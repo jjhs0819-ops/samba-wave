@@ -37,15 +37,15 @@
         const boxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
         if (boxes.length === 0) break
 
-        // 아직 선택 안 된 (closed) 박스 우선, 없으면 i번째
-        const targetBox = boxes.find(b => b.getAttribute('data-state') === 'closed' && !b.querySelector('[data-mds="DropdownTriggerInput"]')?.value?.trim()) || boxes[i] || boxes[boxes.length - 1]
+        // 아직 선택 안 된 박스 우선 — innerText(span 표시) 비어있어야 미선택
+        const targetBox = boxes.find(b => !b.innerText.trim() && !b.querySelector('[data-mds="DropdownTriggerInput"]')?.value?.trim()) || boxes[i] || boxes[boxes.length - 1]
         const ph = targetBox.querySelector('[data-mds="DropdownTriggerInput"]')?.getAttribute('placeholder') || ''
 
         // 박스 클릭으로 드롭다운 열기
         targetBox.click()
-        await sleep(500)
 
-        // 드롭다운 항목 찾기 — TriggerBox 내부(현재 선택값 표시)는 제외하고 실제 목록만
+        // 드롭다운 항목 polling — sleep(500) 고정 대기 시 이미 닫혀버림(실측 0.8초 내 닫힘)
+        // 100ms 간격 최대 2초 polling으로 열리자마자 잡기
         const _ITEM_SELS = [
           '[class*="DropdownItemContent__Container"]',
           '[data-mds="DropdownItem"]',
@@ -53,17 +53,20 @@
           '[class*="DropdownItem__Container"]',
           '[class*="dropdown__item"]',
           '[class*="DropdownList"] li',
+          '[class*="SelectedOption__SelectOptionItemContainer"]',
         ]
         let allItems = []
-        for (const sel of _ITEM_SELS) {
-          // TriggerBox 내부 항목 제외 (현재 선택값 표시용이라 클릭해도 선택 안 됨)
-          const cands = [...document.querySelectorAll(sel)].filter(
-            el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]')
-          )
-          if (cands.length > 0) { allItems = cands; break }
-          // TriggerBox 외부 없으면 전체로 폴백
-          const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
-          if (all.length > 0) { allItems = all; break }
+        for (let _pi = 0; _pi < 20; _pi++) {
+          await sleep(100)
+          for (const sel of _ITEM_SELS) {
+            const cands = [...document.querySelectorAll(sel)].filter(
+              el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]')
+            )
+            if (cands.length > 0) { allItems = cands; break }
+            const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
+            if (all.length > 0) { allItems = all; break }
+          }
+          if (allItems.length > 0) break
         }
         let matched = false
         if (allItems.length > 0) {
@@ -71,13 +74,11 @@
             const t = c.textContent.trim()
             return t === part || t.startsWith(part) || t.toLowerCase().includes(part.toLowerCase())
           }) || allItems[0]
-          // 실제 클릭 가능한 부모(SelectedOption__SelectOptionIt 또는 StaticDropdownMenuItem)로 이동
+          // click()이 PointerEvent보다 안전 — PointerEvent(pointerdown)이 외부클릭으로 감지되어 드롭다운을 닫음
           const clickEl = target.closest('[class*="SelectedOption__SelectOptionIt"]')
             || target.closest('[class*="StaticDropdownMenuItem"]')
             || target
-          ;['pointerdown', 'pointerup', 'click'].forEach(type => {
-            clickEl.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, isPrimary: true }))
-          })
+          clickEl.click()
           await sleep(600)
           const isExact = target.textContent.trim() === part
           console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${isExact ? part : target.textContent.trim()}" 선택`)
@@ -93,16 +94,22 @@
       const remainingBoxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
       for (const box of remainingBoxes) {
         const inp = box.querySelector('[data-mds="DropdownTriggerInput"]')
-        if (inp && (!inp.value || !inp.value.trim())) {
+        // innerText(span 표시) 우선 확인 — value는 항상 ""인 UI
+        const _boxSelected = box.innerText.trim() || (inp && inp.value && inp.value.trim()) || ''
+        if (!_boxSelected) {
           const ph = inp.getAttribute('placeholder') || ''
           box.click()
-          await sleep(500)
+          // sleep(500) 고정 대기 → 닫힘 위험, polling으로 대체
           let _items = []
-          for (const sel of ['[class*="DropdownItemContent__Container"]','[data-mds="DropdownItem"]','[role="option"]','[class*="DropdownList"] li']) {
-            const cands = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]'))
-            if (cands.length > 0) { _items = cands; break }
-            const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
-            if (all.length > 0) { _items = all; break }
+          for (let _ri = 0; _ri < 20; _ri++) {
+            await sleep(100)
+            for (const sel of ['[data-mds="StaticDropdownMenuItem"]','[class*="DropdownItemContent__Container"]','[data-mds="DropdownItem"]','[role="option"]','[class*="DropdownList"] li','[class*="SelectedOption__SelectOptionItemContainer"]']) {
+              const cands = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]'))
+              if (cands.length > 0) { _items = cands; break }
+              const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
+              if (all.length > 0) { _items = all; break }
+            }
+            if (_items.length > 0) break
           }
           const available = _items.filter(c => !c.closest('[aria-disabled="true"]') && !c.closest('[class*="disabled"]'))
           const target = available.length > 0 ? available[0] : _items[0]
@@ -110,9 +117,7 @@
             const clickEl = target.closest('[class*="SelectedOption__SelectOptionIt"]')
               || target.closest('[class*="StaticDropdownMenuItem"]')
               || target
-            ;['pointerdown', 'pointerup', 'click'].forEach(type => {
-              clickEl.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, isPrimary: true }))
-            })
+            clickEl.click()
             await sleep(500)
             console.log(`[삼바-주문처리-무신사] 남은 드롭다운[${ph}] 자동선택: ${target.textContent.trim()}`)
           }
@@ -415,17 +420,51 @@
     console.log('[삼바-주문처리-무신사] 쿠폰 선택 완료')
   }
 
-  // ── 주문서 페이지: 적립금 선할인 확인 (기본값 유지) ──
+  // ── 주문서 페이지: 적립금 선할인 선택 (선할인 가능한 상품만) ──
   async function ensurePrepaySelected() {
-    // aria-checked="true" 인 선할인 라디오 확인
-    for (const radio of document.querySelectorAll('[role="radio"]')) {
-      const parent = radio.closest('[class*="SavePoint"], [class*="Prepay"]')
-      if (parent && parent.textContent.includes('선할인') && radio.getAttribute('aria-checked') !== 'true') {
-        radio.click()
-        await sleep(300)
-        console.log('[삼바-주문처리-무신사] 적립금 선할인 선택')
-      }
-    }
+    const discountBtn = document.querySelector('button[role="radio"][value="DISCOUNT"]')
+    if (!discountBtn) return
+    // radiogroup data-disabled → 선할인 제한 상품 스킵
+    const group = discountBtn.closest('[role="radiogroup"]')
+    if (group && group.dataset.disabled !== undefined) return
+    if (discountBtn.dataset.state === 'checked') return
+    discountBtn.scrollIntoView({ block: 'center' })
+    await sleep(200)
+    discountBtn.click()
+    await sleep(500)
+    console.log('[삼바-주문처리-무신사] 적립금 선할인 선택')
+  }
+
+  // ── 주문서 페이지: 무신사 머니 결제 수단 선택 ──
+  async function selectMusinsaMoney() {
+    const btn = document.querySelector('button[role="radio"][value="MUSINSAPAY_MONEY"]')
+    if (!btn || btn.dataset.state === 'checked') return
+    btn.scrollIntoView({ block: 'center' })
+    await sleep(200)
+    btn.click()
+    await sleep(500)
+    console.log('[삼바-주문처리-무신사] 무신사 머니 선택')
+  }
+
+  // ── 주문서 페이지: 실구매가 계산 ──
+  // 실구매가 = 결제금액 - 무신사머니 적립 + 보유적립금 사용액
+  function computeActualCost() {
+    // 결제하기 버튼에서 마지막 금액 파싱 (예: "49,000원42,000원 결제하기" → 42000)
+    const payBtn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('결제하기') && b.offsetHeight > 0)
+    const amounts = payBtn?.textContent.match(/[\d,]+원/g) || []
+    const finalAmount = amounts.length > 0 ? parseInt(amounts[amounts.length - 1].replace(/[,원]/g, '')) : 0
+
+    // 무신사머니 적립금
+    const txt = document.body.innerText
+    const moneyMatch = txt.match(/무신사머니 결제[^\d]*([\d,]+)원\s*적립/)
+    const musinsaMoneyReward = moneyMatch ? parseInt(moneyMatch[1].replace(/,/g, '')) : 0
+
+    // 보유 적립금 사용액
+    const pointInput = document.querySelector('input[placeholder*="보유 적립금"]')
+    const pointUsed = parseInt((pointInput?.value || '0').replace(/,/g, '')) || 0
+
+    const actualCost = finalAmount - musinsaMoneyReward + pointUsed
+    return { finalAmount, musinsaMoneyReward, pointUsed, actualCost }
   }
 
   // ── 메인 플로우 ──
@@ -464,11 +503,18 @@
           // 쿠폰 자동선택
           await selectBestCoupon()
 
-          // 적립금 선할인 기본값 유지 확인
+          // 적립금 선할인 선택 (가능한 경우)
           await ensurePrepaySelected()
 
+          // 무신사 머니 결제 수단 선택
+          await selectMusinsaMoney()
+
+          // 실구매가 계산
+          const costInfo = computeActualCost()
+          console.log(`[삼바-주문처리-무신사] 실구매가: ${costInfo.actualCost.toLocaleString()}원 (결제${costInfo.finalAmount.toLocaleString()} - 머니적립${costInfo.musinsaMoneyReward.toLocaleString()} + 적립금사용${costInfo.pointUsed.toLocaleString()})`)
+
           console.log('[삼바-주문처리-무신사] 주문서 준비 완료 — 결제 대기 중')
-          sendResponse({ success: true, status: 'ready-to-pay' })
+          sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
         }
       } catch (e) {
         sendResponse({ success: false, error: e.message })

@@ -5035,9 +5035,10 @@ async function _handleSsgShippingPopup(orderTabId, shippingName, shippingPhone, 
 
 async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, detail) {
   try {
-    // 1. 주문서에서 "배송지 변경" 버튼 클릭
+    // 1. 주문서에서 "배송지 변경" 버튼 클릭 (MAIN world — React 이벤트 핸들러)
     const clicked = await chrome.scripting.executeScript({
       target: { tabId: orderTabId },
+      world: 'MAIN',
       func: () => {
         const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '배송지 변경')
         if (btn) { btn.click(); return true }
@@ -5046,27 +5047,33 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     })
     if (!clicked?.[0]?.result) { console.warn('[무신사 배송지팝업] 배송지 변경 버튼 못 찾음'); return }
 
-    // 2. 팝업 창(addresses/order URL) 열림 대기 8초
+    // 2. 팝업 창(addresses/order URL) 열림 대기 10초 (onUpdated + 폴링 병행)
     let popupTabId = null
     await new Promise((resolve) => {
+      const done = (id) => { if (!popupTabId) { popupTabId = id; clearInterval(poll); chrome.tabs.onUpdated.removeListener(h); resolve() } }
       const h = (id, info, tabInfo) => {
-        if (id !== orderTabId && /addresses\/order/.test(tabInfo?.url || '') && info.status === 'complete') {
-          popupTabId = id
-          chrome.tabs.onUpdated.removeListener(h)
-          resolve()
-        }
+        if (id !== orderTabId && /addresses\/order/.test(tabInfo?.url || '') && info.status === 'complete') done(id)
       }
       chrome.tabs.onUpdated.addListener(h)
-      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 8000)
+      const poll = setInterval(async () => {
+        const all = await chrome.tabs.query({})
+        const t = all.find(tab => tab.id !== orderTabId && /addresses\/order/.test(tab.url || ''))
+        if (t) done(t.id)
+      }, 500)
+      setTimeout(() => { clearInterval(poll); chrome.tabs.onUpdated.removeListener(h); resolve() }, 10000)
     })
     if (!popupTabId) { console.warn('[무신사 배송지팝업] 팝업 탭 못 찾음'); return }
+    console.log('[무신사 배송지팝업] 팝업 탭 ID:', popupTabId)
     await new Promise(r => setTimeout(r, 800))
 
-    // 3. 배송지 추가하기 클릭 (a 태그, button 아님)
+    // 3. 배송지 추가하기 클릭 (MAIN world)
+    console.log('[무신사 배송지팝업] step3: 추가하기 클릭')
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
+      world: 'MAIN',
       func: () => {
         const a = document.querySelector('a.order-address-item__add')
+        console.log('[무신사] 추가하기 a태그:', !!a)
         if (a) a.click()
       },
     })
@@ -5084,9 +5091,10 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     })
     await new Promise(r => setTimeout(r, 800))
 
-    // 5. 이름/전화 입력 (Vue native setter 우회)
+    // 5. 이름/전화 입력 (MAIN world — React nativeSetter 인식)
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
+      world: 'MAIN',
       func: (n, p) => {
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
         const setVal = (el, v) => {
@@ -5102,18 +5110,22 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     })
     await new Promise(r => setTimeout(r, 300))
 
-    // 6. 주소 찾기 버튼 클릭
+    // 6. 주소 찾기 버튼 클릭 (MAIN world)
+    console.log('[무신사 배송지팝업] step6: 주소찾기 클릭')
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
+      world: 'MAIN',
       func: () => {
         const btn = document.querySelector('button.order-address-input__button')
           || [...document.querySelectorAll('button')].find(b => b.textContent.includes('주소 찾기'))
+        console.log('[무신사] 주소찾기 btn:', !!btn)
         if (btn) btn.click()
       },
     })
     await new Promise(r => setTimeout(r, 1500))
 
     // 7. 카카오 frame 찾기 (최대 3초 폴링)
+    console.log('[무신사 배송지팝업] step7: 카카오frame 찾기')
     let kakaoFrame = null
     for (let i = 0; i < 6; i++) {
       const frames = await chrome.webNavigation.getAllFrames({ tabId: popupTabId }).catch(() => [])
@@ -5123,9 +5135,10 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     }
     if (!kakaoFrame) { console.warn('[무신사 배송지팝업] 카카오 frame 못 찾음'); return }
 
-    // 8. 카카오 frame에서 검색어 입력 + 검색
+    // 8. 카카오 frame에서 검색어 입력 + 검색 (MAIN world)
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId, frameIds: [kakaoFrame.frameId] },
+      world: 'MAIN',
       func: (addr) => {
         const inp = document.querySelector('input.tf_keyword')
         if (!inp) return
@@ -5139,9 +5152,10 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     })
     await new Promise(r => setTimeout(r, 2000))
 
-    // 9. 첫 번째 도로명 결과 클릭
+    // 9. 첫 번째 도로명 결과 클릭 (MAIN world)
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId, frameIds: [kakaoFrame.frameId] },
+      world: 'MAIN',
       func: () => {
         const btn = document.querySelector('button.link_post')
         if (btn) btn.click()
@@ -5149,9 +5163,11 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     })
     await new Promise(r => setTimeout(r, 1000))
 
-    // 10. 상세주소 입력 + 저장하기 클릭
+    // 10. 상세주소 입력 + 저장하기 클릭 (MAIN world — 저장하기 React 버튼)
+    console.log('[무신사 배송지팝업] step10: 상세주소+저장하기')
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
+      world: 'MAIN',
       func: (d) => {
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
         const el = document.querySelector("input[name='address2']")
@@ -5189,16 +5205,49 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     }
     await new Promise(r => setTimeout(r, 500))
 
-    // 13. 신규 추가된 배송지는 저장 후 자동 선택 상태 → 변경하기만 클릭 (MAIN world 필수)
-    await chrome.scripting.executeScript({
+    // 13+14. radio 선택 + 변경하기 클릭
+    // element.click() / dispatchEvent(MouseEvent) 로는 React state 업데이트 안 됨 (CDP 실측 확인)
+    // chrome.debugger Input.dispatchMouseEvent만 동작
+    await chrome.debugger.attach({ tabId: popupTabId }, '1.3').catch(() => {})
+    const _radioCoordRes = await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
-      world: 'MAIN',
+      func: (n) => {
+        const items = [...document.querySelectorAll('.order-address-item--radio')]
+        const target = items.find(el => n && el.textContent.includes(n)) || items[1] || items[0]
+        if (!target) return null
+        const r = target.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+      },
+      args: [name || ''],
+    })
+    const _radioCoord = _radioCoordRes[0]?.result
+    if (_radioCoord) {
+      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: _radioCoord.x, y: _radioCoord.y, button: 'left', clickCount: 1, buttons: 1 })
+      await new Promise(r => setTimeout(r, 50))
+      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: _radioCoord.x, y: _radioCoord.y, button: 'left', clickCount: 1 })
+    } else {
+      console.warn('[무신사 배송지팝업] radio 좌표 없음')
+    }
+    await new Promise(r => setTimeout(r, 600))
+
+    const _btnCoordRes = await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
       func: () => {
         const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '변경하기')
-        if (btn) btn.click()
-        else console.warn('[무신사 배송지팝업] 변경하기 버튼 없음')
+        if (!btn) return null
+        const r = btn.getBoundingClientRect()
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
       },
     })
+    const _btnCoord = _btnCoordRes[0]?.result
+    if (_btnCoord) {
+      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x: _btnCoord.x, y: _btnCoord.y, button: 'left', clickCount: 1, buttons: 1 })
+      await new Promise(r => setTimeout(r, 50))
+      await chrome.debugger.sendCommand({ tabId: popupTabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x: _btnCoord.x, y: _btnCoord.y, button: 'left', clickCount: 1 })
+    } else {
+      console.warn('[무신사 배송지팝업] 변경하기 좌표 없음')
+    }
+    await chrome.debugger.detach({ tabId: popupTabId }).catch(() => {})
 
     // 13. 팝업 닫힘 대기 + 주문서 업데이트 여유
     await new Promise((resolve) => {
