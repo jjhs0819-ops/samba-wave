@@ -80,6 +80,16 @@
     }
   }
 
+  // ── 주문서: 실구매가 계산 (GS샵 실측: em.txt_moneys, td.td-order-amount) ──
+  function computeActualCost() {
+    const parse = (sel) => {
+      const el = document.querySelector(sel)
+      return el ? parseInt((el.textContent || '').replace(/[^\d]/g, '')) || 0 : 0
+    }
+    const finalAmount = parse('em.txt_moneys') || parse('td.td-order-amount') || parse('.pay_price em') || 0
+    return { finalAmount, actualCost: finalAmount }
+  }
+
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     if (!msg || msg.action !== 'samba_place_order') return
     ;(async () => {
@@ -97,9 +107,10 @@
           sendResponse({ success: true, nextStep: 'order-form' })
         } else {
           await sleep(1500)
-          if (orderType === 'direct') await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
+          if (orderType === 'direct' || orderType === 'kkadaegi') await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
           await selectCoupon()
-          sendResponse({ success: true, status: 'ready-to-pay' })
+          const costInfo = computeActualCost()
+          sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
         }
       } catch (e) { sendResponse({ success: false, error: e.message }) }
     })()

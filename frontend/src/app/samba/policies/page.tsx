@@ -1754,8 +1754,8 @@ export default function PoliciesPage() {
                   </div>
                 )
               })()}
-              {/* 옥션/지마켓 전용: 복수구매 할인, 스마일캐시 지급 */}
-              {(marketPolicyTab === '옥션' || marketPolicyTab === '지마켓') && (
+              {/* 옥션/G마켓 전용: 복수구매 할인, 스마일캐시 지급 */}
+              {(marketPolicyTab === '옥션' || marketPolicyTab === 'G마켓') && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                     <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>복수구매 할인</span>

@@ -341,17 +341,26 @@ class DetailClientMixin:
                     return None
                 data = resp.json()
                 items = data.get("itemList", [])
-                # productId로 정확 매칭
-                for item in items:
-                    pid = item.get("productId", "")
-                    if pid == spd_no:
-                        price_map: dict[str, int] = {}
-                        for p in item.get("priceInfo", []):
-                            price_map[p.get("type", "")] = p.get("num", 0)
-                        return {
-                            "original": price_map.get("original", 0),
-                            "final": price_map.get("final", 0),
-                        }
+                # q= 파라미터로 이미 스코핑됐으므로 1건이면 바로 사용
+                # productId는 PD prefix라 LE prefix인 spd_no와 직접 비교 불가
+                if len(items) == 1:
+                    item = items[0]
+                elif items:
+                    item = next(
+                        (i for i in items if spd_no in (i.get("productName") or "")),
+                        None,
+                    )
+                    if item is None:
+                        return None
+                else:
+                    return None
+                price_map: dict[str, int] = {}
+                for p in item.get("priceInfo", []):
+                    price_map[p.get("type", "")] = p.get("num", 0)
+                return {
+                    "original": price_map.get("original", 0),
+                    "final": price_map.get("final", 0),
+                }
         except Exception as e:
             logger.debug(f"[LOTTEON] qapi 가격 조회 실패: {spd_no} — {e}")
         return None

@@ -285,14 +285,17 @@ export default function OrderInfoCell(props: Props) {
         }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>상품정보</button>
         )}
         <button onClick={async () => {
-          if (!o.product_id) { showAlert('상품 정보가 없습니다', 'info'); return }
           try {
-            const lookup = await collectorApi.lookupByMarketNo(o.product_id)
-            if (!lookup.found || !lookup.id) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
+            let cpId = o.collected_product_id && o.collected_product_id !== 'DELETED' ? o.collected_product_id : ''
+            if (!cpId && o.product_id) {
+              const lookup = await collectorApi.lookupByMarketNo(o.product_id)
+              if (lookup.found && lookup.id) cpId = lookup.id
+            }
+            if (!cpId) { showAlert('수집상품을 찾을 수 없습니다', 'info'); return }
             setPriceHistoryProduct({ name: o.product_name || '', source_site: o.source_site || '' })
             setPriceHistoryData([])
             setPriceHistoryModal(true)
-            const history = await collectorApi.getPriceHistory(lookup.id)
+            const history = await collectorApi.getPriceHistory(cpId)
             setPriceHistoryData(history || [])
           } catch { showAlert('가격이력 조회 실패', 'error') }
         }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>가격변경이력</button>
