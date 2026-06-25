@@ -5166,7 +5166,7 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
       args: [detail || ''],
     })
 
-    // 11. /addresses/order 재이동 대기 8초
+    // 11. /addresses/order 재이동 대기 10초
     await new Promise((resolve) => {
       const h = (id, info, tabInfo) => {
         if (id === popupTabId && /addresses\/order/.test(tabInfo?.url || '') && info.status === 'complete') {
@@ -5175,27 +5175,28 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
         }
       }
       chrome.tabs.onUpdated.addListener(h)
-      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 8000)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 10000)
     })
-    await new Promise(r => setTimeout(r, 800))
 
-    // 12. 신규 추가된 배송지 선택(이름 매칭) + 변경하기 클릭
-    await chrome.scripting.executeScript({
-      target: { tabId: popupTabId },
-      func: (n) => {
-        const items = [...document.querySelectorAll('.order-address-item--radio')]
-        const target = items.find(el => el.textContent.includes(n)) || items[0]
-        if (target) target.click()
-      },
-      args: [name || '수령인'],
-    })
+    // 12. radio 항목 렌더링 대기 (React hydration 완료 polling, 최대 6초)
+    for (let _pi = 0; _pi < 12; _pi++) {
+      const _pRes = await chrome.scripting.executeScript({
+        target: { tabId: popupTabId },
+        func: () => document.querySelectorAll('.order-address-item--radio').length,
+      })
+      if ((_pRes[0]?.result || 0) > 0) break
+      await new Promise(r => setTimeout(r, 500))
+    }
     await new Promise(r => setTimeout(r, 500))
 
+    // 13. 신규 추가된 배송지는 저장 후 자동 선택 상태 → 변경하기만 클릭 (MAIN world 필수)
     await chrome.scripting.executeScript({
       target: { tabId: popupTabId },
+      world: 'MAIN',
       func: () => {
         const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '변경하기')
         if (btn) btn.click()
+        else console.warn('[무신사 배송지팝업] 변경하기 버튼 없음')
       },
     })
 
@@ -5212,7 +5213,7 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
 }
 
 async function _handlePlaceOrder(payload) {
-  const { sourceSite, productUrl, orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail, sourcingAccountId } = payload
+  const { sourceSite, productUrl, orderType, productOption, shippingName, shippingPhone, shippingZipcode, shippingAddress, shippingAddressDetail, sourcingAccountId } = payload
   const contentScript = _PLACE_ORDER_SCRIPTS[sourceSite]
   const orderFormPattern = _ORDER_FORM_PATTERNS[sourceSite]
   if (!contentScript || !orderFormPattern) return { success: false, error: `지원하지 않는 소싱처: ${sourceSite}` }
@@ -5228,7 +5229,7 @@ async function _handlePlaceOrder(payload) {
     }
   }
 
-  const msg = { action: 'samba_place_order', orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail }
+  const msg = { action: 'samba_place_order', orderType, productOption, shippingName, shippingPhone, shippingZipcode, shippingAddress, shippingAddressDetail }
 
   // 탭 열기
   const tab = await chrome.tabs.create({ url: productUrl, active: true })
