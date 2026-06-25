@@ -1,5 +1,6 @@
-// content-purchase-lotteon-order.js — 롯데ON 직배/까대기 주문처리
+// content-purchase-lotteon-order.js — 롯데ON 직배/까대기/선물 주문처리
 // 확인된 셀렉터: 바로구매 button.hasBgColor.bgColorRed(텍스트 '바로 구매하기')
+// 선물하기: button.gift (텍스트 '선물하기') — CDP 실측 확인
 // 옵션: 커스텀 드롭다운 (.selectResult label 클릭 → ul.selectLists li .caption 텍스트 클릭)
 ;(() => {
   if (window.__sambaLotteonOrderLoaded) return
@@ -15,11 +16,9 @@
     if (!val) return true
     const parts = val.split('/').map(s => s.trim())
     for (const part of parts) {
-      // 모든 optionWrap을 순서대로 시도
       for (const wrap of document.querySelectorAll('.optionWrap')) {
         const label = wrap.querySelector('.selectResult label, .selectResult')
         if (label) { label.click(); await sleep(700) }
-        // 열린 ul에서 항목 찾기
         const ul = wrap.querySelector('ul.selectLists')
         if (!ul) continue
         let found = false
@@ -31,7 +30,6 @@
           }
         }
         if (found) break
-        // 못 찾으면 닫기 (label 다시 클릭)
         if (label) label.click()
       }
       await sleep(300)
@@ -39,7 +37,7 @@
     return true
   }
 
-  // ── 바로구매 (확인: button.hasBgColor.bgColorRed, 텍스트 '바로 구매하기') ──
+  // ── 바로구매 ──
   async function clickBuyNow() {
     for (const btn of document.querySelectorAll('button.hasBgColor, button')) {
       const t = btn.textContent.trim()
@@ -48,11 +46,26 @@
     return false
   }
 
-  // ── 주문서: 배송지 변경 ──
-  // 롯데ON payments 구조: '변경' 버튼 → 배송지 등록 폼 모달 열림 → 이름/전화 입력 → 저장
+  // ── 선물하기 버튼 클릭 (상품 페이지) ──
+  async function clickGift() {
+    const btn = [...document.querySelectorAll('button.gift, button[class*="gift"]')].find(b => b.offsetHeight > 0 && b.textContent.includes('선물'))
+    if (btn) { btn.click(); await sleep(3000); return true }
+    return false
+  }
+
+  // ── native setter (Vue readonly input 우회) ──
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  const setVal = (el, v) => {
+    if (!el) return
+    if (nativeSetter) nativeSetter.call(el, v)
+    else el.value = v
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  // ── 주문서: 배송지 변경 (직배/까대기) ──
   async function changeShipping(name, phone, address, detail) {
     if (!name) return
-    // 배송지 변경 버튼 클릭 (텍스트 '변경')
     const changeBtn = document.querySelector('button.btnAddress') ||
       Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '변경' && b.offsetHeight > 0)
     if (!changeBtn) return
@@ -62,54 +75,53 @@
     const modal = document.querySelector('[role="dialog"], .v--modal-box')
     if (!modal) return
 
-    // native setter로 Vue readonly input 우회
-    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
-    const setVal = (el, v) => {
-      if (!el) return
-      if (nativeSetter) nativeSetter.call(el, v)
-      else el.value = v
-      el.dispatchEvent(new Event('input', { bubbles: true }))
-      el.dispatchEvent(new Event('change', { bubbles: true }))
-    }
-
-    // 배송지 목록에서 이름 매칭 시도 (목록 선택 방식)
     const radios = Array.from(modal.querySelectorAll('input[type="radio"]'))
     let selected = false
     for (const r of radios) {
       const container = r.closest('li, label, div')
       if (container && container.textContent.includes(name)) {
-        r.click()
-        await sleep(500)
-        selected = true
-        break
+        r.click(); await sleep(500); selected = true; break
       }
     }
 
     if (!selected) {
-      // 새 배송지 추가 버튼 클릭 (있으면)
       const newBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.includes('새 배송지') || b.textContent.includes('배송지 추가'))
       if (newBtn) { newBtn.click(); await sleep(1000) }
 
-      // 이름 입력 (placeholder: '받는 분을 입력해 주세요.')
       const nameEl = modal.querySelector('input[placeholder*="받는 분"]') ||
         Array.from(modal.querySelectorAll('input[type="text"]')).find(i => !i.readOnly)
       setVal(nameEl, name)
 
-      // 전화 입력 (placeholder: '-없이 휴대폰 번호를 입력해 주세요.')
       const phoneEl = modal.querySelector('input[placeholder*="휴대폰"]') ||
         Array.from(modal.querySelectorAll('input[type="tel"]')).find(i => !i.readOnly)
       setVal(phoneEl, (phone || '').replace(/-/g, ''))
 
       await sleep(300)
-
-      // 저장 버튼 클릭 (배송지 등록 폼)
       const saveBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.trim() === '저장')
       if (saveBtn) { saveBtn.click(); await sleep(1500) }
     }
 
-    // 확인 버튼 클릭 (배송지 선택 모달)
     const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => b.offsetHeight > 0 && b.textContent.trim() === '확인')
     if (confirmBtn) { confirmBtn.click(); await sleep(1500) }
+  }
+
+  // ── 선물 주문서: 수령인/전화 입력 ──
+  async function fillGiftRecipient(name, phone) {
+    if (!name) return
+    await sleep(1500)
+    // 수령인 이름
+    const nameEl = document.querySelector('input[placeholder*="이름"]') ||
+      document.querySelector('input[placeholder*="받는 분"]') ||
+      document.querySelector('input[name*="name"], input[name*="receiver"]')
+    if (nameEl) setVal(nameEl, name)
+
+    // 전화번호
+    const phoneEl = document.querySelector('input[placeholder*="전화"]') ||
+      document.querySelector('input[placeholder*="휴대폰"]') ||
+      document.querySelector('input[type="tel"]')
+    if (phoneEl) setVal(phoneEl, (phone || '').replace(/-/g, ''))
+
+    await sleep(300)
   }
 
   // ── 주문서: 쿠폰 ──
@@ -128,6 +140,18 @@
     }
   }
 
+  // ── 실구매가 계산 ──
+  function computeActualCost() {
+    const getText = (sel) => {
+      const el = document.querySelector(sel)
+      return el ? parseInt((el.textContent || '').replace(/[^\d]/g, '')) || 0 : 0
+    }
+    // payments 페이지: 총 결제금액
+    const finalAmount = getText('.priceTotal em, .totalAmount em, .finalAmount em, [class*="totalPay"] em') ||
+      getText('.priceTotal, .totalAmount, .finalAmount, [class*="totalPay"]') || 0
+    return { finalAmount, actualCost: finalAmount }
+  }
+
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     if (!msg || msg.action !== 'samba_place_order') return
     ;(async () => {
@@ -135,23 +159,36 @@
         const { orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail } = msg
         const isOrderForm = /lotteon\.com\/(p\/)?order/.test(window.location.href)
         if (!isOrderForm) {
+          // 상품 페이지: 옵션 선택 + 구매/선물 버튼 클릭
           if (productOption) await selectOption(productOption)
           await sleep(800)
-          const ok = await clickBuyNow()
-          if (!ok) { sendResponse({ success: false, error: '바로구매 버튼 못 찾음' }); return }
+          let ok = false
+          if (orderType === 'gift') {
+            ok = await clickGift()
+            if (!ok) { sendResponse({ success: false, error: '선물하기 버튼 못 찾음' }); return }
+          } else {
+            ok = await clickBuyNow()
+            if (!ok) { sendResponse({ success: false, error: '바로구매 버튼 못 찾음' }); return }
+          }
           sendResponse({ success: true, nextStep: 'order-form' })
         } else {
+          // 주문서 페이지
           await sleep(1500)
-          if (orderType === 'direct') await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
+          if (orderType === 'direct' || orderType === 'kkadaegi') {
+            await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
+          } else if (orderType === 'gift') {
+            await fillGiftRecipient(shippingName, shippingPhone)
+          }
           await selectCoupon()
-          // 롯데ON 주문서 1페이지(orders/N)에서 계속하기 클릭 → 결제 페이지(payments)로 이동
+          // 롯데ON 1페이지(orders/N) → 계속하기 → payments 페이지
           const continueBtn = Array.from(document.querySelectorAll('button')).find(b => b.offsetHeight > 0 && b.textContent.trim() === '계속하기')
+          const costInfo = computeActualCost()
           if (continueBtn) {
-            sendResponse({ success: true, status: 'ready-to-pay' })
+            sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
             continueBtn.click()
             return
           }
-          sendResponse({ success: true, status: 'ready-to-pay' })
+          sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
         }
       } catch (e) { sendResponse({ success: false, error: e.message }) }
     })()

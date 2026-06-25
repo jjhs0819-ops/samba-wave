@@ -109,8 +109,10 @@ export default function OrderInfoCell(props: Props) {
     : ''
 
   const _placeOrderSites = ['MUSINSA', 'SSG', 'LOTTEON', 'ABCmart', 'GrandStage', 'GSShop', 'FashionPlus']
+  const _giftSites = ['SSG', 'LOTTEON'] // 선물하기 지원 사이트
   const _srcSite = (sourceFromUrl || actualSourceSite || o.source_site || '').trim().split('(')[0].trim()
   const showOrderBtns = _placeOrderSites.includes(_srcSite) && !!o.source_url
+  const showGiftBtn = _giftSites.includes(_srcSite)
 
   async function triggerPlaceOrder(orderType: 'direct' | 'kkadaegi' | 'gift') {
     try {
@@ -125,11 +127,13 @@ export default function OrderInfoCell(props: Props) {
         orderType,
         productOption: o.product_option || '',
         sourcingAccountId: o.sourcing_account_id || '',
+        // gift: 사무실 수령인+전화만 (배송지 고객이 직접 입력)
+        // direct: 고객 주소, kkadaegi: 사무실 주소
         shippingName: orderType === 'direct' ? (o.customer_name || '') : office.name,
         shippingPhone: office.phone,
         shippingZipcode: orderType === 'direct' ? (o.customer_postal_code || '') : '',
-        shippingAddress: orderType === 'direct' ? customerAddress.base : office.address,
-        shippingAddressDetail: orderType === 'direct' ? customerAddress.detail : office.address_detail,
+        shippingAddress: orderType === 'gift' ? '' : (orderType === 'direct' ? customerAddress.base : office.address),
+        shippingAddressDetail: orderType === 'gift' ? '' : (orderType === 'direct' ? customerAddress.detail : office.address_detail),
       }
       window.postMessage({ source: 'samba-page', type: 'PLACE_ORDER', payload }, window.location.origin)
     } catch (e) {
@@ -195,8 +199,10 @@ export default function OrderInfoCell(props: Props) {
                       style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2563EB', borderRadius: '4px', color: '#60A5FA', cursor: 'pointer' }}>직배주문</button>
                     <button onClick={() => triggerPlaceOrder('kkadaegi')}
                       style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #D97706', borderRadius: '4px', color: '#FBBF24', cursor: 'pointer' }}>까대기주문</button>
-                    <button onClick={() => triggerPlaceOrder('gift')}
-                      style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #7C3AED', borderRadius: '4px', color: '#A78BFA', cursor: 'pointer' }}>선물주문</button>
+                    {showGiftBtn && (
+                      <button onClick={() => triggerPlaceOrder('gift')}
+                        style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #7C3AED', borderRadius: '4px', color: '#A78BFA', cursor: 'pointer' }}>선물주문</button>
+                    )}
                   </>
                 )}
               </div>

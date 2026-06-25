@@ -1,5 +1,6 @@
-// content-purchase-ssg-order.js — SSG 직배/까대기 주문처리
-// 확인된 셀렉터: 바로구매 a#actionPayment, 옵션 select#ordOpt1(색상)/select#ordOpt2(사이즈)
+// content-purchase-ssg-order.js — SSG 직배/까대기/선물 주문처리
+// 확인된 셀렉터: 바로구매 a#actionPayment
+// 배송지 변경: background._handleSsgShippingPopup 에서 처리 (직배/까대기)
 ;(() => {
   if (window.__sambaSSGOrderLoaded) return
   window.__sambaSSGOrderLoaded = true
@@ -7,7 +8,6 @@
   try { Object.defineProperty(window, 'alert', { value: () => {} }) } catch { window.alert = () => {} }
   try { Object.defineProperty(window, 'confirm', { value: () => true }) } catch { window.confirm = () => true }
 
-  // 가구매(content-purchase-ssg.js)와 동일한 방식: focus+change+input+blur 4종
   function triggerSelect(sel, val) {
     const target = Array.from(sel.options).find(o => !o.disabled && (
       o.text.trim() === val || o.value === val ||
@@ -22,7 +22,6 @@
     return true
   }
 
-  // ── 옵션 선택 (가구매와 동일: 모든 select 순환, 폴백 li/[data-opt-no]) ──
   async function selectOption(val) {
     val = String(val).trim()
     if (!val) return true
@@ -33,7 +32,6 @@
         if (triggerSelect(sel, part)) { matched = true; await sleep(700); break }
       }
       if (!matched) {
-        // 폴백: li/커스텀 옵션
         for (const item of document.querySelectorAll('.opt_list li, .option_list li, [data-opt-no], [data-opt-val]')) {
           const t = item.textContent.trim()
           if (t === part || t.startsWith(part + ' ')) { item.click(); await sleep(700); matched = true; break }
@@ -43,39 +41,62 @@
     return true
   }
 
-  // ── 바로구매 (확인: a#actionPayment) ──
   async function clickBuyNow() {
     const btn = document.querySelector('#actionPayment')
     if (btn) { btn.click(); await sleep(3000); return true }
-    // 폴백
     for (const b of document.querySelectorAll('button, a')) {
       if (b.textContent.trim() === '바로구매') { b.click(); await sleep(3000); return true }
     }
     return false
   }
 
-  // ── 주문서: 배송지 변경 ──
-  async function changeShipping(name, phone, address, detail) {
-    if (!name || !address) return
-    for (const btn of document.querySelectorAll('button, a')) {
-      const t = btn.textContent.trim()
-      if (t === '배송지 변경' || t === '배송지 추가' || t === '새 배송지') { btn.click(); await sleep(1500); break }
-    }
-    const inputs = [...document.querySelectorAll('input[type="text"],input:not([type])')]
-    const fill = (ph, v) => {
-      const el = inputs.find(i => (i.placeholder || '').includes(ph))
-      if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })) }
-    }
-    fill('이름', name); fill('연락', phone); fill('전화', phone)
-    fill('주소', address); fill('상세', detail || '')
-    await sleep(500)
-    for (const btn of document.querySelectorAll('button')) {
-      const t = btn.textContent.trim()
-      if (t === '저장' || t === '확인' || t === '완료') { btn.click(); await sleep(1500); break }
-    }
+  // ── 선물하기 버튼 클릭 ──
+  async function clickGift() {
+    // SSG 선물하기: a[href*="gift"], button 텍스트 '선물하기'
+    const btn = [...document.querySelectorAll('a, button')].find(b => b.offsetHeight > 0 && b.textContent.trim().includes('선물하기'))
+    if (btn) { btn.click(); await sleep(3000); return true }
+    return false
   }
 
-  // ── 주문서: 쿠폰 ──
+  // native setter
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  const setVal = (el, v) => {
+    if (!el) return
+    if (nativeSetter) nativeSetter.call(el, v)
+    else el.value = v
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  // ── 선물 주문서: 수령인/전화 입력 ──
+  async function fillGiftRecipient(name, phone) {
+    if (!name) return
+    await sleep(1000)
+    const nameEl = document.querySelector('input[placeholder*="이름"]') ||
+      document.querySelector('input[placeholder*="수령인"]') ||
+      document.querySelector('input[name*="rcvNm"], input[id*="rcvNm"]')
+    if (nameEl) setVal(nameEl, name)
+
+    const phoneEl = document.querySelector('input[placeholder*="전화"]') ||
+      document.querySelector('input[placeholder*="휴대"]') ||
+      document.querySelector('input[type="tel"], input[name*="rcvPhone"]')
+    if (phoneEl) setVal(phoneEl, (phone || '').replace(/-/g, ''))
+
+    await sleep(300)
+  }
+
+  // ── 실구매가 계산 ──
+  function computeActualCost() {
+    const getText = (sel) => {
+      const el = document.querySelector(sel)
+      return el ? parseInt((el.textContent || '').replace(/[^\d]/g, '')) || 0 : 0
+    }
+    const finalAmount = getText('#totalPayAmt, .total_pay em, .pay_total_price em, [id*="totalPay"]') ||
+      getText('#totalPayAmt, .total_pay, .pay_total_price') || 0
+    return { finalAmount, actualCost: finalAmount }
+  }
+
+  // ── 쿠폰 ──
   async function selectCoupon() {
     for (const btn of document.querySelectorAll('button, a')) {
       const t = btn.textContent.trim()
@@ -96,19 +117,29 @@
     if (!msg || msg.action !== 'samba_place_order') return
     ;(async () => {
       try {
-        const { orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail } = msg
+        const { orderType, productOption, shippingName, shippingPhone } = msg
         const isOrderForm = /(pay\.ssg\.com|ssg\.com)\/(order|payment)/.test(window.location.href)
         if (!isOrderForm) {
           if (productOption) await selectOption(productOption)
           await sleep(800)
-          const ok = await clickBuyNow()
-          if (!ok) { sendResponse({ success: false, error: '바로구매 버튼 못 찾음' }); return }
+          let ok = false
+          if (orderType === 'gift') {
+            ok = await clickGift()
+            if (!ok) { sendResponse({ success: false, error: '선물하기 버튼 못 찾음' }); return }
+          } else {
+            ok = await clickBuyNow()
+            if (!ok) { sendResponse({ success: false, error: '바로구매 버튼 못 찾음' }); return }
+          }
           sendResponse({ success: true, nextStep: 'order-form' })
         } else {
-          // 배송지 변경은 background(_handleSsgShippingPopup)에서 처리 완료됨
+          // 직배/까대기 배송지는 background._handleSsgShippingPopup에서 처리 완료됨
           await sleep(800)
+          if (orderType === 'gift') {
+            await fillGiftRecipient(shippingName, shippingPhone)
+          }
           await selectCoupon()
-          sendResponse({ success: true, status: 'ready-to-pay' })
+          const costInfo = computeActualCost()
+          sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
         }
       } catch (e) { sendResponse({ success: false, error: e.message }) }
     })()

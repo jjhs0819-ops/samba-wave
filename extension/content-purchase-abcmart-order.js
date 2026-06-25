@@ -2,6 +2,7 @@
 // 확인된 셀렉터 (GrandStage 기준):
 //   바로구매: button.btn.btn-lg (텍스트 '바로구매')
 //   옵션: select#selectboxoptionlist (색상), select#search-optn-name (사이즈, display:none jQuery UI)
+// 선물하기 없음 (ABCmart 정책상 미지원)
 ;(() => {
   if (window.__sambaABCOrderLoaded) return
   window.__sambaABCOrderLoaded = true
@@ -13,7 +14,6 @@
     const target = Array.from(sel.options).find(o => !o.disabled && (o.text.trim() === val || o.text.trim().startsWith(val + ' ') || o.value === val))
     if (!target) return false
     sel.value = target.value
-    // jQuery UI select: change 이벤트 + jQuery trigger
     sel.dispatchEvent(new Event('change', { bubbles: true }))
     sel.dispatchEvent(new Event('input', { bubbles: true }))
     if (window.jQuery || window.$) {
@@ -22,7 +22,6 @@
     return true
   }
 
-  // ── 옵션 선택 (select#selectboxoptionlist → select#search-optn-name) ──
   async function selectSize(val) {
     val = String(val).trim()
     if (!val) return true
@@ -40,7 +39,6 @@
     return true
   }
 
-  // ── 바로구매 (확인: button.btn.btn-lg 텍스트 '바로구매') ──
   async function clickBuyNow() {
     for (const btn of document.querySelectorAll('button.btn-lg, button.btn')) {
       if (btn.textContent.trim() === '바로구매') { btn.click(); await sleep(3000); return true }
@@ -52,28 +50,50 @@
     return false
   }
 
-  // ── 주문서: 배송지 변경 ──
+  // native setter (React/Vue readonly input 우회)
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+  const setVal = (el, v) => {
+    if (!el) return
+    if (nativeSetter) nativeSetter.call(el, v)
+    else el.value = v
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  // ── 주문서: 배송지 변경 (직배/까대기) ──
   async function changeShipping(name, phone, address, detail) {
     if (!name || !address) return
     for (const btn of document.querySelectorAll('button, a')) {
       const t = btn.textContent.trim()
       if (t === '배송지 변경' || t === '새 배송지' || t === '배송지 추가' || t === '다른 배송지') { btn.click(); await sleep(1500); break }
     }
-    const inputs = [...document.querySelectorAll('input[type="text"],input:not([type])')]
+    const modal = document.querySelector('[role="dialog"], .modal-body, .address-form-wrap, .delivery-address-wrap')
+    const inputs = [...(modal || document).querySelectorAll('input[type="text"],input:not([type])')]
     const fill = (ph, v) => {
       const el = inputs.find(i => (i.placeholder || '').includes(ph))
-      if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
+      if (el) setVal(el, v)
     }
     fill('이름', name); fill('수령', name); fill('연락', phone); fill('전화', phone)
     fill('주소', address); fill('상세', detail || '')
     await sleep(500)
-    for (const btn of document.querySelectorAll('button')) {
+    for (const btn of (modal || document).querySelectorAll('button')) {
       const t = btn.textContent.trim()
       if (t === '저장' || t === '확인' || t === '완료') { btn.click(); await sleep(1500); break }
     }
   }
 
-  // ── 주문서: 쿠폰 ──
+  // ── 실구매가 계산 ──
+  function computeActualCost() {
+    const getText = (sel) => {
+      const el = document.querySelector(sel)
+      return el ? parseInt((el.textContent || '').replace(/[^\d]/g, '')) || 0 : 0
+    }
+    const finalAmount = getText('.total-price strong, .order-total strong, .pay-price strong, [class*="totalPay"] strong') ||
+      getText('.total-price, .order-total, .pay-price') || 0
+    return { finalAmount, actualCost: finalAmount }
+  }
+
+  // ── 쿠폰 ──
   async function selectCoupon() {
     for (const btn of document.querySelectorAll('button, a')) {
       if (btn.textContent.trim().includes('쿠폰')) { btn.click(); await sleep(1500); break }
@@ -103,9 +123,12 @@
           sendResponse({ success: true, nextStep: 'order-form' })
         } else {
           await sleep(1500)
-          if (orderType === 'direct') await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
+          if (orderType === 'direct' || orderType === 'kkadaegi') {
+            await changeShipping(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
+          }
           await selectCoupon()
-          sendResponse({ success: true, status: 'ready-to-pay' })
+          const costInfo = computeActualCost()
+          sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
         }
       } catch (e) { sendResponse({ success: false, error: e.message }) }
     })()

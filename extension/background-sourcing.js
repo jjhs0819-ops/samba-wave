@@ -5407,7 +5407,7 @@ async function _handlePlaceOrder(payload) {
   await new Promise((r) => setTimeout(r, 2500))
 
   // SSG: 배송지 팝업 처리 (background에서 직접)
-  if (sourceSite === 'SSG' && (orderType === 'direct' || orderType === 'kkaregi')) {
+  if (sourceSite === 'SSG' && (orderType === 'direct' || orderType === 'kkadaegi')) {
     await _handleSsgShippingPopup(tabId, shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
     await new Promise((r) => setTimeout(r, 800))
   }
