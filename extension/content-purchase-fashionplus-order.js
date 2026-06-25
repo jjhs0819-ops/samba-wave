@@ -102,12 +102,22 @@
       await sleep(800)
     }
 
-    // 우편번호/도로명: background가 world:MAIN으로 iframe에서 Vue form + DOM 직접 설정
-    // (CDP 검증 완료: ral.form.zipCode 직접 할당이 Vue 반응형 setter 트리거)
+    // 우편번호/도로명: script tag injection으로 iframe main world에서 Vue form 직접 설정
+    // CSP 없음 확인. background world:MAIN inject는 delivery-address frame 도달 실패.
     if (zipcode && address) {
-      await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'FASHIONPLUS_ZIP_SET', zipcode, address }, resolve)
-      })
+      const safeZip = JSON.stringify(String(zipcode))
+      const safeAddr = JSON.stringify(String(address))
+      const s = doc.createElement('script')
+      s.textContent = `(function(){
+        var ral=window.Faple&&window.Faple.vues&&window.Faple.vues.receiveAddressList;
+        if(ral&&ral.form){ral.form.zipCode=${safeZip};ral.form.roadAddress=${safeAddr};}
+        var inp=document.querySelectorAll('input.textfield');
+        var sd=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+        if(inp[2]){inp[2].removeAttribute('readonly');sd.set.call(inp[2],${safeZip});inp[2].dispatchEvent(new Event('input',{bubbles:true}));}
+        if(inp[3]){inp[3].removeAttribute('readonly');sd.set.call(inp[3],${safeAddr});inp[3].dispatchEvent(new Event('input',{bubbles:true}));}
+      })()`
+      doc.head.appendChild(s)
+      s.remove()
       await sleep(300)
     }
 
