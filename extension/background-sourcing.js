@@ -5066,8 +5066,8 @@ async function _handlePlaceOrder(payload) {
   })
   await new Promise((r) => setTimeout(r, 1500))
 
-  // ShopBack 캐시백 활성화 자동 클릭 (shadow DOM 내부 버튼, 최대 3초 대기)
-  ;(async () => {
+  // ShopBack 캐시백 활성화 자동 클릭 (shadow DOM 내부 버튼, 최대 3초 대기, 완료 후 메인 로직 진행)
+  await (async () => {
     for (let i = 0; i < 5; i++) {
       try {
         const r = await chrome.scripting.executeScript({
@@ -5087,7 +5087,7 @@ async function _handlePlaceOrder(payload) {
       await new Promise(r => setTimeout(r, 600))
     }
   })()
-  await new Promise((r) => setTimeout(r, 500))
+  await new Promise((r) => setTimeout(r, 1000))
 
   // 1단계: 상품 페이지 → 옵션 선택 + 바로구매
   await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] })

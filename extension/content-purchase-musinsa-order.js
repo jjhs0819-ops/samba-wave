@@ -71,6 +71,29 @@
           }
         }
       }
+
+      // 제공된 parts 선택 후 남은 미선택 드롭다운 자동 첫번째 선택 (컬러 등 추가 옵션)
+      await sleep(400)
+      const remainingBoxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
+      for (const box of remainingBoxes) {
+        const inp = box.querySelector('[data-mds="DropdownTriggerInput"]')
+        if (inp && (!inp.value || !inp.value.trim())) {
+          const ph = inp.getAttribute('placeholder') || ''
+          box.click()
+          await sleep(500)
+          const containers = Array.from(document.querySelectorAll('[class*="DropdownItemContent__Container"]'))
+          const available = containers.filter(c => !c.closest('[aria-disabled="true"]') && !c.closest('[class*="disabled"]'))
+          const target = available.length > 0 ? available[0] : containers[0]
+          if (target) {
+            target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+            target.click()
+            target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+            await sleep(500)
+            console.log(`[삼바-주문처리-무신사] 남은 드롭다운[${ph}] 자동선택: ${target.textContent.trim()}`)
+          }
+        }
+      }
+
       return true
     }
 
