@@ -370,9 +370,11 @@ export default function OrdersPage() {
       if (!result?.success || !result?.orderId || result?.actualCost == null) return
       const cost = Number(result.actualCost)
       if (!Number.isFinite(cost) || cost <= 0) return
+      const patch: Record<string, unknown> = { cost }
+      if (result.orderType === 'kkadaegi') patch.shipping_fee = 2300
       try {
-        await orderApi.update(result.orderId, { cost })
-        patchOrder(result.orderId, { cost })
+        await orderApi.update(result.orderId, patch)
+        patchOrder(result.orderId, patch as Partial<SambaOrder>)
         setEditingCosts(prev => { const n = { ...prev }; delete n[result.orderId]; return n })
       } catch {}
     }

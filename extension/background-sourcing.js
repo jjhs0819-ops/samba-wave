@@ -5394,8 +5394,8 @@ async function _handlePlaceOrder(payload) {
     await new Promise((r) => setTimeout(r, 800))
   }
 
-  // MUSINSA 직배: 배송지 팝업 처리 (background에서 직접, 팝업 창 기반)
-  if (sourceSite === 'MUSINSA' && orderType === 'direct' && shippingAddress) {
+  // MUSINSA 직배/까대기: 배송지 팝업 처리 (background에서 직접, 팝업 창 기반)
+  if (sourceSite === 'MUSINSA' && (orderType === 'direct' || orderType === 'kkadaegi') && shippingAddress) {
     // 직배도 사무실 전화번호 사용 (고객 번호 아님) — 백엔드 office-shipping API에서 직접 조회
     let musinsaPhone = shippingPhone
     try {
@@ -5482,7 +5482,7 @@ async function _handlePlaceOrder(payload) {
     await new Promise((r) => setTimeout(r, 1000))
   }
 
-  return { ...step2, tabId, orderId }
+  return { ...step2, tabId, orderId, orderType }
 }
 
 // PLACE_ORDER 메시지 핸들러 (content-samba-deviceid.js relay)
