@@ -512,8 +512,9 @@ export default function PoliciesPage() {
   // GS샵 출고지/반품지 목록 로드
   const loadGsDelivPlaces = useCallback(async () => {
     if (gsDelivPlaces.length > 0) return
+    const accId = marketPolicies['GS샵']?.accountId || ''
     try {
-      const res = await request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/delivery-places`)
+      const res = await request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/delivery-places${accId ? `?account_id=${encodeURIComponent(accId)}` : ''}`)
       if (res.success) {
         const outer = res.data as { resultList?: unknown[] } | null
         const list = (outer?.resultList || []) as Record<string, unknown>[]
@@ -523,7 +524,7 @@ export default function PoliciesPage() {
         })))
       }
     } catch { /* 무시 */ }
-  }, [gsDelivPlaces.length])
+  }, [gsDelivPlaces.length, marketPolicies])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (marketPolicyTab === 'GS샵') { loadGsDelivPlaces(); loadGsMdList() } }, [marketPolicyTab, loadGsDelivPlaces])
