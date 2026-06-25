@@ -158,6 +158,30 @@
     console.log('[삼바-주문처리-패션플러스] 배송지 등록 완료')
   }
 
+  // ── 주문서: 전체 동의하기 체크 ──
+  async function checkAllAgree() {
+    // "전체 동의" 텍스트를 가진 label 또는 버튼 탐색
+    const allAgreeEl =
+      [...document.querySelectorAll('label')].find(
+        (l) => l.textContent.trim().includes('전체 동의')
+      ) ||
+      [...document.querySelectorAll('button, span, div')].find(
+        (el) => el.textContent.trim() === '전체 동의하기' && el.offsetParent !== null
+      )
+    if (!allAgreeEl) return
+    // label에 for 속성이 있으면 연결된 checkbox 클릭
+    const forId = allAgreeEl.getAttribute && allAgreeEl.getAttribute('for')
+    const cb = forId
+      ? document.getElementById(forId)
+      : allAgreeEl.querySelector('input[type="checkbox"]')
+    if (cb) {
+      if (!cb.checked) { cb.click(); await sleep(400) }
+    } else {
+      allAgreeEl.click()
+      await sleep(400)
+    }
+  }
+
   // ── 주문서: 쿠폰 선택 ──
   async function selectCoupon() {
     // 쿠폰 영역 버튼 클릭
@@ -210,6 +234,7 @@
             await changeShipping(shippingName, shippingPhone, shippingZipcode || '', shippingAddress, shippingAddressDetail)
           }
           await selectCoupon()
+          await checkAllAgree()
           sendResponse({ success: true, status: 'ready-to-pay' })
         }
       } catch (e) {
