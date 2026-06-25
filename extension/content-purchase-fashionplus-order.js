@@ -138,22 +138,26 @@
     if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)
 
-    // 등록하기 전 mm.bom.alert 자동 확인 (성공 후 팝업 뜨면 즉시 콜백 실행)
-    if (iframeWin.mm && iframeWin.mm.bom) {
-      const origAlert = iframeWin.mm.bom.alert.bind(iframeWin.mm.bom)
-      iframeWin.mm.bom.alert = (msg, callback) => { if (callback) callback(); else origAlert(msg) }
+    // 부모 페이지 mm.bom.alert 오버라이드 — iframe이 mm.modal.opener 통해 부모창에 팝업 렌더링
+    let origParentAlert = null
+    if (window.mm && window.mm.bom && window.mm.bom.alert) {
+      origParentAlert = window.mm.bom.alert.bind(window.mm.bom)
+      window.mm.bom.alert = (msg, callback) => { if (callback) setTimeout(callback, 100); }
     }
 
     // 등록하기 버튼 클릭
     const registerBtn = tabItem.querySelector('button.__btn_primary__')
     if (registerBtn) {
       registerBtn.click()
-      await sleep(1000)
-      // mm.bom.alert 오버라이드가 안 됐을 경우 폴백: 확인 버튼 직접 클릭
-      const allBtns = [...document.querySelectorAll('button'), ...Array.from(doc.querySelectorAll('button'))]
-      const confirmBtn = allBtns.find((b) => b.textContent.trim() === '확인')
-      if (confirmBtn) { confirmBtn.click(); await sleep(500) }
-      await sleep(1500)
+      await sleep(3000)
+      // 폴백: 오버라이드 실패 시 부모 DOM의 확인 버튼 직접 클릭
+      const confirmBtn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === '확인')
+      if (confirmBtn) { confirmBtn.click(); await sleep(1000) }
+    }
+
+    // alert 오버라이드 복원
+    if (origParentAlert && window.mm && window.mm.bom) {
+      window.mm.bom.alert = origParentAlert
     }
     console.log('[삼바-주문처리-패션플러스] 배송지 등록 완료')
   }
