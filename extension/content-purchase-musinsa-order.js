@@ -190,7 +190,7 @@
     return false
   }
 
-  // ── 주문서 페이지: 배송지 변경 ──
+  // ── 주문서 페이지: 배송지 변경 (무조건 신규 추가) ──
   async function changeShippingAddress(name, phone, address, addressDetail) {
     if (!name || !address) return // 이름/주소 없으면 스킵
 
@@ -203,58 +203,103 @@
       }
     }
 
-    // Drawer 열림 대기
-    // 새 배송지 추가 버튼 찾기
+    // Drawer 열림 대기 (최대 5초)
     let addNewBtn = null
     for (let i = 0; i < 10; i++) {
-      for (const btn of document.querySelectorAll('button')) {
-        const t = btn.textContent.trim()
-        if (t.includes('새 배송지') || t.includes('배송지 추가') || t.includes('추가하기')) {
-          addNewBtn = btn
-          break
-        }
-      }
+      addNewBtn = [...document.querySelectorAll('button')].find(b => {
+        const t = b.textContent.trim()
+        return (t.includes('추가하기') || t.includes('배송지 추가') || t.includes('새 배송지')) && b.offsetHeight > 0
+      })
       if (addNewBtn) break
       await sleep(500)
     }
-
-    if (!addNewBtn) {
-      console.warn('[삼바-주문처리-무신사] 새 배송지 추가 버튼 못 찾음 — Drawer 미열림?')
-      return
-    }
+    if (!addNewBtn) { console.warn('[삼바-주문처리-무신사] 배송지 추가 버튼 못 찾음'); return }
 
     addNewBtn.click()
     await sleep(1500)
 
-    // 이름, 전화번호, 주소 입력
-    const inputs = document.querySelectorAll('input[type="text"], input:not([type])')
-    // 이름 input (첫 번째 또는 placeholder 매칭)
-    const nameInput = [...inputs].find(i => i.placeholder?.includes('이름') || i.placeholder?.includes('받는') || i.name?.includes('name'))
-    if (nameInput) { nameInput.value = name; nameInput.dispatchEvent(new Event('input', { bubbles: true })); nameInput.dispatchEvent(new Event('change', { bubbles: true })) }
+    // native setter (React/Vue 우회)
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    const setVal = (el, v) => {
+      if (!el) return
+      if (nativeSetter) nativeSetter.call(el, v)
+      else el.value = v
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }
 
-    const phoneInput = [...inputs].find(i => i.placeholder?.includes('연락처') || i.placeholder?.includes('전화') || i.placeholder?.includes('번호') || i.name?.includes('phone'))
-    if (phoneInput) { phoneInput.value = phone; phoneInput.dispatchEvent(new Event('input', { bubbles: true })) }
+    // 이름 입력
+    const nameEl = [...document.querySelectorAll('input[type="text"], input:not([type])')].find(
+      i => i.placeholder?.includes('이름') || i.placeholder?.includes('받는') || i.name?.includes('name'),
+    )
+    setVal(nameEl, name)
 
-    // 주소 검색 (카카오 주소 API 팝업 방식 — 자동화 어려움)
-    // 대신 직접 입력 가능한 필드 시도
-    const addrInput = [...inputs].find(i => i.placeholder?.includes('주소') && !i.placeholder?.includes('상세'))
-    if (addrInput) { addrInput.value = address; addrInput.dispatchEvent(new Event('input', { bubbles: true })) }
+    // 전화번호 입력
+    const phoneEl = [...document.querySelectorAll('input')].find(
+      i => i.placeholder?.includes('연락처') || i.placeholder?.includes('전화') || i.placeholder?.includes('번호') || i.type === 'tel',
+    )
+    setVal(phoneEl, (phone || '').replace(/-/g, ''))
 
-    const detailInput = [...inputs].find(i => i.placeholder?.includes('상세') || i.placeholder?.includes('나머지'))
-    if (detailInput) { detailInput.value = addressDetail || ''; detailInput.dispatchEvent(new Event('input', { bubbles: true })) }
+    await sleep(300)
+
+    // 주소 검색 버튼 클릭 → 카카오 팝업 열기
+    const addrSearchBtn = [...document.querySelectorAll('button')].find(b => {
+      const t = b.textContent.trim()
+      return (t.includes('주소 검색') || t.includes('우편번호') || t.includes('검색')) && b.offsetHeight > 0
+    })
+    if (addrSearchBtn) {
+      addrSearchBtn.click()
+      await sleep(2000)
+
+      // 카카오 주소 팝업 iframe 접근 시도
+      const iframe = [...document.querySelectorAll('iframe')].find(
+        f => f.src?.includes('postcode') || f.src?.includes('daum') || f.src?.includes('kakao'),
+      )
+      if (iframe) {
+        try {
+          const iDoc = iframe.contentDocument || iframe.contentWindow?.document
+          if (iDoc) {
+            const searchInput = iDoc.querySelector('input[placeholder*="검색"], input[class*="search"], input[type="text"]')
+            if (searchInput) {
+              searchInput.focus()
+              searchInput.value = address
+              searchInput.dispatchEvent(new Event('input', { bubbles: true }))
+              await sleep(300)
+              // 검색 실행 (Enter 또는 검색 버튼)
+              searchInput.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true }))
+              searchInput.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', keyCode: 13, bubbles: true }))
+              const searchBtn = iDoc.querySelector('button[type="submit"], button')
+              if (searchBtn) searchBtn.click()
+              await sleep(1500)
+              // 첫 번째 결과 클릭
+              const firstResult = iDoc.querySelector('[class*="result"] li:first-child, [class*="list"] li:first-child, table tr:first-child td')
+              if (firstResult) { firstResult.click(); await sleep(1000) }
+            }
+          }
+        } catch (e) {
+          console.warn('[삼바-주문처리-무신사] 카카오 팝업 접근 실패:', e.message)
+        }
+      }
+    }
 
     await sleep(500)
 
+    // 상세주소 입력
+    const detailEl = [...document.querySelectorAll('input[type="text"], input:not([type])')].find(
+      i => i.placeholder?.includes('상세') || i.placeholder?.includes('나머지'),
+    )
+    setVal(detailEl, addressDetail || '')
+
+    await sleep(300)
+
     // 저장 버튼 클릭
-    for (const btn of document.querySelectorAll('button')) {
-      const t = btn.textContent.trim()
-      if (t === '저장' || t === '확인' || t === '완료') {
-        btn.click()
-        await sleep(1500)
-        break
-      }
-    }
-    console.log(`[삼바-주문처리-무신사] 배송지 입력 완료: ${name} / ${phone}`)
+    const saveBtn = [...document.querySelectorAll('button')].find(b => {
+      const t = b.textContent.trim()
+      return (t === '저장' || t === '확인' || t === '완료') && b.offsetHeight > 0
+    })
+    if (saveBtn) { saveBtn.click(); await sleep(1500) }
+
+    console.log(`[삼바-주문처리-무신사] 배송지 신규 추가 완료: ${name} / ${phone}`)
   }
 
   // ── 주문서 페이지: 최적 쿠폰 자동선택 ──
@@ -327,6 +372,19 @@
     for (const btn of document.querySelectorAll('button')) {
       const t = btn.textContent.trim()
       if (t === '적용' || t === '확인' || t === '쿠폰 적용') { btn.click(); await sleep(1000); break }
+    }
+
+    // 쿠폰 모달이 아직 열려있으면 닫기 (X 버튼 또는 ESC)
+    await sleep(300)
+    const openDialog = document.querySelector('[role="dialog"][aria-modal="true"], [class*="Modal"][class*="open"], [class*="modal-wrap"]')
+    if (openDialog) {
+      const closeBtn = [...openDialog.querySelectorAll('button')].find(b =>
+        b.getAttribute('aria-label')?.match(/닫|close/i) ||
+        (b.querySelector('svg') && b.textContent.trim() === '') ||
+        b.textContent.trim() === '닫기',
+      )
+      if (closeBtn) { closeBtn.click(); await sleep(500) }
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     }
 
     console.log('[삼바-주문처리-무신사] 쿠폰 선택 완료')
