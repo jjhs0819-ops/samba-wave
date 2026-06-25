@@ -102,13 +102,18 @@
       await sleep(800)
     }
 
-    // daum.Postcode mock — background가 world:'MAIN'으로 iframe에 직접 inject
-    // (content script isolated world에서는 window.daum.Postcode 수정이 main world에 미반영)
+    // 우편번호 자동화: zipBtn 클릭 → 카카오 팝업 → background가 팝업 iframe에 inject해서 검색+선택
     if (zipcode && address) {
-      await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: 'FASHIONPLUS_ZIP_INJECT', zipcode, address }, resolve)
-      })
-      await sleep(800)
+      const zipBtn = Array.from(doc.querySelectorAll('a'))
+        .find(a => a.textContent.trim() === '우편번호 찾기')
+      if (zipBtn) {
+        zipBtn.click()
+        await sleep(2000) // 팝업 창 로드 대기
+        await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: 'FASHIONPLUS_ZIP_POPUP_SEARCH', address }, resolve)
+        })
+        await sleep(1500) // oncomplete → Vue form 갱신 대기
+      }
     }
 
     // 이름 / 전화 / 상세주소 입력
