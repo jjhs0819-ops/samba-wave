@@ -100,10 +100,28 @@ _ORIGIN_KO = {
 }
 
 
-def _build_gov_publs_clothing(
-    product: dict[str, Any], brand: str
+def _truncate_prdnm(name: str, max_bytes: int = 30) -> str:
+    """GS 송장명(prdNm)=VARCHAR2(30)=30바이트. 한글 글자경계 안 깨지게 절단.
+    노출상품명(prdNmChgExposPrdNm, 240자)은 풀로 유지하고 송장명만 줄인다.
+    """
+    out = ""
+    for ch in name:
+        try:
+            nb = len((out + ch).encode("euc-kr"))
+        except UnicodeEncodeError:
+            nb = len((out + ch).encode("utf-8"))
+        if nb > max_bytes:
+            break
+        out += ch
+    return out.strip() or name[:15]
+
+
+def _build_gov_publs(
+    product: dict[str, Any], brand: str, prd_cls_cd: str
 ) -> list[dict[str, str]]:
-    """의류 정보고시(1001~1009) — 수집데이터 우선, 없으면 '상품 페이지 참조' (메모리 원칙)."""
+    """정보고시 — 분류(prdClsCd)별 그룹. B25=신발(1101~1109), 그외=의류(1001~1009).
+    수집데이터(소재·색상·제조자·제조국 등) 우선, 없으면 '상품 페이지 참조' (메모리 원칙).
+    """
 
     def g(v: Any, default: str = "상품 페이지 참조") -> str:
         s = str(v or "").strip()
@@ -111,31 +129,47 @@ def _build_gov_publs_clothing(
 
     origin = str(product.get("origin") or "").strip()
     origin_ko = _ORIGIN_KO.get(origin.lower(), origin) if origin else "상품 페이지 참조"
+    material = g(product.get("material"))
+    color = g(product.get("color"))
+    maker = g(product.get("manufacturer") or brand)
+    care = g(product.get("care_instructions"))
+    as_phone = g(product.get("as_phone"))
+    quality = g(
+        product.get("quality_guarantee"), "관련 법령 및 소비자분쟁해결기준에 따름"
+    )
+
+    if str(prd_cls_cd).startswith("B25"):  # 신발 (그룹11: 1101~1109)
+        return [
+            {"govPublsItmCd": "1101", "govPublsItmCntnt": material},
+            {"govPublsItmCd": "1102", "govPublsItmCntnt": color},
+            {
+                "govPublsItmCd": "1103",
+                "govPublsItmCntnt": g(product.get("size_notice")),
+            },
+            {
+                "govPublsItmCd": "1104",
+                "govPublsItmCntnt": g(product.get("heel_height"), "해당없음"),
+            },
+            {"govPublsItmCd": "1105", "govPublsItmCntnt": maker},
+            {"govPublsItmCd": "1106", "govPublsItmCntnt": origin_ko},
+            {"govPublsItmCd": "1107", "govPublsItmCntnt": quality},
+            {"govPublsItmCd": "1108", "govPublsItmCntnt": as_phone},
+            {"govPublsItmCd": "1109", "govPublsItmCntnt": care},
+        ]
+    # 의류 (그룹10: 1001~1009)
     return [
-        {"govPublsItmCd": "1001", "govPublsItmCntnt": g(product.get("material"))},
-        {"govPublsItmCd": "1002", "govPublsItmCntnt": g(product.get("color"))},
+        {"govPublsItmCd": "1001", "govPublsItmCntnt": material},
+        {"govPublsItmCd": "1002", "govPublsItmCntnt": color},
         {"govPublsItmCd": "1003", "govPublsItmCntnt": g(product.get("size_notice"))},
-        {
-            "govPublsItmCd": "1004",
-            "govPublsItmCntnt": g(product.get("manufacturer") or brand),
-        },
+        {"govPublsItmCd": "1004", "govPublsItmCntnt": maker},
         {"govPublsItmCd": "1005", "govPublsItmCntnt": origin_ko},
-        {
-            "govPublsItmCd": "1006",
-            "govPublsItmCntnt": g(product.get("care_instructions")),
-        },
+        {"govPublsItmCd": "1006", "govPublsItmCntnt": care},
         {
             "govPublsItmCd": "1007",
             "govPublsItmCntnt": g(product.get("manufacture_date")),
         },
-        {
-            "govPublsItmCd": "1008",
-            "govPublsItmCntnt": g(
-                product.get("quality_guarantee"),
-                "관련 법령 및 소비자분쟁해결기준에 따름",
-            ),
-        },
-        {"govPublsItmCd": "1009", "govPublsItmCntnt": g(product.get("as_phone"))},
+        {"govPublsItmCd": "1008", "govPublsItmCntnt": quality},
+        {"govPublsItmCd": "1009", "govPublsItmCntnt": as_phone},
     ]
 
 
@@ -273,7 +307,7 @@ def _transform_for_gsshop(
     # 출고일 (당일=0이면 당일출고마감시간 입력 가능)
     std_rels_ddcnt = int(gs.get("stdRelsDdcnt") or 1)
     base_add_info: dict[str, Any] = {
-        "prdNm": name,
+        "prdNm": _truncate_prdnm(name),
         "brandCd": brand_cd,
         "prdClsCd": category_prd_cls_cd or gs.get("prdClsCd") or "",
         # 3100=직송(설치), 3200=직송(택배) — 택배사(dlvsCoCd)는 직송(택배)일 때만 적용됨
@@ -321,7 +355,7 @@ def _transform_for_gsshop(
         "frmlesPrdTypCd": "N",
         "attrTypNm1": first_opt_name or "사이즈",
         "paraImPrdYn": "N",
-        "prdBaseCmposCntnt": name,
+        "prdBaseCmposCntnt": _truncate_prdnm(name),
         "orgprdPkgCnt": 1,
         "prdUnitValCd40": "A01",
         "prdUnitValCd20": "B01",
@@ -366,7 +400,9 @@ def _transform_for_gsshop(
             # 정보고시 — 의류 코드 1001~1009. 수집데이터(소재·색상·제조자·제조국 등) 우선,
             # 없으면 "상품 페이지 참조" 기본값.
             "prdGovPublsItmList": gs.get("prdGovPublsItmList")
-            or _build_gov_publs_clothing(product, brand),
+            or _build_gov_publs(
+                product, brand, category_prd_cls_cd or str(gs.get("prdClsCd") or "")
+            ),
         }
     )
     return payload
