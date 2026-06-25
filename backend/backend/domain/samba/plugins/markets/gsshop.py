@@ -385,11 +385,18 @@ class GsShopPlugin(MarketPlugin):
                 # brandCd, prdClsCd, dlvsCoCd, prdRelspAddrCd 등 등록에 필요한 코드값
                 gs_settings = gs_policy.get("gsSettings") or {}
 
-        # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때)
-        if not gs_settings.get("rtpAmt") and auth_creds.get("returnFee"):
-            gs_settings = {**gs_settings, "rtpAmt": int(auth_creds["returnFee"])}
-        if not gs_settings.get("exchAmt") and auth_creds.get("exchangeFee"):
-            gs_settings = {**gs_settings, "exchAmt": int(auth_creds["exchangeFee"])}
+        # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때).
+        # returnFee/exchangeFee는 계정 additional_fields에 저장되는데 auth_creds 출처가
+        # 설정/resolver일 때 누락될 수 있어, 계정 additional_fields도 함께 조회한다.
+        _acct_extra = getattr(account, "additional_fields", None) or {} if account else {}
+        if not gs_settings.get("rtpAmt"):
+            _rf = auth_creds.get("returnFee") or _acct_extra.get("returnFee")
+            if _rf:
+                gs_settings = {**gs_settings, "rtpAmt": int(_rf)}
+        if not gs_settings.get("exchAmt"):
+            _ef = auth_creds.get("exchangeFee") or _acct_extra.get("exchangeFee")
+            if _ef:
+                gs_settings = {**gs_settings, "exchAmt": int(_ef)}
 
         client = GsShopClient(sup_cd, aes_key, sub_sup_cd, env)
 
