@@ -102,18 +102,13 @@
       await sleep(800)
     }
 
-    // daum.Postcode mock — script 태그 injection (iframe main world에서 실행)
-    // isolated world에서 iframeWin 속성 조건 체크 제거 — script 내부에서 처리
+    // daum.Postcode mock — background가 world:'MAIN'으로 iframe에 직접 inject
+    // (content script isolated world에서는 window.daum.Postcode 수정이 main world에 미반영)
     if (zipcode && address) {
-      const safeZip = JSON.stringify(zipcode)
-      const safeAddr = JSON.stringify(address)
-      const mockScript = doc.createElement('script')
-      mockScript.textContent = 'if(window.daum&&window.daum.Postcode){var _op=window.daum.Postcode;window.daum.Postcode=function(opts){return{open:function(){if(opts.oncomplete)opts.oncomplete({zonecode:' + safeZip + ',roadAddress:' + safeAddr + '});window.daum.Postcode=_op;}}};}'
-      doc.head.appendChild(mockScript)
-      mockScript.remove()
-      const zipBtn = Array.from(doc.querySelectorAll('a'))
-        .find(a => a.textContent.trim() === '우편번호 찾기')
-      if (zipBtn) { zipBtn.click(); await sleep(500) }
+      await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: 'FASHIONPLUS_ZIP_INJECT', zipcode, address }, resolve)
+      })
+      await sleep(800)
     }
 
     // 이름 / 전화 / 상세주소 입력

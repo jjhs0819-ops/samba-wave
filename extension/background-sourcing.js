@@ -5436,3 +5436,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   })()
   return true
 })
+
+// 패션플러스 직배: background가 world:'MAIN'으로 iframe에 daum.Postcode mock inject
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== 'FASHIONPLUS_ZIP_INJECT') return
+  ;(async () => {
+    try {
+      const tabId = sender.tab.id
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        world: 'MAIN',
+        func: (zipcode, address) => {
+          if (!window.location.href.includes('delivery-address')) return
+          if (!window.daum || !window.daum.Postcode) return
+          const orig = window.daum.Postcode
+          window.daum.Postcode = function(opts) {
+            return {
+              open: function() {
+                if (opts.oncomplete) opts.oncomplete({ zonecode: zipcode, roadAddress: address })
+                window.daum.Postcode = orig
+              },
+            }
+          }
+          const zipBtn = Array.from(document.querySelectorAll('a'))
+            .find((a) => a.textContent.trim() === '우편번호 찾기')
+          if (zipBtn) zipBtn.click()
+        },
+        args: [msg.zipcode, msg.address],
+      })
+      sendResponse({ ok: true })
+    } catch (e) {
+      console.warn('[패션플러스 zip inject] 실패(무시):', e?.message)
+      sendResponse({ ok: false, error: e.message })
+    }
+  })()
+  return true
+})
