@@ -85,13 +85,24 @@ def _build_attr_prd_list(
 
 
 _ORIGIN_KO = {
-    "china": "중국", "vietnam": "베트남", "korea": "대한민국", "indonesia": "인도네시아",
-    "cambodia": "캄보디아", "bangladesh": "방글라데시", "india": "인도", "thailand": "태국",
-    "myanmar": "미얀마", "philippines": "필리핀", "taiwan": "대만", "japan": "일본",
+    "china": "중국",
+    "vietnam": "베트남",
+    "korea": "대한민국",
+    "indonesia": "인도네시아",
+    "cambodia": "캄보디아",
+    "bangladesh": "방글라데시",
+    "india": "인도",
+    "thailand": "태국",
+    "myanmar": "미얀마",
+    "philippines": "필리핀",
+    "taiwan": "대만",
+    "japan": "일본",
 }
 
 
-def _build_gov_publs_clothing(product: dict[str, Any], brand: str) -> list[dict[str, str]]:
+def _build_gov_publs_clothing(
+    product: dict[str, Any], brand: str
+) -> list[dict[str, str]]:
     """의류 정보고시(1001~1009) — 수집데이터 우선, 없으면 '상품 페이지 참조' (메모리 원칙)."""
 
     def g(v: Any, default: str = "상품 페이지 참조") -> str:
@@ -104,12 +115,26 @@ def _build_gov_publs_clothing(product: dict[str, Any], brand: str) -> list[dict[
         {"govPublsItmCd": "1001", "govPublsItmCntnt": g(product.get("material"))},
         {"govPublsItmCd": "1002", "govPublsItmCntnt": g(product.get("color"))},
         {"govPublsItmCd": "1003", "govPublsItmCntnt": g(product.get("size_notice"))},
-        {"govPublsItmCd": "1004", "govPublsItmCntnt": g(product.get("manufacturer") or brand)},
+        {
+            "govPublsItmCd": "1004",
+            "govPublsItmCntnt": g(product.get("manufacturer") or brand),
+        },
         {"govPublsItmCd": "1005", "govPublsItmCntnt": origin_ko},
-        {"govPublsItmCd": "1006", "govPublsItmCntnt": g(product.get("care_instructions"))},
-        {"govPublsItmCd": "1007", "govPublsItmCntnt": g(product.get("manufacture_date"))},
-        {"govPublsItmCd": "1008", "govPublsItmCntnt": g(
-            product.get("quality_guarantee"), "관련 법령 및 소비자분쟁해결기준에 따름")},
+        {
+            "govPublsItmCd": "1006",
+            "govPublsItmCntnt": g(product.get("care_instructions")),
+        },
+        {
+            "govPublsItmCd": "1007",
+            "govPublsItmCntnt": g(product.get("manufacture_date")),
+        },
+        {
+            "govPublsItmCd": "1008",
+            "govPublsItmCntnt": g(
+                product.get("quality_guarantee"),
+                "관련 법령 및 소비자분쟁해결기준에 따름",
+            ),
+        },
         {"govPublsItmCd": "1009", "govPublsItmCntnt": g(product.get("as_phone"))},
     ]
 

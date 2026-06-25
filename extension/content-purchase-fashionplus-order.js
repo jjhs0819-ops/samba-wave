@@ -102,22 +102,18 @@
       await sleep(800)
     }
 
-    // daum.Postcode mock — 우편번호 찾기 클릭 시 즉시 oncomplete 호출
-    if (zipcode && address && iframeWin.daum && iframeWin.daum.Postcode) {
-      const origPostcode = iframeWin.daum.Postcode
-      iframeWin.daum.Postcode = function(opts) {
-        return {
-          open: function() {
-            if (opts.oncomplete) {
-              opts.oncomplete({ zonecode: zipcode, roadAddress: address, jibunAddress: address })
-            }
-            iframeWin.daum.Postcode = origPostcode
-          },
-        }
-      }
+    // daum.Postcode mock — script 태그 injection (iframe main world에서 실행)
+    // isolated world에서 iframeWin 속성 조건 체크 제거 — script 내부에서 처리
+    if (zipcode && address) {
+      const safeZip = JSON.stringify(zipcode)
+      const safeAddr = JSON.stringify(address)
+      const mockScript = doc.createElement('script')
+      mockScript.textContent = 'if(window.daum&&window.daum.Postcode){var _op=window.daum.Postcode;window.daum.Postcode=function(opts){return{open:function(){if(opts.oncomplete)opts.oncomplete({zonecode:' + safeZip + ',roadAddress:' + safeAddr + '});window.daum.Postcode=_op;}}};}'
+      doc.head.appendChild(mockScript)
+      mockScript.remove()
       const zipBtn = Array.from(doc.querySelectorAll('a'))
         .find(a => a.textContent.trim() === '우편번호 찾기')
-      if (zipBtn) { zipBtn.click(); await sleep(300) }
+      if (zipBtn) { zipBtn.click(); await sleep(500) }
     }
 
     // 이름 / 전화 / 상세주소 입력

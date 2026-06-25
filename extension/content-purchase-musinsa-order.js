@@ -45,7 +45,7 @@
         targetBox.click()
         await sleep(500)
 
-        // 드롭다운 항목 찾기 (MDS 다양한 셀렉터 순서 시도)
+        // 드롭다운 항목 찾기 — TriggerBox 내부(현재 선택값 표시)는 제외하고 실제 목록만
         const _ITEM_SELS = [
           '[class*="DropdownItemContent__Container"]',
           '[data-mds="DropdownItem"]',
@@ -56,8 +56,14 @@
         ]
         let allItems = []
         for (const sel of _ITEM_SELS) {
-          allItems = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
-          if (allItems.length > 0) break
+          // TriggerBox 내부 항목 제외 (현재 선택값 표시용이라 클릭해도 선택 안 됨)
+          const cands = [...document.querySelectorAll(sel)].filter(
+            el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]')
+          )
+          if (cands.length > 0) { allItems = cands; break }
+          // TriggerBox 외부 없으면 전체로 폴백
+          const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
+          if (all.length > 0) { allItems = all; break }
         }
         let matched = false
         if (allItems.length > 0) {
@@ -65,9 +71,13 @@
             const t = c.textContent.trim()
             return t === part || t.startsWith(part) || t.toLowerCase().includes(part.toLowerCase())
           }) || allItems[0]
-          target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-          target.click()
-          target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+          // 실제 클릭 가능한 부모(SelectedOption__SelectOptionIt 또는 StaticDropdownMenuItem)로 이동
+          const clickEl = target.closest('[class*="SelectedOption__SelectOptionIt"]')
+            || target.closest('[class*="StaticDropdownMenuItem"]')
+            || target
+          ;['pointerdown', 'pointerup', 'click'].forEach(type => {
+            clickEl.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, isPrimary: true }))
+          })
           await sleep(600)
           const isExact = target.textContent.trim() === part
           console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${isExact ? part : target.textContent.trim()}" 선택`)
@@ -89,15 +99,20 @@
           await sleep(500)
           let _items = []
           for (const sel of ['[class*="DropdownItemContent__Container"]','[data-mds="DropdownItem"]','[role="option"]','[class*="DropdownList"] li']) {
-            _items = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
-            if (_items.length > 0) break
+            const cands = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]'))
+            if (cands.length > 0) { _items = cands; break }
+            const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
+            if (all.length > 0) { _items = all; break }
           }
           const available = _items.filter(c => !c.closest('[aria-disabled="true"]') && !c.closest('[class*="disabled"]'))
           const target = available.length > 0 ? available[0] : _items[0]
           if (target) {
-            target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            target.click()
-            target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+            const clickEl = target.closest('[class*="SelectedOption__SelectOptionIt"]')
+              || target.closest('[class*="StaticDropdownMenuItem"]')
+              || target
+            ;['pointerdown', 'pointerup', 'click'].forEach(type => {
+              clickEl.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, isPrimary: true }))
+            })
             await sleep(500)
             console.log(`[삼바-주문처리-무신사] 남은 드롭다운[${ph}] 자동선택: ${target.textContent.trim()}`)
           }
