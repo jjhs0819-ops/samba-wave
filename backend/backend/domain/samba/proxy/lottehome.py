@@ -389,7 +389,7 @@ class LotteHomeClient:
             return await self._call_api(endpoint, method, params)
         except LotteApiError as e:
             msg = (e.lotte_msg or "").lower()
-            is_auth = e.code == "5001" or (
+            is_auth = e.code in ("5001", "9001") or (
                 e.code == "0001"
                 and any(k in (e.lotte_msg or "") for k in ("인증", "토큰", "키"))
             )
