@@ -29,6 +29,25 @@ async def _get_setting(session, key: str) -> Any:
     return val
 
 
+_GS_CATEGORY_MAP_CACHE: dict[str, str] | None = None
+
+
+def _load_gs_category_map() -> dict[str, str]:
+    """소싱카테고리 → "prdClsCd|sectId" 기본 매핑(레포 커밋 JSON). 모듈 레벨 캐시."""
+    global _GS_CATEGORY_MAP_CACHE
+    if _GS_CATEGORY_MAP_CACHE is None:
+        import json
+        import os
+
+        path = os.path.join(os.path.dirname(__file__), "gsshop_category_map.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                _GS_CATEGORY_MAP_CACHE = json.load(f)
+        except Exception:
+            _GS_CATEGORY_MAP_CACHE = {}
+    return _GS_CATEGORY_MAP_CACHE
+
+
 def _build_attr_prd_list(
     options: list[dict[str, Any]],
     sale_str_dtm: int,
@@ -325,6 +344,22 @@ class GsShopPlugin(MarketPlugin):
     ) -> dict[str, Any]:
         """GS샵 상품 등록 — 전체 로직."""
         from backend.domain.samba.proxy.gsshop import GsShopClient
+
+        # 카테고리 자동결정 — category_id가 비었으면 상품의 소싱 카테고리로 자동매핑.
+        # 수동 매핑 테이블 대신 source_category → "prdClsCd|sectId" 매핑 사용.
+        # 기본: 레포 커밋 JSON(gsshop_category_map.json), DB 설정(gsshop_category_map)으로 오버라이드/확장.
+        if not category_id:
+            _src_cat = str(product.get("category") or "").strip()
+            if _src_cat:
+                _cat_map = dict(_load_gs_category_map())
+                _db_map = await _get_setting(session, "gsshop_category_map")
+                if isinstance(_db_map, dict):
+                    _cat_map.update(_db_map)
+                if _cat_map.get(_src_cat):
+                    category_id = str(_cat_map[_src_cat])
+                    logger.info(
+                        f"[GS샵] 카테고리 자동매칭: '{_src_cat}' → {category_id}"
+                    )
 
         # creds가 비었으면 settings에서 조회.
         # (2026-05-25) store_gsshop 직접 호출 → resolver 위임 + account.tenant_id 자동 추출.
