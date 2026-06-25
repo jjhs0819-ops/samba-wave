@@ -958,8 +958,6 @@ async def scroll_products(
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import (
         func,
-        cast,
-        String,
         and_,
         text,
         select,
@@ -988,6 +986,7 @@ async def scroll_products(
         _SEARCH_NORM_RE = "[^0-9A-Za-z가-힣]"
         q_norm = re.sub(r"[^0-9A-Za-z가-힣]", "", q)
         # 빈 쿼리(특수문자만 입력) 시 전체매칭 방지 — 정규화 조건 미적용
+        # market_names CAST는 GIN 인덱스 무력화로 8초 Seq Scan 유발 → 제거
         _norm_conds = []
         if q_norm:
             q_norm_pat = f"%{escape_like(q_norm)}%"
@@ -995,12 +994,6 @@ async def scroll_products(
                 func.regexp_replace(_CP.name, _SEARCH_NORM_RE, "", "g").ilike(
                     q_norm_pat, escape="\\"
                 ),
-                func.regexp_replace(
-                    func.coalesce(cast(_CP.market_names, String), ""),
-                    _SEARCH_NORM_RE,
-                    "",
-                    "g",
-                ).ilike(q_norm_pat, escape="\\"),
             ]
 
         # 상품번호 다중 입력(콤마) 지원 — split 결과가 있으면 IN, 없으면 단일 ilike
@@ -1012,40 +1005,28 @@ async def scroll_products(
         )
 
         if search_type == "name":
-            # 원상품명 + 등록상품명 + 마켓등록명 통합 부분 일치 (공백 무시)
+            # GIN trgm 인덱스 활용: COALESCE/CAST 래핑 금지 (인덱스 무력화)
+            # NULL ILIKE = NULL (= false in WHERE), COALESCE 불필요
             conditions.append(
                 or_(
                     _CP.name.ilike(q_pat, escape="\\"),
                     func.replace(_CP.name, " ", "").ilike(q_no_space_pat, escape="\\"),
                     _CP.name_en.ilike(q_pat, escape="\\"),
-                    func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
-                        q_no_space_pat, escape="\\"
-                    ),
-                    func.coalesce(cast(_CP.market_names, String), "").ilike(
-                        q_pat, escape="\\"
-                    ),
-                    func.coalesce(_CP.brand, "").ilike(q_pat, escape="\\"),
-                    func.coalesce(_CP.style_code, "").ilike(q_pat, escape="\\"),
+                    _CP.brand.ilike(q_pat, escape="\\"),
+                    _CP.style_code.ilike(q_pat, escape="\\"),
                     *_norm_conds,
                     _site_id_clause,
                 )
             )
         elif search_type == "name_all":
-            # 상품명 + 등록상품명 구성 요소(brand/style_code/site_product_id 포함) 동시 검색
-            # market_names 포함 — 셀하 등 마켓 등록명으로 검색 시 누락 방지
+            # GIN trgm 인덱스 활용: COALESCE/CAST 래핑 금지 (인덱스 무력화)
             conditions.append(
                 or_(
                     _CP.name.ilike(q_pat, escape="\\"),
                     func.replace(_CP.name, " ", "").ilike(q_no_space_pat, escape="\\"),
                     _CP.name_en.ilike(q_pat, escape="\\"),
-                    func.replace(func.coalesce(_CP.name_en, ""), " ", "").ilike(
-                        q_no_space_pat, escape="\\"
-                    ),
-                    func.coalesce(cast(_CP.market_names, String), "").ilike(
-                        q_pat, escape="\\"
-                    ),
-                    func.coalesce(_CP.brand, "").ilike(q_pat, escape="\\"),
-                    func.coalesce(_CP.style_code, "").ilike(q_pat, escape="\\"),
+                    _CP.brand.ilike(q_pat, escape="\\"),
+                    _CP.style_code.ilike(q_pat, escape="\\"),
                     *_norm_conds,
                     _site_id_clause,
                 )
