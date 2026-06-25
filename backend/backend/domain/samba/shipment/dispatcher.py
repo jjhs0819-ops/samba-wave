@@ -973,7 +973,109 @@ async def _delete_playauto(
 
 
 # 마켓별 삭제 핸들러 매핑
+async def _mark_poison_cancelled(
+    session: AsyncSession, product_id: str | None, size_keys: list[str]
+) -> None:
+    """취소 성공한 포이즌 사이즈의 biddingNo 제거 + status='cancelled' 표시.
+
+    biddingNo 를 비우면 재입고 시 plugins/markets/poison.py 의 execute() 가
+    '기존 입찰 없음 → 신규 등록(manual_listing)' 분기를 타므로 재등록이 자동화된다.
+    또 status='cancelled' 로 다음 품절 사이클의 이중취소를 방지한다.
+    """
+    if not product_id or not size_keys:
+        return
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository,
+    )
+
+    repo = SambaCollectedProductRepository(session)
+    row = await repo.get_async(product_id)
+    if not row or not isinstance(row.resell_matches, dict):
+        return
+    rm = dict(row.resell_matches)
+    poison = dict(rm.get("poison") or {})
+    sizes = dict(poison.get("sizes") or {})
+    changed = False
+    for k in size_keys:
+        e = sizes.get(k)
+        if isinstance(e, dict):
+            e = dict(e)
+            e.pop("biddingNo", None)  # 재입고 시 신규등록 유도
+            e["status"] = "cancelled"
+            sizes[k] = e
+            changed = True
+    if not changed:
+        return
+    poison["sizes"] = sizes
+    rm["poison"] = poison
+    row.resell_matches = rm
+    await session.commit()
+
+
+async def _delete_poison(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """POIZON 품절 처리 — resell_matches.poison.sizes 의 모든 입찰(biddingNo) 취소.
+
+    포이즌은 재고0 수정이 아니라 입찰 취소(cancel-bidding) 방식. 소싱처 품절 감지 시
+    사이즈별 sellerBiddingNo 를 전부 취소해 '못 사는 상품의 주문 → 미발송 패널티'를 막는다.
+    일부 사이즈 취소가 실패해도 나머지는 계속 시도한다(부분 실패 허용). 취소 성공분은
+    DB 에서 biddingNo 를 비워 재입고 시 자동 재등록되게 한다.
+    """
+    from backend.domain.samba.plugins.markets.poison import PoisonPlugin
+    from backend.domain.samba.proxy.poison import PoisonClient
+
+    creds = await PoisonPlugin()._load_auth(session, account)
+    if not creds or not creds.get("app_key") or not creds.get("app_secret"):
+        return {"success": False, "message": "포이즌 인증정보 없음"}
+
+    resell = product.get("resell_matches") or {}
+    poison = (resell.get("poison") if isinstance(resell, dict) else None) or {}
+    sizes = poison.get("sizes") if isinstance(poison, dict) else None
+    if not isinstance(sizes, dict) or not sizes:
+        return {"success": False, "message": "포이즌 등록 입찰 없음(취소 대상 없음)"}
+
+    client = PoisonClient(
+        app_key=str(creds["app_key"]), app_secret=str(creds["app_secret"])
+    )
+
+    results: list[dict[str, Any]] = []
+    cancelled_keys: list[str] = []
+    already = 0
+    for size_key, entry in sizes.items():
+        if not isinstance(entry, dict):
+            continue
+        # 이미 취소 처리된 사이즈는 스킵(이중취소 방지)
+        if entry.get("status") == "cancelled":
+            already += 1
+            continue
+        bidding_no = str(entry.get("biddingNo") or "")
+        if not bidding_no:
+            continue
+        r = await client.cancel_listing(bidding_no)
+        r["size"] = size_key
+        results.append(r)
+        if r.get("success"):
+            cancelled_keys.append(size_key)
+
+    # 취소 성공분 DB 정리 — biddingNo 제거(재입고 재등록) + status 표시(이중취소 방지)
+    if cancelled_keys:
+        await _mark_poison_cancelled(session, product.get("id"), cancelled_keys)
+
+    cancelled = len(cancelled_keys)
+    ok = cancelled > 0 or (already > 0 and not results)
+    msg = (
+        f"POIZON {cancelled}개 입찰 취소" + (f" (이미취소 {already})" if already else "")
+        if ok
+        else "POIZON 입찰 취소 실패"
+    )
+    return {"success": ok, "message": msg, "data": results}
+
+
 MARKET_DELETE_HANDLERS: dict[str, Any] = {
+    "poison": _delete_poison,
     "smartstore": _delete_smartstore,
     "coupang": _delete_coupang,
     "11st": _delete_11st,
