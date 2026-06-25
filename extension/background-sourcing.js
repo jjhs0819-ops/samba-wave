@@ -5211,18 +5211,27 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     let _dbgAttached = false
     try { await chrome.debugger.attach({ tabId: popupTabId }, '1.3'); _dbgAttached = true } catch (e) { console.warn('[무신사 배송지팝업] debugger attach 실패:', e?.message) }
     console.log('[무신사 배송지팝업] debugger attach 결과:', _dbgAttached, 'tabId:', popupTabId)
-    const _radioCoordRes = await chrome.scripting.executeScript({
-      target: { tabId: popupTabId },
-      func: (n) => {
-        const items = [...document.querySelectorAll('.order-address-item--radio')]
-        const target = items.find(el => n && el.textContent.includes(n)) || items[1] || items[0]
-        if (!target) return null
-        const r = target.getBoundingClientRect()
-        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-      },
-      args: [name || ''],
-    })
-    const _radioCoord = _radioCoordRes[0]?.result
+    const _getRadioCoord = async () => {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: popupTabId },
+        func: (n) => {
+          const items = [...document.querySelectorAll('.order-address-item--radio')]
+          const target = items.find(el => n && el.textContent.includes(n)) || items[1] || items[0]
+          if (!target) return null
+          target.scrollIntoView({ block: 'center', behavior: 'instant' })
+          const r = target.getBoundingClientRect()
+          if (r.width === 0 || r.height === 0) return null
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+        },
+        args: [name || ''],
+      })
+      return res[0]?.result || null
+    }
+    let _radioCoord = await _getRadioCoord()
+    if (!_radioCoord) {
+      await new Promise(r => setTimeout(r, 800))
+      _radioCoord = await _getRadioCoord()
+    }
     console.log('[무신사 배송지팝업] radio 좌표:', _radioCoord)
     if (_radioCoord && _dbgAttached) {
       try {
@@ -5238,16 +5247,25 @@ async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, det
     }
     await new Promise(r => setTimeout(r, 600))
 
-    const _btnCoordRes = await chrome.scripting.executeScript({
-      target: { tabId: popupTabId },
-      func: () => {
-        const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '변경하기')
-        if (!btn) return null
-        const r = btn.getBoundingClientRect()
-        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
-      },
-    })
-    const _btnCoord = _btnCoordRes[0]?.result
+    const _getBtnCoord = async () => {
+      const res = await chrome.scripting.executeScript({
+        target: { tabId: popupTabId },
+        func: () => {
+          const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '변경하기')
+          if (!btn) return null
+          btn.scrollIntoView({ block: 'center', behavior: 'instant' })
+          const r = btn.getBoundingClientRect()
+          if (r.width === 0 || r.height === 0) return null
+          return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }
+        },
+      })
+      return res[0]?.result || null
+    }
+    let _btnCoord = await _getBtnCoord()
+    if (!_btnCoord) {
+      await new Promise(r => setTimeout(r, 800))
+      _btnCoord = await _getBtnCoord()
+    }
     console.log('[무신사 배송지팝업] 변경하기 좌표:', _btnCoord)
     if (_btnCoord && _dbgAttached) {
       try {
