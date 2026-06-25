@@ -84,6 +84,36 @@ def _build_attr_prd_list(
     return result
 
 
+_ORIGIN_KO = {
+    "china": "중국", "vietnam": "베트남", "korea": "대한민국", "indonesia": "인도네시아",
+    "cambodia": "캄보디아", "bangladesh": "방글라데시", "india": "인도", "thailand": "태국",
+    "myanmar": "미얀마", "philippines": "필리핀", "taiwan": "대만", "japan": "일본",
+}
+
+
+def _build_gov_publs_clothing(product: dict[str, Any], brand: str) -> list[dict[str, str]]:
+    """의류 정보고시(1001~1009) — 수집데이터 우선, 없으면 '상품 페이지 참조' (메모리 원칙)."""
+
+    def g(v: Any, default: str = "상품 페이지 참조") -> str:
+        s = str(v or "").strip()
+        return s if s else default
+
+    origin = str(product.get("origin") or "").strip()
+    origin_ko = _ORIGIN_KO.get(origin.lower(), origin) if origin else "상품 페이지 참조"
+    return [
+        {"govPublsItmCd": "1001", "govPublsItmCntnt": g(product.get("material"))},
+        {"govPublsItmCd": "1002", "govPublsItmCntnt": g(product.get("color"))},
+        {"govPublsItmCd": "1003", "govPublsItmCntnt": g(product.get("size_notice"))},
+        {"govPublsItmCd": "1004", "govPublsItmCntnt": g(product.get("manufacturer") or brand)},
+        {"govPublsItmCd": "1005", "govPublsItmCntnt": origin_ko},
+        {"govPublsItmCd": "1006", "govPublsItmCntnt": g(product.get("care_instructions"))},
+        {"govPublsItmCd": "1007", "govPublsItmCntnt": g(product.get("manufacture_date"))},
+        {"govPublsItmCd": "1008", "govPublsItmCntnt": g(
+            product.get("quality_guarantee"), "관련 법령 및 소비자분쟁해결기준에 따름")},
+        {"govPublsItmCd": "1009", "govPublsItmCntnt": g(product.get("as_phone"))},
+    ]
+
+
 def _transform_for_gsshop(
     product: dict[str, Any],
     category_id: str,
@@ -242,8 +272,19 @@ def _transform_for_gsshop(
         "rtpAmt": rtp_amt,
         "exchAmt": exch_amt,
         "chrDlvAddYn": "N",
-        "ilndDlvPsblYn": "N",
-        "jejuDlvPsblYn": "N",
+        # 도서산간/제주 배송가능(Y) + 추가배송비·반품비·교환비 5000원(직송택배라 추가유료배송 가능)
+        "ilndDlvPsblYn": "Y",
+        "ilndChrDlvYn": "Y",
+        "ilndChrDlvcAmt": 5000,
+        "ilndExchRtpChrYn": "Y",
+        "ilndRtpAmt": 5000,
+        "ilndExchAmt": 5000,
+        "jejuDlvPsblYn": "Y",
+        "jejuChrDlvYn": "Y",
+        "jejuChrDlvcAmt": 5000,
+        "jejuExchRtpChrYn": "Y",
+        "jejuRtpAmt": 5000,
+        "jejuExchAmt": 5000,
         "bundlDlvCd": str(gs.get("bundlDlvCd") or "A01"),
         "clerncUniqSignNeedYn": "N",
         "openAftRtpNoadmtYn": "Y",
@@ -259,7 +300,8 @@ def _transform_for_gsshop(
         "orgprdPkgCnt": 1,
         "prdUnitValCd40": "A01",
         "prdUnitValCd20": "B01",
-        "rfnTypCd": 20,
+        # 환불유형 10=상품확인 후 환불, 20=즉시환불 → 상품확인 후 환불
+        "rfnTypCd": 10,
         "supTmDlvCntnt": str(gs.get("supTmDlvCntnt") or "출고 2~3일"),
         "stdRelsDdcnt": std_rels_ddcnt,
         "prdStoreMthodCd": 10,
@@ -296,20 +338,10 @@ def _transform_for_gsshop(
             # 안전인증 — 의류는 safeCertGbnCd=0 (해당없음)
             "prdSafeCertInfo": gs.get("prdSafeCertInfo")
             or {"safeCertGbnCd": 0, "safeCertOrgCd": 0},
-            # 정보고시 — 의류 코드 1001~1009 (getPrdClsDtlInfo API 확인값)
-            # gs_settings에 없으면 "상품 페이지 참조" 기본값으로 채움
+            # 정보고시 — 의류 코드 1001~1009. 수집데이터(소재·색상·제조자·제조국 등) 우선,
+            # 없으면 "상품 페이지 참조" 기본값.
             "prdGovPublsItmList": gs.get("prdGovPublsItmList")
-            or [
-                {"govPublsItmCd": "1001", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1002", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1003", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1004", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1005", "govPublsItmCntnt": "해외"},
-                {"govPublsItmCd": "1006", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1007", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1008", "govPublsItmCntnt": "상품 페이지 참조"},
-                {"govPublsItmCd": "1009", "govPublsItmCntnt": "상품 페이지 참조"},
-            ],
+            or _build_gov_publs_clothing(product, brand),
         }
     )
     return payload
