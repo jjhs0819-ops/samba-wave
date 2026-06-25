@@ -325,7 +325,12 @@ export default function ShipmentsPage() {
             const logData = await lr.json()
             setProgress({ current: j.current || 0, total: j.total || 0 })
             const newLogs = (logData.logs || []) as string[]
-            sinceIdxRef.current = logData.current_idx || sinceIdxRef.current
+            const newIdx = logData.current_idx as number
+            if (newIdx > 0 && newIdx < sinceIdxRef.current) {
+              sinceIdxRef.current = 0
+            } else {
+              sinceIdxRef.current = newIdx || sinceIdxRef.current
+            }
             appendShipmentLogs(setLogMessages, newLogs)
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }

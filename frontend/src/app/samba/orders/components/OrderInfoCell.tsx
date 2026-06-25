@@ -125,7 +125,7 @@ export default function OrderInfoCell(props: Props) {
         productOption: o.product_option || '',
         sourcingAccountId: o.sourcing_account_id || '',
         shippingName: orderType === 'direct' ? (o.customer_name || '') : office.name,
-        shippingPhone: orderType === 'direct' ? (o.customer_phone || '') : office.phone,
+        shippingPhone: office.phone,
         shippingZipcode: orderType === 'direct' ? (o.customer_postal_code || '') : '',
         shippingAddress: orderType === 'direct' ? customerAddress.base : office.address,
         shippingAddressDetail: orderType === 'direct' ? customerAddress.detail : office.address_detail,

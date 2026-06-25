@@ -169,6 +169,18 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         )
         stmt = stmt.where(_db_account_lock)
 
+        # 멀티-프로세스(gunicorn worker) 간 동일 계정 동시 claim 방지.
+        # _db_account_lock 은 커밋 전 uncommitted UPDATE 를 못 읽어 race 발생 가능.
+        # pg_try_advisory_xact_lock 은 트랜잭션 레벨이라 commit 시 자동 해제 —
+        # 같은 계정을 claim 중인 다른 트랜잭션이 있으면 lock 실패 → 해당 잡 SKIP.
+        _advisory_lock = _sa_text(
+            "(samba_jobs.job_type NOT IN ('transmit', 'autotune_transmit') OR NOT EXISTS ("
+            f"SELECT 1 FROM unnest({_job_accounts_sql}) AS v "
+            "WHERE NOT pg_try_advisory_xact_lock(hashtext(v)::bigint)"
+            "))"
+        )
+        stmt = stmt.where(_advisory_lock)
+
         if exclude_accounts:
             # transmit 전용 인메모리 락 — 같은 워커 내 transmit 잡 중복 실행 방지.
             _excl_acc_list = list(exclude_accounts)

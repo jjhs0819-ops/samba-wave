@@ -24,7 +24,7 @@
     const val = String(option).trim()
     if (!val) return true
 
-    const parts = val.split('/').map(s => s.trim())
+    const parts = val.split(/[/,]/).map(s => s.trim()).filter(Boolean)
 
     // 무신사 새 UI: DropdownTriggerBox 방식 (컬러 선택 후 사이즈 박스가 동적으로 생성됨)
     const hasBoxes = document.querySelector('[data-mds="DropdownTriggerBox"]')
@@ -45,30 +45,36 @@
         targetBox.click()
         await sleep(500)
 
-        // DropdownItemContent__Container에서 part 텍스트 매칭
-        const containers = Array.from(document.querySelectorAll('[class*="DropdownItemContent__Container"]'))
+        // 드롭다운 항목 찾기 (MDS 다양한 셀렉터 순서 시도)
+        const _ITEM_SELS = [
+          '[class*="DropdownItemContent__Container"]',
+          '[data-mds="DropdownItem"]',
+          '[role="option"]',
+          '[class*="DropdownItem__Container"]',
+          '[class*="dropdown__item"]',
+          '[class*="DropdownList"] li',
+        ]
+        let allItems = []
+        for (const sel of _ITEM_SELS) {
+          allItems = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
+          if (allItems.length > 0) break
+        }
         let matched = false
-        for (const c of containers) {
-          const t = c.textContent.trim()
-          if (t === part || t.startsWith(part) || t.toLowerCase().includes(part.toLowerCase())) {
-            c.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            c.click()
-            c.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
-            await sleep(500)
-            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${part}" 선택`)
-            matched = true
-            break
-          }
+        if (allItems.length > 0) {
+          const target = allItems.find(c => {
+            const t = c.textContent.trim()
+            return t === part || t.startsWith(part) || t.toLowerCase().includes(part.toLowerCase())
+          }) || allItems[0]
+          target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+          target.click()
+          target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+          await sleep(600)
+          const isExact = target.textContent.trim() === part
+          console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${isExact ? part : target.textContent.trim()}" 선택`)
+          matched = true
         }
         if (!matched) {
-          if (containers.length > 0) {
-            containers[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
-            containers[0].click()
-            await sleep(500)
-            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] 첫 항목 자동선택 (${containers[0].textContent.trim()})`)
-          } else {
-            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${part}" 항목 없음`)
-          }
+          console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${part}" 항목 못 찾음`)
         }
       }
 
@@ -81,9 +87,13 @@
           const ph = inp.getAttribute('placeholder') || ''
           box.click()
           await sleep(500)
-          const containers = Array.from(document.querySelectorAll('[class*="DropdownItemContent__Container"]'))
-          const available = containers.filter(c => !c.closest('[aria-disabled="true"]') && !c.closest('[class*="disabled"]'))
-          const target = available.length > 0 ? available[0] : containers[0]
+          let _items = []
+          for (const sel of ['[class*="DropdownItemContent__Container"]','[data-mds="DropdownItem"]','[role="option"]','[class*="DropdownList"] li']) {
+            _items = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
+            if (_items.length > 0) break
+          }
+          const available = _items.filter(c => !c.closest('[aria-disabled="true"]') && !c.closest('[class*="disabled"]'))
+          const target = available.length > 0 ? available[0] : _items[0]
           if (target) {
             target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
             target.click()
@@ -376,7 +386,7 @@
 
     // 쿠폰 모달이 아직 열려있으면 닫기 (X 버튼 또는 ESC)
     await sleep(300)
-    const openDialog = document.querySelector('[role="dialog"][aria-modal="true"], [class*="Modal"][class*="open"], [class*="modal-wrap"]')
+    const openDialog = document.querySelector('[role="dialog"], [class*="Modal"][class*="open"], [class*="modal-wrap"]')
     if (openDialog) {
       const closeBtn = [...openDialog.querySelectorAll('button')].find(b =>
         b.getAttribute('aria-label')?.match(/닫|close/i) ||
@@ -433,12 +443,8 @@
           console.log(`[삼바-주문처리-무신사] 주문서 페이지 시작 | type=${orderType}`)
           await sleep(1500) // 주문서 완전 로드 대기
 
-          // 까대기: 배송지 변경 (기본배송지가 이미 사무실이면 스킵 가능)
-          // 직배: 배송지 변경 (고객 주소로)
-          // 무신사 까대기는 기본배송지 사용하므로 직배만 변경
-          if (orderType === 'direct') {
-            await changeShippingAddress(shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
-          }
+          // 직배 배송지 변경은 background(_handleMusinsaShippingPopup)에서 이미 처리됨
+          // 팝업 창 기반이라 content script에서 처리 불가
 
           // 쿠폰 자동선택
           await selectBestCoupon()

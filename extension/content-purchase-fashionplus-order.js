@@ -73,44 +73,56 @@
   }
 
   // ── 주문서: 배송지 변경 ──
-  // FashionPlus 구조 (실측 확인):
-  //   배송지 변경 = a.btn-address 클릭 → iframe (.mm_modal iframe) 모달 팝업
-  //   iframe 내: 탭 "배송지 선택" / "새 주소 입력" (btn.btn_tab)
-  //   새 주소 입력 폼: input.textfield 순서 — 이름/전화/우편번호(readonly)/검색주소(readonly)/상세주소
+  // 실측 확인 구조:
+  //   배송지 변경 링크 클릭 → iframe(delivery-address) 모달 팝업
+  //   새 주소 입력 탭: a.btn_tab 텍스트 "새 주소 입력"
+  //   우편번호 = a.mm_btn.__btn_darker__ "우편번호 찾기" 클릭 → daum.Postcode.oncomplete 콜백으로만 처리
+  //   input.textfield 순서: [0]=이름 [1]=전화 [2]=우편번호(readonly) [3]=도로명(readonly) [4]=상세
   //   제출: button.__btn_primary__ (등록하기)
   async function changeShipping(name, phone, zipcode, address, detail) {
     if (!name || !address) return
 
-    // 배송지 변경 링크 클릭 (a.btn-address 또는 텍스트 매칭)
     const changeLink = document.querySelector('a.btn-address') ||
       Array.from(document.querySelectorAll('a, button')).find(el => el.textContent.trim() === '배송지 변경')
     if (!changeLink) { console.log('[삼바-주문처리-패션플러스] 배송지 변경 링크 없음'); return }
     changeLink.click()
     await sleep(2500)
 
-    // iframe 내부 접근 — 모달 컨테이너 클래스 무관하게 탐색
-    const iframe =
-      document.querySelector('div.mm_modal iframe') ||
-      document.querySelector('[class*="modal"] iframe') ||
-      Array.from(document.querySelectorAll('iframe')).find((f) => {
-        try { return f.contentDocument || f.contentWindow?.document } catch { return false }
-      })
+    // iframe 탐색
+    const iframe = document.querySelector('iframe')
     if (!iframe) { console.log('[삼바-주문처리-패션플러스] 배송지 iframe 없음'); return }
     const iframeWin = iframe.contentWindow
     const doc = iframe.contentDocument || iframeWin.document
 
-    // "새 주소 입력" 탭 클릭
-    const newAddrTab = Array.from(doc.querySelectorAll('.btn_tab')).find(b => b.textContent.trim() === '새 주소 입력')
-    if (newAddrTab) { newAddrTab.click(); await sleep(800) }
+    // "새 주소 입력" 탭 — 이미 활성화돼 있으면 스킵
+    const newAddrTab = Array.from(doc.querySelectorAll('a.btn_tab'))
+      .find(a => a.textContent.trim() === '새 주소 입력')
+    if (newAddrTab && !newAddrTab.className.includes('__tab-on')) {
+      newAddrTab.click()
+      await sleep(800)
+    }
 
-    // 활성 탭에서 입력 필드 찾기 (순서: 이름/전화/우편번호/검색주소/상세)
-    const tabItem = doc.querySelector('.mm_tab-item.__tab-on') || doc.querySelector('.mm_tab-item')
-    if (!tabItem) { console.log('[삼바-주문처리-패션플러스] 주소 입력 탭 없음'); return }
+    // daum.Postcode mock — 우편번호 찾기 클릭 시 즉시 oncomplete 호출
+    if (zipcode && address && iframeWin.daum && iframeWin.daum.Postcode) {
+      const origPostcode = iframeWin.daum.Postcode
+      iframeWin.daum.Postcode = function(opts) {
+        return {
+          open: function() {
+            if (opts.oncomplete) {
+              opts.oncomplete({ zonecode: zipcode, roadAddress: address, jibunAddress: address })
+            }
+            iframeWin.daum.Postcode = origPostcode
+          },
+        }
+      }
+      const zipBtn = Array.from(doc.querySelectorAll('a'))
+        .find(a => a.textContent.trim() === '우편번호 찾기')
+      if (zipBtn) { zipBtn.click(); await sleep(300) }
+    }
 
-    const textfields = tabItem.querySelectorAll('input.textfield')
-    // [0]=이름, [1]=전화, [2]=우편번호(readonly), [3]=검색주소(readonly), [4]=상세주소
-
-    // iframe 내부 window의 네이티브 setter 사용 (Vue 반응성 트리거)
+    // 이름 / 전화 / 상세주소 입력
+    const textfields = doc.querySelectorAll('input.textfield')
+    // [0]=이름, [1]=전화, [2]=우편번호(readonly), [3]=도로명(readonly), [4]=상세주소
     const iframeInputProto = iframeWin.HTMLInputElement.prototype
     const nativeSetter = Object.getOwnPropertyDescriptor(iframeInputProto, 'value')
 
@@ -125,20 +137,6 @@
     if (textfields[0]) setVal(textfields[0], name)
     await sleep(200)
     if (textfields[1]) setVal(textfields[1], phone.replace(/[^0-9]/g, ''))
-    await sleep(200)
-
-    // 우편번호·검색주소 — readonly지만 직접 set
-    if (zipcode && textfields[2]) {
-      // readonly 임시 해제
-      textfields[2].removeAttribute('readonly')
-      setVal(textfields[2], zipcode)
-      textfields[2].setAttribute('readonly', 'readonly')
-    }
-    if (address && textfields[3]) {
-      textfields[3].removeAttribute('readonly')
-      setVal(textfields[3], address)
-      textfields[3].setAttribute('readonly', 'readonly')
-    }
     await sleep(200)
     if (detail && textfields[4]) setVal(textfields[4], detail)
     await sleep(300)

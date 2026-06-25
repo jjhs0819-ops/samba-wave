@@ -423,7 +423,9 @@ class GsShopPlugin(MarketPlugin):
         # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때).
         # returnFee/exchangeFee는 계정 additional_fields에 저장되는데 auth_creds 출처가
         # 설정/resolver일 때 누락될 수 있어, 계정 additional_fields도 함께 조회한다.
-        _acct_extra = getattr(account, "additional_fields", None) or {} if account else {}
+        _acct_extra = (
+            getattr(account, "additional_fields", None) or {} if account else {}
+        )
         if not gs_settings.get("rtpAmt"):
             _rf = auth_creds.get("returnFee") or _acct_extra.get("returnFee")
             if _rf:

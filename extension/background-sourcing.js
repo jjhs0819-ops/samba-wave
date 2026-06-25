@@ -5033,6 +5033,184 @@ async function _handleSsgShippingPopup(orderTabId, shippingName, shippingPhone, 
   }
 }
 
+async function _handleMusinsaShippingPopup(orderTabId, name, phone, address, detail) {
+  try {
+    // 1. 주문서에서 "배송지 변경" 버튼 클릭
+    const clicked = await chrome.scripting.executeScript({
+      target: { tabId: orderTabId },
+      func: () => {
+        const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '배송지 변경')
+        if (btn) { btn.click(); return true }
+        return false
+      },
+    })
+    if (!clicked?.[0]?.result) { console.warn('[무신사 배송지팝업] 배송지 변경 버튼 못 찾음'); return }
+
+    // 2. 팝업 창(addresses/order URL) 열림 대기 8초
+    let popupTabId = null
+    await new Promise((resolve) => {
+      const h = (id, info, tabInfo) => {
+        if (id !== orderTabId && /addresses\/order/.test(tabInfo?.url || '') && info.status === 'complete') {
+          popupTabId = id
+          chrome.tabs.onUpdated.removeListener(h)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(h)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 8000)
+    })
+    if (!popupTabId) { console.warn('[무신사 배송지팝업] 팝업 탭 못 찾음'); return }
+    await new Promise(r => setTimeout(r, 800))
+
+    // 3. 배송지 추가하기 클릭 (a 태그, button 아님)
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: () => {
+        const a = document.querySelector('a.order-address-item__add')
+        if (a) a.click()
+      },
+    })
+
+    // 4. /addresses/add 이동 대기 5초
+    await new Promise((resolve) => {
+      const h = (id, info, tabInfo) => {
+        if (id === popupTabId && /addresses\/add/.test(tabInfo?.url || '') && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(h)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(h)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 5000)
+    })
+    await new Promise(r => setTimeout(r, 800))
+
+    // 5. 이름/전화 입력 (Vue native setter 우회)
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: (n, p) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        const setVal = (el, v) => {
+          if (!el) return
+          nativeSetter?.call(el, v)
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+          el.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        setVal(document.querySelector("input[name='name']"), n)
+        setVal(document.querySelector("input[name='mobile']"), p)
+      },
+      args: [name || '수령인', (phone || '').replace(/-/g, '')],
+    })
+    await new Promise(r => setTimeout(r, 300))
+
+    // 6. 주소 찾기 버튼 클릭
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: () => {
+        const btn = document.querySelector('button.order-address-input__button')
+          || [...document.querySelectorAll('button')].find(b => b.textContent.includes('주소 찾기'))
+        if (btn) btn.click()
+      },
+    })
+    await new Promise(r => setTimeout(r, 1500))
+
+    // 7. 카카오 frame 찾기 (최대 3초 폴링)
+    let kakaoFrame = null
+    for (let i = 0; i < 6; i++) {
+      const frames = await chrome.webNavigation.getAllFrames({ tabId: popupTabId }).catch(() => [])
+      kakaoFrame = frames?.find(f => /postcode\.map\.(kakao|daum)/.test(f.url || ''))
+      if (kakaoFrame) break
+      await new Promise(r => setTimeout(r, 500))
+    }
+    if (!kakaoFrame) { console.warn('[무신사 배송지팝업] 카카오 frame 못 찾음'); return }
+
+    // 8. 카카오 frame에서 검색어 입력 + 검색
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId, frameIds: [kakaoFrame.frameId] },
+      func: (addr) => {
+        const inp = document.querySelector('input.tf_keyword')
+        if (!inp) return
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        nativeSetter?.call(inp, addr)
+        inp.dispatchEvent(new Event('input', { bubbles: true }))
+        const btn = document.querySelector('button.btn_search')
+        if (btn) btn.click()
+      },
+      args: [address],
+    })
+    await new Promise(r => setTimeout(r, 2000))
+
+    // 9. 첫 번째 도로명 결과 클릭
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId, frameIds: [kakaoFrame.frameId] },
+      func: () => {
+        const btn = document.querySelector('button.link_post')
+        if (btn) btn.click()
+      },
+    })
+    await new Promise(r => setTimeout(r, 1000))
+
+    // 10. 상세주소 입력 + 저장하기 클릭
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: (d) => {
+        const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+        const el = document.querySelector("input[name='address2']")
+        if (el) {
+          nativeSetter?.call(el, d)
+          el.dispatchEvent(new Event('input', { bubbles: true }))
+          el.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        const saveBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '저장하기')
+        if (saveBtn) saveBtn.click()
+      },
+      args: [detail || ''],
+    })
+
+    // 11. /addresses/order 재이동 대기 8초
+    await new Promise((resolve) => {
+      const h = (id, info, tabInfo) => {
+        if (id === popupTabId && /addresses\/order/.test(tabInfo?.url || '') && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(h)
+          resolve()
+        }
+      }
+      chrome.tabs.onUpdated.addListener(h)
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(h); resolve() }, 8000)
+    })
+    await new Promise(r => setTimeout(r, 800))
+
+    // 12. 신규 추가된 배송지 선택(이름 매칭) + 변경하기 클릭
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: (n) => {
+        const items = [...document.querySelectorAll('.order-address-item--radio')]
+        const target = items.find(el => el.textContent.includes(n)) || items[0]
+        if (target) target.click()
+      },
+      args: [name || '수령인'],
+    })
+    await new Promise(r => setTimeout(r, 500))
+
+    await chrome.scripting.executeScript({
+      target: { tabId: popupTabId },
+      func: () => {
+        const btn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '변경하기')
+        if (btn) btn.click()
+      },
+    })
+
+    // 13. 팝업 닫힘 대기 + 주문서 업데이트 여유
+    await new Promise((resolve) => {
+      const h = (id) => { if (id === popupTabId) { chrome.tabs.onRemoved.removeListener(h); resolve() } }
+      chrome.tabs.onRemoved.addListener(h)
+      setTimeout(() => { chrome.tabs.onRemoved.removeListener(h); resolve() }, 12000)
+    })
+    await new Promise(r => setTimeout(r, 1500))
+  } catch (e) {
+    console.warn(`[무신사 배송지팝업] 예외(무시): ${e?.message || e}`)
+  }
+}
+
 async function _handlePlaceOrder(payload) {
   const { sourceSite, productUrl, orderType, productOption, shippingName, shippingPhone, shippingAddress, shippingAddressDetail, sourcingAccountId } = payload
   const contentScript = _PLACE_ORDER_SCRIPTS[sourceSite]
@@ -5152,6 +5330,46 @@ async function _handlePlaceOrder(payload) {
   if (sourceSite === 'SSG' && (orderType === 'direct' || orderType === 'kkaregi')) {
     await _handleSsgShippingPopup(tabId, shippingName, shippingPhone, shippingAddress, shippingAddressDetail)
     await new Promise((r) => setTimeout(r, 800))
+  }
+
+  // MUSINSA 직배: 배송지 팝업 처리 (background에서 직접, 팝업 창 기반)
+  if (sourceSite === 'MUSINSA' && orderType === 'direct' && shippingAddress) {
+    // 직배도 사무실 전화번호 사용 (고객 번호 아님) — 백엔드 office-shipping API에서 직접 조회
+    let musinsaPhone = shippingPhone
+    try {
+      const stored = await chrome.storage.local.get('proxyUrl')
+      const proxyUrl = stored.proxyUrl || ''
+      const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
+      if (proxyUrl && apiFetch) {
+        const officeRes = await apiFetch(`${proxyUrl}/api/v1/samba/proxy/config/office-shipping`, { method: 'GET' })
+        if (officeRes.ok) {
+          const officeData = await officeRes.json()
+          if (officeData.phone) musinsaPhone = officeData.phone
+        }
+      }
+    } catch (e) {
+      console.warn('[무신사 직배] office phone 조회 실패(payload phone 유지):', e?.message)
+    }
+    await _handleMusinsaShippingPopup(tabId, shippingName, musinsaPhone, shippingAddress, shippingAddressDetail)
+    await new Promise((r) => setTimeout(r, 800))
+  }
+
+  // FashionPlus 직배: 사무실 전화번호 사용 (고객 번호 아님)
+  if (sourceSite === 'FashionPlus' && orderType === 'direct') {
+    try {
+      const stored = await chrome.storage.local.get('proxyUrl')
+      const proxyUrl = stored.proxyUrl || ''
+      const apiFetch = globalThis.SambaBackgroundCore?.apiFetch
+      if (proxyUrl && apiFetch) {
+        const officeRes = await apiFetch(`${proxyUrl}/api/v1/samba/proxy/config/office-shipping`, { method: 'GET' })
+        if (officeRes.ok) {
+          const officeData = await officeRes.json()
+          if (officeData.phone) msg.shippingPhone = officeData.phone
+        }
+      }
+    } catch (e) {
+      console.warn('[패션플러스 직배] office phone 조회 실패(payload phone 유지):', e?.message)
+    }
   }
 
   // chrome.debugger: 주문서 단계에서 뜨는 native alert/confirm 자동 수락
