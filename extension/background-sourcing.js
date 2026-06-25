@@ -5093,6 +5093,21 @@ async function _handlePlaceOrder(payload) {
   await new Promise((r) => setTimeout(r, 1000))
 
   // 1단계: 상품 페이지 → 옵션 선택 + 바로구매
+  // MAIN world에서 alert 차단 (ISOLATED world에선 main world alert 재정의 불가)
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        try { Object.defineProperty(window, 'alert', { value: () => {}, writable: false, configurable: false }) } catch {}
+        window.alert = () => {}
+        try { Object.defineProperty(window, 'confirm', { value: () => true, writable: false, configurable: false }) } catch {}
+        window.confirm = () => true
+      },
+    })
+  } catch (e) {
+    console.warn('[직배] MAIN world alert 차단 실패:', e?.message)
+  }
   await chrome.scripting.executeScript({ target: { tabId }, files: [contentScript] })
   await new Promise((r) => setTimeout(r, 500))
   const step1 = await chrome.tabs.sendMessage(tabId, msg).catch((e) => {

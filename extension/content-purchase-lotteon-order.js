@@ -49,51 +49,67 @@
   }
 
   // ── 주문서: 배송지 변경 ──
-  // 롯데ON 구조: button.btnAddress → 모달(li 목록, 라디오 hopeDlvN) → 이름 매칭 → 확인
+  // 롯데ON payments 구조: '변경' 버튼 → 배송지 등록 폼 모달 열림 → 이름/전화 입력 → 저장
   async function changeShipping(name, phone, address, detail) {
     if (!name) return
-    // 배송지 변경 버튼 클릭 (텍스트 '변경', 클래스 btnAddress)
+    // 배송지 변경 버튼 클릭 (텍스트 '변경')
     const changeBtn = document.querySelector('button.btnAddress') ||
       Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === '변경' && b.offsetHeight > 0)
     if (!changeBtn) return
     changeBtn.click()
     await sleep(1500)
 
-    // 모달에서 이름으로 배송지 찾기
     const modal = document.querySelector('[role="dialog"], .v--modal-box')
-    if (modal) {
-      const items = modal.querySelectorAll('li')
-      let selected = false
-      for (const li of items) {
-        const txt = li.textContent.trim()
-        if (txt.includes(name)) {
-          const radio = li.querySelector('input[type="radio"]') || li
-          radio.click()
-          await sleep(500)
-          selected = true
-          break
-        }
-      }
-      // 이름 못 찾으면 새 배송지 추가 (새 배송지 추가 버튼 → 입력폼 → 저장)
-      if (!selected && address) {
-        const newBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.includes('새 배송지'))
-        if (newBtn) {
-          newBtn.click()
-          await sleep(1000)
-          const inputs = [...document.querySelectorAll('input[type="text"],input:not([type])')]
-          const fill = (ph, v) => {
-            const el = inputs.find(i => (i.placeholder || '').includes(ph))
-            if (el) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })) }
-          }
-          fill('이름', name); fill('연락', phone || ''); fill('전화', phone || '')
-          fill('주소', address); fill('상세', detail || '')
-          await sleep(300)
-        }
-      }
-      // 확인 버튼 클릭
-      const confirmBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.trim() === '확인')
-      if (confirmBtn) { confirmBtn.click(); await sleep(1500) }
+    if (!modal) return
+
+    // native setter로 Vue readonly input 우회
+    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
+    const setVal = (el, v) => {
+      if (!el) return
+      if (nativeSetter) nativeSetter.call(el, v)
+      else el.value = v
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
     }
+
+    // 배송지 목록에서 이름 매칭 시도 (목록 선택 방식)
+    const radios = Array.from(modal.querySelectorAll('input[type="radio"]'))
+    let selected = false
+    for (const r of radios) {
+      const container = r.closest('li, label, div')
+      if (container && container.textContent.includes(name)) {
+        r.click()
+        await sleep(500)
+        selected = true
+        break
+      }
+    }
+
+    if (!selected) {
+      // 새 배송지 추가 버튼 클릭 (있으면)
+      const newBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.includes('새 배송지') || b.textContent.includes('배송지 추가'))
+      if (newBtn) { newBtn.click(); await sleep(1000) }
+
+      // 이름 입력 (placeholder: '받는 분을 입력해 주세요.')
+      const nameEl = modal.querySelector('input[placeholder*="받는 분"]') ||
+        Array.from(modal.querySelectorAll('input[type="text"]')).find(i => !i.readOnly)
+      setVal(nameEl, name)
+
+      // 전화 입력 (placeholder: '-없이 휴대폰 번호를 입력해 주세요.')
+      const phoneEl = modal.querySelector('input[placeholder*="휴대폰"]') ||
+        Array.from(modal.querySelectorAll('input[type="tel"]')).find(i => !i.readOnly)
+      setVal(phoneEl, (phone || '').replace(/-/g, ''))
+
+      await sleep(300)
+
+      // 저장 버튼 클릭 (배송지 등록 폼)
+      const saveBtn = Array.from(modal.querySelectorAll('button')).find(b => b.textContent.trim() === '저장')
+      if (saveBtn) { saveBtn.click(); await sleep(1500) }
+    }
+
+    // 확인 버튼 클릭 (배송지 선택 모달)
+    const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => b.offsetHeight > 0 && b.textContent.trim() === '확인')
+    if (confirmBtn) { confirmBtn.click(); await sleep(1500) }
   }
 
   // ── 주문서: 쿠폰 ──
