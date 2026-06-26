@@ -180,6 +180,19 @@
     }
   }
 
+  // ── 실구매가 계산 ──
+  // FashionPlus: strong 목록에서 "최종 결제금액" 다음 strong이 금액 (CDP 실측 확인)
+  function computeActualCost() {
+    const strongs = [...document.querySelectorAll('strong')]
+    const idx = strongs.findIndex(s => s.textContent.trim() === '최종 결제금액')
+    if (idx >= 0 && idx + 1 < strongs.length) {
+      const raw = strongs[idx + 1].textContent.trim()
+      const finalAmount = parseInt(raw.replace(/[^\d]/g, '')) || 0
+      return { finalAmount, actualCost: finalAmount }
+    }
+    return { finalAmount: 0, actualCost: 0 }
+  }
+
   // ── 주문서: 쿠폰 선택 ──
   async function selectCoupon() {
     // 쿠폰 영역 버튼 클릭
@@ -228,12 +241,13 @@
         } else {
           // 2단계: 주문서 — 배송지 + 쿠폰
           await sleep(1500)
-          if (orderType === 'direct') {
+          if (orderType === 'direct' || orderType === 'kkadaegi') {
             await changeShipping(shippingName, shippingPhone, shippingZipcode || '', shippingAddress, shippingAddressDetail)
           }
           // FashionPlus는 쿠폰 자동 적용 — selectCoupon 불필요
           await checkAllAgree()
-          sendResponse({ success: true, status: 'ready-to-pay' })
+          const costInfo = computeActualCost()
+          sendResponse({ success: true, status: 'ready-to-pay', ...costInfo })
         }
       } catch (e) {
         sendResponse({ success: false, error: e.message })
