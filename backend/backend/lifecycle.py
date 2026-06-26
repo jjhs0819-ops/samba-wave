@@ -38,6 +38,77 @@ async def _cancel_task(task: asyncio.Task | None, timeout: float = 5) -> None:
         pass
 
 
+async def _event_loop_lag_monitor() -> None:
+    """이벤트루프 블로킹 감시기 (진단용, 2026-06-26 추가).
+
+    프로덕션은 단일 워커(gunicorn -w 1) 이벤트루프에서 API 요청과
+    백그라운드 루프(오토튠/리컨실러/폴러/청소)를 함께 돌린다. 백그라운드
+    루프가 동기 CPU·블로킹 호출로 루프를 점유하면 proxy-status 같은
+    무부하 요청까지 멈춰 '백엔드 서버 연결 실패'가 뜬다.
+
+    0.5초마다 실제 경과를 재서 기대보다 LOOP_LAG_THRESHOLD(기본 1.0초)
+    이상 밀리면, 그 순간 실행 중이던 task 들의 스택을 로그에 박아 범인
+    루프를 특정한다. 기존 코드를 건드리지 않는 순수 추가 진단 코드.
+
+    LOOP_LAG_DEBUG=1 이면 asyncio 디버그 모드를 켜 'Executing <Handle>
+    took X seconds' 로 정확한 범인 콜백까지 로깅한다(오버헤드 있어 opt-in).
+    """
+    import time as _time  # ruff local import 규칙 — 함수 내부 사용
+
+    lag_logger = logging.getLogger("backend.loop-lag")
+    interval = 0.5
+    try:
+        threshold = float(os.environ.get("LOOP_LAG_THRESHOLD", "1.0"))
+    except ValueError:
+        threshold = 1.0
+
+    if os.environ.get("LOOP_LAG_DEBUG", "").lower() in ("1", "true", "yes"):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.set_debug(True)
+            loop.slow_callback_duration = threshold
+            lag_logger.warning(
+                "[loop-lag] asyncio 디버그 모드 ON — slow_callback_duration=%.1fs "
+                "(정확한 범인 콜백 로깅, 오버헤드 있음)",
+                threshold,
+            )
+        except Exception as e:
+            lag_logger.warning(f"[loop-lag] 디버그 모드 설정 실패(무시): {e}")
+
+    lag_logger.info(
+        "[loop-lag] 이벤트루프 블로킹 감시 시작 (interval=%.1fs, threshold=%.1fs)",
+        interval,
+        threshold,
+    )
+
+    while True:
+        start = _time.monotonic()
+        await asyncio.sleep(interval)
+        lag = _time.monotonic() - start - interval
+        if lag < threshold:
+            continue
+        try:
+            tasks = [t for t in asyncio.all_tasks() if not t.done()]
+            lines = []
+            for t in tasks:
+                stack = t.get_stack(limit=4)
+                if not stack:
+                    continue
+                top = stack[-1]
+                fname = top.f_code.co_filename.replace("\\", "/").split("/")[-1]
+                lines.append(
+                    f"  {t.get_name()} @ {fname}:{top.f_lineno} {top.f_code.co_name}"
+                )
+            lag_logger.warning(
+                "[loop-lag] 이벤트루프 %.2f초 블로킹 — 활성 task=%d\n%s",
+                lag,
+                len(tasks),
+                "\n".join(lines[:40]) or "  (스택 없음)",
+            )
+        except Exception as e:
+            lag_logger.warning(f"[loop-lag] task 스택 덤프 실패(무시): {e}")
+
+
 async def _connect_cache() -> None:
     from backend.domain.samba.cache import cache
 
@@ -1778,6 +1849,12 @@ async def lifespan(app: FastAPI):
         app.state._pool_monitor_task = asyncio.create_task(pool_status_logger_loop())
     except Exception as e:
         startup_logger.warning(f"[startup] DB 풀 모니터 로거 시작 실패: {e}")
+
+    # 이벤트루프 블로킹 감시기 — '백엔드 서버 연결 실패' 범인 루프 색출용 (진단)
+    try:
+        app.state._loop_lag_task = asyncio.create_task(_event_loop_lag_monitor())
+    except Exception as e:
+        startup_logger.warning(f"[startup] 이벤트루프 lag 감시기 시작 실패: {e}")
 
     # DB 프록시 캐시를 워커/오토튠 시작 전에 프라임한다.
     # async 컨텍스트에서는 _get_cached_proxies 가 백그라운드 태스크만 예약하므로,
