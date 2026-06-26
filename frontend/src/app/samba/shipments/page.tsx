@@ -849,6 +849,9 @@ export default function ShipmentsPage() {
     setPausedJobPayload(null)
     setTransmitting(true)
     setLogMessages([])
+    sinceIdxRef.current = 0
+    // 백엔드 cleared 플래그 설정 — DB fallback 시 이전 잡 로그 재유입 차단
+    try { const { API_BASE_URL: _ab } = await import('@/config/api'); await fetchWithAuth(`${_ab}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' }) } catch { /* ignore */ }
 
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
@@ -1545,6 +1548,8 @@ export default function ShipmentsPage() {
                   // Job 직접 생성
                   setTransmitting(true)
                   setLogMessages([])
+                  sinceIdxRef.current = 0
+                  try { const { API_BASE_URL: _ab } = await import('@/config/api'); await fetchWithAuth(`${_ab}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' }) } catch { /* ignore */ }
                   const ts = fmtTime
                   const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
                   const items: string[] = []
