@@ -587,9 +587,9 @@ class SnkrdunkClient:
                     if x.get("isSold"):
                         continue
                     cond = (x.get("condition") or "기본").strip()
-                    # PSA 등급만 수집 — KREAM은 PSA/BRG 슬랩으로 거래(낱장 raw 옵션 없음).
-                    # SNKR raw(A~D)/BGS/ARS는 KREAM에 자리 없어 제외. PSA만 호환(PSA↔PSA).
-                    if not cond.upper().startswith("PSA"):
+                    # PSA 10 등급만 수집 — KREAM은 PSA/BRG 슬랩 거래이고, 그 중 PSA 10만
+                    # 크로스플랫폼 가치비교 의미가 있음(PSA 9/8/raw/BGS/ARS는 제외).
+                    if not re.match(r"PSA\s*10\b", cond.upper()):
                         continue
                     price = x.get("priceAmount")
                     if not isinstance(price, (int, float)) or price <= 0:

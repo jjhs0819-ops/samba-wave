@@ -1569,6 +1569,42 @@ async def _parse_generic_stub(product: Any) -> RefreshResult:
     )
 
 
+async def _parse_snkrdunk(product: Any) -> RefreshResult:
+    """SNKRDUNK 갱신 — site_product_id로 get_trading_card_detail 재조회(PSA 10 옵션·가격).
+
+    업데이트 버튼/오토튠 갱신 시 최신 PSA 10 최저가·재고를 반영. 리셀 매칭상품은
+    품절이어도 삭제 안 되게 in_stock 유지(lock_delete 정책과 일관).
+    """
+    from backend.domain.samba.proxy.snkrdunk import SnkrdunkClient
+
+    sid = str(getattr(product, "site_product_id", "") or "").strip()
+    if not sid:
+        return RefreshResult(product_id=product.id, error="site_product_id 없음")
+    d = await SnkrdunkClient().get_trading_card_detail(sid)
+    if d.get("error") or not d.get("name"):
+        # 조회 실패 시 기존값 유지(삭제 방지) — 에러로 덮어쓰지 않음
+        return RefreshResult(
+            product_id=product.id,
+            new_sale_price=getattr(product, "sale_price", 0),
+            new_cost=getattr(product, "cost", None),
+            new_sale_status="in_stock",
+            changed=False,
+        )
+    price = float(d.get("sale_price") or 0)
+    opts = d.get("options") or []
+    imgs = d.get("images") or []
+    return RefreshResult(
+        product_id=product.id,
+        new_sale_price=price,
+        new_original_price=price,
+        new_cost=price,
+        new_options=opts,
+        new_sale_status="in_stock",
+        new_images=imgs or None,
+        changed=True,
+    )
+
+
 # 소싱처별 파서 매핑
 SITE_PARSERS: dict[str, Any] = {
     "MUSINSA": _parse_musinsa,
@@ -1583,7 +1619,7 @@ SITE_PARSERS: dict[str, Any] = {
     "ElandMall": _parse_generic_stub,
     "SSF": _parse_generic_stub,
     "FashionPlus": _parse_fashionplus,
-    "SNKRDUNK": _parse_generic_stub,
+    "SNKRDUNK": _parse_snkrdunk,
 }
 
 
