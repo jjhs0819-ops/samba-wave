@@ -1051,11 +1051,14 @@ async def scroll_products(
         elif search_type == "kream_id":
             import json as _json
 
-            from sqlalchemy import cast
-            from sqlalchemy.dialects.postgresql import JSONB
+            from sqlalchemy import text
 
             _kream_filter = _json.dumps({"kream": {"product_id": q}})
-            conditions.append(_CP.resell_matches.op("@>")(cast(_kream_filter, JSONB)))
+            conditions.append(
+                text("resell_matches @> CAST(:kf AS jsonb)").bindparams(
+                    kf=_kream_filter
+                )
+            )
 
     # 소싱처 필터 (단일 또는 복수)
     if source_sites:
