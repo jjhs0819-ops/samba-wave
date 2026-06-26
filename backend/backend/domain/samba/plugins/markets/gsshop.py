@@ -292,6 +292,10 @@ def _transform_for_gsshop(
             parts = str(category_id).split("|", 1)
             category_prd_cls_cd = parts[0].strip()
             sect_id_str = parts[1].strip()
+        elif str(category_id).upper().startswith("B"):
+            # B코드(prdClsCd)만 있는 경우 — sectId 없음
+            category_prd_cls_cd = str(category_id).strip()
+            sect_id_str = ""
         else:
             sect_id_str = str(category_id)
         try:

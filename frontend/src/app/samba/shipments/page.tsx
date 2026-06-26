@@ -857,6 +857,7 @@ export default function ShipmentsPage() {
     setTransmitting(true)
     setLogMessages([])
     sinceIdxRef.current = 0
+    try { const { API_BASE_URL: _ab } = await import('@/config/api'); await fetchWithAuth(`${_ab}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' }) } catch { /* ignore */ }
 
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
@@ -1568,6 +1569,7 @@ export default function ShipmentsPage() {
                   setTransmitting(true)
                   setLogMessages([])
                   sinceIdxRef.current = 0
+                  try { const { API_BASE_URL: _ab } = await import('@/config/api'); await fetchWithAuth(`${_ab}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' }) } catch { /* ignore */ }
                   const ts = fmtTime
                   const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
                   const items: string[] = []
