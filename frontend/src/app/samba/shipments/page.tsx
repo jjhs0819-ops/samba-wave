@@ -334,6 +334,13 @@ export default function ShipmentsPage() {
             appendShipmentLogs(setLogMessages, newLogs)
             if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
               if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+              // Worker/API 인스턴스 분리로 누락된 로그를 DB에서 직접 보완 (finally flush 대기)
+              try {
+                await new Promise(r => setTimeout(r, 500))
+                const flr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}/logs`)
+                const fld = await flr.json()
+                appendShipmentLogs(setLogMessages, (fld.logs || []) as string[])
+              } catch { /* ignore */ }
               // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
               const r = (j.result || {}) as Record<string, number>
               const _ts = fmtTime()
@@ -850,8 +857,6 @@ export default function ShipmentsPage() {
     setTransmitting(true)
     setLogMessages([])
     sinceIdxRef.current = 0
-    // 백엔드 cleared 플래그 설정 — DB fallback 시 이전 잡 로그 재유입 차단
-    try { const { API_BASE_URL: _ab } = await import('@/config/api'); await fetchWithAuth(`${_ab}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' }) } catch { /* ignore */ }
 
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
@@ -1022,6 +1027,13 @@ export default function ShipmentsPage() {
           appendShipmentLogs(setLogMessages, newLogs)
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+            // Worker/API 인스턴스 분리로 누락된 로그를 DB에서 직접 보완
+            try {
+              await new Promise(r => setTimeout(r, 500))
+              const flr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}/logs`)
+              const fld = await flr.json()
+              appendShipmentLogs(setLogMessages, (fld.logs || []) as string[])
+            } catch { /* ignore */ }
             const _ts = fmtTime()
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
@@ -1094,6 +1106,13 @@ export default function ShipmentsPage() {
           appendShipmentLogs(setLogMessages, newLogs)
           if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
             if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+            // Worker/API 인스턴스 분리로 누락된 로그를 DB에서 직접 보완
+            try {
+              await new Promise(r => setTimeout(r, 500))
+              const flr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}/logs`)
+              const fld = await flr.json()
+              appendShipmentLogs(setLogMessages, (fld.logs || []) as string[])
+            } catch { /* ignore */ }
             const _ts = fmtTime()
             if (j.error) addLog(`[${_ts}] ${j.error}`)
             const r = (j.result || {}) as Record<string, number>
@@ -1549,7 +1568,6 @@ export default function ShipmentsPage() {
                   setTransmitting(true)
                   setLogMessages([])
                   sinceIdxRef.current = 0
-                  try { const { API_BASE_URL: _ab } = await import('@/config/api'); await fetchWithAuth(`${_ab}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' }) } catch { /* ignore */ }
                   const ts = fmtTime
                   const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
                   const items: string[] = []
@@ -1625,6 +1643,13 @@ export default function ShipmentsPage() {
                       appendShipmentLogs(setLogMessages, newLogs)
                       if (j.status === 'completed' || j.status === 'failed') {
                         if (jobPollRef.current) { clearInterval(jobPollRef.current); jobPollRef.current = null }
+                        // Worker/API 인스턴스 분리로 누락된 로그를 DB에서 직접 보완
+                        try {
+                          await new Promise(r => setTimeout(r, 500))
+                          const flr = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/${jobId}/logs`)
+                          const fld = await flr.json()
+                          appendShipmentLogs(setLogMessages, (fld.logs || []) as string[])
+                        } catch { /* ignore */ }
                         // Job 결과를 프론트 로그에 직접 표시 (링 버퍼 인스턴스 격리 시 누락 방지)
                         const r = (j.result || {}) as Record<string, number>
                         const _ts = fmtTime()
