@@ -536,6 +536,18 @@ class GsShopPlugin(MarketPlugin):
                 gs_margin_rate = gs_policy.get("gsMarginRate", 0)
                 # brandCd, prdClsCd, dlvsCoCd, prdRelspAddrCd 등 등록에 필요한 코드값
                 gs_settings = gs_policy.get("gsSettings") or {}
+                # 계정별 설정 override — 한 정책에 GS 계정이 여러 개(가디/캐논리츠) 연결된
+                # 경우, 등록 대상 계정(account.id) 키의 설정을 공통값 위에 덮어쓴다.
+                # → 계정마다 다른 담당MD(operMdId)·출고지(prdRelspAddrCd)·반품지
+                #   (prdRetpAddrCd) 등으로 등록됨. 키 없으면 공통 gsSettings 그대로.
+                by_acc = gs_policy.get("gsSettingsByAccount") or {}
+                _acc_id = str(getattr(account, "id", "") or "") if account else ""
+                if _acc_id and isinstance(by_acc.get(_acc_id), dict):
+                    gs_settings = {**gs_settings, **by_acc[_acc_id]}
+                    # 마켓마진율(공급가 계산용)도 계정별 값이 있으면 우선 적용.
+                    # 마놀 25% / 캐논 13% 처럼 계정마다 공급가 마진이 다른 경우 대응.
+                    if by_acc[_acc_id].get("gsMarginRate") is not None:
+                        gs_margin_rate = by_acc[_acc_id].get("gsMarginRate") or 0
 
         # 계정 설정 반품/교환비 fallback (정책 gsSettings에 없을 때).
         # returnFee/exchangeFee는 계정 additional_fields에 저장되는데 auth_creds 출처가

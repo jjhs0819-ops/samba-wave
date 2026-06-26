@@ -536,10 +536,22 @@ const ProductCard = React.memo(function ProductCard({
   const no = String(idx + 1).padStart(6, '0')
 
   // 마켓별 개별 가격 계산 (useMemo 캐싱)
-  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string }>
+  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
   const marketPriceList = useMemo(() => Object.entries(mp)
     .filter(([, v]) => v.accountId)
-    .map(([marketName, v]) => {
+    .flatMap(([marketName, v]) => {
+      // GS샵: 연결 계정(마놀/캐논 등)별로 행을 펼쳐 각 계정 판매수수료(gsSettingsByAccount[계정].feeRate)로 판매가 계산.
+      // 계정마다 수수료가 다르므로(마놀 25% / 캐논 13%) 판매가도 계정별로 달라진다.
+      if (marketName === 'GS샵') {
+        const gsIds = (v.accountIds && v.accountIds.length ? v.accountIds : (v.accountId ? [v.accountId] : []))
+        return gsIds.map(accId => {
+          const gsAcct = accMap.get(accId)
+          const gsName = gsAcct ? (gsAcct.business_name || gsAcct.seller_id || gsAcct.account_label || gsAcct.market_name || '') : ''
+          const gsFee = Number(v.gsSettingsByAccount?.[accId]?.feeRate ?? v.feeRate ?? feeRate ?? 0)
+          const gr = calcPrice(cost, marginRate, (v.shippingCost ?? shippingCost) || shippingCost, gsFee, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym)
+          return { marketName, label: gsName ? `GS샵 (${gsName})` : 'GS샵', rowKey: `GS샵:${accId}`, price: gr.price, calcStr: gr.calcStr }
+        })
+      }
       const acct = v.accountId ? accMap.get(v.accountId) : undefined
       const acctFeeRate = Number((acct?.additional_fields as Record<string, unknown> | undefined)?.feeRate || 0)
       const acctExtraFeeRate = Number((acct?.additional_fields as Record<string, unknown> | undefined)?.extraFeeRate || 0)
@@ -585,7 +597,7 @@ const ProductCard = React.memo(function ProductCard({
           displayPrice = rounded
         }
       }
-      return { marketName, price: displayPrice, calcStr: displayCalcStr }
+      return [{ marketName, label: marketName, rowKey: marketName, price: displayPrice, calcStr: displayCalcStr }]
     }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
@@ -1740,8 +1752,8 @@ const ProductCard = React.memo(function ProductCard({
                   : `${fmtNum(displayName.length)}/${fmtNum(nameLimit)}`
                 const placeholder = byteLimit ? truncateToBytes(composedName, byteLimit) : composedName.slice(0, nameLimit)
                 return (
-                <tr key={m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
-                  <td style={tdLabel}>{m.marketName === '신세계몰(전시)' ? '신세계몰' : m.marketName}</td>
+                <tr key={m.rowKey || m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                  <td style={tdLabel}>{m.marketName === '신세계몰(전시)' ? '신세계몰' : (m.label || m.marketName)}</td>
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>

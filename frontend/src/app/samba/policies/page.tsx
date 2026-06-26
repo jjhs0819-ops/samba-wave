@@ -61,6 +61,27 @@ interface PricingForm {
   sourceSiteMargins: Record<string, SourceSiteMargin>
 }
 
+// GS샵 계정별 등록 설정 (담당MD·출고지·반품지·브랜드 등)
+interface GsSettings {
+  brands?: { brandCd: string; brandNm: string }[]
+  brandCd?: string  // (legacy 단일선택 — brands로 마이그레이션)
+  brandNm?: string  // (legacy)
+  prdClsCd?: string
+  operMdId?: string | number
+  operMdNm?: string
+  sectId?: string | number
+  sectNm?: string
+  subSupCd?: string
+  stdRelsDdcnt?: number
+  dlvsCoCd?: string
+  govGrp?: number
+  attrTypNm1?: string
+  prdRelspAddrCd?: string  // 출고지 supAddrCd
+  prdRetpAddrCd?: string   // 반품지 supAddrCd
+  feeRate?: number         // 판매수수료(판매가 형성용) — 계정별. 예: 마놀 25 / 캐논 13
+  gsMarginRate?: number    // 마켓마진율(공급가 계산용) — 계정별
+}
+
 // 마켓정책
 interface MarketPolicyForm {
   accountId: string
@@ -77,23 +98,10 @@ interface MarketPolicyForm {
   smileCashRate: number
   // GS샵 전용
   gsMarginRate: number
-  gsSettings?: {
-    brands?: { brandCd: string; brandNm: string }[]
-    brandCd?: string  // (legacy 단일선택 — brands로 마이그레이션)
-    brandNm?: string  // (legacy)
-    prdClsCd?: string
-    operMdId?: string | number
-    operMdNm?: string
-    sectId?: string | number
-    sectNm?: string
-    subSupCd?: string
-    stdRelsDdcnt?: number
-    dlvsCoCd?: string
-    govGrp?: number
-    attrTypNm1?: string
-    prdRelspAddrCd?: string  // 출고지 supAddrCd
-    prdRetpAddrCd?: string   // 반품지 supAddrCd
-  }
+  gsSettings?: GsSettings  // 공통/legacy 폴백
+  // 계정별 설정 — 가디/캐논리츠 등 연결 계정마다 담당MD·출고지·반품지를 따로 저장.
+  // 키 = marketAccount.id. 등록 시 백엔드가 account.id로 이 값을 읽어 적용.
+  gsSettingsByAccount?: Record<string, GsSettings>
   // 신세계몰 전용: 주문수량 제한
   dayMaxQty: number
   onceMinQty: number
@@ -332,6 +340,9 @@ export default function PoliciesPage() {
   const [gsDelivPlaces, setGsDelivPlaces] = useState<{ supAddrCd: string; label: string }[]>([])
   const [gsMdList, setGsMdList] = useState<{ operMdId: string; operMdNm: string; fixMargnRt: number }[]>([])
   const [gsMdLoading, setGsMdLoading] = useState(false)
+  // 조회 기준 계정 — 연결 계정이 여러 개(가디/캐논리츠)일 때 어느 계정 기준으로
+  // 담당MD·출고지·반품지·브랜드를 불러올지 선택. '' 이면 accountIds[0] 폴백.
+  const [gsQueryAccId, setGsQueryAccId] = useState('')
 
 
   // 현재 마켓 정책 가져오기 (부분 데이터에도 기본값 보장)
@@ -485,7 +496,8 @@ export default function PoliciesPage() {
     return () => clearTimeout(timer)
   }, [lotteBrandKeyword])
 
-  const gsAccountId = marketPolicies['GS샵']?.accountId || ''
+  // 조회 기준 계정(선택값 우선, 없으면 정책의 첫 연결 계정). MD/출고지/반품지/브랜드 조회에 공통 사용.
+  const gsAccountId = gsQueryAccId || marketPolicies['GS샵']?.accountId || ''
 
   // GS샵 브랜드 검색 (디바운스 300ms)
   useEffect(() => {
@@ -509,10 +521,9 @@ export default function PoliciesPage() {
   }, [gsBrandKeyword, gsAccountId])
 
 
-  // GS샵 출고지/반품지 목록 로드
+  // GS샵 출고지/반품지 목록 로드 (조회 기준 계정 gsAccountId 기준 — 계정 바뀌면 재조회)
   const loadGsDelivPlaces = useCallback(async () => {
-    if (gsDelivPlaces.length > 0) return
-    const accId = marketPolicies['GS샵']?.accountId || ''
+    const accId = gsAccountId
     try {
       const res = await request<{ success: boolean; data: unknown }>(`${API_BASE}/api/v1/samba/proxy/gsshop/delivery-places${accId ? `?account_id=${encodeURIComponent(accId)}` : ''}`)
       if (res.success) {
@@ -524,16 +535,24 @@ export default function PoliciesPage() {
         })))
       }
     } catch { /* 무시 */ }
-  }, [gsDelivPlaces.length, marketPolicies])
+  }, [gsAccountId])
 
+  // 탭 전환 시 조회 계정 선택값 리셋 → 항상 첫 연결 계정(accountIds[0])부터 시작.
+  // stale 계정 ID가 셀렉터에 남는 것 방지.
+  useEffect(() => { setGsQueryAccId('') }, [marketPolicyTab])
+
+  // 탭이 GS샵이거나 조회 계정이 바뀌면 기존 목록 비우고 선택 계정 기준으로 재조회
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (marketPolicyTab === 'GS샵') { loadGsDelivPlaces(); loadGsMdList() } }, [marketPolicyTab, loadGsDelivPlaces])
+  useEffect(() => {
+    if (marketPolicyTab !== 'GS샵') return
+    setGsDelivPlaces([]); setGsMdList([])
+    loadGsDelivPlaces(); loadGsMdList()
+  }, [marketPolicyTab, gsAccountId])
 
-  // GS샵 MD 목록 로드
+  // GS샵 MD 목록 로드 (조회 기준 계정 gsAccountId 기준)
   const loadGsMdList = useCallback(async () => {
-    if (gsMdList.length > 0) return
     setGsMdLoading(true)
-    const accId = marketPolicies['GS샵']?.accountId || ''
+    const accId = gsAccountId
     try {
       const mdUrl = `${API_BASE}/api/v1/samba/proxy/gsshop/md-list${accId ? `?account_id=${encodeURIComponent(accId)}` : ''}`
       const res = await request<{ success: boolean; data: unknown }>(mdUrl)
@@ -543,7 +562,7 @@ export default function PoliciesPage() {
         setGsMdList(list.map(m => ({ operMdId: String(m.mdId || m.operMdId || ''), operMdNm: String(m.mdNm || m.operMdNm || ''), fixMargnRt: Number(m.fixMargnRt || 0) })))
       }
     } catch { /* 무시 */ } finally { setGsMdLoading(false) }
-  }, [gsMdList.length, marketPolicies])
+  }, [gsAccountId])
 
   // 템플릿 선택 시 imgChecks/imgOrder를 DB 값으로 초기화
   useEffect(() => {
@@ -1539,7 +1558,7 @@ export default function PoliciesPage() {
                   </label>
                 </div>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && (
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
                   <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
@@ -1665,10 +1684,34 @@ export default function PoliciesPage() {
               )}
               {/* GS샵 전용 설정 */}
               {marketPolicyTab === 'GS샵' && (() => {
-                const gs = (mp.gsSettings || {}) as NonNullable<typeof mp.gsSettings>
-                const setGs = (patch: typeof gs) => { setCurrentMarketPolicy({ ...mp, gsSettings: { ...gs, ...patch } }); triggerAutoSave() }
+                // 정책에 연결된 GS 계정들(가디/캐논리츠 등) — 설정 대상 계정 선택용
+                const gsAccs = marketAccounts.filter(a => a.market_type === MARKET_KEY_MAP['GS샵'])
+                const gsLinkedAccs = gsAccs.filter(a => (mp.accountIds?.length ? mp.accountIds : (mp.accountId ? [mp.accountId] : [])).includes(a.id))
+                // 설정 대상 계정 = 선택값(gsAccountId). 그 계정 키(gsSettingsByAccount[accId])의 설정을 편집·저장한다.
+                // 계정 키가 아직 없으면 공통 gsSettings를 시작점으로 표시. 계정 미연결(accId 없음)이면 공통 gsSettings 편집.
+                const gsEditAccId = gsAccountId
+                const gs: GsSettings = (gsEditAccId ? (mp.gsSettingsByAccount?.[gsEditAccId] ?? mp.gsSettings) : mp.gsSettings) || {}
+                const setGs = (patch: Partial<GsSettings>) => {
+                  if (gsEditAccId) {
+                    const cur = mp.gsSettingsByAccount?.[gsEditAccId] ?? mp.gsSettings ?? {}
+                    setCurrentMarketPolicy({ ...mp, gsSettingsByAccount: { ...(mp.gsSettingsByAccount || {}), [gsEditAccId]: { ...cur, ...patch } } })
+                  } else {
+                    setCurrentMarketPolicy({ ...mp, gsSettings: { ...(mp.gsSettings || {}), ...patch } })
+                  }
+                  triggerAutoSave()
+                }
                 return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                    {/* 설정 대상 계정 (연결 계정 2개 이상일 때만 노출) — 이 계정으로 등록할 MD/출고지/반품지/브랜드를 따로 저장 */}
+                    {gsLinkedAccs.length > 1 && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '90px', fontWeight: 600 }}>설정 계정</span>
+                        <select value={gsAccountId} onChange={e => setGsQueryAccId(e.target.value)} style={{ flex: 1, maxWidth: 230, background: '#1F2937', border: '1px solid #FF8C00', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
+                          {gsLinkedAccs.map(a => <option key={a.id} value={a.id}>{a.business_name || a.market_name}({a.seller_id || a.account_label || '-'})</option>)}
+                        </select>
+                        <span style={{ color: '#666', fontSize: '0.72rem' }}>이 계정으로 등록할 담당MD·출고지·반품지·브랜드를 따로 저장합니다</span>
+                      </div>
+                    )}
                     {/* MD */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>담당 MD</span>
@@ -1678,11 +1721,17 @@ export default function PoliciesPage() {
                       </select>
                       <input value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} placeholder="MD ID 직접입력" style={{ width: 80, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
                     </div>
-                    {/* 마켓마진율 */}
+                    {/* 판매수수료 (계정별) — 판매가 형성용. 마켓별 공통 '수수료' 칸 대신 계정마다 따로 받음 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>판매수수료</span>
+                      <NumInput value={gs.feeRate ?? (mp.feeRate || 0)} onChange={(v) => setGs({ feeRate: v })} style={{ width: '70px' }} suffix="%" />
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>판매가 형성 수수료 (계정별 — 예: 마놀 25, 캐논 13)</span>
+                    </div>
+                    {/* 마켓마진율 (계정별) — 공급가 계산용 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>마켓마진율</span>
-                      <NumInput value={mp.gsMarginRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, gsMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                      <span style={{ color: '#666', fontSize: '0.75rem' }}>MD 협의 필수항목</span>
+                      <NumInput value={gs.gsMarginRate ?? (mp.gsMarginRate || 0)} onChange={(v) => setGs({ gsMarginRate: v })} style={{ width: '70px' }} suffix="%" />
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>MD 협의 필수항목 (공급가 계산 · 계정별)</span>
                     </div>
                     {/* 전시카테고리는 정책 고정이 아니라 수집상품 카테고리매핑(없으면 상품명 키워드)으로
                         등록 시 자동 결정되므로 정책 설정에서 제외함 */}
