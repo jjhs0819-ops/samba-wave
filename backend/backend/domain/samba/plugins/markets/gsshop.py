@@ -48,26 +48,111 @@ def _load_gs_category_map() -> dict[str, str]:
     return _GS_CATEGORY_MAP_CACHE
 
 
+def _gs_valid_sect(category_id: Any) -> bool:
+    """category_id에 유효한 sectId(숫자 전시매장)가 있는지.
+    'B43071903|1662742' → True, 'B43071903'/'B43071903|' → False, '1662742' → True.
+    """
+    s = str(category_id or "")
+    if not s:
+        return False
+    if "|" in s:
+        return s.split("|", 1)[1].strip().isdigit()
+    return s.strip().isdigit()
+
+
+# 키워드 → "prdClsCd|sectId" (소싱처 무관 카테고리 폴백). 순서 = 구체적인 것 먼저.
+# prdClsCd/sectId 값은 gsshop_category_map.json(검증된 67종)과 동일 코드 사용.
+_GS_KEYWORD_RULES: list[tuple[tuple[str, ...], str]] = [
+    # ── 신발 (B25) ──
+    (("러닝화", "런닝화", "조깅화", "마라톤", "트레일러닝"), "B25030109|1734345"),
+    (("아쿠아", "워터슈즈", "물놀이"), "B25030111|1663466"),
+    (("샌들", "슬리퍼", "슬라이드", "쪼리", "플립플랍", "뮬"), "B25010105|1663468"),
+    (("부츠", "워커"), "B25010103|1663471"),
+    (
+        ("스니커즈", "운동화", "스포츠화", "캐주얼화", "라이프스타일화", "단화",
+         "로퍼", "구두", "스케이트", "발레", "헬스화", "피트니스화", "신발", "슈즈"),
+        "B25030115|1663470",
+    ),
+    # ── 하의 (B43071903 / 레깅스 B43071301) ──
+    (("레깅스",), "B43071301|1719598"),
+    (("숏팬츠", "숏 팬츠", "반바지", "쇼츠", "하프팬츠"), "B43071903|1662743"),
+    (("팬츠", "바지", "슬랙스", "조거", "데님", "하의", "트라우저"), "B43071903|1662742"),
+    # ── 아우터 (B43071905 / 패딩 B43130505 / 카디건 B43130519) ──
+    (("패딩", "다운", "헤비 아우터", "푸퍼"), "B43130505|1662739"),
+    (("카디건",), "B43130519|1662744"),
+    (("베스트", "조끼"), "B43071905|1662745"),
+    (("후드집업", "후드 집업", "집업"), "B43071905|1734349"),
+    (("아노락", "코치 재킷", "나일론 재킷"), "B43071905|1662741"),
+    (
+        ("재킷", "자켓", "아우터", "코트", "점퍼", "블루종", "플리스", "뽀글이",
+         "바람막이", "트랙탑", "윈드브레이커", "패딩베스트"),
+        "B43071905|1662744",
+    ),
+    # ── 상의 (B43071907 / 니트 B43130503) ──
+    (("후드티", "후드 티", "후디"), "B43071907|1734349"),
+    (("맨투맨", "스웨트셔츠", "스웨트"), "B43071907|1662740"),
+    (("니트", "스웨터"), "B43130503|1662740"),
+    (
+        ("티셔츠", "반소매", "긴소매", "셔츠", "블라우스", "민소매", "나시",
+         "브라탑", "상의"),
+        "B43071907|1662747",
+    ),
+    # ── 잡화 ──
+    (("모자", "캡", "비니", "버킷", "햇", "볼캡"), "B43071901|1662747"),
+]
+
+
+def _gs_keyword_category(text: str) -> str:
+    """카테고리/상품 텍스트의 키워드로 GS 분류 추정 (소싱처 무관)."""
+    t = str(text or "")
+    if not t:
+        return ""
+    for keywords, code in _GS_KEYWORD_RULES:
+        if any(kw in t for kw in keywords):
+            return code
+    return ""
+
+
 async def _resolve_gs_category_id(
     session: Any, product: dict[str, Any], category_id: str
 ) -> str:
-    """category_id가 비었으면 상품의 소싱 카테고리로 자동매핑(prdClsCd|sectId).
-    레포 커밋 JSON(gsshop_category_map.json) + DB 설정(gsshop_category_map) 병합.
-    베이스 handle()의 카테고리 검증 전에 호출되어야 자동매칭이 동작한다.
+    """소싱 카테고리로 GS 분류(prdClsCd|sectId) 결정 — 소싱처 무관.
+
+    1) 이미 유효한 sectId 있으면 그대로
+    2) 정확매칭: 레포 JSON(gsshop_category_map.json) + DB 설정(gsshop_category_map)
+    3) 키워드매칭: 카테고리(없으면 상품명) 키워드로 추정 (모든 소싱처 커버)
+    부분값(prdClsCd만, sectId 없음)도 2~3으로 full 'prdClsCd|sectId' 보완.
+    매칭 실패 시 원본 유지 — 무리한 기본분류로 오등록하지 않는다.
     """
-    if category_id:
+    if _gs_valid_sect(category_id):
         return category_id
+
     src_cat = str(product.get("category") or "").strip()
-    if not src_cat:
-        return category_id
-    cat_map = dict(_load_gs_category_map())
-    db_map = await _get_setting(session, "gsshop_category_map")
-    if isinstance(db_map, dict):
-        cat_map.update(db_map)
-    matched = cat_map.get(src_cat)
-    if matched:
-        logger.info(f"[GS샵] 카테고리 자동매칭: '{src_cat}' → {matched}")
-        return str(matched)
+
+    # 2) 정확매칭 (sectId 있는 것만 채택)
+    if src_cat:
+        cat_map = dict(_load_gs_category_map())
+        db_map = await _get_setting(session, "gsshop_category_map")
+        if isinstance(db_map, dict):
+            cat_map.update(db_map)
+        matched = cat_map.get(src_cat)
+        if matched and _gs_valid_sect(matched):
+            logger.info(f"[GS샵] 카테고리 정확매칭: '{src_cat}' → {matched}")
+            return str(matched)
+
+    # 3) 키워드매칭 (카테고리 우선, 없으면 상품명)
+    kw = _gs_keyword_category(src_cat) or _gs_keyword_category(
+        product.get("name") or ""
+    )
+    if kw:
+        logger.info(
+            f"[GS샵] 카테고리 키워드매칭: '{src_cat or product.get('name')}' → {kw}"
+        )
+        return kw
+
+    logger.warning(
+        f"[GS샵] 카테고리 매칭 실패 (소싱카테고리='{src_cat}') — 키워드 룰 추가 필요"
+    )
     return category_id
 
 
