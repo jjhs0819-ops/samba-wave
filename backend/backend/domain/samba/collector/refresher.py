@@ -1748,8 +1748,18 @@ async def refresh_products_bulk(
                 await asyncio.sleep(interval)
                 return r
 
-        tasks = [_limited(p) for p in items]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # task swarm 방지 (2026-06-26) — 모든 product를 한꺼번에 task로 만들면 수백개가
+        # 세마포어 대기로 parked 되어 이벤트루프를 떼거리(thundering herd)로 점유 →
+        # API 요청 지연('백엔드 서버 연결 실패'). 청크로 끊어 살아있는 task 수를 상한.
+        # 실제 동시성은 sem(concurrency)이 이미 제한하므로 처리량 영향 미미.
+        _chunk_size = max(concurrency * 4, 40)
+        results = []
+        for _ci in range(0, len(items), _chunk_size):
+            _chunk = items[_ci : _ci + _chunk_size]
+            _chunk_res = await asyncio.gather(
+                *[_limited(p) for p in _chunk], return_exceptions=True
+            )
+            results.extend(_chunk_res)
         return [
             r
             if isinstance(r, RefreshResult)
