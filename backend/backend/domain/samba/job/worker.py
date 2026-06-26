@@ -1059,10 +1059,9 @@ class JobWorker:
                                         await self._run_autotune_playauto_fast(_batch)
                                     finally:
                                         self._playauto_batch_active -= 1
-                                        from backend.domain.samba.job.progress_tracker import (
-                                            clear_job_logs as _cjl,
-                                        )
-
+                                        # clear_job_logs 는 이 모듈(worker.py)에 정의됨 —
+                                        # progress_tracker 에서 import 하던 건 오류(ImportError로
+                                        # 전송 Task 예외 유발). 같은 모듈이라 직접 참조한다.
                                         for _bj in _batch:
                                             self._active_job_ids.discard(_bj.id)
                                             self._active_tasks.pop(_bj.id, None)
@@ -1074,7 +1073,7 @@ class JobWorker:
                                             )
                                         try:
                                             asyncio.get_running_loop().call_later(
-                                                60, _cjl, _batch[0].id
+                                                60, clear_job_logs, _batch[0].id
                                             )
                                         except RuntimeError:
                                             pass
