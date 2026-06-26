@@ -26,7 +26,9 @@ class MarketPlugin(ABC):
         product = await self._apply_market_settings(session, product, account)
         # 마켓별 카테고리 자동결정 훅 — 매핑이 없을 때 상품 정보로 카테고리를 채운다.
         # (GS샵: 소싱 카테고리 → prdClsCd|sectId 자동매칭) 검증 전에 호출되어야 함.
-        category_id = await self._resolve_category(session, product, category_id, account)
+        category_id = await self._resolve_category(
+            session, product, category_id, account
+        )
         if not category_id:
             return {
                 "success": False,

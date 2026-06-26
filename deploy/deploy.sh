@@ -282,7 +282,11 @@ sleep 2
 
 remote_step "[5/6] blue 새 이미지 pull + 재시작..."
 sudo docker compose pull samba-api
-sudo docker compose up -d samba-api
+# recreate 레이스 방지(2026-06-26): compose up 의 자동 recreate 가 "container is running:
+# cannot remove" 로 실패하는 사례 반복 → blue 는 step4 에서 이미 drain(green 서빙) 상태이므로
+# 새 이미지로 띄우기 전에 강제 제거해 깨끗한 재생성을 보장한다.
+sudo docker rm -f samba-samba-api-1 2>/dev/null || true
+sudo docker compose up -d --force-recreate samba-api
 # /tmp/draining 잔존 시 health 영구 503 → blue 무한 not-ready (2026-04-29 사고).
 # 컨테이너 재시작 시 동일 이미지 SHA면 recreate 안 되어 /tmp/draining 살아남음.
 # 컨테이너가 PID 1까지 올라올 때까지 잠깐 대기 후 명시적 삭제.

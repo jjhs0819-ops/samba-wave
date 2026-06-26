@@ -40,7 +40,7 @@ function appendShipmentLog(
       normalizedMsg === normalizedLast &&
       (normalizedMsg.includes('전송 완료') || normalizedMsg.includes('전송 실패') || normalizedMsg.includes('전송 중단') || normalizedMsg.includes('작업중지'))
     if (isDuplicateCompletion) { return prev }
-    return [...prev, formattedMsg].slice(-30)
+    return [...prev, formattedMsg].slice(-200)
   })
 }
 // 영문 market_type → 한글 정책 키 (markets.ts에서 import)
@@ -53,7 +53,7 @@ function appendShipmentLogs(
 
   setLogMessages(prev => {
     // 폴러 간 fetch race로 동일 메시지가 다시 들어오는 경우 방어 —
-    // 직전 N줄(<=30)에 이미 존재하는 라인은 스킵 (같은 타임스탬프+같은 본문)
+    // 직전 N줄(<=200)에 이미 존재하는 라인은 스킵 (같은 타임스탬프+같은 본문)
     const seen = new Set(prev)
     const next = [...prev]
     for (const raw of messages) {
@@ -62,7 +62,7 @@ function appendShipmentLogs(
       seen.add(formatted)
       next.push(formatted)
     }
-    return next.slice(-30)
+    return next.slice(-200)
   })
 }
 
@@ -848,6 +848,7 @@ export default function ShipmentsPage() {
 
     setPausedJobPayload(null)
     setTransmitting(true)
+    setLogMessages([])
 
     const ts = fmtTime
     const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
@@ -1543,6 +1544,7 @@ export default function ShipmentsPage() {
                   if (allIds.length === 0) { showAlert('선택된 소싱사이트에 해당하는 상품이 없습니다'); return }
                   // Job 직접 생성
                   setTransmitting(true)
+                  setLogMessages([])
                   const ts = fmtTime
                   const addLog = (msg: string) => appendShipmentLog(setLogMessages, msg)
                   const items: string[] = []

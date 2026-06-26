@@ -48,7 +48,9 @@ def _load_gs_category_map() -> dict[str, str]:
     return _GS_CATEGORY_MAP_CACHE
 
 
-async def _resolve_gs_category_id(session: Any, product: dict[str, Any], category_id: str) -> str:
+async def _resolve_gs_category_id(
+    session: Any, product: dict[str, Any], category_id: str
+) -> str:
     """category_id가 비었으면 상품의 소싱 카테고리로 자동매핑(prdClsCd|sectId).
     레포 커밋 JSON(gsshop_category_map.json) + DB 설정(gsshop_category_map) 병합.
     베이스 handle()의 카테고리 검증 전에 호출되어야 자동매칭이 동작한다.
