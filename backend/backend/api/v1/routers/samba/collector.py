@@ -1048,6 +1048,14 @@ async def scroll_products(
 
             pol_ids = select(_POL.id).where(_POL.name.ilike(q_pat, escape="\\"))
             conditions.append(_CP.applied_policy_id.in_(pol_ids))
+        elif search_type == "kream_id":
+            import json as _json
+
+            from sqlalchemy import cast
+            from sqlalchemy.dialects.postgresql import JSONB
+
+            _kream_filter = _json.dumps({"kream": {"product_id": q}})
+            conditions.append(_CP.resell_matches.op("@>")(cast(_kream_filter, JSONB)))
 
     # 소싱처 필터 (단일 또는 복수)
     if source_sites:

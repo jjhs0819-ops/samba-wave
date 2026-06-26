@@ -2192,6 +2192,7 @@ export default function ProductsPage() {
             <option value="name_all">상품명</option>
             <option value="filter">그룹</option>
             <option value="no">상품번호</option>
+            <option value="kream_id">크림번호</option>
             <option value="policy">정책</option>
           </select>
           <input type="text" placeholder={searchType === "no" ? "상품번호 검색 (콤마로 다중)" : "검색어"} value={searchQ}
