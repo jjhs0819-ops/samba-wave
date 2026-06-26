@@ -30,6 +30,10 @@ async def _get_setting(session, key: str) -> Any:
 
 
 _GS_CATEGORY_MAP_CACHE: dict[str, str] | None = None
+# 계정별 전시매장 목록 캐시 (getAllSectList)
+_GS_SECT_CACHE: dict[str, list[dict]] = {}
+# 계정별 상품분류코드 목록 캐시 (SupSendPrdClsInfo)
+_GS_CLS_CACHE: dict[str, list[dict]] = {}
 
 
 def _load_gs_category_map() -> dict[str, str]:
@@ -46,6 +50,65 @@ def _load_gs_category_map() -> dict[str, str]:
         except Exception:
             _GS_CATEGORY_MAP_CACHE = {}
     return _GS_CATEGORY_MAP_CACHE
+
+
+async def _find_best_sect_id(client: Any, prd_cls_cd: str) -> int:
+    """prdClsCd 이름 기반으로 GS샵 전시매장 sectId 자동 매칭. 계정별 캐시 사용."""
+    sup_cd = client.sup_cd
+
+    if sup_cd not in _GS_SECT_CACHE:
+        try:
+            r = await client.get_categories()
+            _GS_SECT_CACHE[sup_cd] = (r.get("data") or {}).get("resultList") or []
+        except Exception:
+            _GS_SECT_CACHE[sup_cd] = []
+
+    if sup_cd not in _GS_CLS_CACHE:
+        try:
+            r = await client.get_product_categories()
+            _GS_CLS_CACHE[sup_cd] = (r.get("data") or {}).get("resultList") or []
+        except Exception:
+            _GS_CLS_CACHE[sup_cd] = []
+
+    sections = _GS_SECT_CACHE[sup_cd]
+    cls_list = _GS_CLS_CACHE[sup_cd]
+    if not sections or not cls_list:
+        return 0
+
+    # prd_cls_cd에서 각 레벨 이름 추출 (세부→광범위 순)
+    target_names: list[str] = []
+    for item in cls_list:
+        if item.get("dtlClsCd") == prd_cls_cd:
+            for field in ["dtlClsNm", "smlClsNm", "midClsNm", "lrgClsNm"]:
+                nm = str(item.get(field) or "").strip()
+                if nm:
+                    target_names.append(nm)
+            break
+
+    if not target_names:
+        return 0
+
+    def _norm(s: str) -> str:
+        return s.replace(" ", "").replace("/", "").replace("·", "").lower()
+
+    best_id = 0
+    best_score = 0
+    for s in sections:
+        sect_nm = s.get("sectNm", "")
+        sect_id = int(s.get("sectId") or 0)
+        if not sect_id:
+            continue
+        snorm = _norm(sect_nm)
+        for rank, target in enumerate(target_names):
+            tnorm = _norm(target)
+            if tnorm and (tnorm in snorm or snorm in tnorm):
+                score = len(target_names) - rank  # 세부 이름일수록 높은 점수
+                if score > best_score:
+                    best_score = score
+                    best_id = sect_id
+                break
+
+    return best_id
 
 
 async def _resolve_gs_category_id(
@@ -580,6 +643,32 @@ class GsShopPlugin(MarketPlugin):
         goods_data = _transform_for_gsshop(
             product, category_id, sub_sup_cd, gs_margin_rate, gs_settings
         )
+
+        # prdSectList 없으면 prdClsCd 이름 기반 전시매장 자동 매핑
+        if not goods_data.get("prdSectList"):
+            _prd_cls_cd = ""
+            _cat = str(category_id or "")
+            if "|" in _cat:
+                _prd_cls_cd = _cat.split("|", 1)[0].strip()
+            elif _cat.upper().startswith("B"):
+                _prd_cls_cd = _cat
+            if _prd_cls_cd:
+                try:
+                    _sect_id = await _find_best_sect_id(client, _prd_cls_cd)
+                    if _sect_id:
+                        goods_data["prdSectList"] = [
+                            {
+                                "prdSectListSectid": _sect_id,
+                                "prdSectListSectGbn": "S",
+                                "prdSectListSectStdYn": "Y",
+                            }
+                        ]
+                        logger.info(
+                            f"[GS샵] prdSectList 자동매핑: {_prd_cls_cd} → sectId={_sect_id}"
+                        )
+                except Exception as _e:
+                    logger.warning(f"[GS샵] prdSectList 자동매핑 실패(무시): {_e}")
+
         result = await client.register_goods(goods_data)
 
         # GS샵 API 응답 검증 — HTTP 200이지만 본문에 fail 포함 가능
