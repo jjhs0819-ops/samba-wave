@@ -101,11 +101,16 @@ _ORIGIN_KO = {
 
 
 def _truncate_prdnm(name: str, max_bytes: int = 30) -> str:
-    """GS 송장명(prdNm)=VARCHAR2(30)=30바이트. 한글 글자경계 안 깨지게 절단.
+    """GS 송장명(prdNm)=VARCHAR2(30)=30바이트. 특수문자 제거 후 한글 글자경계 안 깨지게 절단.
     노출상품명(prdNmChgExposPrdNm, 240자)은 풀로 유지하고 송장명만 줄인다.
+    GS 송장명은 콜론/슬래시 등 특수문자 불가 → 공백으로 치환.
     """
+    import re
+
+    s = re.sub(r"[:/\\|<>\"'~^*]", " ", name)
+    s = re.sub(r"\s+", " ", s).strip()
     out = ""
-    for ch in name:
+    for ch in s:
         try:
             nb = len((out + ch).encode("euc-kr"))
         except UnicodeEncodeError:
@@ -113,7 +118,7 @@ def _truncate_prdnm(name: str, max_bytes: int = 30) -> str:
         if nb > max_bytes:
             break
         out += ch
-    return out.strip() or name[:15]
+    return out.strip() or s[:15]
 
 
 def _build_gov_publs(
