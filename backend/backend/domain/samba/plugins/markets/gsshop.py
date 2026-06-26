@@ -425,7 +425,7 @@ def _transform_for_gsshop(
                 "prdDescdHtmlDescdExplnCntnt": add_lazy_loading(detail_html),
             },
             "attrPrdList": attr_prd_list,
-            "prdSectList": prd_sect_list,
+            **({"prdSectList": prd_sect_list} if prd_sect_list else {}),
             # 안전인증 — 의류는 safeCertGbnCd=0 (해당없음)
             "prdSafeCertInfo": gs.get("prdSafeCertInfo")
             or {"safeCertGbnCd": 0, "safeCertOrgCd": 0},
