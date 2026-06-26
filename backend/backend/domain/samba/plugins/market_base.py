@@ -24,6 +24,9 @@ class MarketPlugin(ABC):
             return {"success": False, "message": f"{self.market_type} 인증정보 없음"}
         category_id = self._validate_category(category_id)
         product = await self._apply_market_settings(session, product, account)
+        # 마켓별 카테고리 자동결정 훅 — 매핑이 없을 때 상품 정보로 카테고리를 채운다.
+        # (GS샵: 소싱 카테고리 → prdClsCd|sectId 자동매칭) 검증 전에 호출되어야 함.
+        category_id = await self._resolve_category(session, product, category_id, account)
         if not category_id:
             return {
                 "success": False,
@@ -44,6 +47,14 @@ class MarketPlugin(ABC):
                 "error_type": self._classify_error(e),
                 "message": str(e),
             }
+
+    async def _resolve_category(
+        self, session, product: dict, category_id: str, account
+    ) -> str:
+        """마켓별 카테고리 자동결정 훅. 기본은 그대로 반환.
+        매핑 테이블 없이 상품 정보로 카테고리를 채우는 마켓(GS샵)이 오버라이드.
+        """
+        return category_id
 
     def _classify_error(self, exc: Exception) -> str:
         """에러 유형 분류."""

@@ -1658,11 +1658,13 @@ class SambaShipmentService:
                             f"(other_id={other_id!r}, mapped={list(mapped_categories.keys())})"
                         )
 
-                # 카페24/롯데홈쇼핑은 플러그인 내부에서 자체 카테고리(소싱처/정책 disp_no)를 사용하므로 매핑 없어도 허용
+                # 카페24/롯데홈쇼핑/GS샵은 플러그인 내부에서 자체 카테고리를 결정하므로 매핑 없어도 허용.
+                # (GS샵: execute()가 소싱카테고리 기반 gsshop_category_map으로 prdClsCd|sectId 자동매칭)
                 if not category_id and market_type not in (
                     "playauto",
                     "cafe24",
                     "lottehome",
+                    "gsshop",
                 ):
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
@@ -3264,11 +3266,12 @@ class SambaShipmentService:
                             logger.info(
                                 f"[ESM 크로스매핑] {other}({other_id}) → {account.market_type}({category_id})"
                             )
-                # 카페24/롯데홈쇼핑은 카테고리 매핑 없이 플러그인 내부에서 자동 처리
+                # 카페24/롯데홈쇼핑/GS샵은 카테고리 매핑 없이 플러그인 내부에서 자동 처리
                 if not category_id and account.market_type not in (
                     "playauto",
                     "cafe24",
                     "lottehome",
+                    "gsshop",
                 ):
                     new_result[account_id] = "failed"
                     new_errors[account_id] = "카테고리 매핑 없음"

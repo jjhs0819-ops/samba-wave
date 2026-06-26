@@ -48,6 +48,27 @@ def _load_gs_category_map() -> dict[str, str]:
     return _GS_CATEGORY_MAP_CACHE
 
 
+async def _resolve_gs_category_id(session: Any, product: dict[str, Any], category_id: str) -> str:
+    """category_id가 비었으면 상품의 소싱 카테고리로 자동매핑(prdClsCd|sectId).
+    레포 커밋 JSON(gsshop_category_map.json) + DB 설정(gsshop_category_map) 병합.
+    베이스 handle()의 카테고리 검증 전에 호출되어야 자동매칭이 동작한다.
+    """
+    if category_id:
+        return category_id
+    src_cat = str(product.get("category") or "").strip()
+    if not src_cat:
+        return category_id
+    cat_map = dict(_load_gs_category_map())
+    db_map = await _get_setting(session, "gsshop_category_map")
+    if isinstance(db_map, dict):
+        cat_map.update(db_map)
+    matched = cat_map.get(src_cat)
+    if matched:
+        logger.info(f"[GS샵] 카테고리 자동매칭: '{src_cat}' → {matched}")
+        return str(matched)
+    return category_id
+
+
 def _build_attr_prd_list(
     options: list[dict[str, Any]],
     sale_str_dtm: int,
@@ -422,6 +443,14 @@ class GsShopPlugin(MarketPlugin):
         """GS샵은 B코드(prdClsCd) 또는 숫자(prdSectListSectid) 모두 허용."""
         return category_id or ""
 
+    async def _resolve_category(
+        self, session: Any, product: dict[str, Any], category_id: str, account: Any
+    ) -> str:
+        """매핑이 없으면 소싱 카테고리로 prdClsCd|sectId 자동매칭.
+        베이스 handle()의 '카테고리 코드 없음' 검증 전에 호출되어 자동매칭이 통한다.
+        """
+        return await _resolve_gs_category_id(session, product, category_id)
+
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         """상품 데이터 → GS샵 API 포맷 변환."""
         gs_margin_rate = kwargs.get("gs_margin_rate", 0)
@@ -443,21 +472,9 @@ class GsShopPlugin(MarketPlugin):
         """GS샵 상품 등록 — 전체 로직."""
         from backend.domain.samba.proxy.gsshop import GsShopClient
 
-        # 카테고리 자동결정 — category_id가 비었으면 상품의 소싱 카테고리로 자동매핑.
-        # 수동 매핑 테이블 대신 source_category → "prdClsCd|sectId" 매핑 사용.
-        # 기본: 레포 커밋 JSON(gsshop_category_map.json), DB 설정(gsshop_category_map)으로 오버라이드/확장.
-        if not category_id:
-            _src_cat = str(product.get("category") or "").strip()
-            if _src_cat:
-                _cat_map = dict(_load_gs_category_map())
-                _db_map = await _get_setting(session, "gsshop_category_map")
-                if isinstance(_db_map, dict):
-                    _cat_map.update(_db_map)
-                if _cat_map.get(_src_cat):
-                    category_id = str(_cat_map[_src_cat])
-                    logger.info(
-                        f"[GS샵] 카테고리 자동매칭: '{_src_cat}' → {category_id}"
-                    )
+        # 카테고리 자동결정 — 보통 베이스 handle()의 _resolve_category 훅에서 이미 매칭됨.
+        # execute()를 직접 호출하는 경로(테스트 등) 대비 한 번 더 폴백 처리.
+        category_id = await _resolve_gs_category_id(session, product, category_id)
 
         # creds가 비었으면 settings에서 조회.
         # (2026-05-25) store_gsshop 직접 호출 → resolver 위임 + account.tenant_id 자동 추출.
