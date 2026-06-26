@@ -404,6 +404,78 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                     _sent,
                 )
 
+        # 재고없음 감지 상품 → 마켓 삭제 + 주문 스냅샷(이미지/소싱처 보존) + DB 삭제
+        # 수동 삭제 버튼과 동일한 파이프: _snapshot_cp_to_orders → delete_from_markets → bulk_delete
+        if no_stock_product_ids:
+            from sqlalchemy import text as _t2
+            from backend.db.orm import get_write_session as _gws2
+            from backend.domain.samba.collector.repository import (
+                SambaCollectedProductRepository,
+            )
+            from backend.domain.samba.shipment.repository import (
+                SambaShipmentRepository as _SR2,
+            )
+            from backend.domain.samba.shipment.service import (
+                SambaShipmentService as _SS2,
+            )
+
+            _deleted = 0
+            for _pid in no_stock_product_ids:
+                _p = product_map.get(_pid)
+                if not _p:
+                    continue
+                _reg_accounts = list(getattr(_p, "registered_accounts", None) or [])
+                try:
+                    async with _gws2() as _del_sess:
+                        # 1) 주문에 이미지/소싱처 스냅샷 저장 + collected_product_id='DELETED'
+                        _cp_rows = (
+                            await _del_sess.execute(
+                                _t2(
+                                    "SELECT id, source_site, images->>0 AS thumb "
+                                    "FROM samba_collected_product WHERE id = :id"
+                                ),
+                                {"id": _pid},
+                            )
+                        ).fetchall()
+                        if _cp_rows:
+                            _cp_src = _cp_rows[0][1] or ""
+                            _cp_thumb = _cp_rows[0][2] or ""
+                            await _del_sess.execute(
+                                _t2(
+                                    "UPDATE samba_order "
+                                    "SET product_image = CASE WHEN product_image IS NULL OR product_image = '' "
+                                    "    THEN :img ELSE product_image END, "
+                                    "source_site = CASE WHEN source_site IS NULL OR source_site = '' "
+                                    "    THEN :src ELSE source_site END, "
+                                    "collected_product_id = 'DELETED' "
+                                    "WHERE collected_product_id = :cpid"
+                                ),
+                                {"img": _cp_thumb, "src": _cp_src, "cpid": _pid},
+                            )
+
+                        # 2) 마켓 삭제 (등록된 계정 전체)
+                        if _reg_accounts:
+                            _ship_svc2 = _SS2(_SR2(_del_sess), _del_sess)
+                            await _ship_svc2.delete_from_markets([_pid], _reg_accounts)
+
+                        # 3) 수집상품 DB 삭제
+                        _coll_repo = SambaCollectedProductRepository(_del_sess)
+                        await _coll_repo.delete_async(_pid)
+
+                        await _del_sess.commit()
+                    _deleted += 1
+                except Exception as _de:
+                    logger.warning(
+                        "[주문이슈체크] 자동삭제 실패 pid=%s: %s",
+                        _pid,
+                        str(_de)[:120],
+                    )
+            if _deleted:
+                logger.info(
+                    "[주문이슈체크] 재고없음 상품 %d개 마켓삭제·DB삭제·DELETED 처리 완료",
+                    _deleted,
+                )
+
     logger.info(
         "[주문이슈체크] 완료 — 검사 %d / 보류 %d / 가격X %d / 재고X %d / 소액배송완료 %d",
         summary["checked"],
