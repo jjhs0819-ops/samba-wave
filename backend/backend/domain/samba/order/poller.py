@@ -201,77 +201,65 @@ async def _fetch_new_order_numbers(
     return dict(new_by_market), tenant_ids_with_new
 
 
-async def _run_direct_order_sync(tenant_ids: set[str | None]) -> None:
-    """신규 주문 감지 시 잡 큐 없이 직접 동기화 실행 (전송 잡에 밀리지 않도록)."""
-    from sqlmodel import select
+async def _enqueue_order_sync_jobs(tenant_ids: set[str | None]) -> None:
+    """신규 주문 감지 → 테넌트별 order_sync 잡 발행 (전송 전용 워커 B가 처리).
 
-    from backend.api.v1.routers.samba.order import (
-        SyncOrdersRequest,
-        sync_orders_from_markets,
-    )
+    [2026-06-26] 기존 _run_direct_order_sync 는 api 프로세스 이벤트루프에서
+    sync_orders_from_markets + auto_check_order_issues(refresh_products_bulk 의
+    수백개 task swarm)를 직접 돌려 단일 워커 루프를 1~3초씩 막았다 →
+    '백엔드 서버 연결 실패' 근본 원인. 이를 order_sync 잡으로 위임해 api 루프를
+    비운다. 역마진/재고없음 자동판정(auto_check_order_issues)은 order_sync
+    핸들러 말미(payload.source == 'order_poller')에서 B 워커가 실행한다.
+    """
+    from sqlmodel import col, select
+
     from backend.db.orm import get_write_session
-    from backend.domain.samba.account.model import SambaMarketAccount
-
-    logger.info("[주문폴러] 직접 동기화 시작 (테넌트 수: %d)", len(tenant_ids))
+    from backend.domain.samba.job.model import (
+        JobStatus,
+        SambaJob,
+        generate_job_id,
+    )
 
     async with get_write_session() as session:
-        result = await session.exec(
-            select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)  # noqa: E712
-        )
-        all_accounts = result.all()
-
-    for tenant_id in tenant_ids:
-        accounts = (
-            [a for a in all_accounts if a.tenant_id == tenant_id or a.tenant_id is None]
-            if tenant_id is not None
-            else list(all_accounts)
-        )
-
-        for acc in accounts:
-            try:
-                # 마켓 API hang 시 폴러가 DB 풀 잠식 → 다른 워커까지 hang 도미노 차단.
-                # 1계정 최대 180초 + TimeoutError 시 명시적 rollback (asyncpg + CancelledError
-                # 좀비 회피, 2026-05-15 사고 기반).
-                async with get_write_session() as acc_session:
-                    try:
-                        res = await asyncio.wait_for(
-                            sync_orders_from_markets(
-                                body=SyncOrdersRequest(days=7, account_id=acc.id),
-                                session=acc_session,
-                                tenant_id=tenant_id,
+        for tenant_id in tenant_ids:
+            # 같은 테넌트의 order_sync 잡이 이미 대기/실행 중이면 중복 발행 안 함
+            existing = (
+                (
+                    await session.execute(
+                        select(SambaJob)
+                        .where(
+                            SambaJob.job_type == "order_sync",
+                            col(SambaJob.status).in_(
+                                [JobStatus.PENDING, JobStatus.RUNNING]
                             ),
-                            timeout=180,
+                            SambaJob.tenant_id == tenant_id,
                         )
-                    except (asyncio.TimeoutError, asyncio.CancelledError):
-                        try:
-                            await asyncio.wait_for(acc_session.rollback(), timeout=5)
-                        except Exception:
-                            pass
-                        raise
-                synced = res.get("total_synced", 0) if isinstance(res, dict) else 0
-                if synced:
-                    logger.info(
-                        "[주문폴러] %s: %d건 신규 저장",
-                        acc.market_name or acc.market_type,
-                        synced,
+                        .limit(1)
                     )
-            except Exception as exc:
-                logger.warning(
-                    "[주문폴러] %s 동기화 실패: %s",
-                    acc.market_name or acc.market_type,
-                    exc,
                 )
-
-        # 동기화 완료 → 역마진(가격X)/재고없음(재고X) 자동 판정 + 상품 갱신 + 메모 기록.
-        # 별도 트랜잭션(자체 세션)으로 실행 — 위 sync 트랜잭션과 분리.
-        try:
-            from backend.domain.samba.order.auto_issue_check import (
-                auto_check_order_issues,
+                .scalars()
+                .first()
             )
-
-            await auto_check_order_issues(tenant_id)
-        except Exception as exc:
-            logger.warning("[주문폴러] 주문이슈 자동체크 실패: %s", exc)
+            if existing:
+                logger.info(
+                    "[주문폴러] order_sync 잡 이미 진행 중 (tenant=%s, job=%s) — 스킵",
+                    tenant_id,
+                    existing.id,
+                )
+                continue
+            job = SambaJob(
+                id=generate_job_id(),
+                tenant_id=tenant_id,
+                job_type="order_sync",
+                payload={"days": 7, "source": "order_poller"},
+            )
+            session.add(job)
+            await session.flush()
+            logger.info(
+                "[주문폴러] order_sync 잡 발행 (tenant=%s, job=%s)", tenant_id, job.id
+            )
+        # get_write_session 은 정상 종료 시 auto-commit 안 함 → 명시적 commit 필수
+        await session.commit()
 
 
 async def _create_cs_sync_job(session, tenant_id: str | None) -> None:
@@ -339,8 +327,9 @@ async def start_order_poller() -> None:
                 # 이관됨 — 여기 30분 폴러에서는 더 이상 cs_sync 잡을 만들지 않는다.
 
             if new_by_market and not is_night:
-                # 잡 큐 대신 직접 동기화 — 전송 잡에 밀리지 않도록
-                asyncio.create_task(_run_direct_order_sync(tenant_ids))
+                # api 루프 블로킹 방지 — 직접 동기화 대신 전송워커(B)에 order_sync 잡 위임
+                # (구 _run_direct_order_sync 인라인 경로 제거, 2026-06-26)
+                await _enqueue_order_sync_jobs(tenant_ids)
 
             if new_by_market:
                 total = sum(len(v) for v in new_by_market.values())

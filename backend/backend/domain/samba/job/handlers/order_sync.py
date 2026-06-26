@@ -223,6 +223,20 @@ async def run(
 
     _add_job_log(job.id, f"전체마켓 주문수집 완료 — 총 {total_synced}건 신규 저장")
 
+    # 주문폴러 발행 잡만 역마진/재고없음 자동판정 실행 (구 _run_direct_order_sync 이관,
+    # 2026-06-26). 수동 '전체마켓 주문수집' 버튼(source 없음)은 기존대로 동작 무변경.
+    # refresh_products_bulk 의 task swarm 부하를 api 루프 대신 B 워커에서 처리.
+    if (job.payload or {}).get("source") == "order_poller":
+        try:
+            from backend.domain.samba.order.auto_issue_check import (
+                auto_check_order_issues,
+            )
+
+            await auto_check_order_issues(job.tenant_id)
+            _add_job_log(job.id, "주문이슈 자동체크 완료(역마진/재고없음)")
+        except Exception as _ac_err:
+            logger.warning(f"[order_sync] 주문이슈 자동체크 실패(무시): {_ac_err}")
+
     # 잡 완료 — 워커 세션이 idle in transaction/풀 락으로 hang 되면 status가
     # 영원히 'running' 으로 남아 프론트가 "주문수집 중..." 무한 표시되는 사고가 있어
     # 독립된 fresh 세션에서 즉시 commit (워커 세션과 분리)
