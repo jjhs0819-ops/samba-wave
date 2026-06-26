@@ -8178,6 +8178,36 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
+                elif _pid and _ch_id and not order_data.get("collected_product_id"):
+                    # 매칭 실패 → 삼바에서 등록했다가 삭제된 상품 케이스.
+                    # 같은 (channel_id, product_id) 과거 주문에서 이미지/소싱처 백필
+                    # + collected_product_id='DELETED' 표시.
+                    try:
+                        async with get_read_session() as _ghost_sess:
+                            _ghost_row = (
+                                await _ghost_sess.execute(
+                                    _sa_text(
+                                        "SELECT product_image, source_url, source_site "
+                                        "FROM samba_order "
+                                        "WHERE channel_id = :ch AND product_id = :pid "
+                                        "  AND (product_image IS NOT NULL OR source_url IS NOT NULL) "
+                                        "ORDER BY created_at DESC LIMIT 1"
+                                    ),
+                                    {"ch": _ch_id, "pid": _pid},
+                                )
+                            ).fetchone()
+                        if _ghost_row and any(_ghost_row):
+                            if _ghost_row[0] and not order_data.get("product_image"):
+                                order_data["product_image"] = _ghost_row[0]
+                            if _ghost_row[1] and not order_data.get("source_url"):
+                                order_data["source_url"] = _ghost_row[1]
+                            if _ghost_row[2] and not order_data.get("source_site"):
+                                order_data["source_site"] = _ghost_row[2]
+                            order_data["collected_product_id"] = "DELETED"
+                    except Exception as _ge:
+                        logger.warning(
+                            "[주문동기화] 삭제상품 백필 실패(무시): %s", str(_ge)[:80]
+                        )
                 # sourcing_account_id 보충 — source_site 확정됐고 계정이 비어있으면 (#299)
                 # LOTTEON 등 source_site 매칭 성공 후 sourcing_account_id="etc"/NULL 잔존 방지
                 _cur_said = order_data.get("sourcing_account_id") or ""
