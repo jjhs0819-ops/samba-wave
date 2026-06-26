@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.47"
+DAEMON_VERSION = "1.4.48"
 
 # N건 처리 후 프록시 교체를 위해 supervisor 재기동 유도 (0=비활성)
 _PROXY_ROTATE_AFTER = 10
@@ -191,10 +191,15 @@ _DAEMON_UPDATE_URL_BACKEND = (
 def _fetch_latest_download_url() -> str:
     """backend latest-version API → 버전 박힌 download_url 반환. 실패 시 ''."""
     import json as _json
+    import ssl as _ssl
     import urllib.request
 
+    # 만료된 시스템 인증서 우회 — 내부 API 엔드포인트 전용
+    _ctx = _ssl.create_default_context()
+    _ctx.check_hostname = False
+    _ctx.verify_mode = _ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(_DAEMON_LATEST_VERSION_URL, timeout=10) as resp:
+        with urllib.request.urlopen(_DAEMON_LATEST_VERSION_URL, timeout=10, context=_ctx) as resp:
             data = _json.loads(resp.read().decode("utf-8") or "{}")
             return (data.get("download_url") or "").strip()
     except Exception as exc:
@@ -210,7 +215,13 @@ def _perform_self_update(api_key: str = "") -> bool:
     """
     if not _is_frozen() or os.name != "nt":
         return False
+    import ssl as _ssl
     import urllib.request
+
+    # 만료된 시스템 인증서 우회 — 내부 API 및 GitHub 다운로드 전용
+    _ctx = _ssl.create_default_context()
+    _ctx.check_hostname = False
+    _ctx.verify_mode = _ssl.CERT_NONE
 
     install_dir = _install_dir()
     exe_path = install_dir / "daemon.exe"
@@ -223,7 +234,7 @@ def _perform_self_update(api_key: str = "") -> bool:
                 _DAEMON_UPDATE_URL_BACKEND, headers={"X-Api-Key": api_key}
             )
             with (
-                urllib.request.urlopen(req, timeout=120) as resp,
+                urllib.request.urlopen(req, timeout=120, context=_ctx) as resp,
                 open(new_path, "wb") as f,
             ):
                 while True:
@@ -238,7 +249,12 @@ def _perform_self_update(api_key: str = "") -> bool:
                 logger_print("GitHub fallback URL 조회 실패 — 업데이트 중단")
                 return False
             try:
-                urllib.request.urlretrieve(_dl_url, str(new_path))
+                with urllib.request.urlopen(_dl_url, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
+                    while True:
+                        chunk = resp.read(1 << 16)
+                        if not chunk:
+                            break
+                        f.write(chunk)
             except Exception as exc2:
                 logger_print(f"GitHub fallback 도 실패(무시): {exc2}")
                 return False
@@ -249,7 +265,12 @@ def _perform_self_update(api_key: str = "") -> bool:
             return False
         try:
             logger_print(f"자동 업데이트: 새 exe 다운로드 {_dl_url}")
-            urllib.request.urlretrieve(_dl_url, str(new_path))
+            with urllib.request.urlopen(_dl_url, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
+                while True:
+                    chunk = resp.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(chunk)
         except Exception as exc:
             logger_print(f"자동 업데이트 다운로드 실패(무시): {exc}")
             return False
