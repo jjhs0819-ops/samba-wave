@@ -2692,7 +2692,19 @@ class SambaShipmentService:
         }
 
         # 조합 태그 순서대로 값 치환 (빈 값이면 태그 자체 제거)
-        parts = [tag_map.get(tag, "") if tag in tag_map else tag for tag in composition]
+        def _resolve_tag(tag: str) -> str:
+            if tag in tag_map:
+                return tag_map[tag]
+            # {태그} 패턴인데 미등록 — 공백/언더스코어 혼용 정규화 시도
+            # (UI가 "{브랜드명 영문}" 공백으로 저장 → "{브랜드명_영문}" 키와 미매칭 방지)
+            if tag.startswith("{") and tag.endswith("}"):
+                norm = tag.replace(" ", "_")
+                if norm in tag_map:
+                    return tag_map[norm]
+                return ""  # 치환 실패한 미등록 태그는 마켓 상품명에 노출 금지
+            return tag  # 일반 리터럴 텍스트는 유지
+
+        parts = [_resolve_tag(tag) for tag in composition]
         composed = " ".join(p for p in parts if p and p.strip())
 
         # 치환어 적용 (동시치환/순차치환 분기)
@@ -2775,6 +2787,8 @@ class SambaShipmentService:
         # 방어: 데이터(style_code/name)에 섞인 <p> 등 HTML 태그가 상품명에 흘러나오지
         # 않도록 최종 단계에서 제거 + 공백 정리
         composed = re.sub(r"<[^>]*>", "", composed)
+        # 방어: 치환되지 못한 {태그} 잔여물 제거 (쿠팡 등 마켓 상품명에 "{브랜드명 영문}" 노출 방지)
+        composed = re.sub(r"\{[^{}]*\}", "", composed)
         composed = re.sub(r"\s{2,}", " ", composed)
 
         return composed.strip()
