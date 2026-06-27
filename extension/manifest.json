@@ -58,6 +58,7 @@
     "http://localhost:3000/*",
     "https://samba-wave-api-363598397345.asia-northeast3.run.app/*",
     "https://api.samba-wave.co.kr/*",
+    "https://samba.blog-dominstyle.com/*",
     "https://*.vercel.app/*",
     "https://postcode.map.daum.net/*",
     "https://postcode.map.kakao.com/*"
