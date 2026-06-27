@@ -1533,9 +1533,37 @@ async def _parse_fashionplus(product: Any) -> RefreshResult:
         f"원가 {old_cost}→{new_cost}, 판매가 {old_sale}→{new_sale}, 배송비 {shipping_fee}"
     )
     new_options = detail.get("options") or None
-    # 옵션 기반 품절 판정: 모든 옵션 재고 0이면 sold_out
+    opts_fetched = bool(detail.get("_options_fetched"))
+    html_sold_out = bool(detail.get("is_sold_out"))
+
+    # 사이즈별 품절 복원: 패션플러스는 품절 사이즈를 옵션 API 응답에서 아예 제거한다.
+    # old 옵션 중 new에 없는 것을 stock=0으로 되살려 마켓에 사이즈별 품절을 전달한다.
+    # (재입고되면 API가 다시 그 옵션을 반환 → new_keys에 포함 → 복원 안 함, 자가치유)
+    old_options = getattr(product, "options", None) or []
+    if opts_fetched and new_options and old_options:
+        new_keys = {
+            (o.get("name") or "").strip() for o in new_options if isinstance(o, dict)
+        }
+        for oo in old_options:
+            if not isinstance(oo, dict):
+                continue
+            nm = (oo.get("name") or "").strip()
+            if nm and nm not in new_keys:
+                merged = dict(oo)
+                merged["stock"] = 0
+                merged["isSoldOut"] = True
+                new_options.append(merged)
+
+    # 품절 판정
     is_sold_out = False
-    if new_options:
+    if html_sold_out:
+        # 제품 레벨 품절 플래그 (전체 품절)
+        is_sold_out = True
+    elif opts_fetched and not new_options:
+        # 옵션 fetch 성공 + 옵션 0개 = 완전 품절 (fetch 실패와 구분)
+        is_sold_out = True
+    elif new_options:
+        # 남은 옵션 전부 재고 0이면 품절
         is_sold_out = all(
             (opt.get("stock", 0) if isinstance(opt, dict) else 0) <= 0
             for opt in new_options

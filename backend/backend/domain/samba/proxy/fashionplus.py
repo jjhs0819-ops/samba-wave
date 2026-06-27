@@ -354,6 +354,10 @@ class FashionPlusClient:
             result = self._parse_detail_html(resp.text, product_id)
 
             # 옵션/재고 API 호출
+            # _options_fetched: 옵션 fetch가 실제로 성공했는지 표시.
+            # 패션플러스는 품절 옵션을 응답에서 제거하므로 "빈 옵션=완전품절"을
+            # fetch 실패(차단/네트워크)와 구분하려면 이 플래그가 필요하다.
+            result["_options_fetched"] = False
             try:
                 opt_resp = await client.get(
                     f"{self.DETAIL_URL}/{product_id}/fetch-option-data",
@@ -365,6 +369,7 @@ class FashionPlusClient:
                 if opt_resp.status_code == 200:
                     opt_data = opt_resp.json()
                     result["options"] = self._parse_options(opt_data)
+                    result["_options_fetched"] = True
             except RateLimitError:
                 raise
             except Exception as e:
@@ -510,7 +515,16 @@ class FashionPlusClient:
             "care_instructions": "",
             "quality_guarantee": "",
             "size_info": "",
+            "is_sold_out": False,
+            "saleStatus": "in_stock",
         }
+
+        # 0) 제품 레벨 품절 플래그 — 전체 품절 감지용.
+        #    (일부 사이즈만 품절이면 이 값은 False라 옵션 API 누락으로 별도 판정)
+        m_sold = re.search(r"isSoldout['\"\s:=]+['\"]?(true|false)", html, re.I)
+        if m_sold and m_sold.group(1).lower() == "true":
+            result["is_sold_out"] = True
+            result["saleStatus"] = "sold_out"
 
         # 1) JSON-LD에서 기본 정보
         json_m = re.search(
