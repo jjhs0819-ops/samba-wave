@@ -1911,16 +1911,26 @@ class SambaShipmentService:
                     # 계정 설정탭 feeRate 우선 — policy market_policies.feeRate 오버라이드
                     _acct_extras = (account.additional_fields or {}) if account else {}
                     _acct_fee_rate = int(_acct_extras.get("feeRate") or 0)
+                    _pkey = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
+                    # GS샵: 정책의 계정별 설정(gsSettingsByAccount[account.id].feeRate)이
+                    # 있으면 그 계정 판매수수료를 판매가 형성에 적용 (마놀 25% / 캐논 13% 등).
+                    # 한 정책에 GS 계정이 여러 개 묶여 계정마다 수수료가 다른 경우 대응.
+                    _acc_id = str(getattr(account, "id", "") or "") if account else ""
+                    if _pkey and _acc_id:
+                        _gs_by_acc = (
+                            policy_market_data.get(_pkey, {}) or {}
+                        ).get("gsSettingsByAccount") or {}
+                        _gs_acc_cfg = _gs_by_acc.get(_acc_id)
+                        if isinstance(_gs_acc_cfg, dict) and _gs_acc_cfg.get("feeRate"):
+                            _acct_fee_rate = int(_gs_acc_cfg["feeRate"])
                     _effective_market_data = policy_market_data
-                    if _acct_fee_rate:
-                        _pkey = MARKET_TYPE_TO_POLICY_KEY.get(market_type, "")
-                        if _pkey:
-                            _mp_copy = dict(policy_market_data.get(_pkey, {}))
-                            _mp_copy["feeRate"] = _acct_fee_rate
-                            _effective_market_data = {
-                                **policy_market_data,
-                                _pkey: _mp_copy,
-                            }
+                    if _acct_fee_rate and _pkey:
+                        _mp_copy = dict(policy_market_data.get(_pkey, {}))
+                        _mp_copy["feeRate"] = _acct_fee_rate
+                        _effective_market_data = {
+                            **policy_market_data,
+                            _pkey: _mp_copy,
+                        }
                     calc_price = calc_market_price(
                         effective_cost,
                         policy.pricing,
