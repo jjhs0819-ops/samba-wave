@@ -146,6 +146,32 @@ async def _find_reusable_goods_no(session, product: dict[str, Any], account) -> 
     return ""
 
 
+async def _recheck_own_goods_no(session, product: dict[str, Any], account) -> str:
+    """#495: advisory lock 획득 후 자기 행의 market_product_nos[account] 재조회.
+
+    같은 (product_id, account) 를 동시 잡 둘이 최초 등록하는 race 에서, 먼저
+    commit 한 잡의 goods_no 를 두번째 잡이 재사용하도록 한다.
+    (_find_reusable_goods_no 는 id <> self 라 같은 행은 못 잡으므로 별도 필요)
+    """
+    from sqlalchemy import text as _t
+
+    _self_id = str(product.get("id") or "")
+    if not _self_id or not account:
+        return ""
+    try:
+        _r = await session.execute(
+            _t(
+                "SELECT market_product_nos->>:k FROM samba_collected_product "
+                "WHERE id = :i"
+            ),
+            {"k": str(account.id), "i": _self_id},
+        )
+        return str(_r.scalar() or "").strip()
+    except Exception as e:
+        logger.warning(f"[롯데홈쇼핑][#495] 자기행 goods_no 재조회 실패(무시): {e}")
+        return ""
+
+
 def _transform_for_lottehome(
     product: dict[str, Any],
     category_id: str,
@@ -1048,9 +1074,32 @@ class LotteHomePlugin(MarketPlugin):
         # P2 중복방지(issue #365): 같은 style_code 가 이미 이 계정에 등록돼 있으면
         # register_goods(새 goods_no 발급)를 스킵하고 기존 goods_no 를 공유한다.
         # → 중복 goods_no 발급 차단(주문 미매칭 근원 제거). 실제 등록 API 호출 0건.
+        # ── #495 동시성 race 방지 ───────────────────────────────────────
+        # 같은 (style_code, account) 최초 등록이 서로 다른 잡으로 동시에 들어오면
+        # _find_reusable_goods_no 가 둘 다 ""(commit 전)를 반환 → 둘 다 register
+        # → goods_no 2개 발급(유령상품). pg_advisory_xact_lock 으로 전 프로세스
+        # 직렬화하고, 락 획득 후 mpn 을 재조회해 이미 등록됐으면 재사용한다.
+        # xact lock 은 아래 mpn 저장 session.commit() 시점에 자동 해제된다.
         _reuse_no = ""
         if not existing_no and account:
-            _reuse_no = await _find_reusable_goods_no(session, product, account)
+            from sqlalchemy import text as _t_lock
+
+            _adv_style = str(product.get("style_code") or "").strip()
+            if _adv_style:
+                try:
+                    await session.execute(
+                        _t_lock("SELECT pg_advisory_xact_lock(hashtext(:lk))"),
+                        {"lk": f"lottehome:reg:{account.id}:{_adv_style}"},
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[롯데홈쇼핑][#495] advisory lock 획득 실패(무시): {e}"
+                    )
+            # 락 획득 후 재조회: 자기 행(같은 product_id+account race) 우선
+            _reuse_no = await _recheck_own_goods_no(session, product, account)
+            # 같은 style 다른 cp 행(#365 + 다른 product_id race)
+            if not _reuse_no:
+                _reuse_no = await _find_reusable_goods_no(session, product, account)
         if _reuse_no:
             goods_no = _reuse_no
             result = {"data": {"_reused_goods_no": _reuse_no}}
