@@ -629,3 +629,7 @@ backend/scripts/_*.py
 
 # 카테고리 학습데이터 - 운영 중 자동 재생성, fork별 DB 상이 (issue #333)
 backend/backend/domain/samba/category/rules_exported.py
+
+# 로컬 이전 환경변수 (시크릿)
+deploy/local/local.env
+local.env

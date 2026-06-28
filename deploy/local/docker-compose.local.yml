@@ -1,0 +1,73 @@
+# 로컬 이전용 compose — 집PC에서 백엔드 + 로컬 Postgres 구동
+#
+# Phase A(검증): DISABLE_BACKGROUND_WORKERS=1 로 백그라운드 워커/오토튠/전송 전면 비활성.
+#   → 내 PC에서 라이브 마켓 전송·EMS 호출·스크래핑이 절대 안 돔 (데이터/API만 검증).
+# Phase D(컷오버) 때 워커 활성 + EMS 터널 라우팅 적용 후 가동.
+#
+# 사용:
+#   cd deploy/local
+#   cp local.env.example local.env   # 시크릿 채우기
+#   docker compose -f docker-compose.local.yml up -d postgres   # PG 먼저
+#   # (데이터 마이그레이션: README 참조 — Cloud SQL dump → 로컬 restore)
+#   docker compose -f docker-compose.local.yml up -d samba-api  # API 검증
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LOCAL_DB_USER:-samba}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD 필요 (local.env)}
+      POSTGRES_DB: ${LOCAL_DB_NAME:-samba}
+      # 한국어 정렬/대용량 대비 기본 설정
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    command:
+      # 일상PC 메모리 공존 고려 — 보수적. 전용화/여유 시 상향(shared_buffers=2GB 등)
+      - "postgres"
+      - "-c"
+      - "max_connections=200"
+      - "-c"
+      - "shared_buffers=512MB"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      # 로컬 마이그레이션/검증 전용 — 외부 노출 안 함(127.0.0.1 바인드)
+      - "127.0.0.1:5432:5432"
+    networks: [samba-local]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_DB_USER:-samba}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  samba-api:
+    build:
+      context: ../../backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./local.env
+    environment:
+      ENVIRONMENT: production
+      # 로컬 PG 는 SSL 미사용 → SSL 강제 해제
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      WEB_CONCURRENCY: "1"
+      PROCESS_ROLE: api
+      # [Phase A 안전장치] 백그라운드 전면 비활성 — 라이브 마켓/EMS/스크래핑 무영향.
+      # Phase D 컷오버 시 제거(또는 0)하고 워커 활성.
+      DISABLE_BACKGROUND_WORKERS: "1"
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [samba-local]
+
+volumes:
+  pg_data:
+
+networks:
+  samba-local:
