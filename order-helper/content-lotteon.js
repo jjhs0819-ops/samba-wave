@@ -125,10 +125,8 @@
     await setJob({ addrPhase: 'running' });
     await sendMsg('SUPPRESS_DIALOGS'); // 네이티브 alert/confirm 자동수락
     const c = Object.assign({}, job.customer || {});
-    if (!String(c.addr2 || '').trim()) {
-      const sp = splitAddress(c.addr, '');
-      if (sp.address2 && sp.address2.trim()) { c.addr = sp.address1; c.addr2 = sp.address2; }
-    }
+    // 라자다 등 — 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리 (이미 분리돼도 멱등).
+    { const sp = splitAddress(c.addr, c.addr2 || ''); c.addr = sp.address1; c.addr2 = sp.address2; }
     const fail = (m) => { banner('🛈 ' + m + ' — 배송지는 직접 입력 후 진행해주세요.', '#c92a2a'); setJob({ addrPhase: null }); };
 
     // 1) 배송지 변경 모달

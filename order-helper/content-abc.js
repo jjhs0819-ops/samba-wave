@@ -94,11 +94,8 @@
   async function stepOrder(job) {
     if (job.addrDone) { banner('배송지 입력 완료 ✅ 결제(결제하기)는 직접 진행하세요.', '#1971c2'); return; }
     const c = Object.assign({}, job.customer || {});
-    // 라자다 등 — 상세주소가 비어있고 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리
-    if (!String(c.addr2 || '').trim()) {
-      const sp = splitAddress(c.addr, '');
-      if (sp.address2 && sp.address2.trim()) { c.addr = sp.address1; c.addr2 = sp.address2; }
-    }
+    // 라자다 등 — 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리 (이미 분리돼도 멱등).
+    { const sp = splitAddress(c.addr, c.addr2 || ''); c.addr = sp.address1; c.addr2 = sp.address2; }
     banner('배송지 자동입력 중...');
     // 신규입력 모드
     const radio = await waitFor('#newDlvy', 10000);

@@ -169,11 +169,8 @@
     if (job.addrPhase === 'running') return;
     await setJob({ addrPhase: 'running' });
     const c = Object.assign({}, job.customer || {});
-    // 라자다 등 — 상세주소가 비어있고 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리
-    if (!String(c.addr2 || '').trim()) {
-      const sp = splitAddress(c.addr, '');
-      if (sp.address2 && sp.address2.trim()) { c.addr = sp.address1; c.addr2 = sp.address2; }
-    }
+    // 라자다 등 — 기본주소에 'A동 GMARKET(...)'이 합쳐진 경우 분리 (이미 분리돼도 멱등).
+    { const sp = splitAddress(c.addr, c.addr2 || ''); c.addr = sp.address1; c.addr2 = sp.address2; }
 
     // 1) '배송지 변경' → 모달(iframe) 오픈
     banner('배송지 변경 여는 중...');
