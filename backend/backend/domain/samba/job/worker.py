@@ -2102,19 +2102,40 @@ class JobWorker:
                 # (item_session이 여러 계정×마켓HTTP 동안 열리면 pool_recycle 만료
                 # → greenlet_spawn 에러. _transmit_session은 전송 중에만 점유)
                 async with get_write_session() as _transmit_session:
-                    item_svc = SambaShipmentService(
-                        SambaShipmentRepository(_transmit_session),
-                        _transmit_session,
+                    # 전송잡 전용 idle-in-transaction 캡(90s) — 마켓 HTTP 행(hang) 시 PostgreSQL이
+                    # 세션 자동 종료해 write 풀 슬롯 회수. collect 잡(최대 139s 점유, orm.py 300s)과
+                    # 달리 전송은 단일 마켓 HTTP<30s 라 90s 연속 idle = 명백한 행. 전역 하향은 collect를
+                    # 죽여 워커 크래시(orm.py 주석 참조)하므로 전송 세션에만 한정한다.
+                    # start_update 내부 commit 다수 → SET LOCAL은 리셋되므로 세션레벨 SET +
+                    # finally RESET(풀 반납 전 기본값 복구로 collect 회귀 방지).
+                    from sqlalchemy import text as _iit_text
+
+                    await _transmit_session.execute(
+                        _iit_text("SET idle_in_transaction_session_timeout = '90000'")
                     )
-                    result = await item_svc.start_update(
-                        [pid],
-                        update_items,
-                        effective_account_ids,
-                        skip_unchanged=skip_unchanged,
-                        skip_policy_account_filter=_tetris_enabled,
-                        skip_refresh=skip_refresh,
-                    )
-                    await _transmit_session.commit()
+                    try:
+                        item_svc = SambaShipmentService(
+                            SambaShipmentRepository(_transmit_session),
+                            _transmit_session,
+                        )
+                        result = await item_svc.start_update(
+                            [pid],
+                            update_items,
+                            effective_account_ids,
+                            skip_unchanged=skip_unchanged,
+                            skip_policy_account_filter=_tetris_enabled,
+                            skip_refresh=skip_refresh,
+                        )
+                        await _transmit_session.commit()
+                    finally:
+                        try:
+                            await _transmit_session.execute(
+                                _iit_text(
+                                    "SET idle_in_transaction_session_timeout = '300000'"
+                                )
+                            )
+                        except Exception:
+                            pass
                 # 작업취소/비상정지로 start_update가 루프 첫 줄에서 break →
                 # results 비어 있고 cancelled>0. 취소는 실패가 아니므로(취소 ≠ 실패)
                 # 집계에서 제외하고 즉시 반환. 배치 루프(1487)가 다음 주기에 정상 중단 처리.
