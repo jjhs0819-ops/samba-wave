@@ -470,25 +470,22 @@ class GsShopClient:
             S = 주문/반품 (신규주문, 교환주문, 반품)
             C = 취소 주문
             N = 미배송(배송불필요/수거불필요) 주문
-        sd_dt: 조회 날짜 (YYYYMMDD)
-        """
-        from zoneinfo import ZoneInfo
+        sd_dt: 조회 날짜 (YYYYMMDD). GS ORD01은 sdDt '하루치'만 반환하므로
+            기간 조회는 호출자가 날짜별로 반복 호출해야 한다.
 
-        now = datetime.now(tz=ZoneInfo("Asia/Seoul"))
-        sysdate = now.strftime("%Y%m%d%H%M%S")
+        반환: 주문 dict 리스트 (응답 data[].resultList 를 평탄화).
+        """
         token = self._generate_token()
 
-        body = {
+        # ORD01은 GET + 쿼리파라미터 (POST는 405 반환). 명세서 GET 표기가 정답.
+        params = {
             "documentId": "ORDINF",
             "supCd": self.sup_cd,
             "processType": process_type,
             "sdDt": sd_dt,
         }
-
-        # ORD01은 POST + JSON body (명세서 GET 표기이나 body 전달 필요)
         url = self.base_url + "/api/v5/dtr/supSendOrderInfo.gs"
         headers = {
-            "Content-Type": "application/json",
             "Accept": "application/json",
             "supCd": self.sup_cd,
             "token": token,
@@ -496,35 +493,52 @@ class GsShopClient:
 
         timeout = httpx.Timeout(60.0, connect=10.0)
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, headers=headers, json=body)
+            resp = await client.get(url, headers=headers, params=params)
             text = resp.text
             try:
                 data = json.loads(text)
             except json.JSONDecodeError:
                 data = {"raw": text}
 
+        # 응답 래퍼: {"result":"success","message":null,"code":"200","data":[...]}
+        _rows = data.get("data")
         logger.info(
             f"[GS샵ORD01] processType={process_type} sdDt={sd_dt} "
-            f"-> {resp.status_code} resultCd={data.get('resultCd', '')}"
+            f"-> {resp.status_code} result={data.get('result', '')} "
+            f"code={data.get('code', '')} cnt={len(_rows) if isinstance(_rows, list) else 0}"
         )
 
         if not resp.is_success:
             raise GsShopApiError(
                 code=resp.status_code,
-                message=(data.get("resultMsg") or text[:120]),
+                message=(data.get("message") or data.get("resultMsg") or text[:120]),
                 data=data,
             )
 
-        # 응답: {"resultCd":"S", "resultList":[...], ...}
-        result_cd = data.get("resultCd", "")
-        if result_cd == "E":
+        # 명시적 실패만 예외 — result=='fail' 또는 code!=200(빈조회는 success/200)
+        _result = str(data.get("result", "")).lower()
+        _code = str(data.get("code", ""))
+        if (_result and _result not in ("success",)) or (
+            _code and _code not in ("200",)
+        ):
             raise GsShopApiError(
                 code=200,
-                message=data.get("resultMsg", "주문 조회 실패"),
+                message=(data.get("message") or "주문 조회 실패"),
                 data=data,
             )
 
-        return data.get("resultList") or []
+        # data[] 각 항목의 resultList(단건 dict)를 평탄화해 주문 리스트로 반환.
+        orders: list[dict[str, Any]] = []
+        if isinstance(_rows, list):
+            for _it in _rows:
+                if not isinstance(_it, dict):
+                    continue
+                _rl = _it.get("resultList")
+                if isinstance(_rl, dict) and _rl:
+                    orders.append(_rl)
+                elif isinstance(_rl, list):
+                    orders.extend(o for o in _rl if isinstance(o, dict))
+        return orders
 
     # ------------------------------------------------------------------
     # 발주확인/배송처리 (ORD02/ORD03)
