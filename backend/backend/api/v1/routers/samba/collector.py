@@ -1729,19 +1729,19 @@ async def product_dashboard_stats(
             except Exception as e:
                 logger.warning("대시보드 계정 매핑 조회 실패: %s", e)
 
+        # acct_map에 없는 aid = 삭제된 계정 잔존 데이터 → 제외
         by_account = sorted(
             [
                 {
                     "account_id": aid,
-                    "market_name": acct_map.get(aid, {}).get(
-                        "market_name", "알 수 없음"
-                    ),
-                    "account_label": acct_map.get(aid, {}).get("account_label", ""),
+                    "market_name": acct_map[aid]["market_name"],
+                    "account_label": acct_map[aid].get("account_label", ""),
                     "registered": cnt,
                     "sold_products": sold_by_acct.get(aid, 0),
                     "brands": brand_by_acct.get(aid, []),
                 }
                 for aid, cnt in acct_totals.items()
+                if aid in acct_map
             ],
             key=lambda x: x["registered"],
             reverse=True,
