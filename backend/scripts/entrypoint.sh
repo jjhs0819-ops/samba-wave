@@ -66,8 +66,11 @@ exit(0 if r else 1)
     _CORES=$(nproc 2>/dev/null || echo 2)
     _WK=${WORKER_REPLICAS:-$(( _CORES - 1 ))}
     if [ "$_WK" -lt 1 ]; then _WK=1; fi
-    echo "Starting TRANSMIT-ONLY worker (PROCESS_ROLE=worker, gunicorn -w $_WK, cores=$_CORES)..."
-    exec uv run --no-dev -m gunicorn -w "$_WK" -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:8080 --timeout 120 --graceful-timeout 600
+    # 바인드 포트 env override — 전부-터널 구성에서 api 와 netns 공유 시 8080 충돌 방지
+    # (network_mode: service:wireguard → worker 는 WORKER_BIND_PORT=8081 로 분리)
+    _WBP=${WORKER_BIND_PORT:-8080}
+    echo "Starting TRANSMIT-ONLY worker (PROCESS_ROLE=worker, gunicorn -w $_WK, cores=$_CORES, port=$_WBP)..."
+    exec uv run --no-dev -m gunicorn -w "$_WK" -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:"$_WBP" --timeout 120 --graceful-timeout 600
   fi
 
   # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완

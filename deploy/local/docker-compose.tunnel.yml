@@ -1,0 +1,99 @@
+# 전부-터널 구성 — 백엔드 모든 아웃바운드가 WireGuard 컨테이너 거쳐 GCP 정적IP로 나감.
+# 마켓 IP 화이트리스트/CDN 변동 문제 영구 해결 (마이그레이션 전처럼 전부 정적IP).
+# 집 본체(ABC 데몬 스크래핑)는 영향 없음 — 컨테이너만 터널.
+#
+# 전제: 집 호스트 WireGuard 서비스(samba-wg) 중지 상태여야 함 (10.8.0.2 중복 방지).
+# 사용: $env:BG_DISABLE='0'; docker compose --env-file local.env -f docker-compose.tunnel.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LOCAL_DB_USER:-samba}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD 필요}
+      POSTGRES_DB: ${LOCAL_DB_NAME:-samba}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    command: ["postgres", "-c", "max_connections=400", "-c", "shared_buffers=2GB"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [samba-local]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_DB_USER:-samba}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # WireGuard 게이트웨이 — api/worker 가 이 netns 공유. AllowedIPs=0.0.0.0/0(wg/wg0.conf)
+  # → samba-local(172.x) 빼고 전부 터널. 인바운드(GCP→10.8.0.2:8080)도 이 컨테이너가 받음.
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    cap_add: [NET_ADMIN]
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./wg:/config/wg_confs
+    ports:
+      - "127.0.0.1:8080:8080" # 로컬 헬스체크용 (인바운드는 10.8.0.2 직접)
+    networks: [samba-local]
+    restart: unless-stopped
+
+  samba-api:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      WEB_CONCURRENCY: "1"
+      PROCESS_ROLE: api
+      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
+      AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
+      AUTOTUNE_QUEUE_CAP: "0"
+      AUTOTUNE_QUEUE_CAP_PER_MARKET: "0"
+      DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+
+  samba-worker:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: worker
+      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync"
+      WORKER_REPLICAS: "4"
+      # api 와 같은 netns(service:wireguard) 공유 → 8080 충돌 방지 위해 worker 는 8081
+      WORKER_BIND_PORT: "8081"
+      DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+
+volumes:
+  pg_data:
+
+networks:
+  samba-local:
