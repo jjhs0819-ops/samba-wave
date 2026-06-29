@@ -9425,8 +9425,10 @@ async def sync_orders_from_markets(
     except Exception as _upd_err:
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
-    # PlayAuto 미매칭 주문 자동 백필 — 동기화 후 collected_product_id IS NULL 잔존 해소.
+    # PlayAuto/롯데홈쇼핑 미매칭 주문 자동 백필 — 동기화 후 collected_product_id IS NULL 잔존 해소.
     # 현대H몰 등 PlayAuto 경유 마켓 주문은 style_code 매칭이 실패해도 DB에 저장은 됨.
+    # 롯데홈쇼핑도 인입 당시 수집상품이 없거나 다중후보면 NULL로 남는데, 과거엔
+    # playauto 전용이라 재시도 루프가 없어 누적됐다(2026-06-29 1,957건 적체 확인).
     # 매 sync 완료 시 재시도해 누적 미매칭 해소.
     try:
         from sqlalchemy import text as _pa_bf_text
@@ -9435,7 +9437,7 @@ async def sync_orders_from_markets(
             await session.execute(
                 _pa_bf_text(
                     "SELECT id, product_name FROM samba_order "
-                    "WHERE source = 'playauto' "
+                    "WHERE source IN ('playauto', 'lottehome') "
                     "AND collected_product_id IS NULL "
                     "AND product_name IS NOT NULL AND product_name != '' "
                     "LIMIT 500"
@@ -9488,10 +9490,10 @@ async def sync_orders_from_markets(
                 if _pa_linked:
                     await session.commit()
                     logger.info(
-                        f"[주문동기화] PlayAuto 미매칭 자동 백필 {_pa_linked}건 완료"
+                        f"[주문동기화] PlayAuto/롯데홈 미매칭 자동 백필 {_pa_linked}건 완료"
                     )
     except Exception as _pa_bf_err:
-        logger.warning(f"[주문동기화] PlayAuto 백필 실패(무시): {_pa_bf_err}")
+        logger.warning(f"[주문동기화] PlayAuto/롯데홈 백필 실패(무시): {_pa_bf_err}")
 
     if total_synced > 0:
         from backend.utils.kakao_notify import send_kakao_message
