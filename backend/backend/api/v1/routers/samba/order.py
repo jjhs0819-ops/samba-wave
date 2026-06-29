@@ -7163,6 +7163,7 @@ async def sync_orders_from_markets(
                     _gs_creds.get("supCd", "")
                     or _gs_creds.get("storeId", "")
                     or extras.get("storeId", "")
+                    or account["seller_id"]  # GS supCd는 seller_id 컬럼(gsshop_creds 빌더와 동일)
                 )
                 _gs_aes_key = _gs_creds.get("apiKeyProd", "") or extras.get(
                     "apiKeyProd", ""
@@ -7187,26 +7188,69 @@ async def sync_orders_from_markets(
                 from zoneinfo import ZoneInfo as _gszi
 
                 _gs_KST = _gszi("Asia/Seoul")
-                _gs_start = (
-                    _gsdt.now(_gs_KST) - _gstd(days=int(body.days or 7))
-                ).strftime("%Y%m%d")
+                _gs_today = _gsdt.now(_gs_KST)
+                _gs_days = int(body.days or 7)
+                # GS ORD01은 sdDt '하루치'만 반환 — 기간 내 날짜별로 반복 조회해야 함
+                _gs_date_list = [
+                    (_gs_today - _gstd(days=_i)).strftime("%Y%m%d")
+                    for _i in range(_gs_days + 1)
+                ]
 
-                # 신규주문(S), 취소(C) 각각 수집
+                # 신규주문(S), 취소(C) 각각 수집 — 날짜×processType 순회 + order_number 중복제거
                 _gs_raw_orders: list[dict] = []
-                for _gs_pt in ("S", "C"):
-                    try:
-                        _gs_rows = await _gs_client.get_orders(
-                            sd_dt=_gs_start, process_type=_gs_pt
-                        )
-                        _gs_raw_orders.extend(_gs_rows)
-                    except Exception as _gs_e:
-                        logger.warning(
-                            f"[주문동기화] {label}: GS샵 processType={_gs_pt} 실패 — {_gs_e}"
-                        )
+                _gs_seen_keys: set[str] = set()
+                for _gs_d in _gs_date_list:
+                    for _gs_pt in ("S", "C"):
+                        try:
+                            _gs_rows = await _gs_client.get_orders(
+                                sd_dt=_gs_d, process_type=_gs_pt
+                            )
+                        except Exception as _gs_e:
+                            logger.warning(
+                                f"[주문동기화] {label}: GS샵 {_gs_d}/{_gs_pt} 실패 — {_gs_e}"
+                            )
+                            continue
+                        for _gr in _gs_rows:
+                            _gk = f"{_gr.get('ordNo', '')}:{_gr.get('ordItemNo', '')}"
+                            if _gk in _gs_seen_keys:
+                                continue
+                            _gs_seen_keys.add(_gk)
+                            _gs_raw_orders.append(_gr)
 
-                # 발주확인 대상 — ordStCd=21(결제완료) / ordTypeCd=O
-                _gs_confirm_targets: list[tuple[str, str]] = []
+                # 상품명·원가 보강 — GS 주문 API의 prdNm은 '송장명'(30byte 절단)이고
+                # 원가는 안 온다. 우리가 등록한 상품은 supPrdCd(=style_code/
+                # site_product_id)로 samba_collected_product를 찾아 풀네임 + 소싱 원가(cost)
+                # 를 가져온다. 미보유분(PlayAuto 등록 등)은 송장명/원가0 폴백.
+                _gs_info_map: dict[str, dict] = {}
+                _gs_sup_codes = {
+                    str(_r.get("supPrdCd", "") or "")
+                    for _r in _gs_raw_orders
+                    if _r.get("supPrdCd")
+                }
+                if _gs_sup_codes:
+                    from sqlalchemy import text as _gs_text
 
+                    _gs_info_rows = await session.execute(
+                        _gs_text(
+                            "SELECT style_code, site_product_id, name, cost "
+                            "FROM samba_collected_product "
+                            "WHERE (style_code = ANY(:codes) "
+                            "OR site_product_id = ANY(:codes)) "
+                            "AND name IS NOT NULL AND name <> ''"
+                        ),
+                        {"codes": list(_gs_sup_codes)},
+                    )
+                    for _sc, _sp, _nm, _cst in _gs_info_rows:
+                        _info = {"name": _nm, "cost": _cst}
+                        if _sc:
+                            _gs_info_map[str(_sc)] = _info
+                        if _sp:
+                            _gs_info_map[str(_sp)] = _info
+
+                # GS 주문 수집은 읽기 전용 — 발주확인(ORD02)은 수집에서 분리.
+                # GS는 주문 수집 단계에 '발주확인' 개념이 없고(배송 워크플로우는
+                # 출하지시→출고완료→배송완료), 해당 주문은 플레이오토가 관리하므로
+                # 수집 중 발주확인을 쏘면 충돌 위험.
                 for ro in _gs_raw_orders:
                     _gs_ord_no = str(ro.get("ordNo", "") or "")
                     _gs_ord_item_no = str(ro.get("ordItemNo", "") or "")
@@ -7227,8 +7271,17 @@ async def sync_orders_from_markets(
                         ro.get("roadNmDelivAddr2", "") or ro.get("delivAddr2", "") or ""
                     )
                     _gs_msg = str(ro.get("delivMsg", "") or "")
-                    _gs_sale_prc = int(ro.get("salePrc", 0) or 0)
+                    # 결제가=stdUprc(GS 화면 '결제'), 정산/공급가=supGivRtamt('정산')
+                    # salePrc는 stdUprc-할인이라 결제가가 아님 → stdUprc 우선
+                    _gs_std_uprc = int(ro.get("stdUprc", 0) or 0)
                     _gs_sup_give = int(ro.get("supGivRtamt", 0) or 0)
+                    _gs_sale_prc = _gs_std_uprc or int(ro.get("salePrc", 0) or 0)
+                    # 수수료율 = (결제 − 정산)/결제 — 정책 수수료와 동일(마놀25%/캐논13%)
+                    _gs_fee_rate = (
+                        round((_gs_std_uprc - _gs_sup_give) / _gs_std_uprc * 100, 1)
+                        if _gs_std_uprc > 0 and _gs_sup_give > 0
+                        else 0.0
+                    )
                     _gs_opt1 = str(ro.get("attrTypNm1", "") or "")
                     _gs_opt2 = str(ro.get("attrTypNm2", "") or "")
                     _gs_opt3 = str(ro.get("attrTypNm3", "") or "")
@@ -7252,8 +7305,6 @@ async def sync_orders_from_markets(
                         _gs_status = "교환요청"
                     elif _gs_ord_st in ("21", "22"):
                         _gs_status = "결제완료"
-                        if _gs_ord_type == "O":
-                            _gs_confirm_targets.append((_gs_ord_no, _gs_ord_item_no))
                     elif _gs_ord_st == "31":
                         _gs_status = "발주완료"
                     elif _gs_ord_st == "44":
@@ -7261,9 +7312,33 @@ async def sync_orders_from_markets(
                     else:
                         _gs_status = "결제완료"
 
-                    # 옵션 조합
-                    _gs_opt_parts = [o for o in [_gs_opt1, _gs_opt2, _gs_opt3] if o]
+                    # 옵션 조합 ('None'/'null' 문자열 제외)
+                    _gs_opt_parts = [
+                        o
+                        for o in [_gs_opt1, _gs_opt2, _gs_opt3]
+                        if o and o.lower() not in ("none", "null")
+                    ]
                     _gs_option_str = " / ".join(_gs_opt_parts) if _gs_opt_parts else ""
+
+                    # ordDt('YYYY-MM-DD' 문자열) → timestamptz 컬럼용 datetime 변환
+                    # (문자열을 그대로 넘기면 asyncpg DataError 발생)
+                    _gs_paid_at = None
+                    if _gs_ord_dt:
+                        try:
+                            _gs_paid_at = _gsdt.strptime(
+                                _gs_ord_dt[:10], "%Y-%m-%d"
+                            ).replace(tzinfo=_gs_KST)
+                        except Exception:
+                            _gs_paid_at = None
+
+                    # 우리 등록상품이면 DB 풀네임 + 소싱 원가, 없으면 송장명/원가0 폴백
+                    _gs_info = (
+                        _gs_info_map.get(_gs_sup_prd_cd)
+                        or _gs_info_map.get(_gs_prd_cd)
+                        or {}
+                    )
+                    _gs_full_nm = _gs_info.get("name")
+                    _gs_src_cost = int(_gs_info.get("cost") or 0)
 
                     orders_data.append(
                         {
@@ -7271,11 +7346,13 @@ async def sync_orders_from_markets(
                             "source": "gsshop",
                             "channel_id": account["id"],
                             "channel_name": label,
-                            "product_name": _gs_prd_nm or _gs_sup_prd_cd,
+                            "product_name": _gs_full_nm
+                            or _gs_prd_nm
+                            or _gs_sup_prd_cd,
                             "product_id": _gs_prd_cd or _gs_sup_prd_cd,
                             "product_option": _gs_option_str,
                             "quantity": _gs_qty,
-                            "paid_at": _gs_ord_dt or None,
+                            "paid_at": _gs_paid_at,
                             "orderer_name": _gs_buyer,
                             "customer_name": _gs_receiver,
                             "customer_phone": _gs_phone,
@@ -7283,28 +7360,12 @@ async def sync_orders_from_markets(
                             "customer_address": f"{_gs_addr1} {_gs_addr2}".strip(),
                             "customer_note": _gs_msg,
                             "sale_price": _gs_sale_prc,
-                            "cost": _gs_sup_give,
+                            "revenue": _gs_sup_give,
+                            "fee_rate": _gs_fee_rate,
+                            "cost": _gs_src_cost,
                             "shipping_status": _gs_status,
                             "tenant_id": account["tenant_id"],
                         }
-                    )
-
-                # 발주확인 통보 (결제완료 → 발주완료)
-                _gs_confirmed_cnt = 0
-                for _gc_ord_no, _gc_item_no in _gs_confirm_targets:
-                    try:
-                        await _gs_client.confirm_order(_gc_ord_no, _gc_item_no)
-                        _gs_confirmed_cnt += 1
-                    except Exception as _gce:
-                        logger.warning(
-                            f"[주문동기화] {label}: GS샵 발주확인 실패 "
-                            f"{_gc_ord_no}:{_gc_item_no} — {_gce}"
-                        )
-
-                if _gs_confirm_targets:
-                    logger.info(
-                        f"[주문동기화] {label}: GS샵 발주확인 "
-                        f"{_gs_confirmed_cnt}/{len(_gs_confirm_targets)}건"
                     )
 
             elif market_type == "lottehome":
