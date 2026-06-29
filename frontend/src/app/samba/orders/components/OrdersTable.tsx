@@ -12,6 +12,8 @@ import { fmtTime } from '@/lib/samba/utils'
 import { STATUS_MAP, SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
 import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
+import { light as c } from '@/lib/samba/colors'
+import { btn } from '@/lib/samba/buttons'
 
 // 같은 주문 송장 동시 전송 차단 — 송장번호 input blur + 마켓전송 버튼 click 이
 // 동시에 발동해 중복 전송되면, 첫 전송 성공 후 두 번째가 INVALID_STATUS 실패로 잡힘.
@@ -114,23 +116,23 @@ export default function OrdersTable(props: OrdersTableProps) {
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({})
 
   return (
-    <div style={{ border: '1px solid #2D2D2D', borderRadius: '8px', overflowX: 'auto' }}>
+    <div style={{ border: `1px solid ${c.border}`, borderRadius: '8px', overflowX: 'auto' }}>
       <table style={{ width: '100%', minWidth: '1100px', borderCollapse: 'collapse' }}>
         <thead>
-          <tr style={{ background: '#0D1117', borderBottom: '2px solid #1C2333' }}>
-            <th style={{ width: '36px', padding: '0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
-              <input type="checkbox" checked={currentPageIds.length > 0 && currentPageIds.every(id => selectedIds.has(id))} onChange={toggleSelectAll} style={{ accentColor: '#F59E0B', width: '13px', height: '13px', cursor: 'pointer' }} />
+          <tr style={{ background: c.headerBg, borderBottom: `2px solid ${c.borderStrong}` }}>
+            <th style={{ width: '36px', padding: '0.5rem', textAlign: 'center', borderRight: `1px solid ${c.borderStrong}` }}>
+              <input type="checkbox" checked={currentPageIds.length > 0 && currentPageIds.every(id => selectedIds.has(id))} onChange={toggleSelectAll} style={{ accentColor: c.warn, width: '13px', height: '13px', cursor: 'pointer' }} />
             </th>
-            <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#94A3B8', borderRight: '1px solid #1C2333' }}>주문정보</th>
-            <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#94A3B8', borderRight: '1px solid #1C2333', width: '143px' }}>금액</th>
-            <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: '#94A3B8', width: '460px' }}>주문상태</th>
+            <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: c.headerText, borderRight: `1px solid ${c.borderStrong}` }}>주문정보</th>
+            <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: c.headerText, borderRight: `1px solid ${c.borderStrong}`, width: '143px' }}>금액</th>
+            <th style={{ padding: '0.6rem 0.75rem', textAlign: 'center', fontSize: '0.75rem', fontWeight: 600, color: c.headerText, width: '460px' }}>주문상태</th>
           </tr>
         </thead>
         <tbody>
           {loading ? (
-            <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
+            <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</td></tr>
           ) : filteredOrders.length === 0 ? (
-            <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>주문이 없습니다</td></tr>
+            <tr><td colSpan={4} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>주문이 없습니다</td></tr>
           ) : filteredOrders.map((o, index) => {
             // 편집 중에는 사용자 입력을 그대로 표시 (콤마 자동삽입으로 인한 커서 꼬임/계산식 깨짐 방지)
             // Blur 후 editingCosts에서 제거되면 저장값(o.cost)에 콤마 포맷 적용
@@ -149,14 +151,14 @@ export default function OrdersTable(props: OrdersTableProps) {
             const isReturnRequested = o.status === 'return_requested'
             const isRejectPending = o.status === 'cancel_reject_pending'
             const rowStyle: React.CSSProperties = {
-              borderBottom: '1px solid #1C2333',
+              borderBottom: `1px solid ${c.borderStrong}`,
               verticalAlign: 'top',
             }
             if (isCancelRequested) {
-              rowStyle.borderLeft = '4px solid #DC2626'
+              rowStyle.borderLeft = `4px solid ${c.danger}`
               rowStyle.background = 'rgba(220,38,38,0.05)'
             } else if (isReturnRequested) {
-              rowStyle.borderLeft = '4px solid #F59E0B'
+              rowStyle.borderLeft = `4px solid ${c.warn}`
               rowStyle.background = 'rgba(245,158,11,0.05)'
             } else if (isRejectPending) {
               rowStyle.borderLeft = '4px solid #8B5CF6'
@@ -166,9 +168,9 @@ export default function OrdersTable(props: OrdersTableProps) {
             return (
               <tr key={o.id} style={rowStyle}>
                 {/* 체크박스 */}
-                <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: '1px solid #1C2333' }}>
-                  <div style={{ fontSize: '0.65rem', color: '#FFFFFF', fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
-                  <input type="checkbox" checked={selectedIds.has(o.id)} onChange={() => setSelectedIds(prev => { const next = new Set(prev); if (next.has(o.id)) next.delete(o.id); else next.add(o.id); return next })} style={{ accentColor: '#F59E0B', cursor: 'pointer' }} />
+                <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: `1px solid ${c.borderStrong}` }}>
+                  <div style={{ fontSize: '0.65rem', color: c.text, fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
+                  <input type="checkbox" checked={selectedIds.has(o.id)} onChange={() => setSelectedIds(prev => { const next = new Set(prev); if (next.has(o.id)) next.delete(o.id); else next.add(o.id); return next })} style={{ accentColor: c.warn, cursor: 'pointer' }} />
                 </td>
                 {/* 주문정보 */}
                 <OrderInfoCell
@@ -197,13 +199,13 @@ export default function OrdersTable(props: OrdersTableProps) {
                   loadOrders={loadOrders}
                 />
                 {/* 금액 */}
-                <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8rem' }}>
+                <td style={{ padding: '0.75rem', borderRight: `1px solid ${c.borderStrong}`, fontSize: '0.8rem' }}>
                   {/* 취소요청 사유 + 승인/거부 (#246) */}
                   {(isCancelRequested || isReturnRequested) && (() => {
                     const faultBy = (o.cancel_fault_by || '').toUpperCase()
                     const faultColor = faultBy === 'CUSTOMER'
-                      ? '#10B981'
-                      : (faultBy === 'VENDOR' || faultBy === 'COUPANG' ? '#F59E0B' : '#888')
+                      ? c.success
+                      : (faultBy === 'VENDOR' || faultBy === 'COUPANG' ? c.warn : c.textMuted)
                     const faultLabel = faultBy === 'CUSTOMER' ? '구매자 귀책 (승인 권장)'
                       : faultBy === 'VENDOR' ? '판매자 귀책 (재검토)'
                       : faultBy === 'COUPANG' ? '쿠팡 귀책 (재검토)'
@@ -219,13 +221,13 @@ export default function OrdersTable(props: OrdersTableProps) {
                         border: '1px solid rgba(220,38,38,0.3)',
                         borderRadius: '4px', fontSize: '0.7rem',
                       }}>
-                        <div style={{ color: '#DC2626', fontWeight: 600, marginBottom: '0.25rem' }}>
+                        <div style={{ color: c.danger, fontWeight: 600, marginBottom: '0.25rem' }}>
                           {isCancelRequested ? '취소요청' : '반품요청'}
-                          {isStopped && <span style={{ marginLeft: 6, padding: '1px 6px', background: '#10B981', color: '#fff', borderRadius: 3, fontSize: '0.6rem' }}>출고중지 완료</span>}
-                          {isAlreadyShipped && <span style={{ marginLeft: 6, padding: '1px 6px', background: '#F59E0B', color: '#fff', borderRadius: 3, fontSize: '0.6rem' }}>이미출고</span>}
+                          {isStopped && <span style={{ marginLeft: 6, padding: '1px 6px', background: c.success, color: '#fff', borderRadius: 3, fontSize: '0.6rem' }}>출고중지 완료</span>}
+                          {isAlreadyShipped && <span style={{ marginLeft: 6, padding: '1px 6px', background: c.warn, color: '#fff', borderRadius: 3, fontSize: '0.6rem' }}>이미출고</span>}
                         </div>
-                        {cat && <div style={{ color: '#ccc' }}>{cat}</div>}
-                        {o.cancel_reason_text && <div style={{ color: '#aaa', fontSize: '0.65rem' }}>{o.cancel_reason_text}</div>}
+                        {cat && <div style={{ color: c.textSub }}>{cat}</div>}
+                        {o.cancel_reason_text && <div style={{ color: c.textSub, fontSize: '0.65rem' }}>{o.cancel_reason_text}</div>}
                         {faultLabel && <div style={{ color: faultColor, fontWeight: 600, marginTop: '0.2rem' }}>{faultLabel}</div>}
                         <div style={{ display: 'flex', gap: '4px', marginTop: '0.4rem' }}>
                           <button
@@ -257,9 +259,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                               }
                             }}
                             style={{
+                              ...btn('primary'),
                               flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
-                              background: '#10B981', color: '#fff',
-                              border: 'none', borderRadius: 3, cursor: 'pointer', fontWeight: 600,
                             }}
                           >취소 승인</button>
                           <button
@@ -275,9 +276,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                               }
                             }}
                             style={{
+                              ...btn('danger'),
                               flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
-                              background: 'transparent', color: '#DC2626',
-                              border: '1px solid #DC2626', borderRadius: 3, cursor: 'pointer', fontWeight: 600,
                             }}
                           >취소 거부</button>
                         </div>
@@ -285,15 +285,15 @@ export default function OrdersTable(props: OrdersTableProps) {
                     )
                   })()}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>결제</span><span>{fmtNum(o.total_payment_amount ?? o.sale_price)}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>정산</span><span>{fmtNum(Math.round(o.revenue))}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수수료율</span><span style={{ color: '#888' }}>{liveFeeRate}%</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>수익률</span><span style={{ color: '#888' }}>{liveProfitRate}%</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: '#888' }}>원가</span><span style={{ color: '#888' }}>{fmtNum(displayCost)}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>결제</span><span>{fmtNum(o.total_payment_amount ?? o.sale_price)}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>정산</span><span>{fmtNum(Math.round(o.revenue))}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수수료율</span><span style={{ color: c.textMuted }}>{liveFeeRate}%</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수익률</span><span style={{ color: c.textMuted }}>{liveProfitRate}%</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>원가</span><span style={{ color: c.textMuted }}>{fmtNum(displayCost)}</span></div>
                   </div>
                   {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px', marginTop: '0.375rem', borderTop: '1px solid #1C2333', paddingTop: '0.375rem' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px', marginTop: '0.375rem', borderTop: `1px solid ${c.borderStrong}`, paddingTop: '0.375rem' }}>
                     <button
                       onClick={async () => {
                         const isPlayauto = (o.source === 'playauto' || o.channel_name?.toLowerCase().includes('플레이오토'))
@@ -312,26 +312,26 @@ export default function OrdersTable(props: OrdersTableProps) {
                       style={{
                         fontSize: '0.68rem', padding: '0.125rem 0',
                         // 취소·반품 요청 상태일 때만 빨간색, 그 외 중립 (#300)
-                        background: isCancelRequested ? 'rgba(220,38,38,0.8)' : 'rgba(80,80,80,0.5)',
+                        background: isCancelRequested ? c.danger : '#5a5a5a',
                         color: '#fff',
-                        border: isCancelRequested ? '1px solid #DC2626' : '1px solid #555',
+                        border: isCancelRequested ? `1px solid ${c.danger}` : '1px solid #5a5a5a',
                         borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
                         fontWeight: 600,
                       }}
                     >주문취소</button>
-                    {ACTION_BUTTONS.map(btn => {
-                      const isActive = activeActionTags.includes(btn.key)
+                    {ACTION_BUTTONS.map(actionBtn => {
+                      const isActive = activeActionTags.includes(actionBtn.key)
                       return (
                         <button
-                          key={btn.key}
-                          onClick={() => toggleAction(o.id, btn.key)}
+                          key={actionBtn.key}
+                          onClick={() => toggleAction(o.id, actionBtn.key)}
                           style={{
                             fontSize: '0.68rem', padding: '0.125rem 0',
-                            background: isActive ? btn.activeColor : 'rgba(80,80,80,0.5)',
-                            color: '#fff', border: isActive ? `1px solid ${btn.activeColor}` : '1px solid #555',
+                            background: isActive ? actionBtn.activeColor : '#5a5a5a',
+                            color: '#fff', border: isActive ? `1px solid ${actionBtn.activeColor}` : '1px solid #5a5a5a',
                             borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
                           }}
-                        >{btn.label}</button>
+                        >{actionBtn.label}</button>
                       )
                     })}
                   </div>
@@ -348,10 +348,10 @@ export default function OrdersTable(props: OrdersTableProps) {
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           cursor: 'pointer',
-                          color: o.status === 'ship_failed' ? '#FF3232' : inputStyle.color,
+                          color: o.status === 'ship_failed' ? c.danger : inputStyle.color,
                         }}
                       >
-                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'arrived', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: '#FF3232' } : {}}>{v.label}</option>)}
+                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'arrived', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: c.danger } : {}}>{v.label}</option>)}
                       </select>
                       <input
                         type="text"
@@ -415,10 +415,10 @@ export default function OrdersTable(props: OrdersTableProps) {
                       </select>
                       <div style={{
                         flex: 1, padding: '0.25rem 0.375rem',
-                        background: 'rgba(30,30,30,0.6)', border: '1px solid #2D2D2D', borderRadius: '6px',
+                        background: c.surface, border: `1px solid ${c.border}`, borderRadius: '6px',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                       }}>
-                        <span style={{ fontSize: '0.75rem', color: '#4C9AFF', fontWeight: 600 }}>{(o.shipping_status === '출고지시' || o.shipping_status === '출하지시' || o.shipping_status === '결제완료' || o.shipping_status === '상품준비') ? '주문접수' : o.shipping_status === '발송대기' ? '배송대기중' : o.shipping_status === '송장전송완료' ? '국내배송중' : (STATUS_MAP[o.shipping_status]?.label || o.shipping_status || '-')}</span>
+                        <span style={{ fontSize: '0.75rem', color: c.text, fontWeight: 600 }}>{(o.shipping_status === '출고지시' || o.shipping_status === '출하지시' || o.shipping_status === '결제완료' || o.shipping_status === '상품준비') ? '주문접수' : o.shipping_status === '발송대기' ? '배송대기중' : o.shipping_status === '송장전송완료' ? '국내배송중' : (STATUS_MAP[o.shipping_status]?.label || o.shipping_status || '-')}</span>
                       </div>
                     </div>
 
@@ -583,7 +583,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                             setTimeout(() => _shippingInFlight.delete(o.id), 1500)
                           }
                         }}
-                        style={{ padding: '0.18rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', background: o.status === 'ship_failed' ? '#dc2626' : '#16a34a', color: '#fff', border: '1px solid #4b5563', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        style={{ ...btn(o.status === 'ship_failed' ? 'dangerSolid' : 'send'), padding: '0.18rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                         title="택배사+송장번호를 마켓에 전송 (재전송 가능)"
                       >{o.status === 'ship_failed' ? '재전송' : '마켓전송'}</button>
                     </div>

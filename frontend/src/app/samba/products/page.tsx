@@ -21,6 +21,8 @@ import { fmtTime } from '@/lib/samba/utils'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
 import { MARKETS } from './components/ProductCard'
+import { light as c } from '@/lib/samba/colors'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 type MarketDeleteModalState = {
   mode: 'single' | 'bulk'
@@ -1460,38 +1462,38 @@ export default function ProductsPage() {
       {/* 무신사 자동로그인계정 미설정/만료 경고 모달 */}
       {musinsaAuthMissing && !musinsaAuthDismissed && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '480px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
+          <div style={{ background: c.surface, border: `2px solid ${c.danger}`, borderRadius: '16px', padding: '2rem', maxWidth: '480px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
             <button
               aria-label='알람 닫기'
               title='닫기'
               onClick={() => setMusinsaAuthDismissed(true)}
-              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: '6px', color: '#AAA', fontSize: '1.25rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1 }}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: '6px', color: c.textSub, fontSize: '1.25rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1 }}
             >
               &#10005;
             </button>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#9888;</div>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>무신사 원가 갱신 중단</h3>
-              <p style={{ fontSize: '0.875rem', color: '#AAA', lineHeight: 1.5 }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: c.danger, marginBottom: '0.5rem' }}>무신사 원가 갱신 중단</h3>
+              <p style={{ fontSize: '0.875rem', color: c.textSub, lineHeight: 1.5 }}>
                 {musinsaAuthMissing.reason === 'cookie_expired'
-                  ? <>자동로그인계정 <b style={{ color: '#FFD' }}>{musinsaAuthMissing.account_label}</b>의 쿠키가 만료됨. 무신사 재로그인 필요.</>
+                  ? <>자동로그인계정 <b style={{ color: c.text }}>{musinsaAuthMissing.account_label}</b>의 쿠키가 만료됨. 무신사 재로그인 필요.</>
                   : musinsaAuthMissing.reason === 'no_cookie'
-                  ? <>자동로그인계정 <b style={{ color: '#FFD' }}>{musinsaAuthMissing.account_label}</b>에 쿠키 없음. 무신사 로그인 필요.</>
-                  : <>무신사 자동로그인계정 미설정. <b style={{ color: '#FFD' }}>설정 → 소싱처계정</b>에서 자동로그인 계정을 지정하세요.</>}
+                  ? <>자동로그인계정 <b style={{ color: c.text }}>{musinsaAuthMissing.account_label}</b>에 쿠키 없음. 무신사 로그인 필요.</>
+                  : <>무신사 자동로그인계정 미설정. <b style={{ color: c.text }}>설정 → 소싱처계정</b>에서 자동로그인 계정을 지정하세요.</>}
                 <br/>
-                <span style={{ color: '#FF8888' }}>cost 계산이 일관되지 않아 자동 갱신을 차단했습니다.</span>
+                <span style={{ color: c.danger }}>cost 계산이 일관되지 않아 자동 갱신을 차단했습니다.</span>
               </p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => setMusinsaAuthDismissed(true)}
-                style={{ flex: 1, padding: '0.75rem', background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#AAA', fontSize: '0.9375rem', fontWeight: 600, cursor: 'pointer' }}
+                style={{ ...btn('ghost'), flex: 1, padding: '0.75rem', fontSize: '0.9375rem' }}
               >
                 나중에
               </button>
               <button
                 onClick={() => { window.location.href = '/samba/settings#sourcing-accounts-MUSINSA' }}
-                style={{ flex: 2, padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}
+                style={{ ...btn('dangerSolid'), flex: 2, padding: '0.75rem', fontSize: '0.9375rem' }}
               >
                 지금 설정하기
               </button>
@@ -1504,33 +1506,25 @@ export default function ProductsPage() {
         <div style={{
           padding: '10px 16px', margin: '8px 12px 0',
           borderRadius: '8px',
-          background: 'rgba(255,107,107,0.12)', border: '1px solid #FF6B6B',
-          color: '#FF6B6B', fontSize: '0.82rem', fontWeight: 600,
+          background: 'rgba(255,107,107,0.12)', border: `1px solid ${c.danger}`,
+          color: c.danger, fontSize: '0.82rem', fontWeight: 600,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
           flexWrap: 'wrap',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
             <span>⚠ 유령 매핑 감지 (최근 48시간)</span>
-            <span style={{ color: '#FFD0D0', fontWeight: 400 }}>
+            <span style={{ color: c.danger, fontWeight: 400 }}>
               {ghostBanner.markets.map(m => `${marketLabel(m.market)} ${fmt(m.count)}건`).join(' · ')}
             </span>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={() => setGhostChoiceModal(true)}
-              style={{
-                fontSize: '0.78rem', padding: '4px 12px', fontWeight: 600,
-                border: '1px solid #FF6B6B', borderRadius: '6px',
-                color: '#FFF', background: '#FF6B6B', cursor: 'pointer',
-              }}
+              style={{ ...btn('dangerSolid'), fontSize: '0.78rem', padding: '4px 12px' }}
             >정리하기</button>
             <button
               onClick={dismissGhostBanner}
-              style={{
-                fontSize: '0.78rem', padding: '4px 10px',
-                border: '1px solid #FF6B6B', borderRadius: '6px',
-                color: '#FF6B6B', background: 'transparent', cursor: 'pointer',
-              }}
+              style={{ ...btn('ghost'), fontSize: '0.78rem', padding: '4px 10px' }}
             >오늘 그만보기</button>
           </div>
         </div>
@@ -1542,28 +1536,22 @@ export default function ProductsPage() {
           background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
         }} onClick={() => setMarketDeleteModal(null)}>
           <div style={{
-            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
             width: 'min(520px, 92vw)', maxHeight: '75vh', display: 'flex', flexDirection: 'column',
           }} onClick={e => e.stopPropagation()}>
             <div style={{
-              padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+              padding: '14px 20px', borderBottom: `1px solid ${c.border}`,
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
-              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5' }}>{marketDeleteModal.title}</span>
-              <button onClick={() => setMarketDeleteModal(null)} style={{
-                background: 'none', border: 'none', color: '#888', fontSize: '0.77rem', cursor: 'pointer',
-              }}>닫기</button>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: c.text }}>{marketDeleteModal.title}</span>
+              <button onClick={() => setMarketDeleteModal(null)} style={{ ...btn('ghost'), fontSize: '0.77rem' }}>닫기</button>
             </div>
-            <div style={{ padding: '16px 20px 10px', color: '#A8B0C0', fontSize: '0.8rem', lineHeight: 1.6 }}>
+            <div style={{ padding: '16px 20px 10px', color: c.textSub, fontSize: '0.8rem', lineHeight: 1.6 }}>
               삭제할 판매처를 선택하세요. 선택한 판매처에 등록된 상품만 삭제됩니다.
             </div>
             <div style={{ padding: '0 20px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: prev.options.map(option => option.accountId) } : prev)} style={{
-                padding: '5px 10px', borderRadius: '6px', border: '1px solid #3D3D3D', background: '#222', color: '#D0D0D0', cursor: 'pointer', fontSize: '0.75rem',
-              }}>전체선택</button>
-              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: [] } : prev)} style={{
-                padding: '5px 10px', borderRadius: '6px', border: '1px solid #3D3D3D', background: '#222', color: '#D0D0D0', cursor: 'pointer', fontSize: '0.75rem',
-              }}>선택해제</button>
+              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: prev.options.map(option => option.accountId) } : prev)} style={{ ...btn('secondary'), padding: '5px 10px', fontSize: '0.75rem' }}>전체선택</button>
+              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: [] } : prev)} style={{ ...btn('secondary'), padding: '5px 10px', fontSize: '0.75rem' }}>선택해제</button>
             </div>
             <div style={{ padding: '0 20px 20px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {marketDeleteModal.options.map(option => {
@@ -1572,8 +1560,8 @@ export default function ProductsPage() {
                   <label key={option.accountId} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     gap: '12px', padding: '12px 14px', borderRadius: '8px',
-                    border: checked ? '1px solid rgba(255,140,0,0.55)' : '1px solid #2D2D2D',
-                    background: checked ? 'rgba(255,140,0,0.08)' : '#161616',
+                    border: checked ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+                    background: checked ? '#e3f4f0' : c.surface,
                     cursor: 'pointer',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1589,11 +1577,11 @@ export default function ProductsPage() {
                         })}
                       />
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                        <span style={{ color: '#E5E5E5', fontSize: '0.82rem', fontWeight: 600 }}>{option.label}</span>
-                        <span style={{ color: '#8A95B0', fontSize: '0.74rem' }}>{option.marketType}</span>
+                        <span style={{ color: c.text, fontSize: '0.82rem', fontWeight: 600 }}>{option.label}</span>
+                        <span style={{ color: c.textMuted, fontSize: '0.74rem' }}>{option.marketType}</span>
                       </div>
                     </div>
-                    <span style={{ color: '#FFB84D', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                    <span style={{ color: c.text, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
                       {fmt(option.productCount)}개 상품
                     </span>
                   </label>
@@ -1601,13 +1589,10 @@ export default function ProductsPage() {
               })}
             </div>
             <div style={{
-              padding: '14px 20px', borderTop: '1px solid #2D2D2D',
+              padding: '14px 20px', borderTop: `1px solid ${c.border}`,
               display: 'flex', justifyContent: 'flex-end', gap: '8px',
             }}>
-              <button onClick={() => setMarketDeleteModal(null)} style={{
-                padding: '7px 16px', borderRadius: '6px', border: '1px solid #3D3D3D',
-                background: '#222', color: '#AAA', cursor: 'pointer',
-              }}>취소</button>
+              <button onClick={() => setMarketDeleteModal(null)} style={{ ...btn('ghost'), padding: '7px 16px' }}>취소</button>
               <button onClick={async () => {
                 if (!marketDeleteModal.selectedAccountIds.length) {
                   showAlert('삭제할 판매처를 선택해주세요.')
@@ -1616,10 +1601,7 @@ export default function ProductsPage() {
                 const modal = marketDeleteModal
                 setMarketDeleteModal(null)
                 await executeMarketDelete(modal.products, modal.selectedAccountIds, modal.title, modal.deleteMode)
-              }} style={{
-                padding: '7px 16px', borderRadius: '6px', border: 'none',
-                background: '#FF6B6B', color: '#FFF', cursor: 'pointer', fontWeight: 700,
-              }}>삭제 실행</button>
+              }} style={{ ...btn('dangerSolid'), padding: '7px 16px' }}>삭제 실행</button>
             </div>
           </div>
         </div>
@@ -1635,13 +1617,13 @@ export default function ProductsPage() {
         >
           <div
             style={{
-              background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+              background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
               width: '420px', padding: '20px',
             }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5', marginBottom: '8px' }}>유령삭제 — 마켓 선택</div>
-            <div style={{ fontSize: '0.78rem', color: '#888', marginBottom: '14px', lineHeight: 1.5 }}>
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: c.text, marginBottom: '8px' }}>유령삭제 — 마켓 선택</div>
+            <div style={{ fontSize: '0.78rem', color: c.textMuted, marginBottom: '14px', lineHeight: 1.5 }}>
               삼바 DB와 마켓 등록상품 목록을 100% 일치시킵니다.<br />
               · 마켓에만 있는 상품 → 마켓에서 삭제<br />
               · 삼바에만 등록 표시된 상품 → 삼바 등록표시 해제<br />
@@ -1652,53 +1634,49 @@ export default function ProductsPage() {
                 onClick={() => { setGhostChoiceModal(false); runSmartstoreGhostSync() }}
                 style={{
                   padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
-                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  border: `1px solid ${c.border}`, borderRadius: '8px', color: c.text,
                   background: 'rgba(80,140,255,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
                 스마트스토어<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: c.textMuted }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runElevenstGhostSyncV2() }}
                 style={{
                   padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
-                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  border: `1px solid ${c.border}`, borderRadius: '8px', color: c.text,
                   background: 'rgba(255,140,80,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
                 11번가<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: c.textMuted }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runLotteonGhostSync() }}
                 style={{
                   padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
-                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  border: `1px solid ${c.border}`, borderRadius: '8px', color: c.text,
                   background: 'rgba(255,80,140,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
                 롯데ON<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: c.textMuted }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => { setGhostChoiceModal(false); runCoupangGhostSync() }}
                 style={{
                   padding: '10px 14px', fontSize: '0.82rem', fontWeight: 600,
-                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#E5E5E5',
+                  border: `1px solid ${c.border}`, borderRadius: '8px', color: c.text,
                   background: 'rgba(255,200,80,0.15)', cursor: 'pointer', textAlign: 'left',
                 }}
               >
                 쿠팡<br />
-                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#999' }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 400, color: c.textMuted }}>마켓에만 있는 상품은 마켓에서 삭제, 삼바에만 있는 등록표시는 해제</span>
               </button>
               <button
                 onClick={() => setGhostChoiceModal(false)}
-                style={{
-                  padding: '8px 14px', fontSize: '0.78rem',
-                  border: '1px solid #3D3D3D', borderRadius: '8px', color: '#888',
-                  background: 'transparent', cursor: 'pointer', marginTop: '4px',
-                }}
+                style={{ ...btn('ghost'), padding: '8px 14px', fontSize: '0.78rem', marginTop: '4px' }}
               >취소</button>
             </div>
           </div>
@@ -1711,30 +1689,30 @@ export default function ProductsPage() {
           background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
-            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
             width: '520px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
           }} onClick={e => e.stopPropagation()}>
             <div style={{
-              padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+              padding: '14px 20px', borderBottom: `1px solid ${c.border}`,
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
-              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5' }}>{aiJobTitle}</span>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: c.text }}>{aiJobTitle}</span>
               {aiJobDone && (
                 <button onClick={() => setAiJobModal(false)} style={{
-                  background: 'none', border: 'none', color: '#888', fontSize: '0.77rem', cursor: 'pointer',
+                  background: 'none', border: 'none', color: c.textMuted, fontSize: '0.77rem', cursor: 'pointer',
                 }}>✕</button>
               )}
             </div>
             {/* 워커 다운 경고 — 30초 이상 heartbeat 끊김 */}
             {bgActiveLoaded && !bgWorkerAlive && (
               <div style={{
-                padding: '8px 14px', borderBottom: '1px solid #2D2D2D',
-                background: 'rgba(255,107,107,0.12)', color: '#FF6B6B',
+                padding: '8px 14px', borderBottom: `1px solid ${c.border}`,
+                background: 'rgba(255,107,107,0.12)', color: c.danger,
                 fontSize: '0.72rem', fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}>
                 <span>⚠ 로컬 배경제거 워커 다운 — local_bg_worker.py 실행 필요</span>
                 {bgWorkerLastSeen && (
-                  <span style={{ fontSize: '0.65rem', color: '#A8A8A8', fontWeight: 400 }}>
+                  <span style={{ fontSize: '0.65rem', color: c.textSub, fontWeight: 400 }}>
                     last: {new Date(bgWorkerLastSeen).toLocaleTimeString('ko-KR')}
                   </span>
                 )}
@@ -1743,10 +1721,10 @@ export default function ProductsPage() {
             {/* 배경제거 큐 — 현재 진행/대기 중인 잡 목록 */}
             {bgActiveLoaded && bgActiveJobs.length > 0 && (
               <div style={{
-                padding: '10px 14px', borderBottom: '1px solid #2D2D2D',
-                background: '#0F0F0F', maxHeight: '180px', overflowY: 'auto',
+                padding: '10px 14px', borderBottom: `1px solid ${c.border}`,
+                background: c.surfaceAlt, maxHeight: '180px', overflowY: 'auto',
               }}>
-                <div style={{ fontSize: '0.72rem', color: '#FFB84D', marginBottom: '6px', fontWeight: 600 }}>
+                <div style={{ fontSize: '0.72rem', color: c.text, marginBottom: '6px', fontWeight: 600 }}>
                   배경제거 큐 ({fmt(bgActiveJobs.length)}건 진행/대기)
                 </div>
                 {bgActiveJobs.map(j => {
@@ -1756,21 +1734,17 @@ export default function ProductsPage() {
                     <div key={j.job_id} style={{
                       display: 'flex', alignItems: 'center', gap: '8px',
                       padding: '6px 8px', marginBottom: '4px',
-                      background: '#1A1A1A', border: `1px solid ${isRunning ? '#FF8C00' : '#2D2D2D'}`,
+                      background: c.surface, border: `1px solid ${isRunning ? '#a9ddd2' : c.border}`,
                       borderRadius: '4px', fontSize: '0.7rem',
                     }}>
                       <span style={{
-                        color: isRunning ? '#FF8C00' : '#888', fontWeight: 700, minWidth: '52px',
+                        color: isRunning ? '#0f6a5b' : c.textMuted, fontWeight: 700, minWidth: '52px',
                       }}>{isRunning ? '▶ 진행중' : '⏸ 대기'}</span>
-                      <span style={{ color: '#8A95B0', fontFamily: 'monospace' }}>{j.job_id.slice(-8)}</span>
-                      <span style={{ color: '#E5E5E5', flex: 1 }}>
+                      <span style={{ color: c.textMuted, fontFamily: 'monospace' }}>{j.job_id.slice(-8)}</span>
+                      <span style={{ color: c.text, flex: 1 }}>
                         {fmt(j.current)}/{fmt(j.total)} ({fmt(pct)}%)
                       </span>
-                      <button onClick={() => cancelBgJob(j.job_id)} style={{
-                        padding: '3px 10px', borderRadius: '4px', fontSize: '0.65rem',
-                        background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.4)',
-                        color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,
-                      }}>취소</button>
+                      <button onClick={() => cancelBgJob(j.job_id)} style={{ ...btn('danger'), padding: '3px 10px', fontSize: '0.65rem' }}>취소</button>
                     </div>
                   )
                 })}
@@ -1780,7 +1754,7 @@ export default function ProductsPage() {
               ref={aiJobLogRef}
               style={{
                 flex: 1, overflow: 'auto', padding: '14px', fontFamily: 'monospace',
-                fontSize: '0.68rem', lineHeight: 1.6, color: '#8A95B0',
+                fontSize: '0.68rem', lineHeight: 1.6, color: c.textMuted,
                 transform: 'scale(0.7)', transformOrigin: 'top left', width: '142.8%',
                 maxHeight: '50vh',
               }}
@@ -1788,29 +1762,21 @@ export default function ProductsPage() {
               {aiJobLogs.map((line, i) => (
                 <p key={i} style={{
                   margin: 0,
-                  color: line.includes('완료') && !/실패[\s:]*[1-9]/.test(line) && !/실패(?![\s:]*\d)/.test(line) ? '#51CF66'
-                    : /실패[\s:]*[1-9]/.test(line) || /실패(?![\s:]*\d)/.test(line) || line.includes('오류') ? '#FF6B6B'
-                    : '#8A95B0',
+                  color: line.includes('완료') && !/실패[\s:]*[1-9]/.test(line) && !/실패(?![\s:]*\d)/.test(line) ? c.success
+                    : /실패[\s:]*[1-9]/.test(line) || /실패(?![\s:]*\d)/.test(line) || line.includes('오류') ? c.danger
+                    : c.textMuted,
                 }}>{fmtTextNumbers(line)}</p>
               ))}
               {!aiJobDone && (
-                <p style={{ margin: 0, color: '#FFB84D' }}>처리 중...</p>
+                <p style={{ margin: 0, color: c.text }}>처리 중...</p>
               )}
             </div>
-            <div style={{ padding: '12px 20px', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <div style={{ padding: '12px 20px', borderTop: `1px solid ${c.border}`, display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               {!aiJobDone && (
-                <button onClick={abortAiJob} style={{
-                  padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
-                  background: 'rgba(255,107,107,0.15)', border: '1px solid rgba(255,107,107,0.4)',
-                  color: '#FF6B6B', cursor: 'pointer', fontWeight: 600,
-                }}>중단</button>
+                <button onClick={abortAiJob} style={{ ...btn('danger'), padding: '6px 20px', fontSize: '0.56rem' }}>중단</button>
               )}
               {aiJobDone && (
-                <button onClick={() => setAiJobModal(false)} style={{
-                  padding: '6px 20px', borderRadius: '6px', fontSize: '0.56rem',
-                  background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
-                  color: '#51CF66', cursor: 'pointer', fontWeight: 600,
-                }}>확인</button>
+                <button onClick={() => setAiJobModal(false)} style={{ ...btn('secondary'), padding: '6px 20px', fontSize: '0.56rem' }}>확인</button>
               )}
             </div>
           </div>
@@ -1824,29 +1790,29 @@ export default function ProductsPage() {
           background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
         }}>
           <div style={{
-            background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+            background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
             width: '860px', maxHeight: '70vh', display: 'flex', flexDirection: 'column',
           }} onClick={e => e.stopPropagation()}>
             <div style={{
-              padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+              padding: '14px 20px', borderBottom: `1px solid ${c.border}`,
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
-              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#E5E5E5' }}>가격재고갱신</span>
+              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: c.text }}>가격재고갱신</span>
               {!refreshLoading && (
                 <button onClick={() => setRefreshModal(false)} style={{
-                  background: 'none', border: 'none', color: '#888', fontSize: '0.77rem', cursor: 'pointer',
+                  background: 'none', border: 'none', color: c.textMuted, fontSize: '0.77rem', cursor: 'pointer',
                 }}>✕</button>
               )}
             </div>
             <div style={{ flex: 1, overflow: 'auto', padding: '0', maxHeight: '50vh' }}>
               {refreshLoading ? (
-                <div style={{ padding: '40px 20px', textAlign: 'center', color: '#FFB84D', fontSize: '0.85rem' }}>
+                <div style={{ padding: '40px 20px', textAlign: 'center', color: c.text, fontSize: '0.85rem' }}>
                   갱신 중... ({fmt(selectedIds.size)}건)
                 </div>
               ) : (
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
                   <thead>
-                    <tr style={{ borderBottom: '1px solid #2D2D2D', color: '#888' }}>
+                    <tr style={{ borderBottom: `1px solid ${c.border}`, color: c.textMuted }}>
                       <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>시간</th>
                       <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>브랜드</th>
                       <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>상품명</th>
@@ -1855,23 +1821,23 @@ export default function ProductsPage() {
                   </thead>
                   <tbody>
                     {refreshDetails.map((d, i) => (
-                      <tr key={i} style={{ borderBottom: '1px solid #1E1E1E' }}>
-                        <td style={{ padding: '6px 12px', color: '#888', whiteSpace: 'nowrap' }}>{d.time}</td>
-                        <td style={{ padding: '6px 12px', color: '#B0B0B0', whiteSpace: 'nowrap' }} title={d.brand}>{d.brand}</td>
-                        <td style={{ padding: '6px 12px', color: '#E5E5E5', whiteSpace: 'nowrap' }} title={d.name}>{d.name}</td>
+                      <tr key={i} style={{ borderBottom: `1px solid ${c.border}` }}>
+                        <td style={{ padding: '6px 12px', color: c.textMuted, whiteSpace: 'nowrap' }}>{d.time}</td>
+                        <td style={{ padding: '6px 12px', color: c.textSub, whiteSpace: 'nowrap' }} title={d.brand}>{d.brand}</td>
+                        <td style={{ padding: '6px 12px', color: c.text, whiteSpace: 'nowrap' }} title={d.name}>{d.name}</td>
                         <td style={{
                           padding: '6px 12px', whiteSpace: 'nowrap',
-                          color: d.status === 'changed' ? '#51CF66' : d.status === 'error' ? '#FF6B6B' : '#666',
+                          color: d.status === 'changed' ? c.success : d.status === 'error' ? c.danger : c.textMuted,
                         }}>
                           {d.detail}
                           {d.retransmitted && (
-                            <span style={{ marginLeft: '8px', color: '#4DABF7', fontSize: '0.7rem' }}>→재전송</span>
+                            <span style={{ marginLeft: '8px', color: c.textSub, fontSize: '0.7rem' }}>→재전송</span>
                           )}
                         </td>
                       </tr>
                     ))}
                     {refreshDetails.length === 0 && !refreshLoading && (
-                      <tr><td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: '#666' }}>결과 없음</td></tr>
+                      <tr><td colSpan={4} style={{ padding: '20px', textAlign: 'center', color: c.textMuted }}>결과 없음</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1879,16 +1845,12 @@ export default function ProductsPage() {
             </div>
             {refreshSummary && !refreshLoading && (
               <div style={{
-                padding: '10px 20px', borderTop: '1px solid #2D2D2D',
-                fontSize: '0.75rem', color: '#B0B0B0',
+                padding: '10px 20px', borderTop: `1px solid ${c.border}`,
+                fontSize: '0.75rem', color: c.textSub,
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}>
                 <span>{refreshSummary}</span>
-                <button onClick={() => setRefreshModal(false)} style={{
-                  padding: '5px 16px', borderRadius: '6px', fontSize: '0.75rem',
-                  background: 'rgba(81,207,102,0.15)', border: '1px solid rgba(81,207,102,0.4)',
-                  color: '#51CF66', cursor: 'pointer', fontWeight: 600,
-                }}>확인</button>
+                <button onClick={() => setRefreshModal(false)} style={{ ...btn('secondary'), padding: '5px 16px', fontSize: '0.75rem' }}>확인</button>
               </div>
             )}
           </div>
@@ -1902,22 +1864,22 @@ export default function ProductsPage() {
           onClick={() => setDeleteConfirm(null)}
         >
           <div
-            style={{ background: "#1A1A1A", border: "1px solid #2D2D2D", borderRadius: "12px", padding: "28px 32px", minWidth: "320px", maxWidth: "480px" }}
+            style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: "12px", padding: "28px 32px", minWidth: "320px", maxWidth: "480px" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 style={{ margin: "0 0 8px", fontSize: "1rem", fontWeight: 600, color: "#E5E5E5" }}>상품 삭제</h3>
-            <p style={{ margin: "0 0 24px", fontSize: "0.875rem", color: "#888", lineHeight: 1.6 }}>
+            <h3 style={{ margin: "0 0 8px", fontSize: "1rem", fontWeight: 600, color: c.text }}>상품 삭제</h3>
+            <p style={{ margin: "0 0 24px", fontSize: "0.875rem", color: c.textMuted, lineHeight: 1.6 }}>
               {deleteConfirm.label}을(를) 삭제하시겠습니까?<br />
-              <span style={{ color: "#FF6B6B", fontSize: "0.8rem" }}>삭제된 상품은 복구할 수 없습니다.</span>
+              <span style={{ color: c.danger, fontSize: "0.8rem" }}>삭제된 상품은 복구할 수 없습니다.</span>
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
               <button
                 onClick={() => setDeleteConfirm(null)}
-                style={{ padding: "7px 20px", fontSize: "0.85rem", borderRadius: "6px", cursor: "pointer", border: "1px solid #3D3D3D", background: "transparent", color: "#888" }}
+                style={{ ...btn('ghost'), padding: "7px 20px", fontSize: "0.85rem" }}
               >취소</button>
               <button
                 onClick={confirmDelete}
-                style={{ padding: "7px 20px", fontSize: "0.85rem", borderRadius: "6px", cursor: "pointer", border: "1px solid rgba(255,107,107,0.5)", background: "rgba(255,107,107,0.15)", color: "#FF6B6B", fontWeight: 600 }}
+                style={{ ...btn('dangerSolid'), padding: "7px 20px", fontSize: "0.85rem" }}
               >삭제</button>
             </div>
           </div>
@@ -1927,20 +1889,20 @@ export default function ProductsPage() {
       {showTagPreview && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 99999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
+          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
             onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>AI 태그 미리보기</h3>
-            <p style={{ margin: '0 0 20px', fontSize: '0.75rem', color: '#888' }}>
+            <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: c.text }}>AI 태그 미리보기</h3>
+            <p style={{ margin: '0 0 20px', fontSize: '0.75rem', color: c.textMuted }}>
               태그사전에 미등록된 태그를 X로 제거한 후 적용하세요
             </p>
             {tagPreviews.map((preview) => (
-              <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: '#0F0F0F', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+              <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: c.surfaceAlt, borderRadius: '8px', border: `1px solid ${c.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                  <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.rep_name}</span>
-                  <span style={{ fontSize: '0.7rem', color: '#666' }}>{fmt(preview.product_count)}개 상품 | {fmt(preview.tags.length)}개 태그</span>
+                  <span style={{ fontSize: '0.82rem', color: c.text, fontWeight: 600 }}>{preview.rep_name}</span>
+                  <span style={{ fontSize: '0.7rem', color: c.textMuted }}>{fmt(preview.product_count)}개 상품 | {fmt(preview.tags.length)}개 태그</span>
                 </div>
                 <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
+                  <span style={{ fontSize: '0.72rem', color: c.textSub, fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
                   <input
                     type="text"
                     defaultValue={preview.seo_keywords.join(', ')}
@@ -1952,19 +1914,19 @@ export default function ProductsPage() {
                       ))
                     }}
                     onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                    style={{ flex: 1, fontSize: '0.72rem', padding: '3px 8px', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#4C9AFF', outline: 'none' }}
+                    style={{ flex: 1, fontSize: '0.72rem', padding: '3px 8px', background: c.surface, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none' }}
                   />
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
                   {preview.tags.map((tag, ti) => (
                     <span key={ti} style={{
                       fontSize: '0.78rem', padding: '4px 10px', borderRadius: '14px',
-                      background: 'rgba(100,100,255,0.1)', border: '1px solid rgba(100,100,255,0.25)', color: '#8B8FD4',
+                      background: c.surfaceAlt, border: `1px solid ${c.border}`, color: c.textSub,
                       display: 'inline-flex', alignItems: 'center', gap: '6px',
                     }}>
                       {tag}
                       <span
-                        style={{ cursor: 'pointer', color: '#666', fontSize: '0.85rem', lineHeight: 1 }}
+                        style={{ cursor: 'pointer', color: c.textMuted, fontSize: '0.85rem', lineHeight: 1 }}
                         onClick={async () => {
                           setTagPreviews(prev => prev.map(p => ({
                             ...p, tags: p.tags.filter(t => t !== tag)
@@ -1996,26 +1958,26 @@ export default function ProductsPage() {
                   }}
                   style={{
                     width: '100%', padding: '5px 10px', fontSize: '0.75rem',
-                    background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px',
-                    color: '#E5E5E5', outline: 'none',
+                    background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px',
+                    color: c.text, outline: 'none',
                   }}
                 />
               </div>
             ))}
             {removedTags.length > 0 && (
               <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
-                <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({fmt(removedTags.length)}개): </span>
-                <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
+                <span style={{ fontSize: '0.72rem', color: c.danger, fontWeight: 600 }}>금지태그 등록 예정 ({fmt(removedTags.length)}개): </span>
+                <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{removedTags.join(', ')}</span>
               </div>
             )}
             {tagPreviewCost && (
-              <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: '#666', textAlign: 'right' }}>
+              <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: c.textMuted, textAlign: 'right' }}>
                 API {fmt(tagPreviewCost.api_calls)}회 | {fmt(tagPreviewCost.input_tokens + tagPreviewCost.output_tokens)} 토큰 | ~{fmt(tagPreviewCost.cost_krw)}원
               </p>
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}
-                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}>취소</button>
+                style={{ ...btn('ghost'), padding: '7px 20px', fontSize: '0.85rem' }}>취소</button>
               <button onClick={async () => {
                 const groups = tagPreviews.filter(p => p.tags.length > 0).map(p => ({ group_id: p.group_id, tags: p.tags, seo_keywords: p.seo_keywords, coupang_search_tags: (p as { coupang_search_tags?: string[] }).coupang_search_tags || [] }))
                 if (groups.length === 0) { showAlert('적용할 태그가 없습니다'); return }
@@ -2052,7 +2014,7 @@ export default function ProductsPage() {
                   showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
                 }
               }}
-                style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>
+                style={{ ...btn('primary'), padding: '7px 20px', fontSize: '0.85rem' }}>
                 전체 그룹에 적용 ({fmt(tagPreviews.reduce((s, p) => s + p.tags.length, 0))}개 태그)
               </button>
             </div>
@@ -2064,24 +2026,20 @@ export default function ProductsPage() {
         <div style={{
           display: "flex", alignItems: "center", gap: "8px",
           padding: "6px 12px", marginBottom: "12px", borderRadius: "8px",
-          background: "rgba(255,140,0,0.08)", border: "1px solid rgba(255,140,0,0.3)",
+          background: c.surfaceAlt, border: `1px solid ${c.border}`,
           fontSize: "0.82rem",
         }}>
-          <span style={{ color: "#888" }}>검색그룹:</span>
+          <span style={{ color: c.textMuted }}>검색그룹:</span>
           <span style={{
-            color: "#FF8C00", fontWeight: 600,
-            background: "rgba(255,140,0,0.12)", border: "1px solid rgba(255,140,0,0.4)",
+            color: c.text, fontWeight: 600,
+            background: c.surface, border: `1px solid ${c.border}`,
             padding: "1px 8px", borderRadius: "4px",
           }}>
             {filterGroupName || filterByGroupId}
           </span>
           <button
             onClick={() => { setFilterByGroupId(""); setFilterGroupName("") }}
-            style={{
-              marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
-              color: "#888", padding: "2px 10px", borderRadius: "4px",
-              fontSize: "0.75rem", cursor: "pointer",
-            }}
+            style={{ ...btn('ghost'), marginLeft: "auto", padding: "2px 10px", fontSize: "0.75rem" }}
           >
             ✕ 해제
           </button>
@@ -2092,81 +2050,77 @@ export default function ProductsPage() {
         <div style={{
           display: "flex", alignItems: "center", gap: "8px",
           padding: "6px 12px", marginBottom: "12px", borderRadius: "8px",
-          background: "rgba(76,154,255,0.08)", border: "1px solid rgba(76,154,255,0.3)",
+          background: c.surfaceAlt, border: `1px solid ${c.border}`,
           fontSize: "0.82rem",
         }}>
-          <span style={{ color: "#888" }}>선택 상품:</span>
-          <span style={{ color: "#4C9AFF", fontWeight: 600 }}>
+          <span style={{ color: c.textMuted }}>선택 상품:</span>
+          <span style={{ color: c.text, fontWeight: 600 }}>
             {allProducts.find(p => p.id === highlightProductId)?.name?.slice(0, 40) || highlightProductId}
           </span>
           <button
             onClick={() => setHighlightProductId("")}
-            style={{
-              marginLeft: "auto", background: "transparent", border: "1px solid #3D3D3D",
-              color: "#888", padding: "2px 10px", borderRadius: "4px",
-              fontSize: "0.75rem", cursor: "pointer",
-            }}
+            style={{ ...btn('ghost'), marginLeft: "auto", padding: "2px 10px", fontSize: "0.75rem" }}
           >전체보기</button>
         </div>
       )}
       {/* KPI stat cards */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.25rem" }}>
         <div style={{
-          background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "12px",
-          padding: "1.75rem", borderLeft: "3px solid #FF8C00",
+          background: c.surface, border: `1px solid ${c.border}`, borderRadius: "12px",
+          padding: "1.75rem", borderLeft: `3px solid ${c.border}`,
           display: "flex", flexDirection: "column", gap: "4px",
         }}>
-          <p style={{ fontSize: "0.75rem", color: "#888", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>수집상품 수</p>
-          <p style={{ fontSize: "1.625rem", fontWeight: 800, color: "#E5E5E5", letterSpacing: "-0.02em", margin: 0 }}>
-            {fmt(kpiCounts.total)}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
+          <p style={{ fontSize: "0.75rem", color: c.textMuted, fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>수집상품 수</p>
+          <p style={{ fontSize: "1.625rem", fontWeight: 800, color: c.text, letterSpacing: "-0.02em", margin: 0 }}>
+            {fmt(kpiCounts.total)}<span style={{ fontSize: "1rem", color: c.textMuted, fontWeight: 500 }}>개</span>
           </p>
-          <p style={{ fontSize: "0.75rem", color: "#666", margin: 0 }}>등록된 상품</p>
+          <p style={{ fontSize: "0.75rem", color: c.textMuted, margin: 0 }}>등록된 상품</p>
         </div>
         <div style={{
-          background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "12px",
-          padding: "1.75rem", borderLeft: "3px solid #FFB84D",
+          background: c.surface, border: `1px solid ${c.border}`, borderRadius: "12px",
+          padding: "1.75rem", borderLeft: `3px solid ${c.border}`,
           display: "flex", flexDirection: "column", gap: "4px",
         }}>
-          <p style={{ fontSize: "0.75rem", color: "#888", fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>판매상품 수</p>
-          <p style={{ fontSize: "1.625rem", fontWeight: 800, color: "#51CF66", letterSpacing: "-0.02em", margin: 0 }}>
-            {fmt(registeredCount)}<span style={{ fontSize: "1rem", color: "#888", fontWeight: 500 }}>개</span>
+          <p style={{ fontSize: "0.75rem", color: c.textMuted, fontWeight: 500, letterSpacing: "0.04em", textTransform: "uppercase", margin: 0 }}>판매상품 수</p>
+          <p style={{ fontSize: "1.625rem", fontWeight: 800, color: c.success, letterSpacing: "-0.02em", margin: 0 }}>
+            {fmt(registeredCount)}<span style={{ fontSize: "1rem", color: c.textMuted, fontWeight: 500 }}>개</span>
           </p>
-          <p style={{ fontSize: "0.75rem", color: "#666", margin: 0 }}>판매중인 상품</p>
+          <p style={{ fontSize: "0.75rem", color: c.textMuted, margin: 0 }}>판매중인 상품</p>
         </div>
       </div>
 
       {/* Filter area */}
       <div style={{
-        background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
+        background: c.surface, border: `1px solid ${c.border}`, borderRadius: "8px",
         padding: "1rem", marginBottom: "1rem", fontSize: "0.875rem",
       }}>
         {/* 검색 조건 1줄 배치 */}
         <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
-          <span style={{ color: "#888", whiteSpace: "nowrap", fontSize: "0.8125rem" }}>등록일자</span>
+          <span style={{ color: c.textMuted, whiteSpace: "nowrap", fontSize: "0.8125rem" }}>등록일자</span>
           <input type="date" style={{
             width: "130px", padding: "0.3rem 0.4rem", fontSize: "0.78rem",
-            background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
-            color: "#E5E5E5",
+            background: c.surface, border: `1px solid ${c.border}`, borderRadius: "6px",
+            color: c.text,
           }} />
-          <span style={{ color: "#888" }}>~</span>
+          <span style={{ color: c.textMuted }}>~</span>
           <input type="date" style={{
             width: "130px", padding: "0.3rem 0.4rem", fontSize: "0.78rem",
-            background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "6px",
-            color: "#E5E5E5",
+            background: c.surface, border: `1px solid ${c.border}`, borderRadius: "6px",
+            color: c.text,
           }} />
           <select value={siteFilter} onChange={(e) => setSiteFilter(e.target.value)}
-            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: "6px" }}>
             <option value="">소싱사이트</option>
             {allSites.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
           <select value={soldOutFilter} onChange={(e) => setSoldOutFilter(e.target.value)}
-            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: "6px" }}>
             <option value="">품절여부</option>
             <option value="sold_out">품절</option>
             <option value="not_sold_out">비품절</option>
           </select>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "rgba(22,22,22,0.95)", border: "1px solid #353535", color: "#C5C5C5", borderRadius: "6px" }}>
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: "6px" }}>
             <option value="">마켓현황</option>
             <option value="market_unregistered">미등록상품</option>
             <option value="market_registered">등록상품</option>
@@ -2186,7 +2140,7 @@ export default function ProductsPage() {
             ))}
           </select>
           <select value={searchType} onChange={(e) => setSearchType(e.target.value)}
-            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px", color: "#C5C5C5", width: "90px" }}>
+            style={{ padding: "0.3rem 0.4rem", fontSize: "0.78rem", background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: "6px", color: c.text, width: "90px" }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
             <option value="name_all">상품명</option>
@@ -2201,34 +2155,30 @@ export default function ProductsPage() {
             style={{
               flex: 1, minWidth: "120px", maxWidth: "200px",
               padding: "0.3rem 0.5rem", fontSize: "0.78rem",
-              background: "#1E1E1E", border: "1px solid #3D3D3D", borderRadius: "6px",
-              color: "#C5C5C5", outline: "none",
+              background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: "6px",
+              color: c.text, outline: "none",
             }}
           />
           <button onClick={handleSearch}
-            style={{
-              background: "rgba(255,140,0,0.15)", border: "1px solid #FF8C00",
-              color: "#FF8C00", padding: "0.3rem 0.625rem", borderRadius: "6px",
-              fontSize: "0.78rem", whiteSpace: "nowrap", flexShrink: 0, cursor: "pointer",
-            }}>검색</button>
+            style={{ ...btn('primary'), padding: "0.3rem 0.625rem", fontSize: "0.78rem", whiteSpace: "nowrap", flexShrink: 0 }}>검색</button>
         </div>
       </div>
 
       {/* 작업 로그 패널 */}
-      {taskLogs.length > 0 && (<div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
-          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#9AA5C0' }}>작업 로그</span>
+      {taskLogs.length > 0 && (<div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
+          <span style={{ fontSize: '0.78rem', fontWeight: 600, color: c.textSub }}>작업 로그</span>
           <div style={{ display: 'flex', gap: '6px' }}>
-            <button onClick={() => navigator.clipboard.writeText(taskLogs.join('\n'))} style={{ padding: '2px 8px', fontSize: '0.68rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '3px', cursor: 'pointer' }}>복사</button>
-            <button onClick={() => setTaskLogs([])} style={{ padding: '2px 8px', fontSize: '0.68rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '3px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={() => navigator.clipboard.writeText(taskLogs.join('\n'))} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.68rem' }}>복사</button>
+            <button onClick={() => setTaskLogs([])} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.68rem' }}>초기화</button>
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ maxHeight: '150px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.72rem', lineHeight: 1.7 }}>
           {taskLogs.map((msg, i) => {
-            let color = '#555'
-            if (/실패[\s:]*[1-9]/.test(msg) || /실패(?![\s:]*\d)/.test(msg) || msg.includes('오류')) color = '#FF6B6B'
-            else if (msg.includes('완료') || msg.includes('성공')) color = '#51CF66'
-            else if (msg.includes('생성 중') || msg.includes('처리 중')) color = '#FFB84D'
+            let color = c.textMuted
+            if (/실패[\s:]*[1-9]/.test(msg) || /실패(?![\s:]*\d)/.test(msg) || msg.includes('오류')) color = c.danger
+            else if (msg.includes('완료') || msg.includes('성공')) color = c.success
+            else if (msg.includes('생성 중') || msg.includes('처리 중')) color = c.text
             return <div key={i} style={{ color }}>{msg}</div>
           })}
         </div>
@@ -2238,29 +2188,29 @@ export default function ProductsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '0.7fr 1.3fr 1fr', gap: '8px', marginBottom: '1rem' }}>
       {/* AI 비용 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(81,207,102,0.08)', border: '1px solid rgba(81,207,102,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
+        <span style={{ fontSize: '0.8125rem', color: c.success, fontWeight: 600 }}>AI 비용</span>
         {lastAiUsage ? (
           <>
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{fmt(lastAiUsage.calls)}건</span>
-            <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
-            <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{fmt(lastAiUsage.cost)}</span>
-            <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
+            <span style={{ fontSize: '0.78rem', color: c.text }}>{fmt(lastAiUsage.calls)}건</span>
+            <span style={{ fontSize: '0.78rem', color: c.textMuted }}>·</span>
+            <span style={{ fontSize: '0.78rem', color: c.text }}>₩{fmt(lastAiUsage.cost)}</span>
+            <span style={{ fontSize: '0.7rem', color: c.textMuted }}>{lastAiUsage.date}</span>
           </>
         ) : (
-          <span style={{ fontSize: '0.78rem', color: '#555' }}>사용 내역 없음</span>
+          <span style={{ fontSize: '0.78rem', color: c.textMuted }}>사용 내역 없음</span>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>AI 이미지 변환</span>
         {([['thumbnail', '대표'], ['additional', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
           <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={aiImgScope[key]}
               onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
-              style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
+              style={{ accentColor: c.primary, width: '13px', height: '13px' }} />
+            <span style={{ fontSize: '0.78rem', color: c.text }}>{label}</span>
           </label>
         ))}
-        <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+        <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
           <option value="model_to_product">모델→상품</option>
           <option value="scene">연출컷</option>
@@ -2270,7 +2220,7 @@ export default function ProductsPage() {
           <select
             value={aiModelPreset}
             onChange={e => setAiModelPreset(e.target.value)}
-            style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
+            style={{ background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
           >
             <option value="auto">자동 (성별·연령 판별)</option>
             {['여성', '남성', '키즈 여아', '키즈 남아'].map(group => {
@@ -2291,7 +2241,7 @@ export default function ProductsPage() {
             })}
           </select>
         )}
-        <span style={{ fontSize: '0.78rem', color: '#888' }}>({fmt(selectedIds.size)}개 상품)</span>
+        <span style={{ fontSize: '0.78rem', color: c.textMuted }}>({fmt(selectedIds.size)}개 상품)</span>
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -2483,12 +2433,12 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={aiImgTransforming}
-          style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+          style={{ ...btn('accent'), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#818CF8', fontWeight: 600 }}>이미지 필터링</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>이미지 필터링</span>
         {([['images', '대표'], ['detail_images', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
           <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={imgFilterScopes.has(key)}
@@ -2498,7 +2448,7 @@ export default function ProductsPage() {
                 return next
               })}
               style={{ accentColor: '#818CF8', width: '13px', height: '13px' }} />
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
+            <span style={{ fontSize: '0.78rem', color: c.text }}>{label}</span>
           </label>
         ))}
         <button
@@ -2620,14 +2570,14 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={imgFiltering}
-          style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+          style={{ ...btn('accent'), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : '필터링 실행'}</button>
       </div>
       </div>
 
       {/* Result header + action bar */}
       <div style={{
-        background: "rgba(18,18,18,0.95)", border: "1px solid #2A2A2A", borderRadius: "8px",
+        background: c.surface, border: `1px solid ${c.border}`, borderRadius: "8px",
         padding: "8px 14px", marginBottom: "1rem",
         display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px",
       }}>
@@ -2637,21 +2587,21 @@ export default function ProductsPage() {
               type="checkbox"
               checked={selectAll && selectScope === 'search'}
               onChange={(e) => handleSelectAll(e.target.checked)}
-              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
+              style={{ accentColor: c.primary, width: "13px", height: "13px", cursor: "pointer" }}
             />
-            <span style={{ fontSize: "0.72rem", color: "#888", userSelect: "none" }}>검색</span>
+            <span style={{ fontSize: "0.72rem", color: c.textMuted, userSelect: "none" }}>검색</span>
           </label>
           <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", margin: 0 }} title="현재 페이지만 선택">
             <input
               type="checkbox"
               checked={selectAll && selectScope === 'page'}
               onChange={(e) => handleSelectPage(e.target.checked)}
-              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
+              style={{ accentColor: c.primary, width: "13px", height: "13px", cursor: "pointer" }}
             />
-            <span style={{ fontSize: "0.72rem", color: "#888", userSelect: "none" }}>1PG</span>
+            <span style={{ fontSize: "0.72rem", color: c.textMuted, userSelect: "none" }}>1PG</span>
           </label>
-          <span style={{ fontSize: "0.875rem", color: "#E5E5E5", fontWeight: 600, whiteSpace: "nowrap" }}>
-            상품관리 <span style={{ color: "#FF8C00" }}>( <span>{fmt(totalCount)}</span>개 )</span>
+          <span style={{ fontSize: "0.875rem", color: c.text, fontWeight: 600, whiteSpace: "nowrap" }}>
+            상품관리 <span style={{ color: c.text }}>( <span>{fmt(totalCount)}</span>개 )</span>
           </span>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -2670,13 +2620,13 @@ export default function ProductsPage() {
             reloadProducts()
           }} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            border: `1px solid ${c.border}`, borderRadius: "5px",
+            color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
           }}>영상</button>
           <button style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            border: `1px solid ${c.border}`, borderRadius: "5px",
+            color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
           }}>AI상품명</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -2698,8 +2648,8 @@ export default function ProductsPage() {
             }
           }} disabled={tagPreviewLoading} style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: tagPreviewLoading ? "wait" : "pointer", whiteSpace: "nowrap", opacity: tagPreviewLoading ? 0.5 : 1,
+            border: `1px solid ${c.border}`, borderRadius: "5px",
+            color: c.textSub, background: c.btnBg, cursor: tagPreviewLoading ? "wait" : "pointer", whiteSpace: "nowrap", opacity: tagPreviewLoading ? 0.5 : 1,
           }}>{tagPreviewLoading ? 'AI태그 생성중...' : 'AI태그'}</button>
           <button onClick={async () => {
             if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -2726,11 +2676,7 @@ export default function ProductsPage() {
             } catch (e) {
               showAlert(`태그 삭제 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
             }
-          }} style={{
-            fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid rgba(255,107,107,0.4)", borderRadius: "5px",
-            color: "#FF6B6B", background: "rgba(255,107,107,0.1)", cursor: "pointer", whiteSpace: "nowrap",
-          }}>태그삭제</button>
+          }} style={{ ...btn('danger'), fontSize: "0.78rem", padding: "4px 12px", whiteSpace: "nowrap" }}>태그삭제</button>
           <button
             onClick={() => {
               if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }
@@ -2744,16 +2690,16 @@ export default function ProductsPage() {
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: `1px solid ${c.border}`, borderRadius: "5px",
+              color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}>상품전송</button>
           <button
             onClick={handleBulkDelete}
             title="DB에서 정보 삭제"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: `1px solid ${c.border}`, borderRadius: "5px",
+              color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}
           >상품삭제</button>
           <button
@@ -2831,8 +2777,8 @@ export default function ProductsPage() {
             title="등록마켓에서 상품 삭제"
             style={{
             fontSize: "0.78rem", padding: "4px 12px",
-            border: "1px solid #3D3D3D", borderRadius: "5px",
-            color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+            border: `1px solid ${c.border}`, borderRadius: "5px",
+            color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
           }}>마켓삭제</button>
           <button
             onClick={async () => {
@@ -2851,8 +2797,8 @@ export default function ProductsPage() {
             title="판매마켓에서 직접 삭제 후 연결 끊긴 상품 판매처 기록 삭제"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: `1px solid ${c.border}`, borderRadius: "5px",
+              color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}
           >강제삭제</button>
           <button
@@ -2860,8 +2806,8 @@ export default function ProductsPage() {
             title="마켓에는 등록되어 있지만 DB 매핑이 끊어진 유령 상품 정리 (스스/11번가 선택)"
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: `1px solid ${c.border}`, borderRadius: "5px",
+              color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}
           >유령삭제</button>
           <button
@@ -2883,8 +2829,8 @@ export default function ProductsPage() {
             }}
             style={{
               fontSize: "0.78rem", padding: "4px 12px",
-              border: "1px solid #3D3D3D", borderRadius: "5px",
-              color: "#B0B0B0", background: "rgba(50,50,50,0.6)", cursor: "pointer", whiteSpace: "nowrap",
+              border: `1px solid ${c.border}`, borderRadius: "5px",
+              color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}
           >업데이트</button>
         </div>
@@ -2893,33 +2839,33 @@ export default function ProductsPage() {
             onClick={() => { setViewMode("compact"); setExpandedIds(new Set()) }}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "compact" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
-              color: viewMode === "compact" ? "#FF8C00" : "#C5C5C5",
-              background: viewMode === "compact" ? "rgba(255,140,0,0.15)" : "transparent",
+              border: viewMode === "compact" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
+              color: viewMode === "compact" ? '#0f6a5b' : c.text,
+              background: viewMode === "compact" ? "#e3f4f0" : "transparent",
             }}
           >간단</button>
           <button
             onClick={() => setViewMode("card")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "card" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
-              color: viewMode === "card" ? "#FF8C00" : "#C5C5C5",
-              background: viewMode === "card" ? "rgba(255,140,0,0.15)" : "transparent",
+              border: viewMode === "card" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
+              color: viewMode === "card" ? '#0f6a5b' : c.text,
+              background: viewMode === "card" ? "#e3f4f0" : "transparent",
             }}
           >자세히</button>
           <button
             onClick={() => setViewMode("image")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "image" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
-              color: viewMode === "image" ? "#FF8C00" : "#C5C5C5",
-              background: viewMode === "image" ? "rgba(255,140,0,0.15)" : "transparent",
+              border: viewMode === "image" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
+              color: viewMode === "image" ? '#0f6a5b' : c.text,
+              background: viewMode === "image" ? "#e3f4f0" : "transparent",
             }}
           >사진</button>
           <select
             value={aiFilter}
             onChange={(e) => setAiFilter(e.target.value)}
-            style={{ background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+            style={{ background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '6px', padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
           >
             <option value="">전체</option>
             <option value="ai_tag_yes">AI태그 적용</option>
@@ -2939,7 +2885,7 @@ export default function ProductsPage() {
             onChange={(e) => setSortBy(e.target.value)}
             style={{
               width: "auto", padding: "0.25rem 0.5rem", fontSize: "0.75rem",
-              background: "#1A1A1A", border: "1px solid #3D3D3D", color: "#C5C5C5", borderRadius: "6px",
+              background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: "6px",
             }}
           >
             <option value="collect-desc">수집일 최신순</option>
@@ -2948,7 +2894,7 @@ export default function ProductsPage() {
             <option value="update-asc">업데이트일 오래된순</option>
           </select>
           <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }}
-            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '6px' }}>
+            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '6px' }}>
             <option value={20}>20건</option>
             <option value={50}>50건</option>
           </select>
@@ -2965,10 +2911,10 @@ export default function ProductsPage() {
               style={{
                 minWidth: 0,
                 height: viewMode === 'compact' ? '180px' : '240px',
-                background: 'linear-gradient(90deg, #1A1A1A 0%, #232323 50%, #1A1A1A 100%)',
+                background: `linear-gradient(90deg, ${c.surfaceAlt} 0%, ${c.border} 50%, ${c.surfaceAlt} 100%)`,
                 backgroundSize: '200% 100%',
                 borderRadius: '8px',
-                border: '1px solid #2D2D2D',
+                border: `1px solid ${c.border}`,
                 animation: 'sambaSkeletonPulse 1.4s ease-in-out infinite',
               }}
             />
@@ -2981,17 +2927,17 @@ export default function ProductsPage() {
           `}</style>
         </div>
       ) : loading ? (
-        <div style={{ padding: "3rem", textAlign: "center", color: "#555", fontSize: "0.9rem" }}>로딩 중...</div>
+        <div style={{ padding: "3rem", textAlign: "center", color: c.textMuted, fontSize: "0.9rem" }}>로딩 중...</div>
       ) : loadError ? (
         <div style={{ padding: "3rem", textAlign: "center", fontSize: "0.85rem" }}>
-          <div style={{ color: "#FF6B6B", marginBottom: "8px" }}>서버 연결에 실패했습니다</div>
+          <div style={{ color: c.danger, marginBottom: "8px" }}>서버 연결에 실패했습니다</div>
           <button
             onClick={() => loadProducts()}
-            style={{ padding: "6px 16px", borderRadius: "6px", fontSize: "0.8rem", background: "rgba(255,107,107,0.15)", border: "1px solid rgba(255,107,107,0.4)", color: "#FF6B6B", cursor: "pointer" }}
+            style={{ ...btn('secondary'), padding: "6px 16px", fontSize: "0.8rem" }}
           >다시 시도</button>
         </div>
       ) : products.length === 0 ? (
-        <div style={{ padding: "3rem", textAlign: "center", color: "#555", fontSize: "0.9rem" }}>
+        <div style={{ padding: "3rem", textAlign: "center", color: c.textMuted, fontSize: "0.9rem" }}>
           등록된 상품이 없습니다
         </div>
       ) : viewMode === "image" ? (
@@ -2999,8 +2945,8 @@ export default function ProductsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px" }}>
           {products.map((p) => (
             <div key={p.id} style={{
-              background: "rgba(30,30,30,0.5)",
-              border: selectedIds.has(p.id) ? "1px solid #FF8C00" : "1px solid #2D2D2D",
+              background: c.surface,
+              border: selectedIds.has(p.id) ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
               borderRadius: "8px",
               overflow: "hidden", cursor: "pointer", position: "relative",
             }} onClick={() => handleCheckboxToggle(p.id, !selectedIds.has(p.id))}>
@@ -3011,7 +2957,7 @@ export default function ProductsPage() {
                 onClick={e => e.stopPropagation()}
                 style={{
                   position: "absolute", top: "6px", left: "6px", zIndex: 1,
-                  accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
+                  accentColor: c.primary, width: "14px", height: "14px", cursor: "pointer",
                 }}
               />
               <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>
@@ -3019,15 +2965,15 @@ export default function ProductsPage() {
               </div>
               {(p.free_shipping || p.same_day_delivery) && (
                 <div style={{ display: 'flex', gap: '3px', padding: '3px 8px 0' }}>
-                  {p.free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF', fontWeight: 600 }}>무배</span>}
-                  {p.same_day_delivery && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}>당발</span>}
+                  {p.free_shipping && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: c.surfaceAlt, color: c.textSub, fontWeight: 600 }}>무배</span>}
+                  {p.same_day_delivery && <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', background: c.surfaceAlt, color: c.textSub, fontWeight: 600 }}>당발</span>}
                 </div>
               )}
               <div style={{ padding: "6px 8px" }}>
-                <p style={{ fontSize: '0.7rem', color: '#C5C5C5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0, display: 'flex', alignItems: 'center' }}>
+                <p style={{ fontSize: '0.7rem', color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0, display: 'flex', alignItems: 'center' }}>
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
                 </p>
-                <p style={{ fontSize: "0.75rem", color: "#FF8C00", fontWeight: 600, margin: 0 }}>₩{fmt(p.sale_price)}</p>
+                <p style={{ fontSize: "0.75rem", color: c.text, fontWeight: 600, margin: 0 }}>₩{fmt(p.sale_price)}</p>
               </div>
             </div>
           ))}
@@ -3073,9 +3019,9 @@ export default function ProductsPage() {
       {serverTotal > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem', padding: '1rem 0', flexWrap: 'wrap' }}>
           <button onClick={() => goToPage(1)} disabled={currentPage === 1}
-            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? '#444' : '#C5C5C5', cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<<'}</button>
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: `1px solid ${c.border}`, borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? c.textMuted : c.text, cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<<'}</button>
           <button onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}
-            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? '#444' : '#C5C5C5', cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<'}</button>
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: `1px solid ${c.border}`, borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? c.textMuted : c.text, cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<'}</button>
           {(() => {
             const pages: number[] = []
             const start = Math.max(1, currentPage - 4)
@@ -3083,14 +3029,14 @@ export default function ProductsPage() {
             for (let i = start; i <= end; i++) pages.push(i)
             return pages.map(p => (
               <button key={p} onClick={() => goToPage(p)}
-                style={{ padding: '4px 10px', fontSize: '0.75rem', border: p === currentPage ? '1px solid #FF8C00' : '1px solid #2D2D2D', borderRadius: '4px', background: p === currentPage ? 'rgba(255,140,0,0.15)' : 'transparent', color: p === currentPage ? '#FF8C00' : '#C5C5C5', cursor: 'pointer', fontWeight: p === currentPage ? 700 : 400 }}>{p}</button>
+                style={{ padding: '4px 10px', fontSize: '0.75rem', border: p === currentPage ? `1px solid #a9ddd2` : `1px solid ${c.border}`, borderRadius: '4px', background: p === currentPage ? '#e3f4f0' : 'transparent', color: p === currentPage ? '#0f6a5b' : c.text, cursor: 'pointer', fontWeight: p === currentPage ? 700 : 400 }}>{p}</button>
             ))
           })()}
           <button onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}
-            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === totalPages ? '#444' : '#C5C5C5', cursor: currentPage === totalPages ? 'default' : 'pointer' }}>{'>'}</button>
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: `1px solid ${c.border}`, borderRadius: '4px', background: 'transparent', color: currentPage === totalPages ? c.textMuted : c.text, cursor: currentPage === totalPages ? 'default' : 'pointer' }}>{'>'}</button>
           <button onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}
-            style={{ padding: '4px 8px', fontSize: '0.75rem', border: '1px solid #2D2D2D', borderRadius: '4px', background: 'transparent', color: currentPage === totalPages ? '#444' : '#C5C5C5', cursor: currentPage === totalPages ? 'default' : 'pointer' }}>{'>>'}</button>
-          <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: '0.5rem' }}>
+            style={{ padding: '4px 8px', fontSize: '0.75rem', border: `1px solid ${c.border}`, borderRadius: '4px', background: 'transparent', color: currentPage === totalPages ? c.textMuted : c.text, cursor: currentPage === totalPages ? 'default' : 'pointer' }}>{'>>'}</button>
+          <span style={{ fontSize: '0.75rem', color: c.textMuted, marginLeft: '0.5rem' }}>
             {fmt(serverTotal)}건 / {currentPage}/{fmt(totalPages)}p
           </span>
         </div>

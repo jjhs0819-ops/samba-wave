@@ -10,6 +10,7 @@ import { STORAGE_KEYS } from "@/lib/samba/constants";
 import { attachDeviceIdListener } from "@/lib/samba/deviceId";
 import { orderApi } from "@/lib/samba/api/commerce";
 import { fmtNum } from "@/lib/samba/styles";
+import { light as c } from "@/lib/samba/colors";
 
 interface NavItem {
   href: string;
@@ -241,8 +242,8 @@ export default function SambaLayout({
   // 인증 체크 중이거나 미로그인이면 빈 화면 (리다이렉트 중)
   if (!authChecked || !currentUser) {
     return (
-      <div className="flex items-center justify-center min-h-screen" style={{ background: "#0F0F0F" }}>
-        <p style={{ color: "#555", fontSize: "0.875rem" }}>로딩 중...</p>
+      <div className="flex items-center justify-center min-h-screen" style={{ background: c.pageBg }}>
+        <p style={{ color: c.textMuted, fontSize: "0.875rem" }}>로딩 중...</p>
       </div>
     );
   }
@@ -255,7 +256,7 @@ export default function SambaLayout({
   };
 
   return (
-    <div className="flex flex-col min-h-screen" style={{ background: "#0F0F0F", color: "#E5E5E5" }}>
+    <div className="flex flex-col min-h-screen" style={{ background: c.pageBg, color: c.text }}>
       {/* Header */}
       <header
         className="sticky top-0 z-30"
@@ -266,8 +267,8 @@ export default function SambaLayout({
           }
         }}
         style={{
-          background: "rgba(15,15,15,0.9)",
-          borderBottom: "1px solid #2D2D2D",
+          background: "rgba(255,255,255,0.85)",
+          borderBottom: `1px solid ${c.border}`,
           backdropFilter: "blur(4px)",
         }}
       >
@@ -276,10 +277,10 @@ export default function SambaLayout({
           <Link href="/samba" className="flex items-center gap-2 select-none" title="대시보드로 이동">
             <img src="/logo.png" alt="SAMBA WAVE Logo" width={40} height={40} className="object-contain" style={{ borderRadius: "8.8px" }} />
             <div>
-              <h1 style={{ fontSize: "0.9375rem", fontWeight: 800, color: "#E5E5E5", letterSpacing: "0.08em", lineHeight: 1.1, textTransform: "uppercase" }}>
+              <h1 style={{ fontSize: "0.9375rem", fontWeight: 800, color: c.text, letterSpacing: "0.08em", lineHeight: 1.1, textTransform: "uppercase" }}>
                 SAMBA WAVE
               </h1>
-              <p style={{ fontSize: "0.5625rem", color: "#666", letterSpacing: "0.04em", lineHeight: 1 }}>
+              <p style={{ fontSize: "0.5625rem", color: c.textMuted, letterSpacing: "0.04em", lineHeight: 1 }}>
                 무재고 위탁판매 솔루션
               </p>
             </div>
@@ -304,20 +305,20 @@ export default function SambaLayout({
                         padding: "0.75rem 1.5rem",
                         fontSize: "0.875rem",
                         fontWeight: 500,
-                        color: isGroupActive ? "#FF8C00" : "#E5E5E5",
+                        color: isGroupActive ? c.primary : c.text,
                         background: "transparent",
                         borderTop: "none",
                         borderLeft: "none",
                         borderRight: "none",
                         borderBottomWidth: "2px",
                         borderBottomStyle: "solid",
-                        borderBottomColor: isGroupActive ? "#FF8C00" : "transparent",
+                        borderBottomColor: isGroupActive ? c.primary : "transparent",
                         cursor: "pointer",
                         transition: "color 0.15s, border-color 0.15s",
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.borderBottomColor = c.primary; }}
                       onMouseLeave={(e) => {
-                        if (!isGroupActive) { e.currentTarget.style.color = "#E5E5E5"; e.currentTarget.style.borderBottomColor = "transparent"; }
+                        if (!isGroupActive) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderBottomColor = "transparent"; }
                       }}
                     >
                       {item.label} <span style={{ fontSize: "0.625rem", transition: "transform 0.2s", transform: openDropdown === item.label ? "rotate(180deg)" : "none" }}>▼</span>
@@ -328,12 +329,12 @@ export default function SambaLayout({
                           position: "absolute",
                           top: "calc(100% + 1px)",
                           left: 0,
-                          background: "#1A1A1A",
-                          border: "1px solid #2D2D2D",
+                          background: c.surface,
+                          border: `1px solid ${c.border}`,
                           borderRadius: "8px",
                           minWidth: "200px",
                           zIndex: 40,
-                          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+                          boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
                           overflow: "hidden",
                         }}
                       >
@@ -346,14 +347,14 @@ export default function SambaLayout({
                               style={{
                                 display: "block",
                                 padding: "0.625rem 1.25rem",
-                                color: isChildActive ? "#FF8C00" : "#C5C5C5",
+                                color: isChildActive ? c.primary : c.textSub,
                                 fontSize: "0.8125rem",
-                                background: isChildActive ? "rgba(255,140,0,0.12)" : "transparent",
+                                background: isChildActive ? c.surfaceAlt : "transparent",
                                 transition: "color 0.15s, border-color 0.15s, background 0.15s",
                               }}
-                              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.background = c.surfaceAlt; }}
                               onMouseLeave={(e) => {
-                                if (!isChildActive) { e.currentTarget.style.color = "#C5C5C5"; e.currentTarget.style.background = "transparent"; }
+                                if (!isChildActive) { e.currentTarget.style.color = c.textSub; e.currentTarget.style.background = "transparent"; }
                               }}
                             >
                               {child.label}
@@ -386,20 +387,20 @@ export default function SambaLayout({
                       padding: item.planned ? "0.35rem 1.5rem" : "0.75rem 1.5rem",
                       fontSize: "0.875rem",
                       fontWeight: 500,
-                      color: isActive ? "#FF8C00" : "#E5E5E5",
+                      color: isActive ? c.primary : c.text,
                       lineHeight: 1.1,
-                      borderBottom: `2px solid ${isActive ? "#FF8C00" : "transparent"}`,
+                      borderBottom: `2px solid ${isActive ? c.primary : "transparent"}`,
                       transition: "color 0.15s, border-color 0.15s",
                       position: "relative",
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.borderBottomColor = c.primary; }}
                     onMouseLeave={(e) => {
-                      if (!isActive) { e.currentTarget.style.color = "#E5E5E5"; e.currentTarget.style.borderBottomColor = "transparent"; }
+                      if (!isActive) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderBottomColor = "transparent"; }
                     }}
                   >
                     <span>{item.label}</span>
                     {item.planned && (
-                      <span style={{ fontSize: "0.625rem", color: "#777", fontWeight: 500 }}>
+                      <span style={{ fontSize: "0.625rem", color: c.textMuted, fontWeight: 500 }}>
                         (개발예정)
                       </span>
                     )}
@@ -413,7 +414,7 @@ export default function SambaLayout({
                           minWidth: "18px",
                           height: "18px",
                           padding: "0 5px",
-                          background: "#FF4444",
+                          background: c.danger,
                           color: "#fff",
                           fontSize: "0.6875rem",
                           fontWeight: 700,
@@ -421,7 +422,7 @@ export default function SambaLayout({
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          boxShadow: "0 0 0 2px #0F0F0F",
+                          boxShadow: `0 0 0 2px ${c.pageBg}`,
                           lineHeight: 1,
                           animation: "samba-cancel-pulse 1.6s ease-in-out infinite",
                         }}
@@ -457,13 +458,13 @@ export default function SambaLayout({
                 border: "none",
                 borderRadius: "6px",
                 cursor: "pointer",
-                color: "#FFD93D",
+                color: c.warn,
                 fontSize: "1.125rem",
                 transition: "color 0.15s, border-color 0.15s, background 0.15s",
                 position: "relative",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = "#FFD93D"; e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.background = c.surfaceAlt; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = c.warn; e.currentTarget.style.background = "transparent"; }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -480,17 +481,17 @@ export default function SambaLayout({
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                background: pathname.startsWith("/samba/users") ? "rgba(255,140,0,0.12)" : "transparent",
+                background: pathname.startsWith("/samba/users") ? c.surfaceAlt : "transparent",
                 border: "none",
                 borderRadius: "6px",
                 cursor: "pointer",
-                color: pathname.startsWith("/samba/users") ? "#FF8C00" : "#888",
+                color: pathname.startsWith("/samba/users") ? c.primary : c.textSub,
                 fontSize: "1.125rem",
                 transition: "color 0.15s, border-color 0.15s, background 0.15s",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.background = c.surfaceAlt; }}
               onMouseLeave={(e) => {
-                if (!pathname.startsWith("/samba/users")) { e.currentTarget.style.color = "#888"; e.currentTarget.style.background = "transparent"; }
+                if (!pathname.startsWith("/samba/users")) { e.currentTarget.style.color = c.textSub; e.currentTarget.style.background = "transparent"; }
               }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -499,8 +500,8 @@ export default function SambaLayout({
               </svg>
             </Link>
             {/* 구분선 */}
-            <div style={{ width: "1px", height: "20px", background: "#333" }} />
-            <span style={{ fontSize: "0.8125rem", color: "#AAA" }}>
+            <div style={{ width: "1px", height: "20px", background: c.border }} />
+            <span style={{ fontSize: "0.8125rem", color: c.textSub }}>
               {currentUser.name || currentUser.email}
             </span>
             <button
@@ -508,15 +509,15 @@ export default function SambaLayout({
               style={{
                 padding: "0.375rem 0.75rem",
                 fontSize: "0.75rem",
-                color: "#888",
+                color: c.textSub,
                 background: "transparent",
-                border: "1px solid #333",
+                border: `1px solid ${c.border}`,
                 borderRadius: "6px",
                 cursor: "pointer",
                 transition: "color 0.15s, border-color 0.15s, background 0.15s",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF6B6B"; e.currentTarget.style.borderColor = "#FF6B6B"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = "#888"; e.currentTarget.style.borderColor = "#333"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = c.danger; e.currentTarget.style.borderColor = c.danger; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = c.textSub; e.currentTarget.style.borderColor = c.border; }}
             >
               로그아웃
             </button>
@@ -531,7 +532,7 @@ export default function SambaLayout({
       <main
         className="flex-1"
         style={{
-          background: "linear-gradient(135deg, #0F0F0F 0%, #1A1A1A 100%)",
+          background: c.pageBg,
           paddingTop: "2rem",
         }}
       >
@@ -557,8 +558,8 @@ export default function SambaLayout({
         >
           <div
             style={{
-              background: "#1A1A1A",
-              border: "2px solid #FF4444",
+              background: c.surface,
+              border: `2px solid ${c.danger}`,
               borderRadius: "16px",
               padding: "2rem",
               maxWidth: "440px",
@@ -588,24 +589,24 @@ export default function SambaLayout({
                 background: "transparent",
                 border: "none",
                 borderRadius: "6px",
-                color: "#AAA",
+                color: c.textSub,
                 fontSize: "1.25rem",
                 fontWeight: 700,
                 cursor: "pointer",
                 lineHeight: 1,
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF6B6B"; e.currentTarget.style.background = "rgba(255,107,107,0.1)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = "#AAA"; e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = c.danger; e.currentTarget.style.background = c.surfaceAlt; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = c.textSub; e.currentTarget.style.background = "transparent"; }}
             >
               ✕
             </button>
             <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
               <div style={{ fontSize: "3rem", marginBottom: "0.75rem" }}>⚠️</div>
-              <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#FF6B6B", marginBottom: "0.5rem" }}>
+              <h3 style={{ fontSize: "1.25rem", fontWeight: 700, color: c.danger, marginBottom: "0.5rem" }}>
                 마켓 취소 미반영 감지
               </h3>
-              <p style={{ fontSize: "0.875rem", color: "#AAA", lineHeight: 1.5 }}>
-                마켓에서 취소요청·취소완료된 주문이 <b style={{ color: "#FF6B6B" }}>{fmtNum(cancelCount)}건</b>{" "}
+              <p style={{ fontSize: "0.875rem", color: c.textSub, lineHeight: 1.5 }}>
+                마켓에서 취소요청·취소완료된 주문이 <b style={{ color: c.danger }}>{fmtNum(cancelCount)}건</b>{" "}
                 있지만 내부 상태가 아직 처리/배송 단계입니다. 발주·송장 등록 전에 확인해 주세요.
               </p>
             </div>
@@ -616,9 +617,9 @@ export default function SambaLayout({
                   flex: 1,
                   padding: "0.75rem",
                   background: "transparent",
-                  border: "1px solid #444",
+                  border: `1px solid ${c.border}`,
                   borderRadius: "8px",
-                  color: "#AAA",
+                  color: c.textSub,
                   fontSize: "0.9375rem",
                   fontWeight: 600,
                   cursor: "pointer",
@@ -634,7 +635,7 @@ export default function SambaLayout({
                 style={{
                   flex: 2,
                   padding: "0.75rem",
-                  background: "#FF4444",
+                  background: c.danger,
                   border: "none",
                   borderRadius: "8px",
                   color: "#fff",
@@ -652,8 +653,8 @@ export default function SambaLayout({
 
       <style jsx global>{`
         @keyframes samba-cancel-pulse {
-          0%, 100% { box-shadow: 0 0 0 2px #0F0F0F, 0 0 0 0 rgba(255, 68, 68, 0.6); }
-          50% { box-shadow: 0 0 0 2px #0F0F0F, 0 0 0 6px rgba(255, 68, 68, 0); }
+          0%, 100% { box-shadow: 0 0 0 2px ${c.pageBg}, 0 0 0 0 rgba(255, 68, 68, 0.6); }
+          50% { box-shadow: 0 0 0 2px ${c.pageBg}, 0 0 0 6px rgba(255, 68, 68, 0); }
         }
       `}</style>
     </div>

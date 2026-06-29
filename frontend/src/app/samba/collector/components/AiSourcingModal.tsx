@@ -9,6 +9,8 @@ import { showAlert } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { SITES } from '../constants'
 import AiSourcingConfirmStep from './AiSourcingConfirmStep'
+import { light as c } from '@/lib/samba/colors'
+import { btn } from '@/lib/samba/buttons'
 
 interface AiSourcingModalProps {
   open: boolean
@@ -48,27 +50,25 @@ export default function AiSourcingModal({
       background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center',
     }} onClick={() => !aiAnalyzing && onClose()}>
       <div onClick={e => e.stopPropagation()} style={{
-        background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+        background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
         width: aiSourcingStep === 'confirm' ? '900px' : '560px',
         maxHeight: '85vh', overflow: 'auto',
       }}>
         {/* 헤더 */}
         <div style={{
-          padding: '16px 20px', borderBottom: '1px solid #2D2D2D',
+          padding: '16px 20px', borderBottom: `1px solid ${c.border}`,
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <span style={{ fontSize: '1.1rem' }}>🤖</span>
             <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>AI 소싱기</span>
-            <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: '4px' }}>
+            <span style={{ fontSize: '0.75rem', color: c.textSub, marginLeft: '4px' }}>
               {aiSourcingStep === 'config' ? '1/3 데이터소스 설정' :
                aiSourcingStep === 'analyzing' ? '2/3 분석 중' : '3/3 결과 확인'}
             </span>
           </div>
           {!aiAnalyzing && (
-            <button onClick={onClose} style={{
-              background: 'none', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer',
-            }}>✕</button>
+            <button onClick={onClose} style={{ ...btn('ghost'), fontSize: '1.2rem' }}>✕</button>
           )}
         </div>
 
@@ -78,24 +78,24 @@ export default function AiSourcingModal({
             {/* 월 + 대카테고리 (핵심 2개 입력) */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
               <div>
-                <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '6px' }}>분석 월 (작년)</label>
+                <label style={{ fontSize: '0.82rem', color: c.text, fontWeight: 600, display: 'block', marginBottom: '6px' }}>분석 월 (작년)</label>
                 <select value={aiMonth} onChange={e => setAiMonth(Number(e.target.value))} style={{
-                  width: '100%', padding: '10px 12px', background: '#111', border: '1px solid #2D2D2D',
-                  borderRadius: '6px', color: '#E5E5E5', fontSize: '0.9rem', cursor: 'pointer',
+                  width: '100%', padding: '10px 12px', background: c.inputBg, border: `1px solid ${c.border}`,
+                  borderRadius: '6px', color: c.text, fontSize: '0.9rem', cursor: 'pointer',
                 }}>
                   {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
                     <option key={m} value={m}>{m}월</option>
                   ))}
                 </select>
-                <span style={{ fontSize: '0.7rem', color: '#555', marginTop: '4px', display: 'block' }}>
+                <span style={{ fontSize: '0.7rem', color: c.textMuted, marginTop: '4px', display: 'block' }}>
                   {new Date().getFullYear() - 1}년 {aiMonth}월 데이터
                 </span>
               </div>
               <div>
-                <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '6px' }}>대 카테고리</label>
+                <label style={{ fontSize: '0.82rem', color: c.text, fontWeight: 600, display: 'block', marginBottom: '6px' }}>대 카테고리</label>
                 <select value={aiMainCategory} onChange={e => setAiMainCategory(e.target.value)} style={{
-                  width: '100%', padding: '10px 12px', background: '#111', border: '1px solid #2D2D2D',
-                  borderRadius: '6px', color: '#E5E5E5', fontSize: '0.9rem', cursor: 'pointer',
+                  width: '100%', padding: '10px 12px', background: c.inputBg, border: `1px solid ${c.border}`,
+                  borderRadius: '6px', color: c.text, fontSize: '0.9rem', cursor: 'pointer',
                 }}>
                   <option value='패션의류'>패션의류</option>
                   <option value='패션잡화'>패션잡화</option>
@@ -107,16 +107,16 @@ export default function AiSourcingModal({
 
             {/* 수집 소싱처 선택 */}
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ fontSize: '0.82rem', color: '#C5C5C5', fontWeight: 600, display: 'block', marginBottom: '8px' }}>수집 소싱처</label>
+              <label style={{ fontSize: '0.82rem', color: c.text, fontWeight: 600, display: 'block', marginBottom: '8px' }}>수집 소싱처</label>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {SITES.map(s => (
                   <button key={s.id} disabled={s.disabled} onClick={() => { if (!s.disabled) setAiSourceSite(s.id) }} style={{
                     padding: '6px 14px', borderRadius: '6px', fontSize: '0.78rem',
                     cursor: s.disabled ? 'not-allowed' : 'pointer',
                     fontWeight: aiSourceSite === s.id ? 700 : 400,
-                    background: s.disabled ? 'transparent' : aiSourceSite === s.id ? 'rgba(255,140,0,0.15)' : '#111',
-                    border: s.disabled ? '1px solid #2A2A2A' : aiSourceSite === s.id ? '1px solid #FF8C00' : '1px solid #2D2D2D',
-                    color: s.disabled ? '#555' : aiSourceSite === s.id ? '#FF8C00' : '#888',
+                    background: s.disabled ? 'transparent' : aiSourceSite === s.id ? '#e3f4f0' : c.surfaceAlt,
+                    border: s.disabled ? `1px solid ${c.border}` : aiSourceSite === s.id ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+                    color: s.disabled ? c.textMuted : aiSourceSite === s.id ? '#0f6a5b' : c.textMuted,
                     opacity: s.disabled ? 0.6 : 1,
                   }}>{s.label}{s.disabled ? ' (예정)' : ''}</button>
                 ))}
@@ -128,14 +128,14 @@ export default function AiSourcingModal({
               background: 'rgba(108,92,231,0.08)', border: '1px solid rgba(108,92,231,0.25)',
               borderRadius: '8px', padding: '12px 14px', marginBottom: '16px', fontSize: '0.78rem',
             }}>
-              <div style={{ color: '#A29BFE', fontWeight: 600, marginBottom: '6px' }}>자동 조회 범위</div>
-              <div style={{ color: '#999', lineHeight: 1.6 }}>
-                <span style={{ color: '#4C9AFF' }}>무신사</span>:{' '}
+              <div style={{ color: c.text, fontWeight: 600, marginBottom: '6px' }}>자동 조회 범위</div>
+              <div style={{ color: c.textMuted, lineHeight: 1.6 }}>
+                <span style={{ color: c.textSub }}>무신사</span>:{' '}
                 {aiMainCategory === '패션의류' ? '상의, 아우터, 바지, 원피스/스커트, 속옷/슬립웨어' :
                  aiMainCategory === '패션잡화' ? '가방, 신발, 시계/주얼리, 패션소품' :
                  aiMainCategory === '스포츠/레저' ? '스포츠/레저' : '전체 10개 카테고리'}
                 <br />
-                <span style={{ color: '#51CF66' }}>네이버 데이터랩</span>:{' '}
+                <span style={{ color: c.success }}>네이버 데이터랩</span>:{' '}
                 {aiMainCategory === '패션전체' ? '패션의류 + 패션잡화' : aiMainCategory} 인기검색어 TOP 500
               </div>
             </div>
@@ -145,28 +145,28 @@ export default function AiSourcingModal({
               display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px',
             }}>
               <div style={{
-                background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '14px',
+                background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '14px',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                   <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>판매 엑셀 (선택)</span>
-                  <span style={{ fontSize: '0.72rem', color: '#888' }}>정확도 향상</span>
+                  <span style={{ fontSize: '0.72rem', color: c.textSub }}>정확도 향상</span>
                 </div>
                 <input type='file' accept='.xlsx,.xlsm,.xls,.csv'
                   onChange={e => setAiExcelFile(e.target.files?.[0] || null)}
-                  style={{ fontSize: '0.8rem', color: '#888' }}
+                  style={{ fontSize: '0.8rem', color: c.textMuted }}
                 />
                 {aiExcelFile && (
-                  <span style={{ fontSize: '0.75rem', color: '#FFB84D', display: 'block', marginTop: '4px' }}>
+                  <span style={{ fontSize: '0.75rem', color: c.text, display: 'block', marginTop: '4px' }}>
                     {aiExcelFile.name}
                   </span>
                 )}
               </div>
               <div style={{
-                background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '14px',
+                background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '14px',
               }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                   <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>최소 상품수</span>
-                  <span style={{ fontSize: '0.72rem', color: '#888' }}>미만 그룹 배제</span>
+                  <span style={{ fontSize: '0.72rem', color: c.textSub }}>미만 그룹 배제</span>
                 </div>
                 <input
                   type='text'
@@ -175,8 +175,8 @@ export default function AiSourcingModal({
                   onChange={e => setAiMinCount(Number(e.target.value.replace(/[^0-9]/g, '')) || 0)}
                   placeholder='0'
                   style={{
-                    width: '100%', padding: '6px 10px', background: '#0A0A0A', border: '1px solid #3D3D3D',
-                    borderRadius: '6px', color: '#FFB84D', fontSize: '0.9rem', fontWeight: 600,
+                    width: '100%', padding: '6px 10px', background: c.inputBg, border: `1px solid ${c.border}`,
+                    borderRadius: '6px', color: c.text, fontSize: '0.9rem', fontWeight: 600,
                   }}
                 />
               </div>
@@ -254,10 +254,8 @@ export default function AiSourcingModal({
                 setAiAnalyzing(false)
               }}
               style={{
-                width: '100%', padding: '10px', borderRadius: '8px',
-                background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
-                color: '#fff', fontWeight: 700, fontSize: '0.9rem',
-                border: 'none', cursor: 'pointer',
+                ...btn('primary'), width: '100%', padding: '10px',
+                borderRadius: '8px', fontSize: '0.9rem',
               }}
             >
               AI 분석 시작
@@ -269,16 +267,16 @@ export default function AiSourcingModal({
         {aiSourcingStep === 'analyzing' && (
           <div style={{ padding: '20px' }}>
             <div style={{
-              background: '#080A10', borderRadius: '8px', padding: '14px',
+              background: c.surfaceAlt, borderRadius: '8px', padding: '14px',
               height: '300px', overflowY: 'auto', fontFamily: 'monospace',
-              fontSize: '0.62rem', lineHeight: 1.5, color: '#8A95B0',
+              fontSize: '0.62rem', lineHeight: 1.5, color: c.textMuted,
             }}>
               {aiLogs.map((line, i) => (
                 <p key={i} style={{
                   margin: 0,
-                  color: line.includes('완료') || line.includes('성공') ? '#51CF66'
-                    : line.includes('오류') || line.includes('실패') ? '#FF6B6B'
-                    : line.includes('시작') ? '#4C9AFF' : '#8A95B0',
+                  color: line.includes('완료') || line.includes('성공') ? c.success
+                    : line.includes('오류') || line.includes('실패') ? c.danger
+                    : line.includes('시작') ? c.link : c.textMuted,
                 }}>{line}</p>
               ))}
             </div>
@@ -286,15 +284,11 @@ export default function AiSourcingModal({
               <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                 {aiResult && (
                   <button onClick={() => setAiSourcingStep('confirm')} style={{
-                    padding: '8px 20px', borderRadius: '6px',
-                    background: 'rgba(81,207,102,0.2)', border: '1px solid rgba(81,207,102,0.5)',
-                    color: '#51CF66', cursor: 'pointer', fontWeight: 600,
+                    ...btn('secondary'), padding: '8px 20px', borderRadius: '6px',
                   }}>결과 확인 →</button>
                 )}
                 <button onClick={onClose} style={{
-                  padding: '8px 20px', borderRadius: '6px',
-                  background: 'transparent', border: '1px solid #3D3D3D',
-                  color: '#888', cursor: 'pointer',
+                  ...btn('ghost'), padding: '8px 20px', borderRadius: '6px',
                 }}>닫기</button>
               </div>
             )}
