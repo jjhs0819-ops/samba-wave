@@ -1806,7 +1806,10 @@ async def refresh_products_bulk(
                     try:
                         await on_result(p, r, _log_idx, _log_total)
                     except Exception as cb_err:
-                        logger.warning("[오토튠] on_result 콜백 오류: %s", cb_err)
+                        # 삼킨 예외에 traceback 포함 — root cause 라인 추적용
+                        logger.warning(
+                            "[오토튠] on_result 콜백 오류: %s", cb_err, exc_info=True
+                        )
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval, 최소 0.1초)
                 interval = max(0.1, _site_intervals.get(site, base_interval))
                 await asyncio.sleep(interval)

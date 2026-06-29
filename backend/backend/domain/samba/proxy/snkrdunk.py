@@ -560,6 +560,7 @@ class SnkrdunkClient:
 
         code_id = card_id
         name = ""
+        name_ja = ""
         image = ""
         product_number = ""
         cond_min: dict[str, int] = {}
@@ -576,6 +577,7 @@ class SnkrdunkClient:
                 dr.raise_for_status()
                 dj = dr.json()
                 name = (dj.get("name") or "").strip()
+                name_ja = (dj.get("localizedName") or "").strip()  # 일문 상품명
                 product_number = (dj.get("productNumber") or "").strip()
                 pm = dj.get("primaryMedia") or {}
                 image = (pm.get("imageUrl") or "").strip()
@@ -675,6 +677,8 @@ class SnkrdunkClient:
         return {
             "site_product_id": card_id,
             "name": name,
+            "name_en": name,  # 영문 상품명(JP API name = 영문)
+            "name_ja": name_ja,  # 일문 상품명(localizedName)
             "brand": _derive_card_brand(name, product_number),
             "sale_price": sale_price,
             "original_price": sale_price,
