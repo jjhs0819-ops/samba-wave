@@ -87,7 +87,13 @@ services:
       READ_DB_PORT: "5432"
       PROCESS_ROLE: worker
       WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync"
-      WORKER_REPLICAS: "4"
+      # 8코어 활용 — worker 8개. 프로세스당 풀 축소(write 20, read 10 = 30)로
+      # 8×30 + api(80) = 320 < max_connections 400 안에 들어옴.
+      WORKER_REPLICAS: "8"
+      DB_WRITE_POOL_SIZE: "10"
+      DB_WRITE_MAX_OVERFLOW: "10"
+      DB_READ_POOL_SIZE: "5"
+      DB_READ_MAX_OVERFLOW: "5"
       # api 와 같은 netns(service:wireguard) 공유 → 8080 충돌 방지 위해 worker 는 8081
       WORKER_BIND_PORT: "8081"
       DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"

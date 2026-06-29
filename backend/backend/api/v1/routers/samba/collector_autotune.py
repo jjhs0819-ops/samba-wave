@@ -101,10 +101,28 @@ async def _get_active_sites_cached() -> list[str]:
             _CP.source_site != None,
             _CP.source_site != "",
         )
-        async with get_read_session() as rs:
-            result = await rs.execute(stmt)
-            # "manual" source_site는 실제 소싱처 플러그인이 없어 오토튠 실패 반복 — 제외
-            sites = [r[0] for r in result.all() if r[0] and r[0] != "manual"]
+        # (2026-06-29) flip-flop fix: 무거운 distinct 쿼리가 DB 부하 시 간헐 timeout/빈결과
+        # → active_sites=[] 로 떨어져 active 사이클(MUSINSA 등)이 취소되는 flip-flop 발생.
+        # 프로덕션은 항상 active site 가 존재하므로 "빈 결과 또는 쿼리 에러" = blip 으로 간주,
+        # 캐시를 []로 덮어쓰지 않고 직전 stale 값을 유지한다(사이클 보호).
+        try:
+            async with get_read_session() as rs:
+                result = await rs.execute(stmt)
+                # "manual" source_site는 실제 소싱처 플러그인이 없어 오토튠 실패 반복 — 제외
+                sites = [r[0] for r in result.all() if r[0] and r[0] != "manual"]
+        except Exception as _e:
+            if cached:
+                logging.getLogger("backend.autotune").warning(
+                    "[active-sites] 쿼리 실패 — 직전 캐시 유지(stale): %s", _e
+                )
+                return list(cached)
+            raise
+        if not sites and cached:
+            # 빈 결과(blip) — 직전 non-empty 캐시 유지, ts 갱신 안 함(다음 호출서 재시도)
+            logging.getLogger("backend.autotune").warning(
+                "[active-sites] 빈 결과 — blip 으로 간주, 직전 캐시 유지(stale)"
+            )
+            return list(cached)
         _active_sites_cache["data"] = sites
         _active_sites_cache["ts"] = time.monotonic()
         return list(sites)
