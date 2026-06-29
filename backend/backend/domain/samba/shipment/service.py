@@ -1917,9 +1917,9 @@ class SambaShipmentService:
                     # 한 정책에 GS 계정이 여러 개 묶여 계정마다 수수료가 다른 경우 대응.
                     _acc_id = str(getattr(account, "id", "") or "") if account else ""
                     if _pkey and _acc_id:
-                        _gs_by_acc = (
-                            policy_market_data.get(_pkey, {}) or {}
-                        ).get("gsSettingsByAccount") or {}
+                        _gs_by_acc = (policy_market_data.get(_pkey, {}) or {}).get(
+                            "gsSettingsByAccount"
+                        ) or {}
                         _gs_acc_cfg = _gs_by_acc.get(_acc_id)
                         if isinstance(_gs_acc_cfg, dict) and _gs_acc_cfg.get("feeRate"):
                             _acct_fee_rate = int(_gs_acc_cfg["feeRate"])
