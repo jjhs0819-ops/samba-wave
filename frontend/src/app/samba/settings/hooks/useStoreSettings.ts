@@ -400,6 +400,14 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
           // password 미전송 시 백엔드가 저장된 credentials에서 폴백
           result = await proxyApi.lottehomeAuth({ userId, password, agncNo, env: safeData.env || 'prod' })
         }
+      } else if (marketKey === 'hmall') {
+        result = await proxyApi.hmallAuthTest({
+          api_id: String(safeData.apiId || ''),
+          api_key: String(safeData.apiKey || ''),
+          store_id: String(safeData.storeId || ''),
+          business_name: String(safeData.businessName || ''),
+          account_id: editingAccountId || undefined,
+        })
       } else if (marketKey === 'playauto') {
         result = await proxyApi.playautoAuthTest({
           api_key: String(safeData.apiKey || ''),
