@@ -532,6 +532,14 @@ _pc_cleanup_task: asyncio.Task | None = None
 _daemon_poll_watch_task: asyncio.Task | None = None
 
 
+# 프록시 서버사이드로 직접 fetch 하는 오토튠 사이트 — 확장앱 폴링(브라우저 탭) 없이도
+# 백엔드가 갱신 가능. 따라서 확장앱 auto-spawn 의 5분 폴링 가드를 면제한다(웨일 탭이
+# 백그라운드 throttle / PC 절전으로 폴링 끊겨도 무신사 오토튠이 죽지 않게). 쿠키 만료
+# 시 잘못된 비로그인가는 musinsa.py 비로그인 검출 → price_uncertain → 오토튠 cost 갱신/
+# 전송 보류(2단 방어)로 차단되므로 가격 오염 위험 없음. [2026-06-30]
+_SERVER_SIDE_AUTOTUNE_SITES = {"MUSINSA"}
+
+
 async def _pc_sync_loop() -> None:
     """매 10초 PC 분담 매핑 DB → in-memory 동기화 (worker 간 sync).
 
@@ -599,9 +607,15 @@ async def _pc_sync_loop() -> None:
                         continue
                     if _is_pc_running(_edev):
                         continue
-                    _last_poll = _pc_last_seen.get(_edev, 0)
-                    if not _last_poll or (_now_ts - _last_poll) > 300:
-                        continue
+                    # 프록시 서버사이드 사이트(무신사)만 분담된 확장앱은 5분 폴링 가드 면제 —
+                    # 백엔드가 폴링 없이 직접 갱신하므로 PC 절전/탭 throttle 에도 죽지 않게.
+                    _all_server_side = all(
+                        _s in _SERVER_SIDE_AUTOTUNE_SITES for _s in _esites
+                    )
+                    if not _all_server_side:
+                        _last_poll = _pc_last_seen.get(_edev, 0)
+                        if not _last_poll or (_now_ts - _last_poll) > 300:
+                            continue
                     _pc_cycle_count[_edev] = 0
                     _pc_restart_count[_edev] = 0
                     _ev2 = _get_pc_event(_edev)
