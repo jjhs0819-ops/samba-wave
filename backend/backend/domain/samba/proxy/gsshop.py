@@ -289,6 +289,17 @@ class GsShopClient:
             "/api/v3/products/getSupMdidList.gs", "GET", params=params
         )
 
+    async def get_prd_cls_dtl_info(self, prd_cls_cd: str) -> dict[str, Any]:
+        """상품분류 상세정보 조회 (V1.05) — 분류별 정보고시그룹/항목, 옵션필수,
+        세금유형, 안전인증 등 등록 기준정보. 정보고시 그룹은 분류마다 다르므로
+        (의류10·신발11·가방12·패션잡화13 등) 등록 시 이걸로 동적 결정한다.
+        """
+        return await self._call_api(
+            "/api/v3/products/getPrdClsDtlInfo.gs",
+            "GET",
+            params={"prdClsCd": prd_cls_cd},
+        )
+
     # ------------------------------------------------------------------
     # 상품 등록/수정
     # ------------------------------------------------------------------
