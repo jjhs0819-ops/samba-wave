@@ -1801,6 +1801,8 @@ class SambaShipmentService:
 
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
+                # GS샵 등 부분수정 플러그인용 — 요청된 필드(재고/가격)만 전송하도록 전달
+                acct_product["_update_items"] = update_items
 
                 # SSG 표준카테고리(stdCtgId) 주입 — ssg_std 매핑값을 _std_category_id로 전달
                 if market_type == "ssg":
