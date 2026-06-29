@@ -173,6 +173,30 @@ async def _fetch_new_order_numbers(
                 finally:
                     pass  # LotteHomeClient는 per-request httpx — close 불필요
 
+            elif market_type == "poison":
+                from backend.domain.samba.proxy.poison import PoisonClient
+
+                app_key = (
+                    extras.get("app_key", "")
+                    or extras.get("appKey", "")
+                    or account.api_key
+                    or ""
+                )
+                app_secret = (
+                    extras.get("app_secret", "")
+                    or extras.get("appSecret", "")
+                    or account.api_secret
+                    or ""
+                )
+                if not app_key or not app_secret:
+                    continue
+                client = PoisonClient(app_key, app_secret)
+                raw_orders = await client.get_orders(days=7)
+                for ro in raw_orders:
+                    oid = str(ro.get("order_no", "") or "")
+                    if oid:
+                        raw_order_numbers.append(oid)
+
             else:
                 continue
 

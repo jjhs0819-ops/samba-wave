@@ -5041,6 +5041,26 @@ async def sync_orders_from_markets(
                 await _c.test_auth()
                 return _aid, await _c.get_orders(days=days)
 
+            elif _mtype == "poison":
+                _app_key = (
+                    _extr.get("app_key", "")
+                    or _extr.get("appKey", "")
+                    or acc["api_key"]
+                    or ""
+                )
+                _app_secret = (
+                    _extr.get("app_secret", "")
+                    or _extr.get("appSecret", "")
+                    or acc["api_secret"]
+                    or ""
+                )
+                if not _app_key or not _app_secret:
+                    return _aid, None
+                from backend.domain.samba.proxy.poison import PoisonClient
+
+                _c = PoisonClient(_app_key, _app_secret)
+                return _aid, await _c.get_orders(days=days)
+
             elif _mtype == "playauto":
                 _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
                 if not _ak:
@@ -5942,6 +5962,42 @@ async def sync_orders_from_markets(
                 except Exception as ps_err:
                     logger.warning(
                         f"[주문동기화] {label}: 롯데ON 배송상태 갱신 실패 — {ps_err}"
+                    )
+
+            elif market_type == "poison":
+                from backend.domain.samba.proxy.poison import PoisonClient
+
+                app_key = (
+                    extras.get("app_key", "")
+                    or extras.get("appKey", "")
+                    or account["api_key"]
+                    or ""
+                )
+                app_secret = (
+                    extras.get("app_secret", "")
+                    or extras.get("appSecret", "")
+                    or account["api_secret"]
+                    or ""
+                )
+                if not app_key or not app_secret:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "POIZON app_key/app_secret 없음",
+                        }
+                    )
+                    continue
+                poison_client = PoisonClient(app_key, app_secret)
+                raw_orders = _raw_cache.get(account["id"])
+                if raw_orders is None:
+                    raw_orders = await poison_client.get_orders(days=body.days)
+                logger.info(
+                    f"[주문동기화] {label}: POIZON 주문 {len(raw_orders)}건 조회"
+                )
+                for ro in raw_orders:
+                    orders_data.append(
+                        _parse_poison_order(ro, account["id"], label)
                     )
 
             elif market_type == "playauto":
@@ -9965,6 +10021,106 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "customer_address_detail": addr_detail,
         "customer_postal_code": postal_code,
         "customer_note": item.get("dvMsg", "") or "",
+        "paid_at": paid_at,
+        # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
+    }
+
+
+def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
+    """POIZON(得物) 주문 데이터 → SambaOrder dict 변환."""
+    from backend.utils import kst_str_to_utc
+
+    # 주문 상태 코드(order_status, int) → 내부 status 매핑
+    # 1000 결제대기, 2000 발송준비, 2100~3040 배송/검수, 2800/4000 완료, 7000~ 취소
+    order_status = item.get("order_status")
+    try:
+        _status_code = int(order_status) if order_status is not None else 0
+    except (TypeError, ValueError):
+        _status_code = 0
+    poison_status_map = {
+        1000: "pending",
+        2000: "preparing",
+        2100: "shipping",
+        2200: "shipping",
+        2500: "shipping",
+        2550: "shipping",
+        2600: "shipping",
+        2650: "shipping",
+        2700: "shipping",
+        3040: "shipping",
+        2800: "delivered",
+        4000: "delivered",
+        7000: "cancelled",
+        8000: "cancelled",
+        8010: "cancelled",
+        8080: "cancelled",
+    }
+    status = poison_status_map.get(_status_code, "preparing")
+
+    # 결제일시 — "yyyy-MM-dd HH:mm:ss" (셀러 타임존 KST 가정) → UTC
+    paid_at = kst_str_to_utc(item.get("pay_time") or "")
+
+    # 수량 안전 파싱
+    try:
+        quantity = max(1, int(item.get("qty") or 1))
+    except (TypeError, ValueError):
+        quantity = 1
+
+    # 결제금액 — pay_amount(통화 최소단위 정수). TODO: currency(item.get("currency"))
+    # 가 KRW가 아닌 경우 환율 환산 필요. 현재는 원본 값을 그대로 저장.
+    try:
+        product_price = int(item.get("pay_amount") or 0)
+    except (TypeError, ValueError):
+        product_price = 0
+
+    # 배송지(delivery_address_platform) — 수취인/주소 분리 저장
+    dap = item.get("delivery_address_platform") or {}
+    if not isinstance(dap, dict):
+        dap = {}
+    customer_name = (dap.get("name") or "").strip()
+    customer_phone = (dap.get("mobile") or "").strip()
+    _addr_parts = [
+        (dap.get("province") or "").strip(),
+        (dap.get("city") or "").strip(),
+        (dap.get("district") or "").strip(),
+    ]
+    customer_address = " ".join(p for p in _addr_parts if p)
+    customer_address_detail = (dap.get("address_detail") or "").strip()
+
+    _order_no = str(item.get("order_no", "") or "")
+    _currency = str(item.get("currency", "") or "")
+
+    return {
+        "channel_id": account_id,
+        "channel_name": label,
+        "source": "poison",
+        "order_number": _order_no,
+        "od_no": _order_no,
+        # 원본 식별자 보존 (메모 컬럼)
+        "shipment_id": str(item.get("seller_bidding_no", "") or ""),
+        "product_id": str(item.get("spu_id", "") or item.get("sku_id", "") or ""),
+        "product_name": item.get("title", "") or "",
+        "product_option": item.get("properties", "") or "",
+        "quantity": quantity,
+        "sale_price": product_price,
+        "cost": 0,
+        "status": status,
+        "shipping_status": "",
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
+        "customer_address": customer_address,
+        "customer_address_detail": customer_address_detail,
+        # currency != KRW 인 경우 환산 TODO. 메모에 원본 통화/품번 보존.
+        "customer_note": " / ".join(
+            p
+            for p in (
+                f"통화:{_currency}" if _currency else "",
+                f"품번:{item.get('article_number', '')}"
+                if item.get("article_number")
+                else "",
+            )
+            if p
+        ),
         "paid_at": paid_at,
         # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
     }

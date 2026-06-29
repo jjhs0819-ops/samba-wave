@@ -37,6 +37,8 @@ class PoisonClient:
     PATH_CANCEL_LISTING = "/dop/api/v1/pop/api/v1/cancel-bid/cancel-bidding"
     # 추천 입찰가(최저가) 조회
     PATH_RECOMMEND_PRICE = "/dop/api/v1/pop/api/v1/recommend-bid/price"
+    # 주문 목록 조회 (Order List — generic_list, create_time 범위 최대 7일)
+    PATH_ORDER_LIST = "/dop/api/v1/pop/api/v2/order/generic_list"
 
     # POIZON sizeType 허용값
     _ALLOWED_SIZE_TYPES = {"EU", "US", "UK", "CN", "JP"}
@@ -320,3 +322,61 @@ class PoisonClient:
             "maxPrice": payload.get("maxPrice"),
             "data": payload,
         }
+
+    # ------------------------------------------------------------------
+    # 주문 조회 (Order List — 삼바 주문 수집용)
+    # ------------------------------------------------------------------
+
+    async def get_orders(
+        self,
+        days: int = 7,
+        *,
+        order_status: int | None = None,
+        page_size: int = 50,
+    ) -> list[dict[str, Any]]:
+        """최근 N일(최대 7일) 주문 목록 조회 — generic_list, 페이징 자동 순회.
+
+        POIZON generic_list 는 create_time 범위가 최대 7일. start/end 미지정 시
+        셀러 타임존 기준 최근 N일. order_status 미지정 시 전체 상태 조회.
+        Returns: 주문 dict 리스트(order_no/article_number/seller_bidding_no/
+        order_status/pay_time/properties/qty/delivery_* 등 포함).
+        """
+        from datetime import datetime, timedelta
+        from datetime import timezone as _tz
+
+        kst = _tz(timedelta(hours=9))
+        now = datetime.now(tz=kst)
+        span = min(max(days, 1), 7)
+        end_created = now.strftime("%Y-%m-%d %H:%M:%S")
+        start_created = (now - timedelta(days=span)).strftime("%Y-%m-%d %H:%M:%S")
+
+        all_orders: list[dict[str, Any]] = []
+        page_no = 1
+        while page_no <= 100:  # 안전 상한
+            business: dict[str, Any] = {
+                "language": self.language,
+                "timeZone": self.time_zone,
+                "start_created": start_created,
+                "end_created": end_created,
+                "page_no": page_no,
+                "page_size": page_size,
+                "order_by_create_time_desc": True,
+            }
+            if order_status is not None:
+                business["order_status"] = order_status
+            data = await self._post(self.PATH_ORDER_LIST, business)
+            if data.get("code") != 200:
+                logger.warning(
+                    f"[POIZON] 주문조회 실패 page={page_no} "
+                    f"code={data.get('code')} "
+                    f"msg={data.get('msg') or data.get('message')}"
+                )
+                break
+            d = data.get("data") or {}
+            orders = d.get("orders") or []
+            all_orders.extend(orders)
+            total = int(d.get("total_results") or 0)
+            if not orders or page_no * page_size >= total:
+                break
+            page_no += 1
+        return all_orders
