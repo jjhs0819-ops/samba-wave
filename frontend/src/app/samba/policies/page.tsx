@@ -337,6 +337,9 @@ export default function PoliciesPage() {
   const [gsBrandKeyword, setGsBrandKeyword] = useState('')
   const [gsBrands, setGsBrands] = useState<{ brandCd: string; brandNm: string; brandHanglNm: string; brandEngNm: string }[]>([])
   const [gsBrandLoading, setGsBrandLoading] = useState(false)
+  // 수동 브랜드 추가 — GS 이름검색(getPrdBrandList)에 안 잡히는 브랜드(영문명 공백 등) 대응
+  const [gsManualBrandNm, setGsManualBrandNm] = useState('')
+  const [gsManualBrandCd, setGsManualBrandCd] = useState('')
   const [gsDelivPlaces, setGsDelivPlaces] = useState<{ supAddrCd: string; label: string }[]>([])
   const [gsMdList, setGsMdList] = useState<{ operMdId: string; operMdNm: string; fixMargnRt: number }[]>([])
   const [gsMdLoading, setGsMdLoading] = useState(false)
@@ -1787,6 +1790,17 @@ export default function PoliciesPage() {
                               })}
                             </div>
                           )}
+                        </div>
+                        {/* 수동 추가 — GS 검색에 안 잡히는 브랜드를 코드로 직접 등록. brandCd는 GS 파트너센터/플레이오토에서 확인한 값. */}
+                        <div style={{ display: 'flex', gap: '0.25rem', width: '100%', maxWidth: 220 }}>
+                          <input value={gsManualBrandNm} onChange={e => setGsManualBrandNm(e.target.value)} placeholder="브랜드명 직접입력" style={{ flex: 1, minWidth: 0, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px', boxSizing: 'border-box' }} />
+                          <input value={gsManualBrandCd} onChange={e => setGsManualBrandCd(e.target.value.replace(/[^0-9]/g, ''))} placeholder="코드" style={{ width: 60, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px', boxSizing: 'border-box' }} />
+                          <button onClick={() => {
+                            const nm = gsManualBrandNm.trim(); const cd = gsManualBrandCd.trim()
+                            if (!nm || !cd) return
+                            setGs({ brands: gsBrandList.some(x => x.brandCd === cd) ? gsBrandList : [...gsBrandList, { brandCd: cd, brandNm: nm }], brandCd: undefined, brandNm: undefined })
+                            setGsManualBrandNm(''); setGsManualBrandCd('')
+                          }} style={{ fontSize: '0.75rem', color: '#FF8C00', background: 'transparent', border: '1px solid #FF8C00', borderRadius: 4, cursor: 'pointer', padding: '0 8px', whiteSpace: 'nowrap' }}>추가</button>
                         </div>
                         {/* 선택된 브랜드 (밑으로 나열) */}
                         {gsBrandList.map(b => (
