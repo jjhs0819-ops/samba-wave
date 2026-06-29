@@ -188,6 +188,13 @@ def _is_stale_conn_error(exc: BaseException) -> bool:
     """
     msg = str(exc)
     name = type(exc).__name__
+    # asyncpg connect 단계가 CancelledError 로 끊기면 빈 메시지 예외로 래핑돼 위 패턴에
+    # 안 걸림 → 코디네이터 재시작 카운트 누적 → 무신사(확장앱 단일사이트) 영구 비활성화
+    # 근본 원인. 예외 cause 체인에 CancelledError 가 있으면 일시 블립으로 간주. [2026-06-30]
+    _cause = getattr(exc, "__cause__", None)
+    if isinstance(_cause, asyncio.CancelledError):
+        return True
+    _lmsg = msg.lower()
     return (
         "Can't reconnect" in msg
         or "invalid transaction" in msg
@@ -195,11 +202,16 @@ def _is_stale_conn_error(exc: BaseException) -> bool:
         or "PendingRollbackError" in name
         or "OperationalError" in name
         or "InterfaceError" in name
-        or "connection is closed" in msg.lower()
-        or "ssl connection has been closed" in msg.lower()
-        or "terminating connection due to" in msg.lower()
-        or "session is in 'prepared' state" in msg.lower()
-        or "greenlet_spawn has not been called" in msg.lower()
+        or "ConnectionDoesNotExistError" in name
+        or "CannotConnectNowError" in name
+        or "connection is closed" in _lmsg
+        or "ssl connection has been closed" in _lmsg
+        or "terminating connection due to" in _lmsg
+        or "session is in 'prepared' state" in _lmsg
+        or "greenlet_spawn has not been called" in _lmsg
+        or "connect call failed" in _lmsg
+        or "connection refused" in _lmsg
+        or "temporary failure in name resolution" in _lmsg
     )
 
 
@@ -219,6 +231,11 @@ _pc_site_tasks: dict[str, dict[str, asyncio.Task]] = {}
 # 코디네이터 spawn 루프 + 사이트 루프 CancelledError 핸들러가 함께 확인해
 # task.cancel() 후 즉시 자가부활/재spawn 되던 버그(2026-05-29) 차단.
 _pc_site_cancel_until: dict[tuple[str, str], float] = {}
+# (2026-06-30) flip-flop 디바운스: active_sites 가 일시적으로 site 를 누락(무거운 distinct
+# 쿼리 blip / 캐시 poison / 부분결과)해도 1회만에 사이클을 취소하지 않도록 연속 누락 횟수를
+# 센다. _SITE_ABSENT_CANCEL_THRESHOLD 연속 누락 시에만 취소 → 진짜 체크해제는 N*폴주기 뒤
+# 취소되고, 순간 blip(무신사 단일사이트 코디가 반복 비활성화되던 근본원인)은 무시된다.
+_pc_site_absent_count: dict[tuple[str, str], int] = {}
 
 
 def _is_site_cancel_suppressed(dev: str, site: str) -> bool:
@@ -324,6 +341,9 @@ _SITE_STUCK_TIMEOUT_OVERRIDE = {
     "SSG": 1000,  # 17분 (실측 679s — 동일 원인)
 }
 MAX_RESTART_COUNT = 50  # 코디네이터 재시작 상한선
+# active_sites 연속 누락 N회 시에만 사이트 루프 취소(flip-flop 방어). 코디 폴 5초 주기라
+# 3회 ≈ 15초 — 진짜 체크해제 반응성 유지 + 순간 blip 무시 균형.
+_SITE_ABSENT_CANCEL_THRESHOLD = 3
 
 # 품절잔존 마켓삭제 영구실패(롯데홈쇼핑 "MD 승인 대기" 등) 재시도 쿨다운.
 # 승인 전엔 삭제 불가한 상품을 매 사이클 헛시도 → 무신사 사이클 4분 점유(화면 공백)
@@ -4327,16 +4347,26 @@ async def _autotune_loop(device_id: str):
                 _stopped = []
                 for _old_site in list(_site_tasks.keys()):
                     if _old_site not in _active_set:
+                        # flip-flop 방어: 일시 누락은 무시, 연속 N회 누락 시에만 취소.
+                        _ab = _pc_site_absent_count.get((device_id, _old_site), 0) + 1
+                        _pc_site_absent_count[(device_id, _old_site)] = _ab
+                        if _ab < _SITE_ABSENT_CANCEL_THRESHOLD:
+                            continue
                         _old_task = _site_tasks[_old_site]
                         if _old_task and not _old_task.done():
                             _old_task.cancel()
                         del _site_tasks[_old_site]
+                        _pc_site_absent_count.pop((device_id, _old_site), None)
                         _stopped.append(_old_site)
+                    else:
+                        # 다시 active_sites 에 나타남 → 누락 카운트 리셋(blip 회복).
+                        _pc_site_absent_count.pop((device_id, _old_site), None)
                 if _stopped:
                     log.info(
-                        "[오토튠][%s] 소싱처 루프 중단: %s (체크박스 해제)",
+                        "[오토튠][%s] 소싱처 루프 중단: %s (체크박스 해제 %d회 연속 확인)",
                         _dev_tag,
                         ", ".join(_stopped),
+                        _SITE_ABSENT_CANCEL_THRESHOLD,
                     )
                 _newly_spawned = []
                 for _site in active_sites:
@@ -4418,6 +4448,16 @@ async def _autotune_loop(device_id: str):
                 _ticks = [v for v in _pc_slt(device_id).values() if v]
                 if _ticks:
                     _pc_last_tick[device_id] = max(_ticks)
+
+                # 정상 iteration 완료 → 누적 재시작 카운트 리셋. [2026-06-30]
+                # 일시 DB 연결 블립(asyncpg connect 중 CancelledError 등 빈 메시지 예외 →
+                # _is_stale_conn_error 미감지 → 카운트 누적)이 성공 사이클 사이에 50회까지
+                # 쌓여 코디네이터 무음 중단되던 사고 방지. 확장앱 단일사이트(MUSINSA) 코디는
+                # 사이트 1개라 블립 1번에도 쉽게 누적 → 무신사만 반복 비활성화되던 근본 원인.
+                # 성공 iteration 사이의 transient 에러는 영구 카운트하지 않고, 연속 실패
+                # (성공 iteration 0회)만 MAX_RESTART_COUNT 로 차단 — 안전망은 유지.
+                if _pc_restart_count.get(device_id):
+                    _pc_restart_count[device_id] = 0
 
                 # 5초 대기 (1초 단위로 중지 확인)
                 for _ in range(5):
