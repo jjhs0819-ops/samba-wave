@@ -5996,9 +5996,7 @@ async def sync_orders_from_markets(
                     f"[주문동기화] {label}: POIZON 주문 {len(raw_orders)}건 조회"
                 )
                 for ro in raw_orders:
-                    orders_data.append(
-                        _parse_poison_order(ro, account["id"], label)
-                    )
+                    orders_data.append(_parse_poison_order(ro, account["id"], label))
 
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta
@@ -7163,7 +7161,9 @@ async def sync_orders_from_markets(
                     _gs_creds.get("supCd", "")
                     or _gs_creds.get("storeId", "")
                     or extras.get("storeId", "")
-                    or account["seller_id"]  # GS supCd는 seller_id 컬럼(gsshop_creds 빌더와 동일)
+                    or account[
+                        "seller_id"
+                    ]  # GS supCd는 seller_id 컬럼(gsshop_creds 빌더와 동일)
                 )
                 _gs_aes_key = _gs_creds.get("apiKeyProd", "") or extras.get(
                     "apiKeyProd", ""
@@ -7346,9 +7346,7 @@ async def sync_orders_from_markets(
                             "source": "gsshop",
                             "channel_id": account["id"],
                             "channel_name": label,
-                            "product_name": _gs_full_nm
-                            or _gs_prd_nm
-                            or _gs_sup_prd_cd,
+                            "product_name": _gs_full_nm or _gs_prd_nm or _gs_sup_prd_cd,
                             "product_id": _gs_prd_cd or _gs_sup_prd_cd,
                             "product_option": _gs_option_str,
                             "quantity": _gs_qty,

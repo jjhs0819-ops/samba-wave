@@ -14,7 +14,7 @@ import httpx
 
 from backend.utils.logger import logger
 
-_BASE_URL = "http://openapi.hmall.com/front"
+_BASE_URL = "https://openapi.hmall.com/front"
 _DEFAULT_USER_IP = "127.0.0.1"
 _DEFAULT_USER_GBCd = "20"  # 협력사 구분코드
 
@@ -79,7 +79,7 @@ class HmallClient:
             "oauserId": self.oauser_id,
             "oauseKey": self.oause_key,
         }
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             resp = await client.post(
                 url, content=xml_body.encode("utf-8"), headers=headers
             )
