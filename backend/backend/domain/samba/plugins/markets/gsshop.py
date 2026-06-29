@@ -145,8 +145,17 @@ _GS_KEYWORD_RULES: list[tuple[tuple[str, ...], str]] = [
     (("숄더백",), "B69050109|1663437"),
     (("토트백", "서류가방"), "B69050117|1663436"),
     (
-        ("힙색", "웨이스트백", "벨트백", "슬링백", "보스턴백", "더플백",
-         "여행가방", "에코백", "가방"),
+        (
+            "힙색",
+            "웨이스트백",
+            "벨트백",
+            "슬링백",
+            "보스턴백",
+            "더플백",
+            "여행가방",
+            "에코백",
+            "가방",
+        ),
         "B69050105|1734355",
     ),
     # ── 잡화 (그룹13 패션잡화 정보고시, 등록검증 완료) ──
@@ -380,7 +389,10 @@ async def _resolve_gov_items(
             )
     except Exception as e:
         logger.warning(f"[GS샵] 정보고시 그룹 조회 실패({prd_cls}): {e}")
-    _GOV_ITEMS_CACHE[prd_cls] = items
+    # 성공(항목 확보) 시에만 캐시. 일시 실패의 None을 영구 캐시하면
+    # 가방/잡화가 의류·신발 폴백으로 굳어 등록 거부가 재시작 전까지 지속됨.
+    if items is not None:
+        _GOV_ITEMS_CACHE[prd_cls] = items
     return items
 
 
