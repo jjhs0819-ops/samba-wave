@@ -555,12 +555,9 @@ def _transform_for_gsshop(
         for b in sorted(brands, key=lambda x: -len(_bn(x))):
             if _bn(b) and _bn(b) in pn:
                 return str(b.get("brandCd") or "")
-        # 4) 폴백: legacy 단일 brandCd → 브랜드가 1개뿐일 때만 그 브랜드.
-        #    매칭 실패 + 다중 브랜드면 임의 선택(오등록)하지 말고 빈값 → GS가 brandCd 필수로 막게 둠.
-        if single:
-            return single
-        if len(brands) == 1:
-            return str((brands[0] or {}).get("brandCd") or "")
+        # 4) 매칭 실패 → 빈값. 단일/다중 브랜드 임의 적용(오등록) 금지.
+        #    상품 브랜드/상품명이 정책 브랜드와 안 맞으면 등록을 막는다(execute에서 차단).
+        #    legacy 단일 brandCd(gs.brandCd, brands 없는 구정책)는 상단 `if not brands` 에서 처리.
         return ""
 
     brand_cd = _resolve_brand_cd()
@@ -901,6 +898,18 @@ class GsShopPlugin(MarketPlugin):
         goods_data = _transform_for_gsshop(
             product, category_id, sub_sup_cd, gs_margin_rate, gs_settings, gov_items
         )
+
+        # 브랜드 매핑 가드 — 상품 브랜드/상품명이 정책 GS 브랜드와 매칭 안 되면 등록 차단.
+        # (단일/다중 브랜드 임의 폴백 제거: 안 맞는 브랜드를 엉뚱한 코드로 오등록하지 않도록)
+        if not str((goods_data.get("prdBaseAddInfo") or {}).get("brandCd") or "").strip():
+            _pbrand = str(product.get("brand") or "").strip() or "(브랜드 없음)"
+            return {
+                "success": False,
+                "message": (
+                    f"브랜드 매핑 없음: 상품 브랜드 '{_pbrand}'가 GS 정책 브랜드 목록에 없습니다. "
+                    f"정책관리 > GS샵 > 브랜드에 추가 후 등록하세요."
+                ),
+            }
 
         # prdSectList 없으면 prdClsCd 이름 기반 전시매장 자동 매핑
         if not goods_data.get("prdSectList"):
