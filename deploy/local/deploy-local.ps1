@@ -13,7 +13,8 @@ try {
 Pop-Location
 
 Write-Host "[2/4] 이미지 재빌드..." -ForegroundColor Cyan
-docker compose --env-file local.env -f $compose build samba-api
+# build 는 build: 섹션 있는 local.yml 로 (tunnel.yml 은 image: 참조라 'No services to build')
+docker compose --env-file local.env -f docker-compose.local.yml build samba-api
 if ($LASTEXITCODE -ne 0) { throw "빌드 실패" }
 
 Write-Host "[3/4] 컨테이너 교체 (워커 ON)..." -ForegroundColor Cyan
