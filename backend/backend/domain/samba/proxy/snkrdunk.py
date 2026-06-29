@@ -31,13 +31,30 @@ KEYWORDS_URL = f"{BASE}/en/v1/search/keywords"
 TRADING_CARDS_URL = f"{BASE}/en/v1/trading-cards"
 DETAIL_SNEAKER_URL = f"{BASE}/en/sneakers/{{id}}"
 DETAIL_STREETWEAR_URL = f"{BASE}/en/streetwears/{{id}}"
-DETAIL_TRADING_CARD_URL = f"{BASE}/en/trading-cards/{{id}}"
+DETAIL_TRADING_CARD_URL = f"{BASE}/apparels/{{id}}"
 # 트레이딩카드 컨디션(옵션)별 중고 리스팅 API
 # 상품코드는 SW---{id} 형식. isOnlyOnSale=true → 판매중(재고) 리스팅만
 USED_LISTINGS_URL = f"{BASE}/en/v1/products/SW---{{id}}/used-listings"
 # 박스/실드 상품 가격 API — used-listings(중고)에 안 잡히고 sizes(수량단)로 노출
 # 예: "1 box" $150(재고 481), "2 boxes" $313 ... 내부적으로 streetwear 타입 취급
 SIZES_URL = f"{BASE}/en/v1/products/SW---{{id}}/sizes"
+# 일본(JP) API — 엔화 가격. 영문(/en) API는 USD라 엔가 미노출 → 트레이딩카드 수집은 JP 사용.
+#   JP_DETAIL: 상세(name·productNumber·primaryMedia·minPrice)
+#   JP_USED  : 중고 리스팅(price=엔, displayShortConditionTitle=PSA10, isDisplaySold)
+#   JP_SIZES : 박스/봉인 수량단 가격(sizePrices[].minListingPrice)
+JP_DETAIL_URL = f"{BASE}/v1/apparels/{{id}}"
+JP_USED_URL = f"{BASE}/v1/apparels/{{id}}/used"
+JP_SIZES_URL = f"{BASE}/v1/apparels/{{id}}/sizes"
+# JP API는 ja-JP 로케일로 엔화 반환
+JP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Accept-Language": "ja-JP,ja;q=0.9",
+    "Referer": f"{BASE}/",
+}
 # 브랜드+카테고리 URL 패턴: https://snkrdunk.com/en/brands/{brand}/trading-cards?categoryId={cat}
 BRAND_TRADING_CARDS_URL_RE = re.compile(
     r"https?://snkrdunk\.com/en/brands/([^/?]+)/trading-cards(?:\?[^#]*?categoryId=(\d+))?",
