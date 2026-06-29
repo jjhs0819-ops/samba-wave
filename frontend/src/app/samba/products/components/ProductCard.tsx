@@ -489,12 +489,16 @@ const ProductCard = React.memo(function ProductCard({
       if (full?.images && full.images.length > 0) setProductImages(full.images)
     }).catch(() => {})
   }
-  // 통화 기호: SNKRDUNK 등 USD 소싱처는 달러($)로 표기 (원화 환산 안 함, 달러 값 그대로)
-  // source_site 기준 판정 우선 — extra_data가 목록 응답에서 누락/미설정인 경우에도 일관 표기.
-  const USD_SOURCE_SITES = ['SNKRDUNK', 'AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
-  const isUsdSource = USD_SOURCE_SITES.includes((p.source_site || '').toUpperCase())
-    || (p.extra_data as Record<string, unknown> | undefined)?.currency === 'USD'
-  const curSym = isUsdSource ? '$' : '₩'
+  // 통화 기호: 소싱처/통화 기준 ¥(엔)·$(달러)·₩(원) 구분 표기 (값 그대로, 환산 안 함).
+  // source_site 우선 판정 — extra_data가 목록 응답에서 누락/미설정이어도 일관 표기.
+  // SNKRDUNK는 일본 사이트(JP API) 수집이라 엔화(¥).
+  const _site = (p.source_site || '').toUpperCase()
+  const _cur = (p.extra_data as Record<string, unknown> | undefined)?.currency
+  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA']
+  const USD_SOURCE_SITES = ['AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
+  const curSym = (JPY_SOURCE_SITES.includes(_site) || _cur === 'JPY') ? '¥'
+    : (USD_SOURCE_SITES.includes(_site) || _cur === 'USD') ? '$'
+    : '₩'
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
   const pricing = (policy?.pricing || {}) as Record<string, unknown>
   // 원가: excludeHeldPoint 토글 켜져 있고 cost_excl_held_point 값이 있으면 그것 우선

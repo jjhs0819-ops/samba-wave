@@ -564,114 +564,100 @@ class SnkrdunkClient:
         product_number = ""
         cond_min: dict[str, int] = {}
         cond_cnt: dict[str, int] = {}
-        had_listings = False  # 중고리스팅 자체가 있었나(있으면 단품 → sizes 폴백 안 함)
+        size_options: list[dict[str, Any]] = []
+        box_min_price = 0
 
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            headers=JP_HEADERS, timeout=self._timeout, follow_redirects=True
         ) as client:
+            # 1) JP 상세 — name(영문 유지)·품번·이미지·박스 minPrice(엔)
+            try:
+                dr = await client.get(JP_DETAIL_URL.format(id=card_id))
+                dr.raise_for_status()
+                dj = dr.json()
+                name = (dj.get("name") or "").strip()
+                product_number = (dj.get("productNumber") or "").strip()
+                pm = dj.get("primaryMedia") or {}
+                image = (pm.get("imageUrl") or "").strip()
+                _mp = dj.get("minPrice")
+                if isinstance(_mp, (int, float)) and _mp > 0:
+                    box_min_price = int(_mp)
+            except Exception as e:
+                logger.warning(f"[SNKRDUNK] JP 상세 실패 id={card_id}: {e}")
+
+            # 2) 싱글 PSA 10 중고 — isSaleOnly=true(재고만) + 엔화 최저가
             page = 1
-            # perPage=100 (상한). Pikachu 등 인기카드 최대 600+건 → 안전상 50페이지 캡
             while page <= 50:
                 params = {
                     "perPage": 100,
                     "page": page,
-                    "sortType": "latest",
-                    "isOnlyOnSale": "true",
+                    "sizeId": 0,
+                    "isSaleOnly": "true",
                 }
                 try:
-                    r = await client.get(
-                        USED_LISTINGS_URL.format(id=code_id), params=params
-                    )
+                    r = await client.get(JP_USED_URL.format(id=code_id), params=params)
                     r.raise_for_status()
                     data = r.json()
                 except Exception as e:
                     logger.warning(
-                        f"[SNKRDUNK] 카드 리스팅 실패 id={card_id} page={page}: {e}"
+                        f"[SNKRDUNK] JP 카드 리스팅 실패 id={card_id} page={page}: {e}"
                     )
                     break
-                if page == 1:
-                    prod = data.get("product") or {}
-                    name = (prod.get("name") or "").strip()
-                    image = prod.get("thumbnailUrl") or ""
-                listings = data.get("usedListings") or []
-                if not listings:
+                items = data.get("apparelUsedItems") or []
+                if not items:
                     break
-                had_listings = True
-                for x in listings:
+                for x in items:
                     if not isinstance(x, dict):
                         continue
-                    # 판매완료(재고 없음)는 제외 — isOnlyOnSale=true 와 이중 안전장치
-                    if x.get("isSold"):
+                    if x.get("isDisplaySold"):
+                        continue  # 판매완료 제외(재고만)
+                    cond = (x.get("displayShortConditionTitle") or "").strip()
+                    # PSA 10 등급만 수집 — PSA 9/8/raw/BGS/ARS 제외(크로스플랫폼은 PSA10만).
+                    if not re.match(r"PSA\s*10\b", cond.upper().replace(" ", "")):
                         continue
-                    cond = (x.get("condition") or "기본").strip()
-                    # PSA 10 등급만 수집 — KREAM은 PSA/BRG 슬랩 거래이고, 그 중 PSA 10만
-                    # 크로스플랫폼 가치비교 의미가 있음(PSA 9/8/raw/BGS/ARS는 제외).
-                    if not re.match(r"PSA\s*10\b", cond.upper()):
-                        continue
-                    price = x.get("priceAmount")
+                    price = x.get("price")
                     if not isinstance(price, (int, float)) or price <= 0:
                         continue
                     price = int(price)
-                    if cond not in cond_min or price < cond_min[cond]:
-                        cond_min[cond] = price
-                    cond_cnt[cond] = cond_cnt.get(cond, 0) + 1
-                if len(listings) < 100:
+                    ckey = "PSA 10"
+                    if ckey not in cond_min or price < cond_min[ckey]:
+                        cond_min[ckey] = price
+                    cond_cnt[ckey] = cond_cnt.get(ckey, 0) + 1
+                if len(items) < 100:
                     break
                 page += 1
                 await asyncio.sleep(0.3)
 
-            # 박스/실드 상품: used-listings(중고)가 비면 sizes(수량단) API로 폴백
-            # "1 box"/"2 boxes" 별 최저가·재고(listingCount). 싱글카드는 used-listings로
-            # 이미 옵션이 잡히므로 비었을 때만 시도(싱글 동작 보존).
-            size_options: list[dict[str, Any]] = []
-            # 박스/실드(중고리스팅 자체가 없음)만 sizes 폴백. PSA만 필터돼 비었어도
-            # 리스팅이 있었으면(단품) sizes 안 함.
-            if not cond_min and not had_listings:
+            # 3) 박스/봉인(PSA10 중고 없음) → sizes 수량단 최저가(엔) 폴백
+            if not cond_min:
                 try:
-                    sr = await client.get(SIZES_URL.format(id=code_id))
+                    sr = await client.get(JP_SIZES_URL.format(id=code_id))
                     sr.raise_for_status()
-                    sdata = sr.json()
-                    for sz in sdata.get("sizes") or []:
+                    for sz in sr.json().get("sizePrices") or []:
                         if not isinstance(sz, dict):
                             continue
-                        price = sz.get("price")
+                        price = sz.get("minListingPrice") or sz.get(
+                            "minNewListingPrice"
+                        )
                         if not isinstance(price, (int, float)) or price <= 0:
                             continue
-                        label = ((sz.get("size") or {}).get("text") or "기본").strip()
-                        cnt = sz.get("listingCount")
+                        label = (
+                            (sz.get("size") or {}).get("localizedName") or "기본"
+                        ).strip()
+                        cnt = sz.get("listingItemCount")
                         stock = int(cnt) if isinstance(cnt, (int, float)) else 0
                         if stock <= 0:
                             continue
                         size_options.append(
                             {"name": label, "price": int(price), "stock": stock}
                         )
-                    if not name:
-                        prod = sdata.get("product") or {}
-                        name = (prod.get("name") or "").strip()
                 except Exception as e:
-                    logger.warning(f"[SNKRDUNK] 박스 sizes 실패 id={card_id}: {e}")
-
-            # 품번(productNumber) 추출 — 상세 SSR HTML의 :trading-card prop
-            # 예: pkmn-tcg-SV-P-261 (used-listings/variations API엔 없음)
-            try:
-                hr = await client.get(DETAIL_TRADING_CARD_URL.format(id=card_id))
-                _pm = _PRODUCT_NUMBER_RE.search(hr.text)
-                if _pm:
-                    product_number = _pm.group(1).strip()
-                if not name:
-                    _nm = re.search(
-                        r'<meta\s+property="og:title"\s+content="([^"]+)"', hr.text
+                    logger.warning(f"[SNKRDUNK] JP 박스 sizes 실패 id={card_id}: {e}")
+                # sizes 도 비면 상세 minPrice 단일 옵션
+                if not size_options and box_min_price > 0:
+                    size_options.append(
+                        {"name": "기본", "price": box_min_price, "stock": 1}
                     )
-                    if _nm:
-                        name = _nm.group(1).strip()
-                if not image:
-                    _im = re.search(
-                        r'<meta\s+property="og:image"\s+content="([^"]+)"', hr.text
-                    )
-                    if _im:
-                        image = _im.group(1).strip()
-            except Exception as e:
-                logger.warning(f"[SNKRDUNK] 품번 추출 실패 {card_id}: {e}")
 
         # 재고 있는 컨디션만 옵션화 → 가격 오름차순 정렬
         if cond_min:
@@ -709,7 +695,7 @@ class SnkrdunkClient:
             "style_code": product_number,  # 품번 = productNumber (예: pkmn-tcg-SV-P-261)
             "extra_data": {
                 "snkr_type": "trading-card",
-                "currency": TARGET_CURRENCY,
+                "currency": "JPY",  # JP API(엔화) 수집 — USD 아님
                 "product_number": product_number,
                 "condition_count": {k: cond_cnt[k] for k in cond_cnt},
             },
