@@ -2189,6 +2189,12 @@ class SambaShipmentService:
                                 nos[f"{account_id}_pid"] = _cpid
                             if _cvid:
                                 nos[f"{account_id}_vid"] = _cvid
+                        # GS샵 — bare 키(account_id)에는 supPrdCd(수정·삭제 API용)가 들어간다.
+                        # 판매페이지 URL(prd.gs?prdid=)은 GS 부여 prdCd 가 필요하므로 _pid 로 분리 저장.
+                        if market_type == "gsshop":
+                            _gs_prd_cd = str(result.get("gsshop_prd_cd", "") or "")
+                            if _gs_prd_cd and _gs_prd_cd.strip() not in ("0", "0.0"):
+                                nos[f"{account_id}_pid"] = _gs_prd_cd
                         if market_type in ("gmarket", "auction"):
                             # result.data.data 에서 siteGoodsNo(구매페이지 URL용) / sellerProductId(수정·삭제 API용) 분리 저장
                             _esm_d: dict = {}

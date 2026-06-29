@@ -950,10 +950,14 @@ class GsShopPlugin(MarketPlugin):
         # GS API 수정/삭제 endpoint URL이 supPrdCd 기준 (/api/v3/products/{supPrdCd}/price)
         sup_prd_cd_registered = goods_data.get("supPrdCd") or str(prd_cd or "")
 
+        # prdCd(=GS 부여 상품번호) 는 판매페이지 URL(prd.gs?prdid=) 용으로 별도 반환.
+        # supPrdCd 와 값이 달라, market_product_nos 의 {account_id}_pid 키로 저장된다
+        # (쿠팡 coupang_product_id 와 동일 패턴 — service.py 상품번호 추출부 참조).
         return {
             "success": True,
             "message": "GS샵 등록 성공",
             "product_id": sup_prd_cd_registered,
+            "gsshop_prd_cd": str(prd_cd or ""),
             "data": result,
         }
 

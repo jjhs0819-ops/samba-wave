@@ -115,8 +115,12 @@ function buildMarketProductUrl(
       return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
     case 'lotteon':
       return `https://www.lotteon.com/p/product/${productNo}`
-    case 'gsshop':
-      return `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`
+    case 'gsshop': {
+      // bare 상품번호는 supPrdCd(업체 스타일코드, 수정·삭제용)라 판매페이지 prdid 로는 무효.
+      // GS 부여 prdCd 를 별도 저장한 _pid 값을 우선 사용 (없으면 검색 폴백되도록 빈 문자열).
+      const prdid = extras?.pid
+      return prdid ? `https://www.gsshop.com/prd/prd.gs?prdid=${prdid}` : ''
+    }
     case 'lottehome':
       return `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${productNo}`
     case 'kream':
