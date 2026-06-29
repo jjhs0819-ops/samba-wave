@@ -1923,6 +1923,51 @@ async def lifespan(app: FastAPI):
 
         asyncio.create_task(_pc_sync_loop_worker(), name="pc-sync-worker")
         worker_runtime = await _start_worker_runtime()
+    elif _process_role == "reconciler":
+        # 유지보수 루프 전용 프로세스(C) — A(api) 이벤트루프 과부하(단일 워커 굶김 →
+        # HTTP 503) 분리용. 고스트 리컨실러/송장sweep/soldout 정리 등 주기적 DB+마켓
+        # 유지보수 루프만 단일 인스턴스로 기동한다. JobWorker/오토튠/폴러는 A 담당.
+        startup_logger.warning(
+            "[startup] PROCESS_ROLE=reconciler — 유지보수 루프 전용 모드. "
+            "(고스트 리컨실러/송장sweep/soldout 정리만 기동, JobWorker/오토튠 비활성)"
+        )
+        # 데몬 레지스트리 read-only 미러 — 송장sweep/soldout 정리가 daemon-only
+        # source(SSG/ABC/LOTTEON) 전송 시 owner 해석(pick_daemon_owner)에 필요.
+        # write/autotune spawn 은 하지 않는다(worker 모드와 동일 패턴).
+        from backend.api.v1.routers.samba.collector_autotune import (  # noqa: F811
+            restore_pc_allowed_sites_from_db,
+            restore_pc_last_seen_from_db,
+            sync_pc_allowed_sites_from_db,
+        )
+
+        await restore_pc_allowed_sites_from_db()
+        await restore_pc_last_seen_from_db()
+
+        async def _pc_sync_loop_reconciler() -> None:
+            """reconciler 전용 데몬 레지스트리 15s 주기 sync (read-only)."""
+            _rlg = logging.getLogger("backend.pc-sync-reconciler")
+            while True:
+                try:
+                    await sync_pc_allowed_sites_from_db()
+                    await restore_pc_last_seen_from_db()
+                except Exception as _e:
+                    _rlg.warning(f"[pc-sync-reconciler] sync 실패(무시): {_e}")
+                await asyncio.sleep(15)
+
+        asyncio.create_task(_pc_sync_loop_reconciler(), name="pc-sync-reconciler")
+
+        await _start_sourcing_job_cleanup()
+        await _start_lotteon_ghost_reconciler()
+        await _start_elevenst_ghost_reconciler()
+        await _start_coupang_pid_reconciler()
+        await _start_ssg_status_reconciler()
+        await _start_smartstore_ghost_reconciler()
+        await _start_coupang_ghost_reconciler()
+        await _start_tracking_dispatch_sweep()
+        await _start_soldout_cleanup()
+        worker_runtime = WorkerRuntime(
+            worker=None, worker_task=None, watchdog_task=None
+        )
     else:
         await _recover_running_jobs(startup_logger)
         await _recover_sourcing_jobs(startup_logger)
@@ -1933,16 +1978,14 @@ async def lifespan(app: FastAPI):
         await _start_tetris_sync_scheduler()
         await _start_order_auto_sync_scheduler()
         await _start_reward_auto_scheduler()
-        await _start_sourcing_job_cleanup()
-        await _start_lotteon_ghost_reconciler()
-        await _start_elevenst_ghost_reconciler()
         await _start_filters_warmup()
-        await _start_coupang_pid_reconciler()
-        await _start_ssg_status_reconciler()
-        await _start_smartstore_ghost_reconciler()
-        await _start_coupang_ghost_reconciler()
-        await _start_tracking_dispatch_sweep()
-        await _start_soldout_cleanup()
+        # 아래 유지보수 루프들은 PROCESS_ROLE=reconciler 프로세스(C)로 분리됨
+        # (단일 워커 이벤트루프 과부하 → HTTP 503 방지). 여기서 기동하지 않는다.
+        #   _start_sourcing_job_cleanup / _start_lotteon_ghost_reconciler /
+        #   _start_elevenst_ghost_reconciler / _start_coupang_pid_reconciler /
+        #   _start_ssg_status_reconciler / _start_smartstore_ghost_reconciler /
+        #   _start_coupang_ghost_reconciler / _start_tracking_dispatch_sweep /
+        #   _start_soldout_cleanup
     _validate_startup_settings()
 
     try:

@@ -73,6 +73,17 @@ exit(0 if r else 1)
     exec uv run --no-dev -m gunicorn -w "$_WK" -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:"$_WBP" --timeout 120 --graceful-timeout 600
   fi
 
+  # ── 프로세스 분리: 유지보수 루프 전용 reconciler(C) ──
+  # PROCESS_ROLE=reconciler 면 마이그레이션/스키마픽스를 스킵하고(이들은 API 프로세스 A 가
+  # 담당) 곧바로 유지보수 루프(고스트 리컨실러/송장sweep/soldout 정리)만 기동한다.
+  # 반드시 단일 인스턴스(-w 1)로 띄운다 — 중복 실행 시 동일 상품 N회 리컨실 사고.
+  # netns 공유(network_mode: service:wireguard) 시 api(8080)/worker(8081)와 포트 분리.
+  if [ "$PROCESS_ROLE" = "reconciler" ]; then
+    _RBP=${RECONCILER_BIND_PORT:-8082}
+    echo "Starting MAINTENANCE reconciler (PROCESS_ROLE=reconciler, gunicorn -w 1, port=$_RBP)..."
+    exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:"$_RBP" --timeout 600 --graceful-timeout 600
+  fi
+
   # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완
   # (2026-04-17 사고 이후 stamp-DB 간극 해소용. 신규 누락 항목은 여기 추가)
   #

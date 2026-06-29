@@ -98,6 +98,36 @@ services:
       WORKER_BIND_PORT: "8081"
       DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
 
+  # 유지보수 루프 전용 프로세스(C) — 고스트 리컨실러/송장sweep/soldout 정리.
+  # 단일 인스턴스(중복 리컨실 방지). api(A) 이벤트루프 과부하 → HTTP 503 분리용.
+  samba-reconciler:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: reconciler
+      # 유지보수 루프는 반드시 돌아야 하므로 BG 비활성 금지 (0 고정)
+      DISABLE_BACKGROUND_WORKERS: "0"
+      # netns 공유 → api(8080)/worker(8081)와 분리
+      RECONCILER_BIND_PORT: "8082"
+      # 풀 축소 — api(80)+worker(8×30=240)+reconciler(30)=350 < max_connections(400)
+      DB_WRITE_POOL_SIZE: "10"
+      DB_WRITE_MAX_OVERFLOW: "10"
+      DB_READ_POOL_SIZE: "5"
+      DB_READ_MAX_OVERFLOW: "5"
+
 volumes:
   pg_data:
 
