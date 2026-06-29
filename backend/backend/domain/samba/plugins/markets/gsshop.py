@@ -901,7 +901,9 @@ class GsShopPlugin(MarketPlugin):
 
         # 브랜드 매핑 가드 — 상품 브랜드/상품명이 정책 GS 브랜드와 매칭 안 되면 등록 차단.
         # (단일/다중 브랜드 임의 폴백 제거: 안 맞는 브랜드를 엉뚱한 코드로 오등록하지 않도록)
-        if not str((goods_data.get("prdBaseAddInfo") or {}).get("brandCd") or "").strip():
+        if not str(
+            (goods_data.get("prdBaseAddInfo") or {}).get("brandCd") or ""
+        ).strip():
             _pbrand = str(product.get("brand") or "").strip() or "(브랜드 없음)"
             return {
                 "success": False,
