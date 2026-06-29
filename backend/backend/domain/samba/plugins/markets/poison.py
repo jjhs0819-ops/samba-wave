@@ -217,6 +217,9 @@ class PoisonPlugin(MarketPlugin):
             )
             if price <= 0:
                 continue
+            # POIZON 은 등록가가 통화 최소단위 배수여야 함(KRW=1000원). 배수가 아니면
+            # "Invalid value. Must be a multiple of" 로 거부 → 1000원 단위 올림(마진 보존).
+            price = -(-int(price) // 1000) * 1000
 
             if bidding_no:
                 # 기존 입찰 → 가격/재고 수정
