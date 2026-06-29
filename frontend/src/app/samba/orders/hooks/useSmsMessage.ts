@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import {
   proxyApi,
   type SambaOrder,
   type SambaMarketAccount,
   type MessageLog,
 } from '@/lib/samba/api/commerce'
+import { forbiddenApi } from '@/lib/samba/legacy'
 import { showAlert } from '@/components/samba/Modal'
 
 interface SmsTemplate {
@@ -33,19 +34,45 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
   const [msgHistory, setMsgHistory] = useState<MessageLog[]>([])
   const [sentFlags, setSentFlags] = useState<Record<string, { sms: boolean; kakao: boolean }>>({})
 
-  // SMS 템플릿 (localStorage 저장)
+  // SMS 템플릿 — 서버(forbidden settings) 영속화, localStorage는 첫 페인트 캐시만
   const [smsTemplates, setSmsTemplates] = useState<SmsTemplate[]>(() => {
     try {
       const saved = typeof window !== 'undefined' ? localStorage.getItem('samba_sms_templates') : null
       return saved ? JSON.parse(saved) : DEFAULT_SMS_TEMPLATES
     } catch { return DEFAULT_SMS_TEMPLATES }
   })
+  // 서버 로드 완료 전 저장을 막는 가드 — 기본값이 서버 데이터를 덮어쓰는 race 방지
+  const templateLoadedRef = useRef(false)
   const [templateEditModal, setTemplateEditModal] = useState<SmsTemplate | null>(null)
   const [isNewTemplate, setIsNewTemplate] = useState(false)
 
+  useEffect(() => {
+    forbiddenApi.getSetting('sms_templates').then((val) => {
+      if (Array.isArray(val) && val.length > 0) {
+        setSmsTemplates(val as SmsTemplate[])
+        localStorage.setItem('samba_sms_templates', JSON.stringify(val))
+      } else {
+        // 서버에 없으면 로컬 값을 1회 승격 저장
+        const local = (() => {
+          try {
+            const s = typeof window !== 'undefined' ? localStorage.getItem('samba_sms_templates') : null
+            return s ? (JSON.parse(s) as SmsTemplate[]) : null
+          } catch { return null }
+        })()
+        const toSave = (local && local.length > 0) ? local : DEFAULT_SMS_TEMPLATES
+        forbiddenApi.saveSetting('sms_templates', toSave).catch(() => {})
+        setSmsTemplates(toSave)
+      }
+    }).catch(() => {}).finally(() => {
+      templateLoadedRef.current = true
+    })
+  }, [])
+
   const saveSmsTemplates = (templates: SmsTemplate[]) => {
+    if (!templateLoadedRef.current) return
     setSmsTemplates(templates)
     localStorage.setItem('samba_sms_templates', JSON.stringify(templates))
+    forbiddenApi.saveSetting('sms_templates', templates).catch(() => {})
   }
   const openNewTemplate = () => {
     setIsNewTemplate(true)
