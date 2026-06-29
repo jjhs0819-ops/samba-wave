@@ -1915,7 +1915,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 # 가격불확실(price_uncertain=True) 시 sale_status 덮어쓰기 보류.
                                 # 플러그인이 옵션 stock 만 보고 'in_stock' 박으면, 사용자가 수동 정리한
                                 # sold_out 이 한 사이클만에 in_stock 으로 회귀되는 사고 방지.
-                                if not r.price_uncertain:
+                                # 단, sold_out 방향은 항상 반영 — 패션플러스는 완전품절 시 sale_price=0
+                                # 으로 price_uncertain=True 가 같이 켜지는데, 이 게이트가 sold_out 까지
+                                # 막으면 품절이 영원히 DB에 안 써짐(#501). in_stock 회귀만 보류.
+                                if (
+                                    not r.price_uncertain
+                                    or r.new_sale_status == "sold_out"
+                                ):
                                     updates["sale_status"] = r.new_sale_status
                                 # cost 변경도 price_changed_at에 반영 (warm/hot 분류 기준)
                                 if (
