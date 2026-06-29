@@ -139,8 +139,30 @@ _GS_KEYWORD_RULES: list[tuple[tuple[str, ...], str]] = [
         ),
         "B43071907|1662747",
     ),
-    # ── 잡화 ──
-    (("모자", "캡", "비니", "버킷", "햇", "볼캡"), "B43071901|1662747"),
+    # ── 가방 (정보고시 동적조회·전시매장 prdDispYn=Y, 등록검증 완료) ──
+    (("백팩", "배낭"), "B69050105|1734355"),
+    (("크로스백", "메신저백"), "B69050115|1663438"),
+    (("숄더백",), "B69050109|1663437"),
+    (("토트백", "서류가방"), "B69050117|1663436"),
+    (
+        (
+            "힙색",
+            "웨이스트백",
+            "벨트백",
+            "슬링백",
+            "보스턴백",
+            "더플백",
+            "여행가방",
+            "에코백",
+            "가방",
+        ),
+        "B69050105|1734355",
+    ),
+    # ── 잡화 (그룹13 패션잡화 정보고시, 등록검증 완료) ──
+    (("양말", "삭스"), "B43071915|1660957"),
+    (("모자", "캡", "비니", "버킷", "햇", "볼캡", "썬캡"), "B43071901|1660954"),
+    (("장갑", "글러브"), "B43071913|1660958"),
+    (("머플러", "스카프", "목도리", "넥워머", "워머"), "B43150301|1661269"),
 ]
 
 
@@ -330,11 +352,61 @@ def _truncate_prdnm(name: str, max_bytes: int = 30) -> str:
     return out.strip() or s[:15]
 
 
+_GOV_ITEMS_CACHE: dict[str, list[dict[str, Any]] | None] = {}
+
+
+async def _resolve_gov_items(
+    client: Any, category_id: str, gs_settings: dict[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """분류 상세조회(getPrdClsDtlInfo)로 prdClsCd의 정보고시 항목 목록을 받는다.
+    분류별 모듈 캐시. 실패 시 None(→ _build_gov_publs 가 의류/신발 폴백).
+    이걸로 의류·신발뿐 아니라 가방(12)·패션잡화(13) 등 모든 정보고시 그룹 자동 대응.
+    """
+    cid = str(category_id or "")
+    if "|" in cid:
+        prd_cls = cid.split("|", 1)[0].strip()
+    elif cid and not cid.strip().isdigit():
+        prd_cls = cid.strip()
+    else:
+        prd_cls = ""
+    prd_cls = prd_cls or str((gs_settings or {}).get("prdClsCd") or "").strip()
+    if not prd_cls:
+        return None
+    if prd_cls in _GOV_ITEMS_CACHE:
+        return _GOV_ITEMS_CACHE[prd_cls]
+    items: list[dict[str, Any]] | None = None
+    try:
+        r = await client.get_prd_cls_dtl_info(prd_cls)
+        data = r.get("data") or {}
+        if isinstance(data.get("data"), dict):
+            data = data["data"]
+        grps = data.get("govPublsGrpList") or []
+        if grps:
+            items = grps[0].get("govPublsGrpItmList") or None
+            logger.info(
+                f"[GS샵] 정보고시 그룹 동적조회: {prd_cls} → "
+                f"{grps[0].get('govPublsPrdGrpNm')} ({len(items or [])}항목)"
+            )
+    except Exception as e:
+        logger.warning(f"[GS샵] 정보고시 그룹 조회 실패({prd_cls}): {e}")
+    # 성공(항목 확보) 시에만 캐시. 일시 실패의 None을 영구 캐시하면
+    # 가방/잡화가 의류·신발 폴백으로 굳어 등록 거부가 재시작 전까지 지속됨.
+    if items is not None:
+        _GOV_ITEMS_CACHE[prd_cls] = items
+    return items
+
+
 def _build_gov_publs(
-    product: dict[str, Any], brand: str, prd_cls_cd: str
+    product: dict[str, Any],
+    brand: str,
+    prd_cls_cd: str,
+    gov_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
-    """정보고시 — 분류(prdClsCd)별 그룹. B25=신발(1101~1109), 그외=의류(1001~1009).
-    수집데이터(소재·색상·제조자·제조국 등) 우선, 없으면 '상품 페이지 참조' (메모리 원칙).
+    """정보고시 — 분류(prdClsCd)별 그룹. 수집데이터 우선, 없으면 '상품 페이지 참조'.
+
+    gov_items(분류 상세조회 getPrdClsDtlInfo 결과)가 있으면 **항목명 기반으로 동적**
+    구성 → 의류·신발뿐 아니라 가방(12)·패션잡화(13) 등 모든 정보고시 그룹 자동 대응.
+    없으면(API 실패) 의류(10)/신발(11) 하드코딩으로 폴백.
     """
 
     def g(v: Any, default: str = "상품 페이지 참조") -> str:
@@ -351,6 +423,51 @@ def _build_gov_publs(
     quality = g(
         product.get("quality_guarantee"), "관련 법령 및 소비자분쟁해결기준에 따름"
     )
+    size = g(product.get("size_notice"))
+    _cat = str(product.get("category") or "").strip()
+    kind = g(_cat.split(">")[-1].strip() if _cat else "")
+
+    # 동적: 분류 상세조회 항목명으로 매핑 (모든 정보고시 그룹 대응)
+    if gov_items:
+
+        def _content(itm_name: str) -> str:
+            n = str(itm_name or "")
+            if "소재" in n or "조성" in n:
+                return material
+            if "색상" in n:
+                return color
+            if "굽" in n or "높이" in n:
+                return g(product.get("heel_height"), "해당없음")
+            if "발길이" in n or "사이즈" in n or "치수" in n or "크기" in n:
+                return size
+            if "제조국" in n or "원산지" in n:
+                return origin_ko
+            if "제조자" in n or "수입자" in n or "제조원" in n or "수입원" in n:
+                return maker
+            if "제조연월" in n or "제조일" in n:
+                return g(product.get("manufacture_date"))
+            if "세탁" in n or "취급" in n:
+                return care
+            if "A/S" in n or "AS" in n or "전화" in n or "책임자" in n:
+                return as_phone
+            if "품질" in n or "보증" in n:
+                return quality
+            if "종류" in n:
+                return kind
+            return "상품 페이지 참조"
+
+        out = []
+        for it in gov_items:
+            cd = str(it.get("govPublsItmCd") or "").strip()
+            if cd:
+                out.append(
+                    {
+                        "govPublsItmCd": cd,
+                        "govPublsItmCntnt": _content(it.get("govPublsItmNm")),
+                    }
+                )
+        if out:
+            return out
 
     if str(prd_cls_cd).startswith("B25"):  # 신발 (그룹11: 1101~1109)
         return [
@@ -393,6 +510,7 @@ def _transform_for_gsshop(
     sub_sup_cd: str = "",
     gs_margin_rate: int = 0,
     gs_settings: dict[str, Any] | None = None,
+    gov_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """수집 상품 → GS샵 V3 ProductV3 형식 변환.
 
@@ -619,7 +737,10 @@ def _transform_for_gsshop(
             # 없으면 "상품 페이지 참조" 기본값.
             "prdGovPublsItmList": gs.get("prdGovPublsItmList")
             or _build_gov_publs(
-                product, brand, category_prd_cls_cd or str(gs.get("prdClsCd") or "")
+                product,
+                brand,
+                category_prd_cls_cd or str(gs.get("prdClsCd") or ""),
+                gov_items,
             ),
         }
     )
@@ -775,8 +896,10 @@ class GsShopPlugin(MarketPlugin):
                 client, product, existing_no, gs_margin_rate, gs_settings, sub_sup_cd
             )
 
+        # 분류별 정보고시 그룹 동적 조회 (의류/신발/가방/패션잡화 등 모든 분류 자동)
+        gov_items = await _resolve_gov_items(client, category_id, gs_settings)
         goods_data = _transform_for_gsshop(
-            product, category_id, sub_sup_cd, gs_margin_rate, gs_settings
+            product, category_id, sub_sup_cd, gs_margin_rate, gs_settings, gov_items
         )
 
         # prdSectList 없으면 prdClsCd 이름 기반 전시매장 자동 매핑
