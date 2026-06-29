@@ -971,38 +971,49 @@ class GsShopPlugin(MarketPlugin):
         options = product.get("options") or []
         attr_prd_list = _build_attr_prd_list(options, now_dtm, end_dtm, brand)
 
+        # 요청된 필드만 전송 — 재고는 재고만, 가격은 가격만.
+        # 오토튠 재고전송(품절)이 가격까지 보내 "동일" 거부로 거짓실패 나고,
+        # 멀쩡한 가격을 MD승인 대기로 밀어넣던 문제 차단.
+        # update_items 미지정(신규등록/수동 전체전송)이면 종전대로 둘 다 전송.
+        _items = product.get("_update_items")
+        _do_price = (not _items) or ("price" in _items)
+        _do_stock = (not _items) or ("stock" in _items)
+
         errors = []
         _price_md_pending = False
+        price_result: dict[str, Any] = {}
 
-        # 가격 수정
-        price_result = await client.update_goods_price(
-            prd_cd,
-            {
-                "prdPrcValidStrDtm": now_dtm,
-                "prdPrcValidEndDtm": end_dtm,
-                "prdPrcSalePrc": sale_price,
-                "prdPrcSupGivRtamt": sup_prc,
-                "prdPrcSupGivRtamtCd": "01",
-            },
-        )
-        price_raw = price_result.get("data", {})
-        if isinstance(price_raw, dict):
-            _pr = price_raw.get("result", "")
-            _pm = price_raw.get("message", "")
-            if _pr == "fail":
-                errors.append(f"가격: {_pm or '실패'}")
-            elif _pr == "success":
-                # "요청" 포함 = MD승인 대기 (즉시반영 아님)
-                # 즉시반영: "P : 처리하였습니다."
-                # MD대기: "P : 가격변경 요청되었습니다."
-                if "요청" in _pm or "대기" in _pm:
-                    _price_md_pending = True
-                    logger.info(
-                        f"[GS샵] 가격 MD승인 대기: {prd_cd} → {sale_price}원 (승인 후 반영)"
-                    )
+        # 가격 수정 (요청 시에만)
+        if _do_price:
+            price_result = await client.update_goods_price(
+                prd_cd,
+                {
+                    "prdPrcValidStrDtm": now_dtm,
+                    "prdPrcValidEndDtm": end_dtm,
+                    "prdPrcSalePrc": sale_price,
+                    "prdPrcSupGivRtamt": sup_prc,
+                    "prdPrcSupGivRtamtCd": "01",
+                },
+            )
+            price_raw = price_result.get("data", {})
+            if isinstance(price_raw, dict):
+                _pr = price_raw.get("result", "")
+                _pm = price_raw.get("message", "")
+                # "동일합니다" = 무변경(no-op) → 실패 아님
+                if _pr == "fail" and "동일" not in _pm:
+                    errors.append(f"가격: {_pm or '실패'}")
+                elif _pr == "success":
+                    # "요청" 포함 = MD승인 대기 (즉시반영 아님)
+                    # 즉시반영: "P : 처리하였습니다."
+                    # MD대기: "P : 가격변경 요청되었습니다."
+                    if "요청" in _pm or "대기" in _pm:
+                        _price_md_pending = True
+                        logger.info(
+                            f"[GS샵] 가격 MD승인 대기: {prd_cd} → {sale_price}원 (승인 후 반영)"
+                        )
 
-        # 옵션/재고 수정 (옵션 있을 때만)
-        if attr_prd_list:
+        # 옵션/재고 수정 (요청 시 + 옵션 있을 때만)
+        if _do_stock and attr_prd_list:
             attr_result = await client.update_attributes(
                 prd_cd,
                 attr_prd_list,
@@ -1011,7 +1022,10 @@ class GsShopPlugin(MarketPlugin):
             )
             attr_raw = attr_result.get("data", {})
             if isinstance(attr_raw, dict) and attr_raw.get("result") == "fail":
-                errors.append(f"재고: {attr_raw.get('message', '실패')}")
+                _am = str(attr_raw.get("message", "실패"))
+                # "동일합니다" = 무변경(no-op) → 실패 아님
+                if "동일" not in _am:
+                    errors.append(f"재고: {_am}")
 
         if errors:
             return {
