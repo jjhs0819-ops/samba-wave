@@ -3,10 +3,6 @@
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
 
-import { btn } from '@/lib/samba/buttons'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
-
 interface Props {
   images: string[]
   detailImages: string[]
@@ -16,10 +12,9 @@ interface Props {
 
 type Tab = 'main' | 'extra' | 'detail'
 
-const INPUT = `flex-1 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
+const INPUT = 'flex-1 px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]'
 
 export default function ImageManagerModal({ images, detailImages, onSave, onClose }: Props) {
-  const c = useTheme()
   const [tab, setTab] = useState<Tab>('main')
   const [imgs, setImgs] = useState<string[]>(images)
   const [details, setDetails] = useState<string[]>(detailImages)
@@ -81,22 +76,22 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
 
   return (
     <div className='fixed inset-0 bg-black/80 z-50 flex items-center justify-center'>
-      <div className={`bg-[${c.surface}] border border-[${c.border}] rounded-lg w-full max-w-xl max-h-[85vh] flex flex-col`}>
+      <div className='bg-[#111] border border-[#1A1A1A] rounded-lg w-full max-w-xl max-h-[85vh] flex flex-col'>
 
-        <div className={`flex justify-between items-center px-4 py-3 border-b border-[${c.border}]`}>
-          <h3 className={`text-sm font-semibold text-[${c.text}]`}>이미지 관리</h3>
-          <button onClick={onClose} className={`text-[${c.textMuted}] hover:text-[${c.text}] text-xl leading-none`}>×</button>
+        <div className='flex justify-between items-center px-4 py-3 border-b border-[#1A1A1A]'>
+          <h3 className='text-sm font-semibold text-[#E5E5E5]'>이미지 관리</h3>
+          <button onClick={onClose} className='text-[#666] hover:text-[#E5E5E5] text-xl leading-none'>×</button>
         </div>
 
-        <div className={`flex border-b border-[${c.border}] px-4`}>
+        <div className='flex border-b border-[#1A1A1A] px-4'>
           {TAB_LABELS.map(t => (
             <button
               key={t.key}
               onClick={() => { setTab(t.key); setUrlInput('') }}
               className={`px-3 py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors ${
                 tab === t.key
-                  ? `border-[${c.primary}] text-[${c.primary}]`
-                  : `border-transparent text-[${c.textMuted}] hover:text-[${c.textMuted}]`
+                  ? 'border-[#FF8C00] text-[#FF8C00]'
+                  : 'border-transparent text-[#666] hover:text-[#999]'
               }`}
             >
               {t.label}
@@ -109,14 +104,14 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
           {tab === 'main' && (
             <div className='space-y-3'>
               {imgs[0] ? (
-                <img src={imgs[0]} alt='' className={`w-32 h-32 object-cover rounded border border-[${c.border}] mx-auto block`} />
+                <img src={imgs[0]} alt='' className='w-32 h-32 object-cover rounded border border-[#2D2D2D] mx-auto block' />
               ) : (
-                <div className={`w-32 h-32 rounded border border-[${c.border}] mx-auto flex items-center justify-center bg-[${c.surfaceAlt}]`}>
-                  <span className={`text-[${c.textMuted}] text-xs`}>미리보기</span>
+                <div className='w-32 h-32 rounded border border-[#2D2D2D] mx-auto flex items-center justify-center bg-[#0A0A0A]'>
+                  <span className='text-[#444] text-xs'>미리보기</span>
                 </div>
               )}
               <div>
-                <label className={`text-xs text-[${c.textSub}] block mb-1`}>대표이미지 URL</label>
+                <label className='text-xs text-[#666] block mb-1'>대표이미지 URL</label>
                 <div className='flex gap-2'>
                   <input
                     className={INPUT}
@@ -126,8 +121,7 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
                   />
                   <button
                     onClick={() => setMainImg(mainInput)}
-                    style={btn('secondary')}
-                    className='px-3 py-1.5 text-xs'
+                    className='px-3 py-1.5 bg-[#FF8C00] text-white text-xs rounded hover:bg-[#E07B00]'
                   >
                     변경
                   </button>
@@ -146,22 +140,22 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
                   onKeyDown={e => { if (e.key === 'Enter') addExtra(urlInput) }}
                   placeholder='추가이미지 URL 입력'
                 />
-                <button onClick={() => addExtra(urlInput)} style={btn('secondary')} className='px-3 py-1.5 text-xs'>추가</button>
+                <button onClick={() => addExtra(urlInput)} className='px-3 py-1.5 bg-[#FF8C00] text-white text-xs rounded hover:bg-[#E07B00]'>추가</button>
               </div>
               {extraImgs.length === 0 && (
-                <p className={`text-xs text-[${c.textMuted}] text-center py-4`}>추가이미지가 없습니다.</p>
+                <p className='text-xs text-[#444] text-center py-4'>추가이미지가 없습니다.</p>
               )}
               {extraImgs.map((url, i) => (
-                <div key={i} className={`flex gap-2 items-center bg-[${c.surfaceAlt}] border border-[${c.border}] rounded p-2`}>
+                <div key={i} className='flex gap-2 items-center bg-[#0A0A0A] border border-[#1A1A1A] rounded p-2'>
                   <img
                     src={url} alt='' className='w-10 h-10 object-cover rounded shrink-0'
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
-                  <span className={`flex-1 text-xs text-[${c.textMuted}] truncate`}>{url}</span>
+                  <span className='flex-1 text-xs text-[#666] truncate'>{url}</span>
                   <div className='flex gap-1 shrink-0'>
-                    <button onClick={() => moveExtra(i, -1)} className={`text-[${c.textMuted}] text-xs px-1 hover:text-[${c.text}]`}>▲</button>
-                    <button onClick={() => moveExtra(i, 1)} className={`text-[${c.textMuted}] text-xs px-1 hover:text-[${c.text}]`}>▼</button>
-                    <button onClick={() => removeExtra(i)} className={`text-[${c.danger}] text-xs px-1`}>삭제</button>
+                    <button onClick={() => moveExtra(i, -1)} className='text-[#666] text-xs px-1 hover:text-[#E5E5E5]'>▲</button>
+                    <button onClick={() => moveExtra(i, 1)} className='text-[#666] text-xs px-1 hover:text-[#E5E5E5]'>▼</button>
+                    <button onClick={() => removeExtra(i)} className='text-[#FF6B6B] text-xs px-1'>삭제</button>
                   </div>
                 </div>
               ))}
@@ -178,22 +172,22 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
                   onKeyDown={e => { if (e.key === 'Enter') addDetail(urlInput) }}
                   placeholder='상세이미지 URL 입력'
                 />
-                <button onClick={() => addDetail(urlInput)} style={btn('secondary')} className='px-3 py-1.5 text-xs'>추가</button>
+                <button onClick={() => addDetail(urlInput)} className='px-3 py-1.5 bg-[#FF8C00] text-white text-xs rounded hover:bg-[#E07B00]'>추가</button>
               </div>
               {details.length === 0 && (
-                <p className={`text-xs text-[${c.textMuted}] text-center py-4`}>상세이미지가 없습니다.</p>
+                <p className='text-xs text-[#444] text-center py-4'>상세이미지가 없습니다.</p>
               )}
               {details.map((url, i) => (
-                <div key={i} className={`flex gap-2 items-center bg-[${c.surfaceAlt}] border border-[${c.border}] rounded p-2`}>
+                <div key={i} className='flex gap-2 items-center bg-[#0A0A0A] border border-[#1A1A1A] rounded p-2'>
                   <img
                     src={url} alt='' className='w-10 h-10 object-cover rounded shrink-0'
                     onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                   />
-                  <span className={`flex-1 text-xs text-[${c.textMuted}] truncate`}>{url}</span>
+                  <span className='flex-1 text-xs text-[#666] truncate'>{url}</span>
                   <div className='flex gap-1 shrink-0'>
-                    <button onClick={() => moveDetail(i, -1)} className={`text-[${c.textMuted}] text-xs px-1 hover:text-[${c.text}]`}>▲</button>
-                    <button onClick={() => moveDetail(i, 1)} className={`text-[${c.textMuted}] text-xs px-1 hover:text-[${c.text}]`}>▼</button>
-                    <button onClick={() => removeDetail(i)} className={`text-[${c.danger}] text-xs px-1`}>삭제</button>
+                    <button onClick={() => moveDetail(i, -1)} className='text-[#666] text-xs px-1 hover:text-[#E5E5E5]'>▲</button>
+                    <button onClick={() => moveDetail(i, 1)} className='text-[#666] text-xs px-1 hover:text-[#E5E5E5]'>▼</button>
+                    <button onClick={() => removeDetail(i)} className='text-[#FF6B6B] text-xs px-1'>삭제</button>
                   </div>
                 </div>
               ))}
@@ -201,9 +195,9 @@ export default function ImageManagerModal({ images, detailImages, onSave, onClos
           )}
         </div>
 
-        <div className={`flex justify-end gap-2 px-4 py-3 border-t border-[${c.border}]`}>
-          <button onClick={onClose} style={btn('ghost')} className='px-4 py-1.5 text-sm'>취소</button>
-          <button onClick={handleSave} style={btn('primary')} className='px-4 py-1.5 text-sm'>저장</button>
+        <div className='flex justify-end gap-2 px-4 py-3 border-t border-[#1A1A1A]'>
+          <button onClick={onClose} className='px-4 py-1.5 text-sm text-[#999] hover:text-[#E5E5E5]'>취소</button>
+          <button onClick={handleSave} className='px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00]'>저장</button>
         </div>
       </div>
     </div>

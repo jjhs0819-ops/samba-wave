@@ -8,8 +8,6 @@ import MarketColumn from './MarketColumn'
 import UnassignedPool from './UnassignedPool'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { BrandAssignment } from './UnassignedPool'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
 
 function normTetrisKey(value: string | null | undefined): string {
   return (value ?? '').replace(/\s+/g, '').toLowerCase()
@@ -57,7 +55,7 @@ function ScaleRuler({
   return (
     <div style={{ width: 56, flexShrink: 0, position: 'relative' }}>
       <div style={{ position: 'relative', height: totalHeight }}>
-        <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 1, background: c.border }} />
+        <div style={{ position: 'absolute', top: 0, bottom: 0, right: 0, width: 1, background: '#2a2a2a' }} />
         {marks.map(v => {
           const fromBottom = v * pixelsPerUnit
           const top = totalHeight - fromBottom
@@ -78,10 +76,10 @@ function ScaleRuler({
                 transform: isZero ? 'translateY(0%)' : isTop ? 'translateY(-100%)' : 'translateY(-50%)',
               }}
             >
-              <span style={{ fontSize: 9, color: c.textSub, userSelect: 'none', whiteSpace: 'nowrap' }}>
+              <span style={{ fontSize: 9, color: '#555', userSelect: 'none', whiteSpace: 'nowrap' }}>
                 {fmtNum(v)}
               </span>
-              <span style={{ width: 8, borderTop: `1px solid ${c.border}`, display: 'inline-block' }} />
+              <span style={{ width: 8, borderTop: '1px solid #333', display: 'inline-block' }} />
             </div>
           )
         })}
@@ -101,7 +99,6 @@ const COLUMN_WIDTH = 227
 const COLUMN_GAP = 12
 
 export default function TetrisBoard() {
-  const c = useTheme()
   const {
     board,
     loading,
@@ -354,12 +351,12 @@ export default function TetrisBoard() {
     })
   }, [pixelsPerUnit, setPixelsPerUnit])
 
-  if (loading) return <div style={{ color: c.textMuted, padding: 24, fontSize: 13 }}>데이터 로딩 중...</div>
+  if (loading) return <div style={{ color: '#888', padding: 24, fontSize: 13 }}>데이터 로딩 중...</div>
   if (error) return (
-    <div style={{ color: c.danger, padding: 24, fontSize: 13, background: 'rgba(239,68,68,0.08)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)', marginTop: 16 }}>
+    <div style={{ color: '#EF4444', padding: 24, fontSize: 13, background: 'rgba(239,68,68,0.08)', borderRadius: 6, border: '1px solid rgba(239,68,68,0.2)', marginTop: 16 }}>
       <div style={{ fontWeight: 700, marginBottom: 6 }}>보드 로딩 실패</div>
-      <div style={{ color: c.textMuted, fontSize: 12 }}>{error}</div>
-      <button onClick={refresh} style={{ marginTop: 10, padding: '4px 12px', background: c.btnBg, border: `1px solid ${c.btnBorder}`, color: c.btnText, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>재시도</button>
+      <div style={{ color: '#888', fontSize: 12 }}>{error}</div>
+      <button onClick={refresh} style={{ marginTop: 10, padding: '4px 12px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}>재시도</button>
     </div>
   )
   if (!board) return null
@@ -373,13 +370,13 @@ export default function TetrisBoard() {
         gap: 8,
         marginBottom: 16,
         padding: '8px 0',
-        borderBottom: `1px solid ${c.border}`,
+        borderBottom: '1px solid #2a2a2a',
       }}>
-        <span style={{ color: c.textSub, fontSize: 11 }}>최대 {fmtNum(globalMax)}개</span>
+        <span style={{ color: '#555', fontSize: 11 }}>최대 {fmtNum(globalMax)}개</span>
 
         <button
           onClick={refresh}
-          style={{ marginLeft: 'auto', padding: '4px 14px', background: c.btnBg, border: `1px solid ${c.btnBorder}`, color: c.btnText, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+          style={{ marginLeft: 'auto', padding: '4px 14px', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
         >
           새로고침
         </button>
@@ -390,9 +387,9 @@ export default function TetrisBoard() {
         position: 'sticky',
         top: 0,
         zIndex: 30,
-        background: c.pageBg,
+        background: 'rgba(12,12,12,0.97)',
         backdropFilter: 'blur(6px)',
-        borderBottom: `1px solid ${c.border}`,
+        borderBottom: '1px solid #222',
         display: 'flex',
       }}>
         {/* 스케일 눈금 자리 */}
@@ -421,7 +418,7 @@ export default function TetrisBoard() {
                 key={market.market_name}
                 style={{ minWidth: COLUMN_WIDTH, width: COLUMN_WIDTH, flexShrink: 0, padding: '8px 10px', textAlign: 'center' }}
               >
-                <div style={{ fontSize: 13, color: allExcluded ? c.textMuted : c.text, fontWeight: 700, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <div style={{ fontSize: 13, color: allExcluded ? '#555' : '#eee', fontWeight: 700, marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   {market.market_name}
                   <button
                     onClick={() => handleToggleMarketExcluded(market.accounts, allExcluded)}
@@ -430,9 +427,9 @@ export default function TetrisBoard() {
                       fontSize: 9,
                       padding: '1px 7px',
                       borderRadius: 3,
-                      background: allExcluded ? 'rgba(239,68,68,0.18)' : c.surfaceAlt,
-                      border: allExcluded ? '1px solid rgba(239,68,68,0.45)' : `1px solid ${c.border}`,
-                      color: allExcluded ? c.danger : c.textSub,
+                      background: allExcluded ? 'rgba(239,68,68,0.18)' : 'rgba(50,50,50,0.7)',
+                      border: allExcluded ? '1px solid rgba(239,68,68,0.45)' : '1px solid #3a3a3a',
+                      color: allExcluded ? '#FCA5A5' : '#555',
                       cursor: 'pointer',
                       fontWeight: 600,
                       letterSpacing: 0.3,
@@ -442,7 +439,7 @@ export default function TetrisBoard() {
                     {allExcluded ? '배제중' : '배제'}
                   </button>
                 </div>
-                <div style={{ fontSize: 10, color: c.textSub }}>
+                <div style={{ fontSize: 10, color: '#666' }}>
                   등록 {fmtNum(totalRegistered)} / 수집 {fmtNum(totalCollected)}
                 </div>
               </div>
@@ -462,8 +459,8 @@ export default function TetrisBoard() {
           flexDirection: 'column',
           alignItems: 'center',
           gap: 6,
-          background: c.surface,
-          border: `1px solid ${c.border}`,
+          background: 'rgba(20,20,20,0.9)',
+          border: '1px solid #333',
           borderRadius: 6,
           padding: '8px 6px',
           marginRight: 4,
@@ -471,16 +468,16 @@ export default function TetrisBoard() {
         }}>
           <button
             onClick={() => zoomFromCenter(2)}
-            style={{ width: 28, height: 28, background: c.btnBg, border: `1px solid ${c.btnBorder}`, color: c.btnText, borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
             +
           </button>
-          <span style={{ color: c.textSub, fontSize: 9, textAlign: 'center', lineHeight: 1.3 }}>
+          <span style={{ color: '#555', fontSize: 9, textAlign: 'center', lineHeight: 1.3 }}>
             {fmtNum(currentStep)}
           </span>
           <button
             onClick={() => zoomFromCenter(0.5)}
-            style={{ width: 28, height: 28, background: c.btnBg, border: `1px solid ${c.btnBorder}`, color: c.btnText, borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            style={{ width: 28, height: 28, background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 16, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
             -
           </button>
@@ -495,8 +492,8 @@ export default function TetrisBoard() {
             onClick={() => contentScrollRef.current?.scrollBy({ left: -(COLUMN_WIDTH + COLUMN_GAP) * 3, behavior: 'smooth' })}
             style={{
               position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)',
-              zIndex: 20, width: 28, height: 48, background: c.surface,
-              border: `1px solid ${c.border}`, borderRadius: '0 6px 6px 0', color: c.textSub,
+              zIndex: 20, width: 28, height: 48, background: 'rgba(30,30,30,0.92)',
+              border: '1px solid #444', borderRadius: '0 6px 6px 0', color: '#aaa',
               cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >‹</button>
@@ -504,8 +501,8 @@ export default function TetrisBoard() {
             onClick={() => contentScrollRef.current?.scrollBy({ left: (COLUMN_WIDTH + COLUMN_GAP) * 3, behavior: 'smooth' })}
             style={{
               position: 'absolute', right: 0, top: '50%', transform: 'translateY(-50%)',
-              zIndex: 20, width: 28, height: 48, background: c.surface,
-              border: `1px solid ${c.border}`, borderRadius: '6px 0 0 6px', color: c.textSub,
+              zIndex: 20, width: 28, height: 48, background: 'rgba(30,30,30,0.92)',
+              border: '1px solid #444', borderRadius: '6px 0 0 6px', color: '#aaa',
               cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}
           >›</button>
@@ -536,7 +533,7 @@ export default function TetrisBoard() {
             />
           ))}
           {sortedMarkets.length === 0 && (
-            <div style={{ color: c.textMuted, fontSize: 12, padding: '32px 0' }}>
+            <div style={{ color: '#444', fontSize: 12, padding: '32px 0' }}>
               등록된 마켓 계정이 없습니다.
             </div>
           )}
@@ -546,9 +543,9 @@ export default function TetrisBoard() {
 
       {/* 소싱처 브랜드 풀 — 항상 표시 */}
       <div style={{ marginTop: 28 }}>
-        <div style={{ color: c.textMuted, fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ color: '#888', fontSize: 12, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
           <span>소싱처 브랜드</span>
-          <span style={{ background: c.accentBg, color: c.text, padding: '1px 8px', borderRadius: 10, fontSize: 11 }}>
+          <span style={{ background: 'rgba(255,140,0,0.15)', color: '#FF8C00', padding: '1px 8px', borderRadius: 10, fontSize: 11 }}>
             {fmtNum(board.unassigned.length)}개
           </span>
         </div>
@@ -576,34 +573,34 @@ export default function TetrisBoard() {
         >
           <div
             style={{
-              background: c.surface, border: `1px solid ${c.border}`, borderRadius: 8,
+              background: '#1a1a1a', border: '1px solid #333', borderRadius: 8,
               padding: '20px 24px', minWidth: 300, maxWidth: 400,
-              boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
             }}
             onClick={e => e.stopPropagation()}
           >
-            <div style={{ fontSize: 14, color: c.text, fontWeight: 700, marginBottom: 6 }}>
+            <div style={{ fontSize: 14, color: '#eee', fontWeight: 700, marginBottom: 6 }}>
               "{deleteModal.brandName}" 삭제 범위
             </div>
-            <div style={{ fontSize: 12, color: c.textMuted, marginBottom: 20 }}>
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 20 }}>
               이 계정에서만 삭제할지, 모든 계정에서 삭제할지 선택하세요.
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <button
                 onClick={handleDeleteThisOnly}
-                style={{ padding: '9px 0', background: c.btnBg, border: `1px solid ${c.btnBorder}`, color: c.btnText, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                style={{ padding: '9px 0', background: '#2a2a2a', border: '1px solid #444', color: '#ccc', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
               >
                 이 계정에서만 삭제
               </button>
               <button
                 onClick={handleDeleteAll}
-                style={{ padding: '9px 0', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: c.danger, borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                style={{ padding: '9px 0', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#EF4444', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
               >
                 모든 계정에서 삭제
               </button>
               <button
                 onClick={() => setDeleteModal(null)}
-                style={{ padding: '7px 0', background: 'transparent', border: `1px solid ${c.border}`, color: c.textMuted, borderRadius: 4, cursor: 'pointer', fontSize: 11 }}
+                style={{ padding: '7px 0', background: 'transparent', border: '1px solid #333', color: '#666', borderRadius: 4, cursor: 'pointer', fontSize: 11 }}
               >
                 취소
               </button>

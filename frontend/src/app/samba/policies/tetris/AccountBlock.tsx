@@ -1,12 +1,9 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-
 import BrandBlock from './BrandBlock'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { DragState } from './useTetris'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy {
   id: string
@@ -50,7 +47,7 @@ function SlotZone({
     <div
       style={{
         height: active ? 6 : 2,
-        background: active ? c.primary : c.accentBg,
+        background: active ? '#FF8C00' : 'rgba(255,140,0,0.15)',
         borderRadius: 2,
         margin: '1px 0',
         flexShrink: 0,
@@ -85,7 +82,6 @@ export default function AccountBlock({
   onAccountDragStart,
   onAccountDragEnd,
 }: Props) {
-  const c = useTheme()
   const [isOver, setIsOver] = useState(false)
   const [dropSlot, setDropSlot] = useState<number | null>(null)
   const [isThisBeingDragged, setIsThisBeingDragged] = useState(false)
@@ -97,7 +93,7 @@ export default function AccountBlock({
   const ratio = account.total_collected > 0
     ? account.total_registered / account.total_collected
     : 0
-  const progressColor = ratio >= 1 ? c.danger : ratio >= 0.8 ? c.warn : c.success
+  const progressColor = ratio >= 1 ? '#EF4444' : ratio >= 0.8 ? '#F59E0B' : '#22C55E'
 
   const blocksWithHeight = useMemo(() => {
     const items = account.assignments.map(block => ({
@@ -131,11 +127,11 @@ export default function AccountBlock({
         position: 'relative',
         height: capacityHeight,
         minHeight: capacityHeight,
-        background: isOver && isDragging && !isSameAccountDrag ? c.accentBg : c.surface,
+        background: isOver && isDragging && !isSameAccountDrag ? 'rgba(255,140,0,0.08)' : 'rgba(25,25,25,0.6)',
         borderRadius: 6,
-        borderTop: `2px solid ${c.borderStrong}`,
-        borderBottom: `2px solid ${c.borderStrong}`,
-        boxShadow: `inset 0 0 0 1px ${c.border}`,
+        borderTop: '2px solid rgba(255,255,255,0.92)',
+        borderBottom: '2px solid rgba(255,255,255,0.92)',
+        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.32)',
         transition: 'background 0.15s, opacity 0.15s',
         overflow: 'hidden',
         boxSizing: 'border-box',
@@ -152,7 +148,7 @@ export default function AccountBlock({
           style={{
             position: 'absolute',
             inset: 0,
-            border: `1px dashed ${c.primary}`,
+            border: '1px dashed #FF8C00',
             borderRadius: 6,
             pointerEvents: 'none',
             boxSizing: 'border-box',
@@ -187,10 +183,10 @@ export default function AccountBlock({
           maxWidth: 'calc(100% - 16px)',
         }}
       >
-        <div style={{ fontSize: 12, color: account.tetris_excluded ? c.textMuted : c.danger, fontWeight: 600, maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textAlign: 'center' }}>
+        <div style={{ fontSize: 12, color: account.tetris_excluded ? '#888' : '#EF4444', fontWeight: 600, maxWidth: '100%', overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', textAlign: 'center' }}>
           {account.account_label.split('-')[0]}
         </div>
-        <div style={{ fontSize: 10, color: c.textMuted, whiteSpace: 'nowrap', textAlign: 'center', pointerEvents: 'none' }}>
+        <div style={{ fontSize: 10, color: '#888', whiteSpace: 'nowrap', textAlign: 'center', pointerEvents: 'none' }}>
           <span style={{ color: progressColor }}>{fmtNum(account.total_registered)}</span>
           <span>/{fmtNum(account.total_collected)}</span>
         </div>
@@ -202,9 +198,9 @@ export default function AccountBlock({
             fontSize: 9,
             padding: '1px 7px',
             borderRadius: 3,
-            background: account.tetris_excluded ? 'rgba(216,68,68,0.16)' : c.surfaceAlt,
-            border: account.tetris_excluded ? `1px solid ${c.danger}` : `1px solid ${c.border}`,
-            color: account.tetris_excluded ? c.danger : c.textMuted,
+            background: account.tetris_excluded ? 'rgba(239,68,68,0.18)' : 'rgba(60,60,60,0.5)',
+            border: account.tetris_excluded ? '1px solid rgba(239,68,68,0.45)' : '1px solid #3a3a3a',
+            color: account.tetris_excluded ? '#FCA5A5' : '#555',
             cursor: 'pointer',
             fontWeight: 600,
             letterSpacing: 0.3,
@@ -214,10 +210,11 @@ export default function AccountBlock({
         </button>
       </div>
 
+
       <div
         style={{
           height: '100%',
-          background: c.surfaceAlt,
+          background: 'rgba(16,16,16,0.8)',
           padding: '8px 6px 6px',
           display: 'flex',
           flexDirection: 'column',
@@ -226,7 +223,7 @@ export default function AccountBlock({
         }}
       >
         {account.assignments.length === 0 ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: c.textMuted, fontSize: 11 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#444', fontSize: 11 }}>
             {isDragging && !isSameAccountDrag && !isAccountDragging ? 'Drop a brand here' : 'No assigned brands'}
           </div>
         ) : (

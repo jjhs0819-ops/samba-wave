@@ -1,10 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-
 import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
 
 const FIXED_BLOCK_PX = 56
 
@@ -49,6 +46,7 @@ function normSiteKey(value: string | null | undefined): string {
 function brandScopeKey(sourceSite: string | null | undefined, brandName: string | null | undefined): string {
   return `${normSiteKey(sourceSite)}::${normTetrisKey(brandName)}`
 }
+
 
 export interface BrandAssignment {
   marketType: string
@@ -96,7 +94,7 @@ function UnassignedItem({
   onDeleteBrandScope: (sourceSite: string, brandName: string) => Promise<void>
 }) {
   const [showPalette, setShowPalette] = useState(false)
-  const brandColor = item.ai_tagged_count > 0 ? c.text : c.danger
+  const brandColor = item.ai_tagged_count > 0 ? '#ddd' : '#EF4444'
   const uniqueMarkets = Array.from(
     new Map(assignments.map(a => [a.marketType, a])).values()
   )
@@ -115,7 +113,7 @@ function UnassignedItem({
     is_legacy: false,
   }
 
-  const borderColor = currentPolicyId ? currentPolicyColor : c.border
+  const borderColor = currentPolicyId ? currentPolicyColor : '#3a3a3a'
 
   return (
     <div
@@ -125,8 +123,8 @@ function UnassignedItem({
       style={{
         height: itemHeight,
         minHeight: itemHeight,
-        background: c.surface,
-        border: `1px solid ${c.border}`,
+        background: 'rgba(28,28,28,0.9)',
+        border: '1px solid #3a3a3a50',
         borderLeft: `3px solid ${borderColor}`,
         borderRadius: 4,
         marginBottom: 2,
@@ -180,12 +178,12 @@ function UnassignedItem({
         )}
         {/* 하단: 등록/수집수(좌) + 소싱처명(우) */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontSize: 10, color: c.textMuted }}>
-            <span style={{ color: c.success }}>{fmtNum(item.registered_count)}</span>
-            <span style={{ color: c.textMuted }}>/</span>
-            <span style={{ color: c.text }}>{fmtNum(item.collected_count)}</span>
+          <div style={{ fontSize: 10, color: '#666' }}>
+            <span style={{ color: '#22C55E' }}>{fmtNum(item.registered_count)}</span>
+            <span style={{ color: '#444' }}>/</span>
+            <span style={{ color: '#fff' }}>{fmtNum(item.collected_count)}</span>
           </div>
-          <span style={{ fontSize: 9, color: c.text, whiteSpace: 'nowrap', fontWeight: 500 }}>
+          <span style={{ fontSize: 9, color: '#ddd', whiteSpace: 'nowrap', fontWeight: 500 }}>
             {item.source_site}
           </span>
         </div>
@@ -208,7 +206,7 @@ function UnassignedItem({
           borderRadius: 4,
           border: '1px solid rgba(239,68,68,0.35)',
           background: 'rgba(239,68,68,0.16)',
-          color: c.danger,
+          color: '#FCA5A5',
           fontSize: 11,
           fontWeight: 700,
           lineHeight: '14px',
@@ -227,14 +225,14 @@ function UnassignedItem({
             top: '100%',
             left: 0,
             zIndex: 300,
-            background: c.surface,
-            border: `1px solid ${c.border}`,
+            background: '#1a1a1a',
+            border: '1px solid #333',
             borderRadius: 6,
             padding: '6px 8px',
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.7)',
             whiteSpace: 'nowrap',
           }}
           onClick={e => e.stopPropagation()}
@@ -246,7 +244,7 @@ function UnassignedItem({
               width: 16, height: 16, borderRadius: '50%',
               background: '#6B7280',
               cursor: 'pointer',
-              border: currentPolicyId === null ? `2px solid ${c.text}` : '2px solid transparent',
+              border: currentPolicyId === null ? '2px solid #fff' : '2px solid transparent',
               flexShrink: 0,
             }}
           />
@@ -259,7 +257,7 @@ function UnassignedItem({
                 width: 16, height: 16, borderRadius: '50%',
                 background: p.color,
                 cursor: 'pointer',
-                border: p.id === currentPolicyId ? `2px solid ${c.text}` : '2px solid transparent',
+                border: p.id === currentPolicyId ? '2px solid #fff' : '2px solid transparent',
                 flexShrink: 0,
               }}
             />
@@ -280,7 +278,6 @@ export default function UnassignedPool({
   onBrandPolicyChange,
   onDeleteBrandScope,
 }: Props) {
-  const c = useTheme()
   const grouped = unassigned.reduce<Record<string, TetrisUnassigned[]>>((acc, item) => {
     const key = item.source_site
     if (!acc[key]) acc[key] = []
@@ -296,8 +293,8 @@ export default function UnassignedPool({
   return (
     <div
       style={{
-        background: c.surfaceAlt,
-        border: `1px solid ${c.border}`,
+        background: 'rgba(20,20,20,0.5)',
+        border: '1px solid #2a2a2a',
         borderRadius: 6,
         padding: '10px 12px',
       }}
@@ -307,14 +304,14 @@ export default function UnassignedPool({
           <div
             style={{
               fontSize: 11,
-              color: c.textSub,
+              color: '#888',
               marginBottom: 6,
               textTransform: 'uppercase',
               letterSpacing: '0.05em',
             }}
           >
             {site}
-            <span style={{ color: c.textMuted, marginLeft: 6 }}>({fmtNum(items.length)})</span>
+            <span style={{ color: '#555', marginLeft: 6 }}>({fmtNum(items.length)})</span>
           </div>
           <div
             style={{

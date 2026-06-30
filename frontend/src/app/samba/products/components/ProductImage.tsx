@@ -3,8 +3,6 @@
 import React, { useState } from 'react'
 
 import { API_BASE_URL } from '@/config/api'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
 
 /** 상품 이미지 컴포넌트 — 로드 실패 시 이름 첫 글자 표시. */
 const API_BASE = API_BASE_URL
@@ -25,10 +23,10 @@ const ProductImage = React.memo(function ProductImage({ src, name, size = 110 }:
     return (
       <div style={{
         width: size, height: size, minWidth: size, borderRadius: '8px',
-        border: `1px dashed ${c.border}`, display: 'flex', alignItems: 'center',
-        justifyContent: 'center', background: c.surface,
+        border: '1px dashed #3D3D3D', display: 'flex', alignItems: 'center',
+        justifyContent: 'center', background: '#1A1A1A',
       }}>
-        <span style={{ fontSize: size * 0.45, color: c.textMuted, fontFamily: 'sans-serif' }}>{firstChar}</span>
+        <span style={{ fontSize: size * 0.45, color: '#FF8C00', fontFamily: 'sans-serif' }}>{firstChar}</span>
       </div>
     )
   }
@@ -41,7 +39,7 @@ const ProductImage = React.memo(function ProductImage({ src, name, size = 110 }:
       onError={() => setError(true)}
       style={{
         width: size, height: size, minWidth: size, objectFit: 'cover',
-        borderRadius: '8px', border: `1px solid ${c.border}`,
+        borderRadius: '8px', border: '1px solid #2D2D2D',
       }}
     />
   )

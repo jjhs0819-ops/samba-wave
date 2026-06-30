@@ -4,10 +4,6 @@ import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
 
-import { btn } from '@/lib/samba/buttons'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
-
 interface Notification {
   id: number
   message: string
@@ -48,7 +44,7 @@ function renderLogMessage(message: string) {
   return parts.map((part, index) => {
     if (index % 3 === 1 && Number(part.replace(/,/g, '')) > 0) {
       return (
-        <span key={`${part}-${index}`} style={{ color: c.text, fontWeight: 700 }}>
+        <span key={`${part}-${index}`} style={{ color: '#FFFFFF', fontWeight: 700 }}>
           {part}
         </span>
       )
@@ -58,7 +54,6 @@ function renderLogMessage(message: string) {
 }
 
 export default function OrdersTopBar(props: Props) {
-  const c = useTheme()
   const {
     notifications, setNotifications, setStatusFilter, setMarketStatus,
     setCustomStart, setCustomEnd, setPeriod,
@@ -80,29 +75,29 @@ export default function OrdersTopBar(props: Props) {
     <>
       {notifications.length > 0 && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: c.surface, border: `2px solid ${c.danger}`, borderRadius: '16px', padding: '2rem', maxWidth: '440px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
+          <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '440px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
             {/* X 닫기 (우측 상단) — 단순히 알람 닫기 */}
             <button
               aria-label='알람 닫기'
               title='닫기'
               onClick={() => setNotifications([])}
-              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: '6px', color: c.textSub, fontSize: '1.25rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1 }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = c.danger; e.currentTarget.style.background = 'rgba(255,107,107,0.1)' }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = c.textSub; e.currentTarget.style.background = 'transparent' }}
+              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: '6px', color: '#AAA', fontSize: '1.25rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1 }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#FF6B6B'; e.currentTarget.style.background = 'rgba(255,107,107,0.1)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = '#AAA'; e.currentTarget.style.background = 'transparent' }}
             >
               &#10005;
             </button>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#9888;</div>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: c.danger, marginBottom: '0.5rem' }}>마켓 취소 미반영 감지</h3>
-              <p style={{ fontSize: '0.875rem', color: c.textSub, lineHeight: 1.5 }}>
-                마켓에서 취소요청·취소완료된 주문이 <b style={{ color: c.danger }}>{fmtNum(cancelAlertCount)}건</b> 있지만 내부 상태가 아직 처리/배송 단계입니다. 발주·송장 등록 전에 확인해 주세요.
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>마켓 취소 미반영 감지</h3>
+              <p style={{ fontSize: '0.875rem', color: '#AAA', lineHeight: 1.5 }}>
+                마켓에서 취소요청·취소완료된 주문이 <b style={{ color: '#FF6B6B' }}>{fmtNum(cancelAlertCount)}건</b> 있지만 내부 상태가 아직 처리/배송 단계입니다. 발주·송장 등록 전에 확인해 주세요.
               </p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => setNotifications([])}
-                style={{ ...btn('ghost'), flex: 1, padding: '0.75rem', fontSize: '0.9375rem', fontWeight: 600 }}
+                style={{ flex: 1, padding: '0.75rem', background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#AAA', fontSize: '0.9375rem', fontWeight: 600, cursor: 'pointer' }}
               >
                 나중에
               </button>
@@ -115,7 +110,7 @@ export default function OrdersTopBar(props: Props) {
                   setCustomEnd(formatDateInput(getKstTodayDate()))
                   setPeriod('')
                 }}
-                style={{ ...btn('dangerSolid'), flex: 2, padding: '0.75rem', fontSize: '0.9375rem' }}
+                style={{ flex: 2, padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}
               >
                 지금 확인하기
               </button>
@@ -139,43 +134,43 @@ export default function OrdersTopBar(props: Props) {
       {isProductMode && (
         <div style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '0.85rem', color: c.text, fontWeight: 600 }}>상품별 매입대상</span>
-            <span style={{ fontSize: '0.85rem', color: c.text, fontWeight: 500, maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: '0.85rem', color: '#FF8C00', fontWeight: 600 }}>상품별 매입대상</span>
+            <span style={{ fontSize: '0.85rem', color: '#E5E5E5', fontWeight: 500, maxWidth: '400px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {cpName || cpId}
             </span>
-            <span style={{ fontSize: '0.75rem', color: c.textMuted }}>({fmtNum(filteredOrdersCount)}건)</span>
+            <span style={{ fontSize: '0.75rem', color: '#888' }}>({fmtNum(filteredOrdersCount)}건)</span>
           </div>
-          <a href='/samba/orders' style={{ fontSize: '0.75rem', color: c.link, textDecoration: 'none', padding: '4px 10px', border: `1px solid ${c.border}`, borderRadius: '5px', background: c.surfaceAlt, whiteSpace: 'nowrap' }}>전체 주문 보기</a>
+          <a href='/samba/orders' style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', padding: '4px 10px', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '5px', background: 'rgba(76,154,255,0.08)', whiteSpace: 'nowrap' }}>전체 주문 보기</a>
         </div>
       )}
 
       <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>{isProductMode ? '상품 판매이력' : '주문 상황'}</h2>
-          <p style={{ fontSize: '0.875rem', color: c.textMuted }}>
-            미배송: <span style={{ color: c.danger, fontWeight: 700 }}>{fmtNum(pendingCount)}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{fmtNum(filteredOrdersCount)}</span>건
+          <p style={{ fontSize: '0.875rem', color: '#888' }}>
+            미배송: <span style={{ color: '#FF6B6B', fontWeight: 700 }}>{fmtNum(pendingCount)}</span>건 / 전체: <span style={{ fontWeight: 700 }}>{fmtNum(filteredOrdersCount)}</span>건
           </p>
         </div>
         {smsRemain && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px' }}>
-            <span style={{ fontSize: '0.8125rem', color: c.textSub, fontWeight: 600 }}>SMS 잔여</span>
-            <span style={{ fontSize: '0.8125rem', color: c.text }}>SMS <span style={{ color: c.success, fontWeight: 700 }}>{fmtNum(smsRemain.SMS_CNT)}</span>건</span>
-            <span style={{ fontSize: '0.8125rem', color: c.text }}>LMS <span style={{ color: c.text, fontWeight: 700 }}>{fmtNum(smsRemain.LMS_CNT)}</span>건</span>
-            <span style={{ fontSize: '0.8125rem', color: c.text }}>MMS <span style={{ color: c.text, fontWeight: 700 }}>{fmtNum(smsRemain.MMS_CNT)}</span>건</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(76,154,255,0.08)', border: '1px solid rgba(76,154,255,0.2)', borderRadius: '8px' }}>
+            <span style={{ fontSize: '0.8125rem', color: '#4C9AFF', fontWeight: 600 }}>SMS 잔여</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>SMS <span style={{ color: '#51CF66', fontWeight: 700 }}>{fmtNum(smsRemain.SMS_CNT)}</span>건</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>LMS <span style={{ color: '#FFB84D', fontWeight: 700 }}>{fmtNum(smsRemain.LMS_CNT)}</span>건</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>MMS <span style={{ color: '#CC5DE8', fontWeight: 700 }}>{fmtNum(smsRemain.MMS_CNT)}</span>건</span>
           </div>
         )}
       </div>
 
-      <div style={{ border: `1px solid ${c.borderStrong}`, borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
-        <div style={{ padding: '6px 14px', background: c.headerBg, borderBottom: `1px solid ${c.borderStrong}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: c.headerText }}>주문 로그</span>
+      <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+        <div style={{ padding: '6px 14px', background: '#0D1117', borderBottom: '1px solid #1C2333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8' }}>주문 로그</span>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ fontSize: '0.72rem', color: c.textMuted, background: 'transparent', border: `1px solid ${c.borderStrong}`, padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
-            <button onClick={() => setLogMessages(['[대기] 로그가 초기화되었습니다.'])} style={{ fontSize: '0.72rem', color: c.textMuted, background: 'transparent', border: `1px solid ${c.borderStrong}`, padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+            <button onClick={() => setLogMessages(['[대기] 로그가 초기화되었습니다.'])} style={{ fontSize: '0.72rem', color: '#555', background: 'transparent', border: '1px solid #1C2333', padding: '1px 8px', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
-        <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: c.textMuted, background: c.surfaceAlt, lineHeight: 1.8 }}>
-          {logMessages.map((msg, i) => <p key={i} style={{ color: c.textMuted, fontSize: 'inherit', margin: 0 }}>{renderLogMessage(msg)}</p>)}
+        <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}>
+          {logMessages.map((msg, i) => <p key={i} style={{ color: '#8A95B0', fontSize: 'inherit', margin: 0 }}>{renderLogMessage(msg)}</p>)}
         </div>
       </div>
     </>

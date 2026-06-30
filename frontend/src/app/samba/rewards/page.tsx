@@ -3,12 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { rewardsApi, type RewardAccountRow, type RewardJob, type RewardsStatus } from '@/lib/samba/api'
-
-import { btn } from '@/lib/samba/buttons'
 import { getDeviceId } from '@/lib/samba/deviceId'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
-import { useTheme } from '@/lib/samba/useTheme'
 
 function formatRelative(iso: string | null): string {
   if (!iso) return '-'
@@ -43,11 +39,11 @@ const ACTION_LABEL: Record<string, string> = {
 }
 
 const JOB_STATUS_VIEW: Record<string, { label: string; color: string; bg: string }> = {
-  pending: { label: '적재됨', color: c.textMuted, bg: 'rgba(160,160,160,0.12)' },
-  dispatched: { label: '실행중', color: c.link, bg: 'rgba(76,154,255,0.15)' },
-  completed: { label: '완료', color: c.success, bg: 'rgba(81,207,102,0.15)' },
-  failed: { label: '실패', color: c.danger, bg: 'rgba(231,76,60,0.15)' },
-  expired: { label: '만료', color: c.warn, bg: 'rgba(232,163,61,0.15)' },
+  pending: { label: '적재됨', color: '#A0A0A0', bg: 'rgba(160,160,160,0.12)' },
+  dispatched: { label: '실행중', color: '#4C9AFF', bg: 'rgba(76,154,255,0.15)' },
+  completed: { label: '완료', color: '#51CF66', bg: 'rgba(81,207,102,0.15)' },
+  failed: { label: '실패', color: '#E74C3C', bg: 'rgba(231,76,60,0.15)' },
+  expired: { label: '만료', color: '#E8A33D', bg: 'rgba(232,163,61,0.15)' },
 }
 
 // 처리 PC 표시: 내 PC(트리거 device)와 일치하면 '이 PC', 아니면 device 끝 4자리.
@@ -85,7 +81,6 @@ function reviewAction(site: string): string {
 }
 
 export default function RewardsPage() {
-  const c = useTheme()
   const [data, setData] = useState<RewardsStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [intervalDraft, setIntervalDraft] = useState<number>(24)
@@ -283,10 +278,10 @@ export default function RewardsPage() {
   }
 
   return (
-    <div style={{ padding: '1rem', maxWidth: '1400px', margin: '0 auto', color: c.text }}>
+    <div style={{ padding: '1rem', maxWidth: '1400px', margin: '0 auto', color: '#E5E5E5' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '1rem' }}>
-        <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: c.text }}>적립금</h1>
-        <span style={{ fontSize: '0.85rem', color: c.textMuted }}>
+        <h1 style={{ fontSize: '1.4rem', fontWeight: 700, color: '#E5E5E5' }}>적립금</h1>
+        <span style={{ fontSize: '0.85rem', color: '#888' }}>
           계정별 적립금 및 리뷰 현황을 24시간마다 자동으로 동기화합니다.
         </span>
       </div>
@@ -302,11 +297,11 @@ export default function RewardsPage() {
       >
         <div style={cardStyle}>
           <div style={labelStyle}>무신사 머니 (전체 합계)</div>
-          <div style={{ ...valueStyle, color: c.success }}>{fmtNum(Math.round(totalMusinsaMoney))}원</div>
+          <div style={{ ...valueStyle, color: '#51CF66' }}>{fmtNum(Math.round(totalMusinsaMoney))}원</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>무신사 적립금 (전체 합계)</div>
-          <div style={{ ...valueStyle, color: c.text }}>{fmtNum(Math.round(totalMusinsaMileage))}원</div>
+          <div style={{ ...valueStyle, color: '#4C9AFF' }}>{fmtNum(Math.round(totalMusinsaMileage))}원</div>
         </div>
         <div style={cardStyle}>
           <div style={labelStyle}>활성 계정</div>
@@ -321,14 +316,14 @@ export default function RewardsPage() {
           gap: '0.75rem',
           marginBottom: '1rem',
           padding: '0.7rem 0.9rem',
-          background: c.surface,
+          background: 'rgba(30,30,30,0.5)',
           backdropFilter: 'blur(20px)',
           borderRadius: '8px',
-          border: `1px solid ${c.border}`,
+          border: '1px solid #2D2D2D',
           flexWrap: 'wrap',
         }}
       >
-        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: c.text }}>자동 실행:</span>
+        <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#E5E5E5' }}>자동 실행:</span>
         <input
           type="number"
           min={0}
@@ -339,14 +334,14 @@ export default function RewardsPage() {
             width: '70px',
             padding: '0.3rem 0.5rem',
             fontSize: '0.85rem',
-            background: c.inputBg,
-            border: `1px solid ${c.border}`,
+            background: '#1A1A1A',
+            border: '1px solid #2D2D2D',
             borderRadius: '4px',
-            color: c.text,
+            color: '#E5E5E5',
             outline: 'none',
           }}
         />
-        <span style={{ fontSize: '0.85rem', color: c.textSub }}>시간마다 (0 = 비활성)</span>
+        <span style={{ fontSize: '0.85rem', color: '#A0A0A0' }}>시간마다 (0 = 비활성)</span>
         <button
           onClick={handleSaveInterval}
           disabled={busy === 'interval'}
@@ -354,7 +349,7 @@ export default function RewardsPage() {
         >
           {busy === 'interval' ? '저장 중' : '저장'}
         </button>
-        <span style={{ fontSize: '0.8rem', color: c.textMuted }}>
+        <span style={{ fontSize: '0.8rem', color: '#888' }}>
           마지막 자동 실행: {data?.last_auto_run_at ? formatRelative(data.last_auto_run_at) : '-'}
         </span>
         <div style={{ flex: 1 }} />
@@ -372,7 +367,7 @@ export default function RewardsPage() {
             borderRadius: '4px',
             fontSize: '0.85rem',
             marginBottom: '0.75rem',
-            color: c.danger,
+            color: '#FFB3B3',
           }}
         >
           {msg}
@@ -380,9 +375,9 @@ export default function RewardsPage() {
       )}
 
       {/* 적립 로그 — 주문 송장 로그와 동일 패턴: 액션 + 잡 상태전이(적재→실행중→완료/실패 + 처리 PC) */}
-      <div style={{ border: `1px solid ${c.borderStrong}`, borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
-        <div style={{ padding: '6px 14px', background: c.headerBg, borderBottom: `1px solid ${c.borderStrong}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: c.headerText }}>적립 로그</span>
+      <div style={{ border: '1px solid #1C2333', borderRadius: '8px', overflow: 'hidden', marginBottom: '0.75rem' }}>
+        <div style={{ padding: '6px 14px', background: '#0D1117', borderBottom: '1px solid #1C2333', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94A3B8' }}>적립 로그</span>
           <div style={{ display: 'flex', gap: '4px' }}>
             <button onClick={() => { void navigator.clipboard?.writeText(logMessages.join('\n')).catch(() => {}) }} style={logBtnStyle}>복사</button>
             <button onClick={() => setLogMessages(['[대기] 로그가 초기화되었습니다.'])} style={logBtnStyle}>초기화</button>
@@ -392,10 +387,10 @@ export default function RewardsPage() {
           ref={(el) => {
             if (el) el.scrollTop = el.scrollHeight
           }}
-          style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: c.textMuted, background: c.surface, lineHeight: 1.8 }}
+          style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: '#8A95B0', background: '#080A10', lineHeight: 1.8 }}
         >
           {logMessages.map((m, i) => (
-            <p key={i} style={{ color: c.textMuted, margin: 0 }}>
+            <p key={i} style={{ color: '#8A95B0', margin: 0 }}>
               {m}
             </p>
           ))}
@@ -403,35 +398,35 @@ export default function RewardsPage() {
       </div>
 
       {loading && !data ? (
-        <div style={{ color: c.textMuted, fontSize: '0.9rem' }}>불러오는 중...</div>
+        <div style={{ color: '#888', fontSize: '0.9rem' }}>불러오는 중...</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {Array.from(grouped.entries()).map(([site, accounts]) => (
             <div
               key={site}
               style={{
-                border: `1px solid ${c.border}`,
+                border: '1px solid #2D2D2D',
                 borderRadius: '8px',
                 overflow: 'hidden',
-                background: c.surface,
+                background: 'rgba(30,30,30,0.5)',
                 backdropFilter: 'blur(20px)',
               }}
             >
               <div
                 style={{
                   padding: '0.65rem 0.9rem',
-                  background: c.surfaceAlt,
-                  borderBottom: `1px solid ${c.border}`,
+                  background: 'rgba(20,20,20,0.6)',
+                  borderBottom: '1px solid #2D2D2D',
                   fontWeight: 700,
                   fontSize: '0.95rem',
-                  color: c.text,
+                  color: '#E5E5E5',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.5rem',
                 }}
               >
                 <span>{SITE_LABEL[site] || site}</span>
-                <span style={{ color: c.textMuted, fontWeight: 400, fontSize: '0.8rem' }}>
+                <span style={{ color: '#888', fontWeight: 400, fontSize: '0.8rem' }}>
                   {fmtNum(accounts.length)}개 계정
                 </span>
               </div>
@@ -477,12 +472,12 @@ export default function RewardsPage() {
           {grouped.size === 0 && (
             <div
               style={{
-                color: c.textMuted,
+                color: '#888',
                 fontSize: '0.9rem',
                 padding: '1.5rem',
                 textAlign: 'center',
-                background: c.surface,
-                border: `1px solid ${c.border}`,
+                background: 'rgba(30,30,30,0.5)',
+                border: '1px solid #2D2D2D',
                 borderRadius: '8px',
               }}
             >
@@ -515,10 +510,10 @@ function AccountRow({
   const abcFresh = isFresh24h(a.last_abcmart_attendance_at)
 
   return (
-    <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+    <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
       <td style={tdStyle}>
-        <div style={{ fontWeight: 600, color: c.text }}>{a.account_label}</div>
-        <div style={{ color: c.textMuted, fontSize: '0.75rem' }}>{a.username}</div>
+        <div style={{ fontWeight: 600, color: '#E5E5E5' }}>{a.account_label}</div>
+        <div style={{ color: '#888', fontSize: '0.75rem' }}>{a.username}</div>
         {jobs && jobs.length > 0 && (
           <div
             style={{
@@ -536,7 +531,7 @@ function AccountRow({
                   key={j.request_id}
                   style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.7rem' }}
                 >
-                  <span style={{ color: c.textMuted }}>{ACTION_LABEL[j.action] || j.action}</span>
+                  <span style={{ color: '#999' }}>{ACTION_LABEL[j.action] || j.action}</span>
                   <span
                     style={{
                       padding: '0.05rem 0.35rem',
@@ -548,9 +543,9 @@ function AccountRow({
                   >
                     {v.label}
                   </span>
-                  <span style={{ color: dt.mine ? c.success : c.textMuted }}>{dt.label}</span>
+                  <span style={{ color: dt.mine ? '#51CF66' : '#888' }}>{dt.label}</span>
                   {j.error && (
-                    <span title={j.error} style={{ color: c.danger, cursor: 'help' }}>
+                    <span title={j.error} style={{ color: '#E74C3C', cursor: 'help' }}>
                       ⓘ
                     </span>
                   )}
@@ -564,12 +559,12 @@ function AccountRow({
       {isMusinsa && (
         <>
           <td style={tdStyle}>
-            <span style={{ color: c.success, fontWeight: 600 }}>
+            <span style={{ color: '#51CF66', fontWeight: 600 }}>
               {fmtNum(Math.round(a.balance ?? 0))}원
             </span>
           </td>
           <td style={tdStyle}>
-            <span style={{ color: c.text, fontWeight: 600 }}>
+            <span style={{ color: '#4C9AFF', fontWeight: 600 }}>
               {fmtNum(Math.round(a.mileage ?? 0))}원
             </span>
           </td>
@@ -577,7 +572,7 @@ function AccountRow({
             <div>
               {a.musinsa_attendance_streak ? `${fmtNum(a.musinsa_attendance_streak)}일 연속` : '-'}
             </div>
-            <div style={{ color: attendanceFresh ? c.success : c.textMuted, fontSize: '0.75rem' }}>
+            <div style={{ color: attendanceFresh ? '#51CF66' : '#666', fontSize: '0.75rem' }}>
               {formatRelative(a.last_musinsa_attendance_at)}
             </div>
           </td>
@@ -585,7 +580,7 @@ function AccountRow({
             <div>
               {a.last_musinsa_snap_reward ? `${fmtNum(a.last_musinsa_snap_reward)}원` : '-'}
             </div>
-            <div style={{ color: snapFresh ? c.success : c.textMuted, fontSize: '0.75rem' }}>
+            <div style={{ color: snapFresh ? '#51CF66' : '#666', fontSize: '0.75rem' }}>
               {formatRelative(a.last_musinsa_snap_like_at)}
             </div>
           </td>
@@ -597,7 +592,7 @@ function AccountRow({
           <td style={tdStyle}>{fmtNum(a.abcmart_stamp_count ?? 0)}개</td>
           <td style={tdStyle}>{fmtNum(a.abcmart_stamp_score ?? 0)}</td>
           <td style={tdStyle}>
-            <div style={{ color: abcFresh ? c.success : c.textMuted, fontSize: '0.75rem' }}>
+            <div style={{ color: abcFresh ? '#51CF66' : '#666', fontSize: '0.75rem' }}>
               {formatRelative(a.last_abcmart_attendance_at)}
             </div>
           </td>
@@ -616,7 +611,7 @@ function AccountRow({
             <div>
               {fmtNum(Number(total))}건 누적 {last ? `(+${fmtNum(Number(last))})` : ''}
             </div>
-            <div style={{ color: fresh ? c.success : c.textMuted, fontSize: '0.75rem' }}>
+            <div style={{ color: fresh ? '#51CF66' : '#666', fontSize: '0.75rem' }}>
               {formatRelative(at)}
             </div>
           </td>
@@ -625,11 +620,11 @@ function AccountRow({
 
       <td style={tdStyle}>
         {a.cookie_expired ? (
-          <span style={{ color: c.danger, fontWeight: 600 }}>쿠키 만료</span>
+          <span style={{ color: '#E74C3C', fontWeight: 600 }}>쿠키 만료</span>
         ) : a.is_login_default ? (
-          <span style={{ color: c.success }}>기본계정</span>
+          <span style={{ color: '#51CF66' }}>기본계정</span>
         ) : (
-          <span style={{ color: c.textMuted }}>활성</span>
+          <span style={{ color: '#888' }}>활성</span>
         )}
       </td>
 
@@ -697,9 +692,9 @@ function AccountRow({
 
 const logBtnStyle: React.CSSProperties = {
   fontSize: '0.72rem',
-  color: c.textMuted,
+  color: '#555',
   background: 'transparent',
-  border: `1px solid ${c.borderStrong}`,
+  border: '1px solid #1C2333',
   padding: '1px 8px',
   borderRadius: '4px',
   cursor: 'pointer',
@@ -707,59 +702,70 @@ const logBtnStyle: React.CSSProperties = {
 
 const cardStyle: React.CSSProperties = {
   padding: '0.75rem 1rem',
-  background: c.surface,
+  background: 'rgba(30,30,30,0.5)',
   backdropFilter: 'blur(20px)',
-  border: `1px solid ${c.border}`,
+  border: '1px solid #2D2D2D',
   borderRadius: '8px',
-  color: c.text,
+  color: '#E5E5E5',
 }
 
 const labelStyle: React.CSSProperties = {
   fontSize: '0.75rem',
-  color: c.textMuted,
+  color: '#888',
   marginBottom: '0.25rem',
 }
 
 const valueStyle: React.CSSProperties = {
   fontSize: '1.2rem',
   fontWeight: 700,
-  color: c.text,
+  color: '#E5E5E5',
 }
 
 const thStyle: React.CSSProperties = {
   padding: '0.5rem 0.75rem',
   textAlign: 'left',
   fontWeight: 600,
-  color: c.textSub,
+  color: '#A0A0A0',
   fontSize: '0.78rem',
-  borderBottom: `1px solid ${c.border}`,
-  background: c.surfaceAlt,
+  borderBottom: '1px solid #2D2D2D',
+  background: 'rgba(20,20,20,0.6)',
 }
 
 const tdStyle: React.CSSProperties = {
   padding: '0.5rem 0.75rem',
   verticalAlign: 'top',
-  color: c.text,
+  color: '#E5E5E5',
   fontSize: '0.85rem',
 }
 
 const btnStylePrimary: React.CSSProperties = {
-  ...btn('primary'),
   padding: '0.35rem 0.7rem',
   fontSize: '0.8rem',
+  background: '#FF4444',
+  color: '#fff',
+  border: 'none',
   borderRadius: '4px',
+  cursor: 'pointer',
+  fontWeight: 600,
 }
 
 const btnStyleSmall: React.CSSProperties = {
-  ...btn('secondary'),
   padding: '0.2rem 0.5rem',
   fontSize: '0.75rem',
+  background: '#1A1A1A',
+  color: '#E5E5E5',
+  border: '1px solid #2D2D2D',
   borderRadius: '3px',
+  cursor: 'pointer',
 }
 
 const btnStyleSmallPrimary: React.CSSProperties = {
-  ...btn('primary'),
   padding: '0.2rem 0.55rem',
   fontSize: '0.75rem',
+  background: '#FF4444',
+  color: '#fff',
+  border: 'none',
   borderRadius: '3px',
+  cursor: 'pointer',
+  fontWeight: 600,
 }
