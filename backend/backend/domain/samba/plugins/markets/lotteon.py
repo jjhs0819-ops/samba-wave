@@ -3282,10 +3282,15 @@ class LotteonPlugin(MarketPlugin):
                 else:
                     logger.warning(f"[롯데ON] 살수록할인 설정 실패 (무시): {e}")
 
-    async def delete(self, session, product_no: str, account) -> dict[str, Any]:
+    async def delete(
+        self, session, product_no: str, account, market_delete: bool = False
+    ) -> dict[str, Any]:
         """롯데ON 상품 판매종료 (END 전환 → 판매페이지 즉시 차단 + 시스템 자동 삭제).
 
         _get_cached_client로 test_auth 캐싱 — 오토튠 품절 배치 시 인증 API 1회만 호출.
+        market_delete=False(자동품절): END는 가역적(자동삭제 시차+재입고 재등록+change_status
+        outer-only 검증)이라 리스팅이 생존할 수 있다. soldout_fallback=True로 매핑 보존.
+        market_delete=True(수동삭제): 사용자 의도이므로 success(매핑 제거).
         """
         creds = await self._load_auth(session, account)
         if not creds:
@@ -3301,7 +3306,13 @@ class LotteonPlugin(MarketPlugin):
             # 롯데ON 시스템이 일정 기간 경과 후 자동 삭제한다. (SOUT은 품절 배지만 달고
             # 판매페이지는 계속 노출되어 삼바 "품절→삭제" 원칙을 만족시키지 못함.)
             await client.delete_product(product_no)
-            return {"success": True, "message": "롯데ON 판매종료 완료"}
+            if market_delete:
+                return {"success": True, "message": "롯데ON 판매종료 완료"}
+            return {
+                "success": True,
+                "soldout_fallback": True,
+                "message": "롯데ON 판매종료 완료 (자동품절 — 매핑 보존)",
+            }
         except Exception as e:
             err = str(e)
             # 이미 종료/삭제된 상품 — 마켓 측 정리는 끝났으므로 우리도 success로 간주해

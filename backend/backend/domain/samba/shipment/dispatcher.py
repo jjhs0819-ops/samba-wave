@@ -233,7 +233,7 @@ async def delete_from_market(
                 "success": False,
                 "message": f"{market_type} 삭제 핸들러 미구현 (건너뜀)",
             }
-        if market_type == "playauto":
+        if market_type in ("playauto", "lotteon"):
             return await handler(
                 session, product, account=account, market_delete=market_delete
             )
@@ -777,6 +777,7 @@ async def _delete_lotteon(
     session: AsyncSession,
     product: dict[str, Any],
     account: Any = None,
+    market_delete: bool = False,
 ) -> dict[str, Any]:
     """롯데ON 상품 판매중지 — 플러그인 delete() 위임."""
     from backend.domain.samba.plugins.markets.lotteon import LotteonPlugin
@@ -785,7 +786,9 @@ async def _delete_lotteon(
     if not product_no:
         return {"success": False, "message": "롯데ON 상품번호 없음 (건너뜀)"}
     plugin = LotteonPlugin()
-    return await plugin.delete(session, product_no, account)
+    return await plugin.delete(
+        session, product_no, account, market_delete=market_delete
+    )
 
 
 async def _delete_ssg(

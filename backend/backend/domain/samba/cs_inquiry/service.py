@@ -3,6 +3,8 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy.exc import IntegrityError
+
 from backend.domain.samba.cs_inquiry.model import SambaCSInquiry
 from backend.domain.samba.cs_inquiry.repository import SambaCSInquiryRepository
 from backend.utils.logger import logger
@@ -474,22 +476,27 @@ class SambaCSInquiryService:
             content = str(it.get("Content") or "")
             goods_nm = str(it.get("GoodsNm") or "")
 
-            await self.repo.create_async(
-                market="롯데홈쇼핑",
-                inquiry_type="product_question",
-                external_id=ext_id,
-                external_sent=False,
-                account_id=account_id,
-                account_name=account_label,
-                market_order_id=str(it.get("RcntOrdNo") or "") or None,
-                questioner=str(it.get("QuestNm") or "") or None,
-                product_name=goods_nm or None,
-                market_product_no=str(it.get("GoodsNo") or "") or None,
-                content=f"[{subject}] {content}".strip() if subject else content,
-                reply_status="replied" if is_done else "pending",
-                inquiry_date=parsed_date,
-            )
-            qna_collected += 1
+            try:
+                await self.repo.create_async(
+                    market="롯데홈쇼핑",
+                    inquiry_type="product_question",
+                    external_id=ext_id,
+                    external_sent=False,
+                    account_id=account_id,
+                    account_name=account_label,
+                    market_order_id=str(it.get("RcntOrdNo") or "") or None,
+                    questioner=str(it.get("QuestNm") or "") or None,
+                    product_name=goods_nm or None,
+                    market_product_no=str(it.get("GoodsNo") or "") or None,
+                    content=f"[{subject}] {content}".strip() if subject else content,
+                    reply_status="replied" if is_done else "pending",
+                    inquiry_date=parsed_date,
+                )
+                qna_collected += 1
+            except IntegrityError:
+                # tenant 필터로 find_by_external_id가 기존 row를 못 찾아 중복 INSERT 시도 →
+                # unique index 충돌. 세션 롤백 후 계속 (함수 중단 방지).
+                await self.repo.session.rollback()
 
         # 상품Q&A도 active_ids에 없는 기존 pending → replied 마킹
         existing_qna_pending = await self.repo.find_pending_since(
