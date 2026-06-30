@@ -30,11 +30,6 @@ import { dark, type Palette } from './colors'
 
 export type BtnVariant = 'primary' | 'secondary' | 'accent' | 'send' | 'ghost' | 'danger' | 'dangerSolid' | 'link'
 
-// 강조(메인색=틸의 옅은 틴트) — 토큰 외 전용 색
-const ACC_BG = '#e3f4f0'
-const ACC_BORDER = '#a9ddd2'
-const ACC_TEXT = '#0f6a5b'
-
 const BASE: CSSProperties = {
   borderRadius: '6px',
   fontWeight: 600,
@@ -51,7 +46,7 @@ export function btn(variant: BtnVariant, palette: Palette = dark): CSSProperties
   const variants: Record<BtnVariant, CSSProperties> = {
     primary: { background: c.btnSolidBg, color: c.btnSolidText, border: 'none', fontWeight: 700 },
     secondary: { background: c.btnBg, color: c.btnText, border: `1px solid ${c.btnBorder}` },
-    accent: { background: ACC_BG, color: ACC_TEXT, border: `1px solid ${ACC_BORDER}` },
+    accent: { background: c.btnAccentBg, color: c.btnAccentText, border: `1px solid ${c.btnAccentBorder}` },
     send: { background: c.success, color: '#ffffff', border: 'none', fontWeight: 700 },
     ghost: { background: 'transparent', color: c.textMuted, border: 'none' },
     danger: { background: c.btnBg, color: c.danger, border: `1px solid ${c.danger}` },

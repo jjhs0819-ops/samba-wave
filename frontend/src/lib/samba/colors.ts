@@ -27,11 +27,14 @@ export interface Palette {
   warn: string         // 주황·경고
   success: string      // 초록
   accentBg: string     // 옅은 강조 배경(노랑)
-  btnBg: string        // 버튼 기본 배경
-  btnBorder: string    // 버튼 테두리
-  btnText: string      // 버튼 텍스트
-  btnSolidBg: string   // 더망고풍 진한 솔리드 버튼 배경(주요 액션)
-  btnSolidText: string // 솔리드 버튼 글씨
+  btnBg: string           // 버튼 기본 배경
+  btnBorder: string       // 버튼 테두리
+  btnText: string         // 버튼 텍스트
+  btnSolidBg: string      // 더망고풍 진한 솔리드 버튼 배경(주요 액션)
+  btnSolidText: string    // 솔리드 버튼 글씨
+  btnAccentBg: string     // accent 버튼 배경 (카테고리스캔 등)
+  btnAccentBorder: string // accent 버튼 테두리
+  btnAccentText: string   // accent 버튼 텍스트
   inputBg: string      // 입력 배경
   gaugeTrack: string   // 게이지(용량바) 트랙(빈) 배경
   gaugeFill: string    // 게이지(용량바) 채움(중성 회색)
@@ -59,6 +62,9 @@ export const light: Palette = {
   btnText: '#404a59',
   btnSolidBg: '#15786a',
   btnSolidText: '#ffffff',
+  btnAccentBg: '#e3f4f0',
+  btnAccentBorder: '#a9ddd2',
+  btnAccentText: '#0f6a5b',
   inputBg: '#ffffff',
   gaugeTrack: '#e4e6e8',
   gaugeFill: '#525a64',
@@ -86,6 +92,9 @@ export const dark: Palette = {
   btnText: '#B0B0B0',
   btnSolidBg: '#3a4150',
   btnSolidText: '#E5E5E5',
+  btnAccentBg: '#162926',
+  btnAccentBorder: '#254542',
+  btnAccentText: '#40c4aa',
   inputBg: '#1A1A1A',
   gaugeTrack: '#232733',
   gaugeFill: '#6f7782',
