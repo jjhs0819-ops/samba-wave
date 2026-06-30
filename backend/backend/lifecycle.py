@@ -539,6 +539,14 @@ _daemon_poll_watch_task: asyncio.Task | None = None
 # 전송 보류(2단 방어)로 차단되므로 가격 오염 위험 없음. [2026-06-30]
 _SERVER_SIDE_AUTOTUNE_SITES = {"MUSINSA"}
 
+# 좀비 코디 watchdog [2026-06-30] — 코디 task 는 살아있는데(`_is_pc_running`=True)
+# stale-conn 무한재시도/hung await 로 사이클이 안 도는 좀비. pc-sync 의 spawn 가드가
+# "이미 running" 으로 보고 안 갈아끼워 무신사가 영구 비활성화되던 잔여 구멍을 메운다.
+# 진척 신호(site heartbeat 또는 spawn 시각)가 _ZOMBIE_COORD_TIMEOUT 초 넘게 정지면 강제 교체.
+# 무신사 사이클은 정상 시 항목당 heartbeat 갱신(수초 단위)이라 240초 무진척 = 확실한 hung.
+_ZOMBIE_COORD_TIMEOUT = 240.0
+_pc_coord_spawned_at: dict[str, float] = {}
+
 
 async def _pc_sync_loop() -> None:
     """매 10초 PC 분담 매핑 DB → in-memory 동기화 (worker 간 sync).
@@ -563,6 +571,7 @@ async def _pc_sync_loop() -> None:
         _pc_last_seen,
         _pc_main_task,
         _pc_restart_count,
+        _pc_site_heartbeats,
         persist_pc_last_seen_to_db,
         sync_pc_allowed_sites_from_db,
     )
@@ -606,7 +615,30 @@ async def _pc_sync_loop() -> None:
                     if not _esites:
                         continue
                     if _is_pc_running(_edev):
-                        continue
+                        # 좀비 코디 watchdog — running 인데 _ZOMBIE_COORD_TIMEOUT 초+ 무진척
+                        # (site heartbeat / spawn 시각 정지)이면 hung 좀비로 보고 강제 교체.
+                        # 정상이면 그대로 둠(continue). 이 분기 없으면 hung 코디가 영구 비활성.
+                        _zmain = _pc_main_task.get(_edev)
+                        _zhbs = _pc_site_heartbeats.get(_edev) or {}
+                        _zprog = max(
+                            [_pc_coord_spawned_at.get(_edev, 0.0)]
+                            + list(_zhbs.values())
+                        )
+                        if (
+                            _zmain is not None
+                            and not _zmain.done()
+                            and _zprog
+                            and (_now_ts - _zprog) > _ZOMBIE_COORD_TIMEOUT
+                        ):
+                            _lg.warning(
+                                f"[pc-sync] 좀비 코디 강제 교체: {_edev} "
+                                f"(무진척 {int(_now_ts - _zprog)}초, sites={sorted(_esites)})"
+                            )
+                            _zmain.cancel()
+                            _pc_main_task.pop(_edev, None)
+                            # event 는 set 유지 — 아래 spawn 으로 폴스루해 새 코디 교체.
+                        else:
+                            continue
                     # 프록시 서버사이드 사이트(무신사)만 분담된 확장앱은 5분 폴링 가드 면제 —
                     # 백엔드가 폴링 없이 직접 갱신하므로 PC 절전/탭 throttle 에도 죽지 않게.
                     _all_server_side = all(
@@ -618,6 +650,7 @@ async def _pc_sync_loop() -> None:
                             continue
                     _pc_cycle_count[_edev] = 0
                     _pc_restart_count[_edev] = 0
+                    _pc_coord_spawned_at[_edev] = _now_ts
                     _ev2 = _get_pc_event(_edev)
                     _ev2.set()
                     _pc_main_task[_edev] = _asyncio.create_task(
