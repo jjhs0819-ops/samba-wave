@@ -2434,7 +2434,7 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={aiImgTransforming}
-          style={{ ...btn('accent'), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+          style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
 
@@ -2571,7 +2571,7 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={imgFiltering}
-          style={{ ...btn('accent'), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+          style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : '필터링 실행'}</button>
       </div>
       </div>
@@ -2849,18 +2849,18 @@ export default function ProductsPage() {
             onClick={() => setViewMode("card")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "card" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
-              color: viewMode === "card" ? '#0f6a5b' : c.text,
-              background: viewMode === "card" ? "#e3f4f0" : "transparent",
+              border: viewMode === "card" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
+              color: viewMode === "card" ? "#FF8C00" : "#C5C5C5",
+              background: viewMode === "card" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
           >자세히</button>
           <button
             onClick={() => setViewMode("image")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "image" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
-              color: viewMode === "image" ? '#0f6a5b' : c.text,
-              background: viewMode === "image" ? "#e3f4f0" : "transparent",
+              border: viewMode === "image" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
+              color: viewMode === "image" ? "#FF8C00" : "#C5C5C5",
+              background: viewMode === "image" ? "rgba(255,140,0,0.15)" : "transparent",
             }}
           >사진</button>
           <select
