@@ -5,7 +5,6 @@ import { manualProductApi } from '@/lib/samba/legacy'
 import ImageManagerModal from './ImageManagerModal'
 import CategorySelector from './CategorySelector'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 interface Account {
@@ -31,9 +30,6 @@ interface OptionRow {
   name: string
   stock: number
 }
-
-const INPUT = `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
-const LABEL = `text-xs text-[${c.textSub}] mb-1 block`
 
 function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Account[] {
   if (!policy?.market_policies) return []
@@ -76,26 +72,41 @@ export default function NewProductCard({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    padding: '0.375rem 0.625rem',
+    background: c.inputBg,
+    border: `1px solid ${c.border}`,
+    borderRadius: '4px',
+    fontSize: '0.875rem',
+    color: c.text,
+    outline: 'none',
+  }
+  const labelStyle: React.CSSProperties = {
+    fontSize: '0.75rem',
+    color: c.textSub,
+    marginBottom: '0.25rem',
+    display: 'block',
+  }
+
   const addTag = () => {
     const t = tagInput.trim()
     if (t && !tags.includes(t)) setTags(prev => [...prev, t])
     setTagInput('')
   }
-  const removeTag = (t: string) => setTags(prev => prev.filter(v => v !== t))
-
-  const addOption = () =>
-    setOptions(prev => [...prev, { id: crypto.randomUUID(), name: '', stock: 0 }])
-  const removeOption = (id: string) =>
-    setOptions(prev => prev.filter(o => o.id !== id))
-  const updateOption = (id: string, key: 'name' | 'stock', val: string | number) =>
-    setOptions(prev => prev.map(o => o.id === id ? { ...o, [key]: val } : o))
+  const removeTag = (t: string) => setTags(prev => prev.filter(x => x !== t))
+  const addOption = () => setOptions(prev => [...prev, { id: crypto.randomUUID(), name: '', stock: 0 }])
+  const removeOption = (id: string) => setOptions(prev => prev.filter(o => o.id !== id))
+  const updateOption = (id: string, field: 'name' | 'stock', val: string | number) =>
+    setOptions(prev => prev.map(o => o.id === id ? { ...o, [field]: val } : o))
 
   const reset = () => {
     setName(''); setNameEn(''); setNameJa(''); setBrand('')
     setOriginalPrice(''); setSalePrice(''); setCost('')
     setManufacturer(''); setStyleCode(''); setOrigin('')
     setSex('남녀공용'); setSeason('사계절'); setColor(''); setMaterial('')
-    setImages([]); setDetailImages([]); setTags([])
+    setImages([]); setDetailImages([])
+    setTagInput(''); setTags([])
     setOptions([{ id: crypto.randomUUID(), name: '', stock: 0 }])
     setSelectedPolicyId('')
     setPendingCategories({})
@@ -146,75 +157,75 @@ export default function NewProductCard({
 
   return (
     <>
-      <div className={`bg-[${c.surface}] border border-[${c.border}] rounded-lg p-4 mb-6 space-y-4`}>
-        <p className={`text-sm font-semibold text-[${c.text}]`}>새 상품 등록</p>
+      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem' }} className='space-y-4'>
+        <p style={{ fontSize: '0.875rem', fontWeight: 600, color: c.text }}>새 상품 등록</p>
 
         {/* 이미지 + 기본정보 */}
         <div className='flex gap-4'>
           <div
             onClick={() => setShowImageModal(true)}
-            className={`w-20 h-20 rounded border border-[${c.border}] shrink-0 cursor-pointer overflow-hidden bg-[${c.surfaceAlt}] flex flex-col items-center justify-center hover:border-[#a9ddd2] transition-colors`}
+            style={{ width: '5rem', height: '5rem', minWidth: '5rem', borderRadius: '4px', border: `1px solid ${c.border}`, cursor: 'pointer', overflow: 'hidden', background: c.surfaceAlt, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
             title='이미지 추가/관리'
           >
             {thumb ? (
-              <img src={thumb} alt='' className='w-full h-full object-cover' />
+              <img src={thumb} alt='' style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
               <>
-                <span className={`text-[${c.textMuted}] text-lg`}>+</span>
-                <span className={`text-[${c.textMuted}] text-xs`}>이미지</span>
+                <span style={{ color: c.textMuted, fontSize: '1.125rem' }}>+</span>
+                <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>이미지</span>
               </>
             )}
           </div>
 
           <div className='flex-1 space-y-2'>
-            <input className={INPUT} value={name} onChange={e => setName(e.target.value)} placeholder='상품명 *' />
+            <input style={inputStyle} value={name} onChange={e => setName(e.target.value)} placeholder='상품명 *' />
             <div className='grid grid-cols-2 gap-2'>
-              <input className={INPUT} value={nameEn} onChange={e => setNameEn(e.target.value)} placeholder='영문 상품명' />
-              <input className={INPUT} value={nameJa} onChange={e => setNameJa(e.target.value)} placeholder='일문 상품명' />
+              <input style={inputStyle} value={nameEn} onChange={e => setNameEn(e.target.value)} placeholder='영문 상품명' />
+              <input style={inputStyle} value={nameJa} onChange={e => setNameJa(e.target.value)} placeholder='일문 상품명' />
             </div>
-            <input className={INPUT} value={brand} onChange={e => setBrand(e.target.value)} placeholder='브랜드' />
+            <input style={inputStyle} value={brand} onChange={e => setBrand(e.target.value)} placeholder='브랜드' />
           </div>
         </div>
 
         {/* 가격 */}
         <div className='grid grid-cols-3 gap-2'>
           <div>
-            <label className={LABEL}>정상가</label>
-            <input type='number' className={INPUT} value={originalPrice} onChange={e => setOriginalPrice(e.target.value)} placeholder='0' />
+            <label style={labelStyle}>정상가</label>
+            <input type='number' style={inputStyle} value={originalPrice} onChange={e => setOriginalPrice(e.target.value)} placeholder='0' />
           </div>
           <div>
-            <label className={LABEL}>할인가</label>
-            <input type='number' className={INPUT} value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder='0' />
+            <label style={labelStyle}>할인가</label>
+            <input type='number' style={inputStyle} value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder='0' />
           </div>
           <div>
-            <label className={LABEL}>원가</label>
-            <input type='number' className={INPUT} value={cost} onChange={e => setCost(e.target.value)} placeholder='0' />
+            <label style={labelStyle}>원가</label>
+            <input type='number' style={inputStyle} value={cost} onChange={e => setCost(e.target.value)} placeholder='0' />
           </div>
         </div>
 
         {/* 상품정보 */}
         <div>
-          <label className={LABEL}>상품정보</label>
+          <label style={labelStyle}>상품정보</label>
           <div className='grid grid-cols-4 gap-2'>
-            <input className={INPUT} value={manufacturer} onChange={e => setManufacturer(e.target.value)} placeholder='제조사' />
-            <input className={INPUT} value={styleCode} onChange={e => setStyleCode(e.target.value)} placeholder='품번' />
-            <input className={INPUT} value={origin} onChange={e => setOrigin(e.target.value)} placeholder='제조국' />
-            <input className={INPUT} value={color} onChange={e => setColor(e.target.value)} placeholder='색상' />
-            <select className={INPUT} value={sex} onChange={e => setSex(e.target.value)}>
+            <input style={inputStyle} value={manufacturer} onChange={e => setManufacturer(e.target.value)} placeholder='제조사' />
+            <input style={inputStyle} value={styleCode} onChange={e => setStyleCode(e.target.value)} placeholder='품번' />
+            <input style={inputStyle} value={origin} onChange={e => setOrigin(e.target.value)} placeholder='제조국' />
+            <input style={inputStyle} value={color} onChange={e => setColor(e.target.value)} placeholder='색상' />
+            <select style={inputStyle} value={sex} onChange={e => setSex(e.target.value)}>
               <option>남녀공용</option><option>남성</option><option>여성</option><option>키즈</option>
             </select>
-            <select className={INPUT} value={season} onChange={e => setSeason(e.target.value)}>
+            <select style={inputStyle} value={season} onChange={e => setSeason(e.target.value)}>
               <option>사계절</option><option>봄/여름</option><option>가을/겨울</option><option>봄</option><option>여름</option><option>가을</option><option>겨울</option>
             </select>
-            <input className={`col-span-2 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`} value={material} onChange={e => setMaterial(e.target.value)} placeholder='재질 (예: 면 100%)' />
+            <input style={{ ...inputStyle, gridColumn: 'span 2' }} value={material} onChange={e => setMaterial(e.target.value)} placeholder='재질 (예: 면 100%)' />
           </div>
         </div>
 
         {/* 정책 */}
         <div>
-          <label className={LABEL}>정책</label>
+          <label style={labelStyle}>정책</label>
           <select
-            className={INPUT}
+            style={inputStyle}
             value={selectedPolicyId}
             onChange={e => { setSelectedPolicyId(e.target.value); setPendingCategories({}) }}
           >
@@ -231,20 +242,20 @@ export default function NewProductCard({
           const linked = policyAccountIds(policy, accounts)
           return linked.length > 0 ? (
             <div>
-              <label className={LABEL}>판매처별 카테고리</label>
+              <label style={labelStyle}>판매처별 카테고리</label>
               <CategorySelector accounts={linked} savedCategories={pendingCategories} onSave={setPendingCategories} />
             </div>
           ) : (
-            <p className={`text-xs text-[${c.textMuted}]`}>이 정책에 연결된 판매처 계정이 없습니다.</p>
+            <p style={{ fontSize: '0.75rem', color: c.textMuted }}>이 정책에 연결된 판매처 계정이 없습니다.</p>
           )
         })()}
 
         {/* 태그 */}
         <div>
-          <label className={LABEL}>태그</label>
+          <label style={labelStyle}>태그</label>
           <div className='flex gap-2 mb-2'>
             <input
-              className={INPUT}
+              style={inputStyle}
               value={tagInput}
               onChange={e => setTagInput(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
@@ -255,9 +266,9 @@ export default function NewProductCard({
           {tags.length > 0 && (
             <div className='flex flex-wrap gap-1'>
               {tags.map(t => (
-                <span key={t} className={`inline-flex items-center gap-1 bg-[${c.surfaceAlt}] text-[${c.textMuted}] text-xs px-2 py-0.5 rounded`}>
+                <span key={t} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', background: c.surfaceAlt, color: c.textMuted, fontSize: '0.75rem', padding: '0.125rem 0.5rem', borderRadius: '4px' }}>
                   {t}
-                  <button onClick={() => removeTag(t)} className={`text-[${c.textMuted}] hover:text-[${c.danger}]`}>×</button>
+                  <button onClick={() => removeTag(t)} style={{ color: c.textMuted, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>×</button>
                 </span>
               ))}
             </div>
@@ -267,26 +278,26 @@ export default function NewProductCard({
         {/* 옵션 */}
         <div>
           <div className='flex justify-between items-center mb-1'>
-            <label className={LABEL}>옵션</label>
-            <button onClick={addOption} className={`text-xs text-[${c.textSub}] hover:text-[${c.text}]`}>+ 추가</button>
+            <label style={labelStyle}>옵션</label>
+            <button onClick={addOption} style={{ fontSize: '0.75rem', color: c.textSub, background: 'none', border: 'none', cursor: 'pointer' }}>+ 추가</button>
           </div>
-          <div className={`grid grid-cols-[1fr_100px_24px] gap-2 text-xs text-[${c.textSub}] px-0.5 mb-1`}>
+          <div className='grid grid-cols-[1fr_100px_24px] gap-2 px-0.5 mb-1' style={{ fontSize: '0.75rem', color: c.textSub }}>
             <span>옵션명</span><span>재고</span><span />
           </div>
           <div className='space-y-1.5'>
             {options.map(opt => (
               <div key={opt.id} className='grid grid-cols-[1fr_100px_24px] gap-2'>
-                <input className={INPUT} value={opt.name} onChange={e => updateOption(opt.id, 'name', e.target.value)} placeholder='옵션명 (예: 블랙/L)' />
-                <input type='number' className={INPUT} value={opt.stock} onChange={e => updateOption(opt.id, 'stock', Number(e.target.value))} placeholder='0' />
+                <input style={inputStyle} value={opt.name} onChange={e => updateOption(opt.id, 'name', e.target.value)} placeholder='옵션명 (예: 블랙/L)' />
+                <input type='number' style={inputStyle} value={opt.stock} onChange={e => updateOption(opt.id, 'stock', Number(e.target.value))} placeholder='0' />
                 {options.length > 1 ? (
-                  <button onClick={() => removeOption(opt.id)} className={`text-[${c.danger}] text-sm`}>×</button>
+                  <button onClick={() => removeOption(opt.id)} style={{ color: c.danger, fontSize: '0.875rem', background: 'none', border: 'none', cursor: 'pointer' }}>×</button>
                 ) : <span />}
               </div>
             ))}
           </div>
         </div>
 
-        {error && <p className={`text-[${c.danger}] text-xs`}>{error}</p>}
+        {error && <p style={{ color: c.danger, fontSize: '0.75rem' }}>{error}</p>}
 
         <div className='flex justify-end'>
           <button

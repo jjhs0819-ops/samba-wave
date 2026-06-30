@@ -5,8 +5,8 @@ import { collectorApi } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { monitorApi, type DashboardStats, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { fmtNum, fmtTextNumbers, LOG_FONT_FAMILY } from '@/lib/samba/styles'
-import { light as clr } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
@@ -71,6 +71,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
   filterSources?: string[] | null
   deviceId?: string  // 이 PC device_id — 본인 잡 로그만 표시 (PC 분리, 2026-05-25)
 }) {
+  const clr = useTheme()
   // 로그에 클라이언트 부여 시퀀스 번호 — React key 안정화용
   const [logs, setLogs] = useState<Array<RefreshLogEntry & { __seq: number }>>([])
   const [, setIntervals] = useState<Record<string, number>>({})
@@ -247,14 +248,6 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
   )
 })
 
-const card: React.CSSProperties = {
-  background: clr.surface,
-  backdropFilter: 'blur(20px)',
-  border: `1px solid ${clr.border}`,
-  borderRadius: '12px',
-  padding: '1.25rem',
-}
-
 const normalizeWarroomSourceSite = (value: string | null | undefined) => {
   const site = String(value || '').trim()
   if (!site) return ''
@@ -361,6 +354,7 @@ interface ActiveCycle {
 }
 
 function ActiveCyclesPanel(): React.ReactElement {
+  const clr = useTheme()
   const [cycles, setCycles] = useState<ActiveCycle[]>([])
   const [busy, setBusy] = useState<string>('')
   // 애니메이션 카운터 — 실제 idx 값이 한번에 200씩 올라와도 화면에는 부드럽게 1씩 표시
@@ -611,6 +605,14 @@ function ActiveCyclesPanel(): React.ReactElement {
 }
 
 export default function WarroomPage() {
+  const clr = useTheme()
+  const card: React.CSSProperties = {
+    background: clr.surface,
+    backdropFilter: 'blur(20px)',
+    border: `1px solid ${clr.border}`,
+    borderRadius: '12px',
+    padding: '1.25rem',
+  }
   useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
 
   // 무신사 자동로그인계정 상태 — 60s 폴링. 미설정/만료 시 모달 경고.
