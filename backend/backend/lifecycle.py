@@ -543,8 +543,11 @@ _SERVER_SIDE_AUTOTUNE_SITES = {"MUSINSA"}
 # stale-conn 무한재시도/hung await 로 사이클이 안 도는 좀비. pc-sync 의 spawn 가드가
 # "이미 running" 으로 보고 안 갈아끼워 무신사가 영구 비활성화되던 잔여 구멍을 메운다.
 # 진척 신호(site heartbeat 또는 spawn 시각)가 _ZOMBIE_COORD_TIMEOUT 초 넘게 정지면 강제 교체.
-# 무신사 사이클은 정상 시 항목당 heartbeat 갱신(수초 단위)이라 240초 무진척 = 확실한 hung.
-_ZOMBIE_COORD_TIMEOUT = 240.0
+# [2026-06-30] 600초로 상향: 무신사 풀사이클이 전역 동시성 캡 영향으로 bulk+후처리 합쳐
+# ~245초까지 느려지고 후처리 구간엔 site heartbeat 가 멈출 수 있어, 240초면 정상-느린
+# 사이클을 좀비로 오판해 죽이고 flapping 유발. 600초(10분)면 정상 사이클엔 여유, 진짜
+# hung(10분+ 완전 무진척)만 회수.
+_ZOMBIE_COORD_TIMEOUT = 600.0
 _pc_coord_spawned_at: dict[str, float] = {}
 
 

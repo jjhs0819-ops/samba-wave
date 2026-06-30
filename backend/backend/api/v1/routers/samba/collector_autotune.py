@@ -117,10 +117,16 @@ async def _get_active_sites_cached() -> list[str]:
                 )
                 return list(cached)
             raise
-        if not sites and cached:
-            # 빈 결과(blip) — 직전 non-empty 캐시 유지, ts 갱신 안 함(다음 호출서 재시도)
+        # 직전 캐시에 있던 site 가 이번 결과에서 사라지면(빈 결과 포함) distinct 쿼리가
+        # DB 부하/일시 불일치로 누락한 blip 으로 간주한다. 30s TTL 캐시를 줄어든 값으로
+        # 덮으면 그 site 의 오토튠 코디가 30초간 active_sites 에서 빠져 죽는다 — 무신사
+        # 단일사이트가 반복 비활성화되던 flip-flop 의 진짜 근본. 줄어든 결과는 캐시에
+        # 반영하지 않고 직전 값 유지(다음 호출서 회복 재시도). 신규 site 추가(확장)는 정상 반영.
+        # [2026-06-30] 기존 "빈 결과만" 가드를 "site 누락(shrink) 전반"으로 확장.
+        if cached and (set(cached) - set(sites)):
             logging.getLogger("backend.autotune").warning(
-                "[active-sites] 빈 결과 — blip 으로 간주, 직전 캐시 유지(stale)"
+                "[active-sites] 사이트 누락 감지(%s) — blip 으로 간주, 직전 캐시 유지(stale)",
+                sorted(set(cached) - set(sites)),
             )
             return list(cached)
         _active_sites_cache["data"] = sites
@@ -4300,7 +4306,14 @@ async def _autotune_loop(device_id: str):
                         )
                         active_sites = []
                     else:
-                        active_sites = [s for s in active_sites if s in my_sites]
+                        # [2026-06-30 근본 fix] 배정(my_sites)을 진실 source 로 직접 사용한다.
+                        # 과거엔 글로벌 distinct 쿼리(_get_active_sites_cached)와 교집합했으나,
+                        # 그 쿼리가 DB 부하/일시 불일치로 site 를 누락하면(30s 캐시TTL 동안 지속)
+                        # active_sites=[] 가 되어 배정된 무신사 site loop 이 죽는 flip-flop 의
+                        # 근본 원인이었다. 디바이스에 명시 배정된 site 는 등록상품이 있다는 뜻이므로
+                        # 글로벌 "등록상품 존재" 교집합은 불필요하고 해롭다. breaker/연속빈결과
+                        # skip 은 아래에서 그대로 적용되어 비정상 site 는 여전히 제외된다.
+                        active_sites = list(my_sites)
                         # 데몬은 TRACKING_ONLY 사이트(무신사/GSShop 등)의 가격수집(오토튠) 미지원 —
                         # 송장(tracking)만 처리한다. 데몬 allowed_sites 에 무신사가 있어도(송장 폴링용)
                         # 오토튠 사이클은 스폰하지 않는다. 안 막으면 데몬·확장앱 중복 오토튠 발생.
@@ -4414,6 +4427,15 @@ async def _autotune_loop(device_id: str):
                 _heartbeats = _pc_hb(device_id)
                 for _s in list(_site_tasks.keys()):
                     if _s in _active_set:
+                        continue
+                    # flip-flop 방어: 위 "체크박스 해제" 블록과 동일 디바운스 적용 —
+                    # 연속 누락 임계 미달이면 취소 안 함(순간 active_sites blip 무시).
+                    # 이 가드 없으면 무신사가 distinct 쿼리 blip 1회에 즉시 죽던 근본 버그
+                    # (디바운스가 한쪽 경로만 막아 무력화되던 문제). [2026-06-30]
+                    if (
+                        _pc_site_absent_count.get((device_id, _s), 0)
+                        < _SITE_ABSENT_CANCEL_THRESHOLD
+                    ):
                         continue
                     _t = _site_tasks[_s]
                     if not _t.done():
@@ -4536,15 +4558,20 @@ async def _autotune_loop(device_id: str):
             current_pc_owner.reset(_owner_token)
         except Exception:
             pass
-        # 이 PC의 모든 소싱처 태스크 종료
-        _site_tasks = _pc_st(device_id)
-        for _s, _t in list(_site_tasks.items()):
-            if not _t.done():
-                _t.cancel()
-        _site_tasks.clear()
-        ev = _pc_running.get(device_id)
-        if ev is not None:
-            ev.clear()
+        # 교체(watchdog/pc-sync 가 새 코디로 갈아끼움)로 종료하는 경우엔 event/site_tasks 를
+        # 절대 건드리지 않는다. _pc_running event 와 _pc_site_tasks 는 device_id 단위 공유라,
+        # 옛 코디가 finally 에서 ev.clear()/site_tasks.clear() 하면 이미 떠 있는 새 코디가
+        # 첫 `while _is_pc_running` 검사서 즉시 종료되거나 site task 추적이 날아간다.
+        # (내가 아직 등록 task 일 때만 = 진짜 shutdown 일 때만 정리.) [2026-06-30]
+        if _pc_main_task.get(device_id) is asyncio.current_task():
+            _site_tasks = _pc_st(device_id)
+            for _s, _t in list(_site_tasks.items()):
+                if not _t.done():
+                    _t.cancel()
+            _site_tasks.clear()
+            ev = _pc_running.get(device_id)
+            if ev is not None:
+                ev.clear()
         log.info("[오토튠][%s] 코디네이터 종료", _dev_tag)
 
 
