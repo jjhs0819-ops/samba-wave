@@ -39,9 +39,16 @@ async def run(
         result = await _do_sync_cs_from_markets(session)
         synced = result.get("synced", 0) if isinstance(result, dict) else 0
         linked = result.get("linked", 0) if isinstance(result, dict) else 0
+        errors = result.get("errors", []) if isinstance(result, dict) else []
         _add_job_log(
             job.id, f"CS 문의 동기화 완료 — {synced}건 수집, {linked}건 상품연결"
         )
+        # [2026-06-30] 마켓별 실패 사유를 잡 로그에 노출 — 기존엔 result['errors']를 버려서
+        # '0건 수집'으로만 보여 원인(토큰/계정/테넌트 격리) 추적이 불가했음.
+        for _err in (errors or [])[:20]:
+            _add_job_log(job.id, f"⚠️ CS 동기화 경고: {_err}")
+        if errors:
+            logger.warning(f"[cs_sync] 마켓 동기화 경고 {len(errors)}건: {errors[:5]}")
     except Exception as e:
         logger.error(f"[cs_sync] CS 동기화 실패: {e}")
         _add_job_log(job.id, f"CS 동기화 오류: {e}")

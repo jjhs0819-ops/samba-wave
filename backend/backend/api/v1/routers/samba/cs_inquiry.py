@@ -1361,6 +1361,16 @@ async def _do_sync_cs_from_markets(
     except Exception:
         pass  # 슬러그 조회 실패 시 기존 로직으로 폴백
 
+    # [2026-06-30] 스마트스토어 동기화 의도인데 계정이 0개면 명시 경고+에러 노출.
+    # 원인: 테넌트별 cs_sync 잡에서 스마트스토어 SambaMarketAccount/SambaSettings 의
+    # tenant_id 가 NULL/불일치면 ORM 자동격리로 제외돼 '조용히 0건'이 됨(이슈 #510 backfill 누락).
+    if not ss_settings and (not market_name or market_name == "스마트스토어"):
+        logger.warning(
+            "[CS동기화] 스마트스토어 계정 0개 — 테넌트 격리로 제외됐을 수 있음 "
+            "(계정/설정의 tenant_id 미설정·불일치 점검 → scripts/backfill_setting_tenant.py)"
+        )
+        errors.append("스마트스토어 계정 0개 (tenant_id 미설정/불일치 의심)")
+
     for setting in ss_settings:
         try:
             import json
