@@ -1778,6 +1778,10 @@ class JobWorker:
         _tetris_account_map: dict[tuple[str, str], list[str]] = {}
         # market_account_id → market_type (오버라이드 시 마켓별 교체 판정용)
         _tetris_acc_market: dict[str, str] = {}
+        # try 안에서만 할당되던 플래그를 미리 초기화 — 테트리스 설정 로드가
+        # 실패해도(except 무시) _process_one 클로저가 미할당 참조로 죽지 않도록.
+        # 기본 False = 테트리스 매칭 끄고 일반 등록은 정상 진행.
+        _tetris_enabled = False
         try:
             from backend.domain.samba.forbidden.model import SambaSettings
             from backend.domain.samba.tetris.repository import SambaTetrisRepository
