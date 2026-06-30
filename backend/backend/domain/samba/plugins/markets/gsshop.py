@@ -744,6 +744,30 @@ def _transform_for_gsshop(
     return payload
 
 
+async def _gs_product_exists(client: Any, sup_prd_cd: str) -> bool:
+    """supPrdCd가 GS에 실제 등록됐는지 확인 — 등록 응답 타임아웃/누락 시 orphan 방지(A안).
+
+    승인상태 조회(prdStCd: R/F/N/Y/E/T/D) 또는 상세 조회(prdCd)에서 값이 잡히면 존재로 본다.
+    조회 자체가 실패(네트워크 등)하면 단정 못 하므로 False(보수적: 기존 실패 흐름 유지).
+    """
+    if not sup_prd_cd:
+        return False
+    try:
+        r = await client.get_approve_status(sup_prd_cd)
+        d = r.get("data") or {}
+        if isinstance(d, dict) and isinstance(d.get("data"), dict):
+            d = d["data"]
+        if isinstance(d, dict):
+            if str(d.get("prdStCd") or d.get("prdSt") or "").strip():
+                return True
+            rl = d.get("resultList")
+            if isinstance(rl, list) and rl:
+                return True
+    except Exception as e:
+        logger.warning(f"[GS샵] 승인상태 확인 실패({sup_prd_cd}): {e}")
+    return False
+
+
 class GsShopPlugin(MarketPlugin):
     market_type = "gsshop"
     policy_key = "GS샵"
@@ -938,7 +962,28 @@ class GsShopPlugin(MarketPlugin):
                 except Exception as _e:
                     logger.warning(f"[GS샵] prdSectList 자동매핑 실패(무시): {_e}")
 
-        result = await client.register_goods(goods_data)
+        try:
+            result = await client.register_goods(goods_data)
+        except Exception as _reg_exc:
+            # A안: 등록 응답이 타임아웃/끊김 — GS 서버는 상품을 이미 만들었을 수 있다.
+            # 품번(supPrdCd)으로 GS 실제 등록 여부를 확인해, 있으면 등록완료로 처리해
+            # orphan(삼바 미등록·재전송 중복거부)을 원천 차단한다.
+            _sup = str(goods_data.get("supPrdCd") or "")
+            logger.warning(
+                f"[GS샵] 등록 응답 예외 — GS 실제등록 여부 확인 시도: {_sup} ({_reg_exc})"
+            )
+            if _sup and await _gs_product_exists(client, _sup):
+                logger.info(
+                    f"[GS샵] 응답 지연이나 GS엔 등록 확인됨 — 등록완료 처리: {_sup}"
+                )
+                return {
+                    "success": True,
+                    "message": "GS샵 등록 확인됨 (응답 지연/타임아웃 후 GS 실제 등록 확인)",
+                    "product_id": _sup,
+                    "data": {"_verified_after_timeout": True},
+                }
+            # GS에도 없으면 진짜 실패 — 기존대로 예외 전파(상위 handle()이 실패 처리)
+            raise
 
         # GS샵 API 응답 검증 — HTTP 200이지만 본문에 fail 포함 가능
         # 응답 구조: result["data"] = raw API JSON, raw["data"] = {"prdCd": "..."}
@@ -948,6 +993,24 @@ class GsShopPlugin(MarketPlugin):
                 raw.get("result") and raw.get("result") != "success"
             ):
                 msg = raw.get("message", "") or raw.get("code", "") or "등록 실패"
+                # "이미 등록된 업체상품코드" = supPrdCd(=품번)가 GS에 이미 등록돼 있음
+                # = 사실상 등록 완료. 신규등록 응답이 늦거나(타임아웃) 직전 등록 성공이
+                # 삼바에 미반영돼 재전송된 경우, GS엔 상품이 실재하므로 실패로 버리지 않고
+                # 품번(supPrdCd)을 product_id로 돌려줘 등록정보를 보존한다 → 삼바 상품관리가
+                # 실제 GS 등록을 따라잡고(미등록 오표시 해소), 오토튠도 수정모드로 정상 동작.
+                _ms = str(msg)
+                if "이미 등록" in _ms and "업체상품코드" in _ms:
+                    _exist_sup = str(goods_data.get("supPrdCd") or "")
+                    logger.info(
+                        f"[GS샵] 이미 등록된 업체상품코드 — 등록완료로 처리(품번 보존): "
+                        f"{_exist_sup}"
+                    )
+                    return {
+                        "success": True,
+                        "message": "GS샵 이미 등록됨 (업체상품코드 존재) — 등록정보 보존",
+                        "product_id": _exist_sup,
+                        "data": raw,
+                    }
                 return {
                     "success": False,
                     "message": f"GS샵 등록 실패: {msg}",
