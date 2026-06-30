@@ -308,18 +308,18 @@ export default function SambaLayout({
                         padding: "0.75rem 1.5rem",
                         fontSize: "0.875rem",
                         fontWeight: 500,
-                        color: isGroupActive ? c.primary : c.text,
+                        color: isGroupActive ? "#FF8C00" : c.text,
                         background: "transparent",
                         borderTop: "none",
                         borderLeft: "none",
                         borderRight: "none",
                         borderBottomWidth: "2px",
                         borderBottomStyle: "solid",
-                        borderBottomColor: isGroupActive ? c.primary : "transparent",
+                        borderBottomColor: isGroupActive ? "#FF8C00" : "transparent",
                         cursor: "pointer",
                         transition: "color 0.15s, border-color 0.15s",
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.borderBottomColor = c.primary; }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
                       onMouseLeave={(e) => {
                         if (!isGroupActive) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderBottomColor = "transparent"; }
                       }}
@@ -350,12 +350,12 @@ export default function SambaLayout({
                               style={{
                                 display: "block",
                                 padding: "0.625rem 1.25rem",
-                                color: isChildActive ? c.primary : c.textSub,
+                                color: isChildActive ? "#FF8C00" : c.textSub,
                                 fontSize: "0.8125rem",
-                                background: isChildActive ? c.surfaceAlt : "transparent",
+                                background: isChildActive ? "rgba(255,140,0,0.12)" : "transparent",
                                 transition: "color 0.15s, border-color 0.15s, background 0.15s",
                               }}
-                              onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.background = c.surfaceAlt; }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.background = "rgba(255,140,0,0.08)"; }}
                               onMouseLeave={(e) => {
                                 if (!isChildActive) { e.currentTarget.style.color = c.textSub; e.currentTarget.style.background = "transparent"; }
                               }}
@@ -390,13 +390,13 @@ export default function SambaLayout({
                       padding: item.planned ? "0.35rem 1.5rem" : "0.75rem 1.5rem",
                       fontSize: "0.875rem",
                       fontWeight: 500,
-                      color: isActive ? c.primary : c.text,
+                      color: isActive ? "#FF8C00" : c.text,
                       lineHeight: 1.1,
-                      borderBottom: `2px solid ${isActive ? c.primary : "transparent"}`,
+                      borderBottom: `2px solid ${isActive ? "#FF8C00" : "transparent"}`,
                       transition: "color 0.15s, border-color 0.15s",
                       position: "relative",
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = c.primary; e.currentTarget.style.borderBottomColor = c.primary; }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "#FF8C00"; e.currentTarget.style.borderBottomColor = "#FF8C00"; }}
                     onMouseLeave={(e) => {
                       if (!isActive) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderBottomColor = "transparent"; }
                     }}

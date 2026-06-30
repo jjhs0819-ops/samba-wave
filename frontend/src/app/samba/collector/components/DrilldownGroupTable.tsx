@@ -12,9 +12,6 @@ import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
 import { matchesPolicyRegFilter } from '../hooks/useDisplayedFilters'
 
-import { btn, btnDisabled } from '@/lib/samba/buttons'
-import { useTheme } from '@/lib/samba/useTheme'
-
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 const FIXED_REQUESTED_COUNT = 1000
 
@@ -46,7 +43,6 @@ export interface DrilldownGroupTableProps {
 }
 
 export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
-  const c = useTheme()
   const {
     filters, tree, policies,
     drillSite, drillBrand, drillGroup, drillEntry,
@@ -70,30 +66,30 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           marginBottom: '0.75rem', flexWrap: 'wrap', gap: '8px',
         }}>
-          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: c.text, margin: 0 }}>검색그룹 목록</h3>
+          <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', margin: 0 }}>검색그룹 목록</h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
             <select value={collectFilter} onChange={e => setCollectFilter(e.target.value)}
-              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: collectFilter ? c.warn : c.textMuted, cursor: 'pointer' }}>
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: collectFilter ? '#F59E0B' : '#888', cursor: 'pointer' }}>
               <option value="">상품수집</option>
               <option value="collected">수집</option>
               <option value="uncollected">미수집</option>
             </select>
             <select value={marketRegFilter} onChange={e => setMarketRegFilter(e.target.value)}
-              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: marketRegFilter ? c.text : c.textMuted, cursor: 'pointer' }}>
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: marketRegFilter ? '#4C9AFF' : '#888', cursor: 'pointer' }}>
               <option value="">마켓등록</option>
               <option value="registered">전체등록</option>
               <option value="partial">부분등록</option>
               <option value="unregistered">미등록</option>
             </select>
             <select value={tagRegFilter} onChange={e => setTagRegFilter(e.target.value)}
-              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: tagRegFilter ? c.success : c.textMuted, cursor: 'pointer' }}>
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: tagRegFilter ? '#51CF66' : '#888', cursor: 'pointer' }}>
               <option value="">태그등록</option>
               <option value="registered">등록</option>
               <option value="partial">부분등록</option>
               <option value="unregistered">미등록</option>
             </select>
             <select value={policyRegFilter} onChange={e => setPolicyRegFilter(e.target.value)}
-              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: policyRegFilter ? c.text : c.textMuted, cursor: 'pointer' }}>
+              style={{ fontSize: '0.78rem', padding: '0.3rem 0.5rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: policyRegFilter ? '#FF8C00' : '#888', cursor: 'pointer' }}>
               <option value="">정책등록</option>
               <option value="registered">등록</option>
               <option value="partial">부분등록</option>
@@ -101,19 +97,28 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             </select>
             <button
               onClick={() => setShowDuplicatesModal(true)}
-              style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{
+                background: 'rgba(255,165,0,0.1)', border: '1px solid rgba(255,165,0,0.3)',
+                color: '#FFA500', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
             >
               중복 상품
             </button>
             <button
               onClick={handleDeleteSelectedGroups}
-              style={{ ...btn('danger'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{
+                background: 'rgba(255,100,100,0.1)', border: '1px solid rgba(255,100,100,0.3)',
+                color: '#FF6B6B', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
             >
               그룹 삭제
             </button>
             <button
               onClick={handleCollectGroups}
-              style={{ ...btn('primary'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{
+                background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.35)',
+                color: '#FF8C00', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
             >
               상품수집
             </button>
@@ -121,31 +126,42 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             <button
               onClick={handleSyncRequestedCounts}
               title="선택된(없으면 전체) 그룹의 요청수를 현재 수집수로 일괄 맞춥니다"
-              style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{
+                background: 'rgba(100,200,255,0.1)', border: '1px solid rgba(100,200,255,0.3)',
+                color: '#64C8FF', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
             >
               수집동기화
             </button>
             <button
               disabled={tagPreviewLoading}
               onClick={handleAiTagPreview}
-              style={{ ...btn('accent'), ...(tagPreviewLoading ? btnDisabled : null), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{
+                background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.35)',
+                color: '#FF8C00', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem',
+                cursor: tagPreviewLoading ? 'not-allowed' : 'pointer', opacity: tagPreviewLoading ? 0.6 : 1,
+              }}
             >
               {tagPreviewLoading ? '태그 생성중...' : 'AI태그'}
             </button>
-            <button onClick={handleClearAiTags} style={{ ...btn('danger'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}>태그삭제</button>
+            <button onClick={handleClearAiTags} style={{
+              background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)',
+              color: '#FF6B6B', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem',
+              cursor: 'pointer',
+            }}>태그삭제</button>
           </div>
         </div>
 
         <div style={{
           marginBottom: '0.75rem', padding: '0.5rem 0.875rem', borderRadius: '8px',
           background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.2)',
-          fontSize: '0.8rem', color: c.textMuted,
+          fontSize: '0.8rem', color: '#888',
         }}>
-          ※ 정책 우선순위: <span style={{ color: c.text }}>[상품별 개별정책]</span> → <span style={{ color: c.text }}>[카테고리 정책]</span> 순으로 적용됩니다
-          <span style={{ float: 'right', color: c.text, fontWeight: 600 }}>
-            수집 <span style={{ color: c.text }}>{fmtNum(filters.reduce((s, f) => s + ((f as unknown as Record<string, number>).collected_count ?? 0), 0))}</span>
-            <span style={{ color: c.textMuted }}> / </span>
-            요청 <span style={{ color: c.text }}>{fmtNum(filters.filter(f => !f.is_folder).reduce((s, f) => s + (f.requested_count ?? 0), 0))}</span>
+          ※ 정책 우선순위: <span style={{ color: '#FF8C00' }}>[상품별 개별정책]</span> → <span style={{ color: '#FF8C00' }}>[카테고리 정책]</span> 순으로 적용됩니다
+          <span style={{ float: 'right', color: '#E5E5E5', fontWeight: 600 }}>
+            수집 <span style={{ color: '#FF8C00' }}>{fmtNum(filters.reduce((s, f) => s + ((f as unknown as Record<string, number>).collected_count ?? 0), 0))}</span>
+            <span style={{ color: '#555' }}> / </span>
+            요청 <span style={{ color: '#FFB84D' }}>{fmtNum(filters.filter(f => !f.is_folder).reduce((s, f) => s + (f.requested_count ?? 0), 0))}</span>
           </span>
         </div>
 
@@ -230,12 +246,12 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
           const selectedCount = selectedFilter ? ((selectedFilter as unknown as Record<string, number>).collected_count ?? 0) : 0
 
           const colW = ['12%', '13%', '22%', '15%', '10%', '8%', '6%', '11%', '3%']
-          const colBase = { borderRight: `1px solid ${c.border}`, maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'left' as const }
+          const colBase = { borderRight: '1px solid #2D2D2D', maxHeight: '320px', overflowY: 'auto' as const, boxSizing: 'border-box' as const, textAlign: 'left' as const }
           const colStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0 })
           const detColStyle = (i: number) => ({ ...colBase, width: colW[i], flexShrink: 0, padding: '0.5rem 0.5rem' })
           const itemSt = (sel: boolean) => ({
             padding: '0.5rem 0.75rem', fontSize: '0.8125rem',
-            color: c.text, cursor: 'pointer' as const,
+            color: sel ? '#FF8C00' : '#C5C5C5', cursor: 'pointer' as const,
             background: sel ? 'rgba(255,140,0,0.08)' : 'transparent',
             transition: 'background 0.15s',
             display: 'flex' as const, alignItems: 'center' as const, gap: '4px',
@@ -243,18 +259,18 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
 
           return (
             <div style={{
-              background: c.surface, border: `1px solid ${c.border}`,
+              background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D',
               borderRadius: '8px', overflow: 'hidden', marginBottom: '1rem',
             }}>
               {/* 헤더 */}
-              <div style={{ display: 'flex', borderBottom: `1px solid ${c.border}`, background: c.surfaceAlt }}>
+              <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
                 {['사이트', '브랜드', '카테고리', '링크', '정책', '수집', '요청', '생성일/최근수집', '매핑'].map((h, i) => (
                   <div key={h} style={{
                     width: colW[i], flexShrink: 0, boxSizing: 'border-box' as const,
                     padding: '0.5rem 0.5rem', textAlign: 'center' as const,
                     fontSize: '0.72rem', fontWeight: 600,
-                    color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#0f6a5b' : c.textMuted,
-                    borderRight: i < 8 ? `1px solid ${c.border}` : 'none',
+                    color: (i === 0 && (drillEntry === 'site' || drillSite)) || (i === 1 && (drillEntry === 'brand' || drillBrand)) || (i === 2 && drillGroup) ? '#FF8C00' : '#888',
+                    borderRight: i < 8 ? '1px solid #2D2D2D' : 'none',
                     cursor: i < 3 ? 'pointer' : 'default',
                   }}
                   onClick={() => {
@@ -270,15 +286,15 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                 <div style={colStyle(0)}>
                   {(drillEntry === 'site' || drillBrand) ? (
                     filteredSites.length === 0 ? (
-                      <div style={{ padding: '0.75rem', color: c.textMuted, fontSize: '0.8rem' }}>그룹 없음</div>
+                      <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>그룹 없음</div>
                     ) : filteredSites.map(s => (
                       <div key={s.id} style={itemSt(drillSite === s.id)}
                         onClick={() => { setDrillSite(drillSite === s.id ? null : s.id); setDrillGroup(null) }}
-                        onMouseEnter={e => { if (drillSite !== s.id) e.currentTarget.style.background = c.surfaceAlt }}
+                        onMouseEnter={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                         onMouseLeave={e => { if (drillSite !== s.id) e.currentTarget.style.background = 'transparent' }}
                       >
                         {s.source_site || s.name}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: c.text, fontWeight: 600 }}>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>
                           {(() => {
                             const leaves = allLeafInfos.filter(l => l._siteId === s.id)
                             const collected = leaves.reduce((sum, l) => sum + ((l as unknown as Record<string, number>).collected_count ?? 0), 0)
@@ -291,7 +307,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                 </div>
                 <div style={colStyle(1)}>
                   {treeCountsLoading && drillSite ? (
-                    <div style={{ padding: '0.75rem', color: c.textMuted, fontSize: '0.8rem' }}>로드 중...</div>
+                    <div style={{ padding: '0.75rem', color: '#888', fontSize: '0.8rem' }}>로드 중...</div>
                   ) : (drillEntry === 'brand' || drillSite) ? (
                     brands.length > 0 ? brands.map(([brand, info]) => (
                       <div key={brand} style={itemSt(drillBrand === brand)}
@@ -309,13 +325,13 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                             setSelectedIds(new Set())
                           }
                         }}
-                        onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = c.surfaceAlt }}
+                        onMouseEnter={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                         onMouseLeave={e => { if (drillBrand !== brand) e.currentTarget.style.background = 'transparent' }}
                       >
                         {brand}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: c.text, fontWeight: 600 }}>{fmtNum(info.count)}({fmtNum(info.collected)})</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(info.count)}({fmtNum(info.collected)})</span>
                       </div>
-                    )) : <div style={{ padding: '0.75rem', color: c.textMuted, fontSize: '0.8rem' }}>브랜드 없음</div>
+                    )) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>브랜드 없음</div>
                   ) : null}
                 </div>
                 <div style={colStyle(2)}>
@@ -338,17 +354,17 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                           setDrillGroup(g.id)
                           setSelectedIds(new Set([g.id]))
                         }}
-                        onMouseEnter={e => { if (drillGroup !== g.id && !selectedIds.has(g.id)) e.currentTarget.style.background = c.surfaceAlt }}
+                        onMouseEnter={e => { if (drillGroup !== g.id && !selectedIds.has(g.id)) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                         onMouseLeave={e => { if (drillGroup !== g.id && !selectedIds.has(g.id)) e.currentTarget.style.background = 'transparent' }}
                       >
                         {g._category || g.name}
                         {(g as unknown as Record<string, number>).ai_tagged_count > 0 && (
-                          <span style={{ fontSize: '0.55rem', padding: '0 3px', borderRadius: '3px', background: 'rgba(81,207,102,0.15)', color: c.success, border: '1px solid rgba(81,207,102,0.3)' }}>T</span>
+                          <span style={{ fontSize: '0.55rem', padding: '0 3px', borderRadius: '3px', background: 'rgba(81,207,102,0.15)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>T</span>
                         )}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: c.text, fontWeight: 600 }}>{fmtNum(g.collected_count ?? 0)}</span>
+                        <span style={{ marginLeft: 'auto', fontSize: '0.74rem', color: '#FF8C00', fontWeight: 600 }}>{fmtNum(g.collected_count ?? 0)}</span>
                       </div>
                     ))}
-                  </>) : <div style={{ padding: '0.75rem', color: c.textMuted, fontSize: '0.8rem' }}>항목 없음</div>
+                  </>) : <div style={{ padding: '0.75rem', color: '#555', fontSize: '0.8rem' }}>항목 없음</div>
                   ) : null}
                 </div>
                 <div style={detColStyle(3)}>
@@ -366,10 +382,10 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         {linkUrl ? (
                           <a href={linkUrl} target="_blank" rel="noopener noreferrer" style={{
-                            color: c.link, fontSize: '0.7rem', wordBreak: 'break-all',
+                            color: '#7EB5D0', fontSize: '0.7rem', wordBreak: 'break-all',
                             textDecoration: 'underline', textUnderlineOffset: '2px', flex: 1,
                           }}>{(() => { try { return decodeURIComponent(linkUrl.replace(/https?:\/\/[^/]+/, '')).slice(0, 40) } catch { return linkUrl.replace(/https?:\/\/[^/]+/, '').slice(0, 40) } })()}...</a>
-                        ) : <span style={{ color: c.textMuted, fontSize: '0.75rem', flex: 1 }}>-</span>}
+                        ) : <span style={{ color: '#555', fontSize: '0.75rem', flex: 1 }}>-</span>}
                         <button
                           onClick={async () => {
                             if (!await showConfirm(`"${selectedFilter.name}" 그룹과 그룹 내 상품을 모두 삭제하시겠습니까?`)) return
@@ -387,11 +403,15 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                             setDrillGroup(null)
                             load(); loadTree()
                           }}
-                          style={{ ...btn('danger'), fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', flexShrink: 0 }}
+                          style={{
+                            background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)',
+                            color: '#FF6B6B', fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px',
+                            cursor: 'pointer', flexShrink: 0,
+                          }}
                         >삭제</button>
                       </div>
                     )
-                  })() : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>선택</span>}
+                  })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 <div style={detColStyle(4)}>
                   {selectedFilter ? (
@@ -401,8 +421,8 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                       onChange={e => handlePolicyApply(selectedFilter.id, e.target.value)}
                       style={{
                         width: '100%', padding: '0.2rem 0.2rem', fontSize: '0.72rem',
-                        background: c.inputBg, border: `1px solid ${c.border}`,
-                        color: c.text, borderRadius: '4px',
+                        background: 'rgba(22,22,22,0.95)', border: '1px solid #353535',
+                        color: '#C5C5C5', borderRadius: '4px',
                       }}
                     >
                       <option value="">정책 선택</option>
@@ -425,22 +445,22 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                     }} style={{
                       width: '100%', padding: '0.2rem 0.2rem', fontSize: '0.68rem',
                       background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.3)',
-                      color: c.text, borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
+                      color: '#FF8C00', borderRadius: '4px', cursor: 'pointer', fontWeight: 600,
                     }}>
                       <option value="">일괄적용 ({fmtNum(catGroups.length)})</option>
                       {policies.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
-                  ) : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>선택</span>}
+                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>선택</span>}
                 </div>
                 {/* 6. 수집 */}
                 <div style={detColStyle(5)}>
                   {selectedFilter ? (
                     <span onClick={() => handleGoToProducts(selectedFilter)} style={{
-                      color: selectedCount > 0 ? c.primary : c.textMuted, fontWeight: 600, fontSize: '0.82rem',
+                      color: selectedCount > 0 ? '#FF8C00' : '#555', fontWeight: 600, fontSize: '0.82rem',
                       cursor: selectedCount > 0 ? 'pointer' : 'default',
                       textDecoration: selectedCount > 0 ? 'underline' : 'none',
                     }}>{fmtNum(selectedCount)}</span>
-                  ) : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>-</span>}
+                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 8. 요청 */}
                 <div style={detColStyle(6)}>
@@ -455,21 +475,21 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                       }}
                       style={{
                         width: '50px', textAlign: 'center', background: 'transparent',
-                        border: `1px solid ${c.border}`, color: c.text, fontSize: '0.78rem',
+                        border: '1px solid #3D3D3D', color: '#4C9AFF', fontSize: '0.78rem',
                         fontWeight: 600, padding: '0.1rem 0.2rem', borderRadius: '4px', outline: 'none',
                       }}
-                      onFocus={e => { e.currentTarget.style.borderColor = '#0f6a5b' }}
-                      onBlurCapture={e => { e.currentTarget.style.borderColor = c.border }}
+                      onFocus={e => { e.currentTarget.style.borderColor = '#4C9AFF' }}
+                      onBlurCapture={e => { e.currentTarget.style.borderColor = '#3D3D3D' }}
                     />
-                  ) : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>-</span>}
+                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 9. 생성일/최근수집 */}
                 <div style={detColStyle(7)}>
                   {selectedFilter ? (
-                    <div style={{ fontSize: '0.68rem', color: c.textMuted }}>
+                    <div style={{ fontSize: '0.68rem', color: '#888' }}>
                       {fmtDate(selectedFilter.created_at)}<br />{fmtDate(selectedFilter.last_collected_at)}
                     </div>
-                  ) : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>-</span>}
+                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
                 {/* 10. 매핑 */}
                 <div style={{ ...detColStyle(8), borderRight: 'none' }}>
@@ -487,11 +507,11 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                           padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer',
                           background: mappedCount > 0 ? 'rgba(81,207,102,0.1)' : 'rgba(255,140,0,0.1)',
                           border: `1px solid ${mappedCount > 0 ? 'rgba(81,207,102,0.3)' : 'rgba(255,140,0,0.3)'}`,
-                          color: mappedCount > 0 ? c.success : c.warn,
+                          color: mappedCount > 0 ? '#51CF66' : '#FF8C00',
                         }}
                       >{mappedCount > 0 ? fmtNum(mappedCount) : '+'}</button>
                     )
-                  })() : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>-</span>}
+                  })() : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
                 </div>
               </div>
             </div>
