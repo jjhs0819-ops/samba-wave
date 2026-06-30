@@ -131,4 +131,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 현재 저장된 키 유무로 연결 상태 표시
   const keyData = await chrome.storage.local.get(['apiKey'])
   updateConn(!!keyData.apiKey)
+
+  // ============================================================
+  // 적립금 우선 모드 토글 — 켜면 background 가 reward 외 잡(송장/점수/가구매/수집) 스킵
+  // ============================================================
+  const rewardOnly = $('rewardOnly')
+  const rewardOnlyStatus = $('rewardOnlyStatus')
+  function _roStatus() {
+    if (rewardOnly.checked) setStatus(rewardOnlyStatus, '⚡ ON — 적립금만 처리 (송장/점수/가구매 멈춤)', 'ok')
+    else setStatus(rewardOnlyStatus, 'OFF — 모든 잡 정상 처리', '')
+  }
+  const ro = await chrome.storage.local.get('rewardOnlyMode')
+  rewardOnly.checked = !!ro.rewardOnlyMode
+  _roStatus()
+  rewardOnly.addEventListener('change', async () => {
+    await chrome.storage.local.set({ rewardOnlyMode: rewardOnly.checked })
+    _roStatus()
+  })
 })

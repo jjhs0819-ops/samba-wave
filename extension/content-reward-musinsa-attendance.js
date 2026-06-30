@@ -79,8 +79,12 @@
     let performData = null
     try { performData = JSON.parse(performText) } catch (_) {}
 
-    if (performResp.ok && performData?.data?.success) {
-      const pd = performData.data
+    const pd = performData?.data || {}
+    // 무신사 '이미 완료' 응답은 409 도 meta.errorCode 도 아니다:
+    //   HTTP 200 + data.success:false + data.completedAt(세팅) + data.message "오늘은 이미 출석을 완료했습니다."
+    // → completedAt 또는 '이미/완료' 메시지로 잡아 실패로 오판하지 않게 한다. (거짓 실패 보고 방지)
+    const alreadyCompleted = !!pd.completedAt || /이미|완료/.test(pd.message || '')
+    if (performResp.ok && pd.success) {
       log(`✓ 출석체크 완료 적립금 ${pd.rewardValue}원 (${pd.streakCount}일 연속)`)
       send({
         success: true,
@@ -88,9 +92,9 @@
         reward: pd.rewardValue ?? 0,
         streakCount: pd.streakCount ?? 0,
       })
-    } else if (performResp.status === 409 || performData?.meta?.errorCode) {
-      log('이미 출석 완료 (중복 응답)')
-      send({ success: true, alreadyDone: true, reward: 0, streakCount: 0 })
+    } else if (performResp.status === 409 || performData?.meta?.errorCode || alreadyCompleted) {
+      log(`이미 출석 완료 (${pd.message || '중복 응답'})`)
+      send({ success: true, alreadyDone: true, reward: pd.rewardValue ?? 0, streakCount: pd.streakCount ?? 0 })
     } else {
       log(`출석 실패 ${performResp.status}: ${performText.substring(0, 100)}`)
       send({ success: false, error: `${performResp.status}: ${performText.substring(0, 80)}` })

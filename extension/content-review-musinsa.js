@@ -67,13 +67,15 @@
 
   async function scrollAndCollect() {
     const prevY = window.scrollY
-    window.scrollBy(0, 3000)
+    const prevHeight = document.body.scrollHeight
+    window.scrollBy(0, 4000)
     await sleep(2000)
     const paths = getGeneralReviewPaths()
     const newHeight = document.body.scrollHeight
-    const didntMove = window.scrollY === prevY && prevY > 200
-    const reachedBottom = window.scrollY + window.innerHeight >= newHeight - 200
-    return { generalPaths: paths, atBottom: didntMove || reachedBottom }
+    // 진짜 바닥 판정: 스크롤이 더 안 내려가고(±5px) 페이지 높이도 안 자랐을 때만(= 더 로드 안 됨).
+    // 가상스크롤 로딩 중 잠깐 멈춤을 '바닥'으로 오판하지 않게 — 높이 증가 여부를 함께 본다.
+    const atBottom = window.scrollY <= prevY + 5 && newHeight <= prevHeight + 5 && prevY > 200
+    return { generalPaths: paths, atBottom }
   }
 
   async function fillAndSubmit() {

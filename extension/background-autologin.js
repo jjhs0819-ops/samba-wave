@@ -27,10 +27,20 @@ const AUTO_LOGIN_SITES = {
   },
   abcmart: {
     name: 'ABC마트',
-    loginUrl: 'https://abcmart.a-rt.com/login',
+    loginUrl: 'https://abcmart.a-rt.com/login?track=W0005', // [2026-06-29] 홈 로그인링크 실측(?track=W0005).
+    // /member/login=404(헤더만 뜸), 맨 /login=로그인상태면 홈 리다이렉트 → 로그아웃 후 진입하면 폼 정상(loginId/loginPwd)
     checkUrl: 'https://abcmart.a-rt.com/mypage/claim/claim-order-main?orderPrdtStatCodeClick=10007',
     isLoginPage: url => url.includes('/login'),
-    loginButtonSelector: '#login, input#login, button[type="submit"], .btn_login, button.login',
+    loginButtonSelector: '#btnLogin, button#btnLogin, button[type="submit"], .btn_login',
+  },
+  member: {
+    // [2026-06-29] ABC-CAMP 멤버십(member.a-rt.com) — abcmart.a-rt.com 과 로그인 세션 분리.
+    // 출석체크(abcmart_attendance)가 member 도메인이라 별도 자동로그인 필요. 폼은 abcmart 와 동일(loginId/loginPwd) 추정.
+    name: 'ABC멤버십',
+    loginUrl: 'https://member.a-rt.com/p/login', // /login 은 server-error 리다이렉트 → /p/login 이 실제 폼
+    checkUrl: 'https://member.a-rt.com/p/attendance-check',
+    isLoginPage: url => url.includes('/p/login'),
+    loginButtonSelector: '#btnLogin, button#btnLogin, button[type="submit"], .btn_login',
   },
   lotteon: {
     name: '롯데ON',
@@ -413,8 +423,8 @@ async function _spaDirectLogin(siteKey, username, password) {
       chrome.debugger.onEvent.addListener(dialogHandler)
 
       // 사이트별 셀렉터 + .value 직접 설정 + event dispatch + button.click()
-      const [scriptResult] = await chrome.scripting.executeScript({
-        target: { tabId },
+      const scriptResults = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true }, // 로그인 폼이 iframe(ABC마트 통합멤버십 등) 안일 수 있어 전 프레임 실행
         func: (siteKeyArg, usernameArg, passwordArg) => {
           // 사이트별 input/button 셀렉터
           const SELECTORS = {
@@ -424,9 +434,17 @@ async function _spaDirectLogin(siteKey, username, password) {
               btnId: '[data-cmpnt-name="login_btn_select"]',
             },
             abcmart: {
-              id: ['#username', 'input[name="username"]'],
-              pw: ['#password', 'input[type="password"]'],
-              btnId: '#login',
+              // [2026-06-29] abcmart.a-rt.com/login?track=W0005 실측: id=loginId / pw=loginPwd / 버튼=btnLogin.
+              // 이전 #username/#password/#login 은 추측값이라 전부 빗나감(fields not found 원인).
+              id: ['#loginId', 'input[name="loginId"]'],
+              pw: ['#loginPwd', 'input[name="loginPwd"]', 'input[type="password"]'],
+              btnId: '#btnLogin, button#btnLogin',
+            },
+            member: {
+              // [2026-06-29] member.a-rt.com/p/login — abcmart 와 동일 폼 추정. 다르면 폼-폴백(pw폼 안 id)+버튼 전역탐색이 커버.
+              id: ['#loginId', 'input[name="loginId"]'],
+              pw: ['#loginPwd', 'input[name="loginPwd"]', 'input[type="password"]'],
+              btnId: '#btnLogin, button#btnLogin',
             },
             ssg: {
               // member.ssg.com 실측(2026-06-08, CDP 9222): id="mem_id" name="mbrLoginId" /
@@ -468,18 +486,26 @@ async function _spaDirectLogin(siteKey, username, password) {
             const el = document.querySelector(s)
             if (el) { pwField = el; pwSelMatched = s; break }
           }
+          // [2026-06-29] ID 폴백 — pw는 찾았는데 id 못 찾으면(WebFetch가 id 필드명만 잘못 준 케이스):
+          // pw 필드와 같은 form 안의 '보이는 text/tel/email input 중 검색창 아닌 첫 번째'를 ID 필드로 사용.
+          if (!idField && pwField) {
+            const scope = pwField.closest('form') || document
+            const cand = Array.from(scope.querySelectorAll('input[type="text"], input[type="email"], input[type="tel"], input:not([type])'))
+              .find(i => i.offsetParent !== null && i.id !== 'searchBar' && i.name !== 'searchWord' && i.id !== 'brandSearch')
+            if (cand) { idField = cand; idSelMatched = `(form-fallback:#${cand.id || cand.name || '?'})` }
+          }
           if (!idField || !pwField) {
-            // 디버그 — 페이지의 input 목록 dump
-            const allInputs = Array.from(document.querySelectorAll('input')).map(i => ({
-              id: i.id, name: i.name, type: i.type, placeholder: i.placeholder,
-              visible: i.offsetParent !== null,
-            }))
+            // 디버그 — 로그인 관련 input 우선 dump (검색창/헤더 input 에 가려 안 보이던 진짜 로그인칸 노출)
+            const dump = i => ({ id: i.id, name: i.name, type: i.type, placeholder: i.placeholder, visible: i.offsetParent !== null })
+            const allEls = Array.from(document.querySelectorAll('input'))
+            const loginish = allEls.filter(i => /login|user|mbr|pass|pwd/i.test((i.id || '') + ' ' + (i.name || '')) || i.type === 'password')
             return {
               success: false,
               error: 'fields not found',
               idFound: !!idField,
               pwFound: !!pwField,
-              allInputs: allInputs.slice(0, 20),
+              loginInputs: loginish.map(dump),
+              allInputs: allEls.map(dump).slice(0, 30),
               currentUrl: location.href,
             }
           }
@@ -498,7 +524,7 @@ async function _spaDirectLogin(siteKey, username, password) {
           pwField.dispatchEvent(new Event('input', { bubbles: true }))
           pwField.dispatchEvent(new Event('change', { bubbles: true }))
 
-          // 로그인 버튼 찾기 — id 셀렉터 우선, 미발견 시 텍스트 매칭 폴백
+          // 로그인 버튼 찾기 — id 셀렉터 → 텍스트(sel.btnText) → pw 폼 안 로그인버튼 탐색(폴백)
           let btn = null
           if (sel.btnId) {
             btn = document.querySelector(sel.btnId)
@@ -510,7 +536,27 @@ async function _spaDirectLogin(siteKey, username, password) {
                 return txt === sel.btnText && b.offsetParent !== null
               })
           }
-          if (!btn) return { success: false, error: 'login button not found' }
+          if (!btn) {
+            // [2026-06-29] 폴백 — 로그인 버튼이 <form> 밖(JS submit)이거나 id 가 빗나가도 대응.
+            // 헤더의 'LOGIN' 링크·비회원·간편·SNS 는 제외하고 '로그인' 텍스트 클릭요소를 페이지 전역에서 탐색.
+            const norm = b => (b.textContent || b.value || '').trim()
+            const isKoLogin = t => /로그인/.test(t) && !/비회원|회원가입|간편|sns|카카오|네이버|애플|페이|guest|join|아이디|찾기|비밀번호|문의/.test(t)
+            const inHeader = b => !!b.closest('header, nav, [class*="header"], [class*="gnb"], [id*="header"], [id*="gnb"]')
+            const form = pwField && pwField.closest('form')
+            const vis = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a')).filter(b => b.offsetParent !== null)
+            btn = vis.find(b => isKoLogin(norm(b)) && form && form.contains(b))     // 1) 폼 안 '로그인'
+              || vis.find(b => isKoLogin(norm(b)) && b.type === 'submit')           // 2) submit '로그인'
+              || vis.find(b => isKoLogin(norm(b)) && !inHeader(b))                  // 3) 헤더 밖 '로그인'(폼 밖 JS버튼)
+              || vis.find(b => b.type === 'submit' && form && form.contains(b))     // 4) 폼 안 submit(텍스트 무관)
+          }
+          if (!btn) {
+            // 디버그 — 페이지 전역의 '로그인/login' 클릭요소 목록 (폼 안 여부 포함)
+            const form = pwField && pwField.closest('form')
+            const buttons = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], a'))
+              .filter(b => b.offsetParent !== null && /로그인|login/i.test((b.textContent || b.value || '').trim()))
+              .map(b => ({ tag: b.tagName, type: b.type, id: b.id, cls: (b.className || '').toString().slice(0, 25), txt: (b.textContent || b.value || '').trim().slice(0, 15), inForm: !!(form && form.contains(b)) }))
+            return { success: false, error: 'login button not found', buttons: buttons.slice(0, 15), pwInForm: !!form, currentUrl: location.href }
+          }
 
           // disabled 풀고 click
           btn.disabled = false
@@ -521,7 +567,12 @@ async function _spaDirectLogin(siteKey, username, password) {
         args: [siteKey, username, password],
       })
 
-      const r = scriptResult?.result
+      // allFrames 결과 중 성공 프레임 채택 (로그인 폼이 iframe 안이면 그 프레임이 success).
+      // 성공 없으면 디버그용으로 부분매칭/마지막 프레임 결과를 남긴다.
+      const _frameResults = (scriptResults || []).map(s => s?.result).filter(Boolean)
+      const r = _frameResults.find(x => x?.success)
+        || _frameResults.find(x => x?.idFound && x?.pwFound)
+        || _frameResults[_frameResults.length - 1]
       if (!r?.success) {
         console.log(`[자동로그인][SPA] ${site.name} 스크립트 실행 실패:`, JSON.stringify(r))
         chrome.debugger.onEvent.removeListener(dialogHandler)
@@ -896,7 +947,7 @@ async function _ensureLoggedInSingle(siteKey, accountId) {
   // [SPA 분기] LOTTEON / ABCmart / SSG는 백엔드 라디오 지정 계정으로만 자동로그인
   // 사용자 요구 — 소싱처계정의 username/password를 직접 .value 설정 (Chrome 자동완성 드롭다운 사용 X)
   // 백엔드 자격증명 없으면 즉시 실패. chrome.debugger triple-click 폴백 제거 (드롭다운 노출 방지).
-  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg', 'musinsa']
+  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg', 'musinsa', 'member']
   if (SPA_DIRECT_LOGIN_SITES.includes(siteKey)) {
     // [2026-06-10] SSG 세션 재사용 — fresh 로그인 횟수 자체를 줄여 "비정상 자동접근" 잠금 회피.
     // ① 현 세션이 이미 잡 계정이면 로그인 생략 ② 저장세션 복원으로 살아나면 로그인 생략.
