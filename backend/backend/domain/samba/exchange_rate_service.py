@@ -27,7 +27,7 @@ SOURCE_SITE_CURRENCY_MAP: dict[str, str] = {
     "lazada": "USD",
     "shopee": "USD",
     "qoo10": "USD",
-    "snkrdunk": "USD",
+    "snkrdunk": "JPY",
     "rakuten": "JPY",
     "buyma": "JPY",
     "poizon": "CNY",

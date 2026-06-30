@@ -1,0 +1,94 @@
+# 컷오버용 compose — 집PC가 실제 백엔드(api+worker)로 가동.
+# prod 토폴로지 미러: api(PROCESS_ROLE=api, 전송/주문동기화는 worker 위임) + worker.
+#
+# 인바운드: 0.0.0.0:8080 바인드 → WireGuard(10.8.0.2)로 들어오는 트래픽 수신.
+# 워커 토글: BG_DISABLE=1(shadow 검증, 백그라운드 off) / 0(라이브, 워커 on).
+#
+# 사용:
+#   shadow: BG_DISABLE=1 docker compose --env-file local.env -f docker-compose.cutover.yml up -d
+#   live  : BG_DISABLE=0 docker compose --env-file local.env -f docker-compose.cutover.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LOCAL_DB_USER:-samba}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD 필요}
+      POSTGRES_DB: ${LOCAL_DB_NAME:-samba}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    command: ["postgres", "-c", "max_connections=400", "-c", "shared_buffers=2GB"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [samba-local]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_DB_USER:-samba}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  samba-api:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      WEB_CONCURRENCY: "1"
+      PROCESS_ROLE: api
+      # 전송/주문동기화는 worker(B)에 위임 (prod 미러)
+      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
+      AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
+      AUTOTUNE_QUEUE_CAP: "0"
+      AUTOTUNE_QUEUE_CAP_PER_MARKET: "0"
+      # shadow=1(백그라운드 off), live=0(워커 on)
+      DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+    # IP화이트리스트 마켓 API를 고정IP로 핀(Akamai/CDN edge 변동 방지) → 터널 라우팅된 IP로 고정
+    extra_hosts:
+      - "api-gateway.coupang.com:184.29.45.235"
+    ports:
+      # WireGuard(10.8.0.2)로 들어오는 인바운드 수신 위해 0.0.0.0 바인드
+      - "8080:8080"
+    networks: [samba-local]
+
+  samba-worker:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      samba-api:
+        condition: service_started
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: worker
+      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync"
+      # WSL 10코어라 기본(nproc-1=9) 너무 많아 DB 풀 고갈 → 4로 제한
+      WORKER_REPLICAS: "4"
+      # shadow=1 이면 worker 도 미가동
+      DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+    # 전송은 worker가 수행 → 쿠팡 IP 핀 필수
+    extra_hosts:
+      - "api-gateway.coupang.com:184.29.45.235"
+    networks: [samba-local]
+
+volumes:
+  pg_data:
+
+networks:
+  samba-local:

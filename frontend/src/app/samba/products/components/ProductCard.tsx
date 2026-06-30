@@ -115,8 +115,12 @@ function buildMarketProductUrl(
       return `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`
     case 'lotteon':
       return `https://www.lotteon.com/p/product/${productNo}`
-    case 'gsshop':
-      return `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`
+    case 'gsshop': {
+      // bare 상품번호는 supPrdCd(업체 스타일코드, 수정·삭제용)라 판매페이지 prdid 로는 무효.
+      // GS 부여 prdCd 를 별도 저장한 _pid 값을 우선 사용 (없으면 검색 폴백되도록 빈 문자열).
+      const prdid = extras?.pid
+      return prdid ? `https://www.gsshop.com/prd/prd.gs?prdid=${prdid}` : ''
+    }
     case 'lottehome':
       return `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${productNo}`
     case 'kream':
@@ -196,6 +200,7 @@ const SOURCE_URL_MAP: Record<string, string> = {
   SSG: 'https://www.ssg.com/item/itemView.ssg?itemId={id}',
   NIKE: 'https://www.nike.com/kr/t/{id}',
   ADIDAS: 'https://www.adidas.co.kr/{id}.html',
+  SNKRDUNK: 'https://snkrdunk.com/apparels/{id}',
 }
 
 function getSourceUrl(p: { source_url?: string; source_site: string; site_product_id?: string; video_url?: string | null }): string {
@@ -484,12 +489,16 @@ const ProductCard = React.memo(function ProductCard({
       if (full?.images && full.images.length > 0) setProductImages(full.images)
     }).catch(() => {})
   }
-  // 통화 기호: SNKRDUNK 등 USD 소싱처는 달러($)로 표기 (원화 환산 안 함, 달러 값 그대로)
-  // source_site 기준 판정 우선 — extra_data가 목록 응답에서 누락/미설정인 경우에도 일관 표기.
-  const USD_SOURCE_SITES = ['SNKRDUNK', 'AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
-  const isUsdSource = USD_SOURCE_SITES.includes((p.source_site || '').toUpperCase())
-    || (p.extra_data as Record<string, unknown> | undefined)?.currency === 'USD'
-  const curSym = isUsdSource ? '$' : '₩'
+  // 통화 기호: 소싱처/통화 기준 ¥(엔)·$(달러)·₩(원) 구분 표기 (값 그대로, 환산 안 함).
+  // source_site 우선 판정 — extra_data가 목록 응답에서 누락/미설정이어도 일관 표기.
+  // SNKRDUNK는 일본 사이트(JP API) 수집이라 엔화(¥).
+  const _site = (p.source_site || '').toUpperCase()
+  const _cur = (p.extra_data as Record<string, unknown> | undefined)?.currency
+  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA']
+  const USD_SOURCE_SITES = ['AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
+  const curSym = (JPY_SOURCE_SITES.includes(_site) || _cur === 'JPY') ? '¥'
+    : (USD_SOURCE_SITES.includes(_site) || _cur === 'USD') ? '$'
+    : '₩'
   const policy = policies.find((pol) => pol.id === p.applied_policy_id)
   const pricing = (policy?.pricing || {}) as Record<string, unknown>
   // 원가: excludeHeldPoint 토글 켜져 있고 cost_excl_held_point 값이 있으면 그것 우선

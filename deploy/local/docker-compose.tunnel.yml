@@ -1,0 +1,135 @@
+# 전부-터널 구성 — 백엔드 모든 아웃바운드가 WireGuard 컨테이너 거쳐 GCP 정적IP로 나감.
+# 마켓 IP 화이트리스트/CDN 변동 문제 영구 해결 (마이그레이션 전처럼 전부 정적IP).
+# 집 본체(ABC 데몬 스크래핑)는 영향 없음 — 컨테이너만 터널.
+#
+# 전제: 집 호스트 WireGuard 서비스(samba-wg) 중지 상태여야 함 (10.8.0.2 중복 방지).
+# 사용: $env:BG_DISABLE='0'; docker compose --env-file local.env -f docker-compose.tunnel.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${LOCAL_DB_USER:-samba}
+      POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD 필요}
+      POSTGRES_DB: ${LOCAL_DB_NAME:-samba}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    command: ["postgres", "-c", "max_connections=400", "-c", "shared_buffers=2GB"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    networks: [samba-local]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LOCAL_DB_USER:-samba}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # WireGuard 게이트웨이 — api/worker 가 이 netns 공유. AllowedIPs=0.0.0.0/0(wg/wg0.conf)
+  # → samba-local(172.x) 빼고 전부 터널. 인바운드(GCP→10.8.0.2:8080)도 이 컨테이너가 받음.
+  wireguard:
+    image: lscr.io/linuxserver/wireguard:latest
+    cap_add: [NET_ADMIN]
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./wg:/config/wg_confs
+    ports:
+      - "127.0.0.1:8080:8080" # 로컬 헬스체크용 (인바운드는 10.8.0.2 직접)
+    networks: [samba-local]
+    restart: unless-stopped
+
+  samba-api:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      WEB_CONCURRENCY: "1"
+      PROCESS_ROLE: api
+      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
+      AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
+      AUTOTUNE_QUEUE_CAP: "0"
+      AUTOTUNE_QUEUE_CAP_PER_MARKET: "0"
+      DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+
+  samba-worker:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: worker
+      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync"
+      # 8코어 활용 — worker 8개. 프로세스당 풀 축소(write 20, read 10 = 30)로
+      # 8×30 + api(80) = 320 < max_connections 400 안에 들어옴.
+      WORKER_REPLICAS: "8"
+      DB_WRITE_POOL_SIZE: "10"
+      DB_WRITE_MAX_OVERFLOW: "10"
+      DB_READ_POOL_SIZE: "5"
+      DB_READ_MAX_OVERFLOW: "5"
+      # api 와 같은 netns(service:wireguard) 공유 → 8080 충돌 방지 위해 worker 는 8081
+      WORKER_BIND_PORT: "8081"
+      DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+
+  # 유지보수 루프 전용 프로세스(C) — 고스트 리컨실러/송장sweep/soldout 정리.
+  # 단일 인스턴스(중복 리컨실 방지). api(A) 이벤트루프 과부하 → HTTP 503 분리용.
+  samba-reconciler:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: reconciler
+      # 유지보수 루프는 반드시 돌아야 하므로 BG 비활성 금지 (0 고정)
+      DISABLE_BACKGROUND_WORKERS: "0"
+      # netns 공유 → api(8080)/worker(8081)와 분리
+      RECONCILER_BIND_PORT: "8082"
+      # 풀 축소 — api(80)+worker(8×30=240)+reconciler(30)=350 < max_connections(400)
+      DB_WRITE_POOL_SIZE: "10"
+      DB_WRITE_MAX_OVERFLOW: "10"
+      DB_READ_POOL_SIZE: "5"
+      DB_READ_MAX_OVERFLOW: "5"
+
+volumes:
+  pg_data:
+
+networks:
+  samba-local:

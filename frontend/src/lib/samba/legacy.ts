@@ -1612,6 +1612,10 @@ export const proxyApi = {
     request<MessageLog[]>(`${SAMBA_PREFIX}/proxy/messages/by-order/${encodeURIComponent(orderId)}`),
   fetchSentFlags: (orderIds: string[]) =>
     request<Record<string, { sms: boolean; kakao: boolean }>>(`${SAMBA_PREFIX}/proxy/messages/sent-flags?order_ids=${orderIds.map(encodeURIComponent).join(',')}`),
+  hmallAuthTest: (payload?: { api_id?: string; api_key?: string; store_id?: string; business_name?: string; account_id?: string }) =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/hmall/auth-test`,
+      { method: 'POST', body: JSON.stringify(payload || {}) }),
   playautoAuthTest: (payload?: { api_key?: string; account_id?: string }) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/playauto/auth-test`,

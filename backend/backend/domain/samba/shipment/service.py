@@ -1801,6 +1801,8 @@ class SambaShipmentService:
 
                 # 마켓별 판매가 계산 (product_dict 원본 보호를 위해 복사본 사용)
                 acct_product = dict(product_dict)
+                # GS샵 등 부분수정 플러그인용 — 요청된 필드(재고/가격)만 전송하도록 전달
+                acct_product["_update_items"] = update_items
 
                 # SSG 표준카테고리(stdCtgId) 주입 — ssg_std 매핑값을 _std_category_id로 전달
                 if market_type == "ssg":
@@ -1917,9 +1919,9 @@ class SambaShipmentService:
                     # 한 정책에 GS 계정이 여러 개 묶여 계정마다 수수료가 다른 경우 대응.
                     _acc_id = str(getattr(account, "id", "") or "") if account else ""
                     if _pkey and _acc_id:
-                        _gs_by_acc = (
-                            policy_market_data.get(_pkey, {}) or {}
-                        ).get("gsSettingsByAccount") or {}
+                        _gs_by_acc = (policy_market_data.get(_pkey, {}) or {}).get(
+                            "gsSettingsByAccount"
+                        ) or {}
                         _gs_acc_cfg = _gs_by_acc.get(_acc_id)
                         if isinstance(_gs_acc_cfg, dict) and _gs_acc_cfg.get("feeRate"):
                             _acct_fee_rate = int(_gs_acc_cfg["feeRate"])
@@ -2189,6 +2191,12 @@ class SambaShipmentService:
                                 nos[f"{account_id}_pid"] = _cpid
                             if _cvid:
                                 nos[f"{account_id}_vid"] = _cvid
+                        # GS샵 — bare 키(account_id)에는 supPrdCd(수정·삭제 API용)가 들어간다.
+                        # 판매페이지 URL(prd.gs?prdid=)은 GS 부여 prdCd 가 필요하므로 _pid 로 분리 저장.
+                        if market_type == "gsshop":
+                            _gs_prd_cd = str(result.get("gsshop_prd_cd", "") or "")
+                            if _gs_prd_cd and _gs_prd_cd.strip() not in ("0", "0.0"):
+                                nos[f"{account_id}_pid"] = _gs_prd_cd
                         if market_type in ("gmarket", "auction"):
                             # result.data.data 에서 siteGoodsNo(구매페이지 URL용) / sellerProductId(수정·삭제 API용) 분리 저장
                             _esm_d: dict = {}

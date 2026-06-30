@@ -5041,6 +5041,26 @@ async def sync_orders_from_markets(
                 await _c.test_auth()
                 return _aid, await _c.get_orders(days=days)
 
+            elif _mtype == "poison":
+                _app_key = (
+                    _extr.get("app_key", "")
+                    or _extr.get("appKey", "")
+                    or acc["api_key"]
+                    or ""
+                )
+                _app_secret = (
+                    _extr.get("app_secret", "")
+                    or _extr.get("appSecret", "")
+                    or acc["api_secret"]
+                    or ""
+                )
+                if not _app_key or not _app_secret:
+                    return _aid, None
+                from backend.domain.samba.proxy.poison import PoisonClient
+
+                _c = PoisonClient(_app_key, _app_secret)
+                return _aid, await _c.get_orders(days=days)
+
             elif _mtype == "playauto":
                 _ak = _extr.get("apiKey", "") or acc["api_key"] or ""
                 if not _ak:
@@ -5943,6 +5963,40 @@ async def sync_orders_from_markets(
                     logger.warning(
                         f"[주문동기화] {label}: 롯데ON 배송상태 갱신 실패 — {ps_err}"
                     )
+
+            elif market_type == "poison":
+                from backend.domain.samba.proxy.poison import PoisonClient
+
+                app_key = (
+                    extras.get("app_key", "")
+                    or extras.get("appKey", "")
+                    or account["api_key"]
+                    or ""
+                )
+                app_secret = (
+                    extras.get("app_secret", "")
+                    or extras.get("appSecret", "")
+                    or account["api_secret"]
+                    or ""
+                )
+                if not app_key or not app_secret:
+                    results.append(
+                        {
+                            "account": label,
+                            "status": "skip",
+                            "message": "POIZON app_key/app_secret 없음",
+                        }
+                    )
+                    continue
+                poison_client = PoisonClient(app_key, app_secret)
+                raw_orders = _raw_cache.get(account["id"])
+                if raw_orders is None:
+                    raw_orders = await poison_client.get_orders(days=body.days)
+                logger.info(
+                    f"[주문동기화] {label}: POIZON 주문 {len(raw_orders)}건 조회"
+                )
+                for ro in raw_orders:
+                    orders_data.append(_parse_poison_order(ro, account["id"], label))
 
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta
@@ -7107,6 +7161,9 @@ async def sync_orders_from_markets(
                     _gs_creds.get("supCd", "")
                     or _gs_creds.get("storeId", "")
                     or extras.get("storeId", "")
+                    or account[
+                        "seller_id"
+                    ]  # GS supCd는 seller_id 컬럼(gsshop_creds 빌더와 동일)
                 )
                 _gs_aes_key = _gs_creds.get("apiKeyProd", "") or extras.get(
                     "apiKeyProd", ""
@@ -7131,26 +7188,69 @@ async def sync_orders_from_markets(
                 from zoneinfo import ZoneInfo as _gszi
 
                 _gs_KST = _gszi("Asia/Seoul")
-                _gs_start = (
-                    _gsdt.now(_gs_KST) - _gstd(days=int(body.days or 7))
-                ).strftime("%Y%m%d")
+                _gs_today = _gsdt.now(_gs_KST)
+                _gs_days = int(body.days or 7)
+                # GS ORD01은 sdDt '하루치'만 반환 — 기간 내 날짜별로 반복 조회해야 함
+                _gs_date_list = [
+                    (_gs_today - _gstd(days=_i)).strftime("%Y%m%d")
+                    for _i in range(_gs_days + 1)
+                ]
 
-                # 신규주문(S), 취소(C) 각각 수집
+                # 신규주문(S), 취소(C) 각각 수집 — 날짜×processType 순회 + order_number 중복제거
                 _gs_raw_orders: list[dict] = []
-                for _gs_pt in ("S", "C"):
-                    try:
-                        _gs_rows = await _gs_client.get_orders(
-                            sd_dt=_gs_start, process_type=_gs_pt
-                        )
-                        _gs_raw_orders.extend(_gs_rows)
-                    except Exception as _gs_e:
-                        logger.warning(
-                            f"[주문동기화] {label}: GS샵 processType={_gs_pt} 실패 — {_gs_e}"
-                        )
+                _gs_seen_keys: set[str] = set()
+                for _gs_d in _gs_date_list:
+                    for _gs_pt in ("S", "C"):
+                        try:
+                            _gs_rows = await _gs_client.get_orders(
+                                sd_dt=_gs_d, process_type=_gs_pt
+                            )
+                        except Exception as _gs_e:
+                            logger.warning(
+                                f"[주문동기화] {label}: GS샵 {_gs_d}/{_gs_pt} 실패 — {_gs_e}"
+                            )
+                            continue
+                        for _gr in _gs_rows:
+                            _gk = f"{_gr.get('ordNo', '')}:{_gr.get('ordItemNo', '')}"
+                            if _gk in _gs_seen_keys:
+                                continue
+                            _gs_seen_keys.add(_gk)
+                            _gs_raw_orders.append(_gr)
 
-                # 발주확인 대상 — ordStCd=21(결제완료) / ordTypeCd=O
-                _gs_confirm_targets: list[tuple[str, str]] = []
+                # 상품명·원가 보강 — GS 주문 API의 prdNm은 '송장명'(30byte 절단)이고
+                # 원가는 안 온다. 우리가 등록한 상품은 supPrdCd(=style_code/
+                # site_product_id)로 samba_collected_product를 찾아 풀네임 + 소싱 원가(cost)
+                # 를 가져온다. 미보유분(PlayAuto 등록 등)은 송장명/원가0 폴백.
+                _gs_info_map: dict[str, dict] = {}
+                _gs_sup_codes = {
+                    str(_r.get("supPrdCd", "") or "")
+                    for _r in _gs_raw_orders
+                    if _r.get("supPrdCd")
+                }
+                if _gs_sup_codes:
+                    from sqlalchemy import text as _gs_text
 
+                    _gs_info_rows = await session.execute(
+                        _gs_text(
+                            "SELECT style_code, site_product_id, name, cost "
+                            "FROM samba_collected_product "
+                            "WHERE (style_code = ANY(:codes) "
+                            "OR site_product_id = ANY(:codes)) "
+                            "AND name IS NOT NULL AND name <> ''"
+                        ),
+                        {"codes": list(_gs_sup_codes)},
+                    )
+                    for _sc, _sp, _nm, _cst in _gs_info_rows:
+                        _info = {"name": _nm, "cost": _cst}
+                        if _sc:
+                            _gs_info_map[str(_sc)] = _info
+                        if _sp:
+                            _gs_info_map[str(_sp)] = _info
+
+                # GS 주문 수집은 읽기 전용 — 발주확인(ORD02)은 수집에서 분리.
+                # GS는 주문 수집 단계에 '발주확인' 개념이 없고(배송 워크플로우는
+                # 출하지시→출고완료→배송완료), 해당 주문은 플레이오토가 관리하므로
+                # 수집 중 발주확인을 쏘면 충돌 위험.
                 for ro in _gs_raw_orders:
                     _gs_ord_no = str(ro.get("ordNo", "") or "")
                     _gs_ord_item_no = str(ro.get("ordItemNo", "") or "")
@@ -7171,8 +7271,17 @@ async def sync_orders_from_markets(
                         ro.get("roadNmDelivAddr2", "") or ro.get("delivAddr2", "") or ""
                     )
                     _gs_msg = str(ro.get("delivMsg", "") or "")
-                    _gs_sale_prc = int(ro.get("salePrc", 0) or 0)
+                    # 결제가=stdUprc(GS 화면 '결제'), 정산/공급가=supGivRtamt('정산')
+                    # salePrc는 stdUprc-할인이라 결제가가 아님 → stdUprc 우선
+                    _gs_std_uprc = int(ro.get("stdUprc", 0) or 0)
                     _gs_sup_give = int(ro.get("supGivRtamt", 0) or 0)
+                    _gs_sale_prc = _gs_std_uprc or int(ro.get("salePrc", 0) or 0)
+                    # 수수료율 = (결제 − 정산)/결제 — 정책 수수료와 동일(마놀25%/캐논13%)
+                    _gs_fee_rate = (
+                        round((_gs_std_uprc - _gs_sup_give) / _gs_std_uprc * 100, 1)
+                        if _gs_std_uprc > 0 and _gs_sup_give > 0
+                        else 0.0
+                    )
                     _gs_opt1 = str(ro.get("attrTypNm1", "") or "")
                     _gs_opt2 = str(ro.get("attrTypNm2", "") or "")
                     _gs_opt3 = str(ro.get("attrTypNm3", "") or "")
@@ -7196,8 +7305,6 @@ async def sync_orders_from_markets(
                         _gs_status = "교환요청"
                     elif _gs_ord_st in ("21", "22"):
                         _gs_status = "결제완료"
-                        if _gs_ord_type == "O":
-                            _gs_confirm_targets.append((_gs_ord_no, _gs_ord_item_no))
                     elif _gs_ord_st == "31":
                         _gs_status = "발주완료"
                     elif _gs_ord_st == "44":
@@ -7205,9 +7312,33 @@ async def sync_orders_from_markets(
                     else:
                         _gs_status = "결제완료"
 
-                    # 옵션 조합
-                    _gs_opt_parts = [o for o in [_gs_opt1, _gs_opt2, _gs_opt3] if o]
+                    # 옵션 조합 ('None'/'null' 문자열 제외)
+                    _gs_opt_parts = [
+                        o
+                        for o in [_gs_opt1, _gs_opt2, _gs_opt3]
+                        if o and o.lower() not in ("none", "null")
+                    ]
                     _gs_option_str = " / ".join(_gs_opt_parts) if _gs_opt_parts else ""
+
+                    # ordDt('YYYY-MM-DD' 문자열) → timestamptz 컬럼용 datetime 변환
+                    # (문자열을 그대로 넘기면 asyncpg DataError 발생)
+                    _gs_paid_at = None
+                    if _gs_ord_dt:
+                        try:
+                            _gs_paid_at = _gsdt.strptime(
+                                _gs_ord_dt[:10], "%Y-%m-%d"
+                            ).replace(tzinfo=_gs_KST)
+                        except Exception:
+                            _gs_paid_at = None
+
+                    # 우리 등록상품이면 DB 풀네임 + 소싱 원가, 없으면 송장명/원가0 폴백
+                    _gs_info = (
+                        _gs_info_map.get(_gs_sup_prd_cd)
+                        or _gs_info_map.get(_gs_prd_cd)
+                        or {}
+                    )
+                    _gs_full_nm = _gs_info.get("name")
+                    _gs_src_cost = int(_gs_info.get("cost") or 0)
 
                     orders_data.append(
                         {
@@ -7215,11 +7346,11 @@ async def sync_orders_from_markets(
                             "source": "gsshop",
                             "channel_id": account["id"],
                             "channel_name": label,
-                            "product_name": _gs_prd_nm or _gs_sup_prd_cd,
+                            "product_name": _gs_full_nm or _gs_prd_nm or _gs_sup_prd_cd,
                             "product_id": _gs_prd_cd or _gs_sup_prd_cd,
                             "product_option": _gs_option_str,
                             "quantity": _gs_qty,
-                            "paid_at": _gs_ord_dt or None,
+                            "paid_at": _gs_paid_at,
                             "orderer_name": _gs_buyer,
                             "customer_name": _gs_receiver,
                             "customer_phone": _gs_phone,
@@ -7227,28 +7358,12 @@ async def sync_orders_from_markets(
                             "customer_address": f"{_gs_addr1} {_gs_addr2}".strip(),
                             "customer_note": _gs_msg,
                             "sale_price": _gs_sale_prc,
-                            "cost": _gs_sup_give,
+                            "revenue": _gs_sup_give,
+                            "fee_rate": _gs_fee_rate,
+                            "cost": _gs_src_cost,
                             "shipping_status": _gs_status,
                             "tenant_id": account["tenant_id"],
                         }
-                    )
-
-                # 발주확인 통보 (결제완료 → 발주완료)
-                _gs_confirmed_cnt = 0
-                for _gc_ord_no, _gc_item_no in _gs_confirm_targets:
-                    try:
-                        await _gs_client.confirm_order(_gc_ord_no, _gc_item_no)
-                        _gs_confirmed_cnt += 1
-                    except Exception as _gce:
-                        logger.warning(
-                            f"[주문동기화] {label}: GS샵 발주확인 실패 "
-                            f"{_gc_ord_no}:{_gc_item_no} — {_gce}"
-                        )
-
-                if _gs_confirm_targets:
-                    logger.info(
-                        f"[주문동기화] {label}: GS샵 발주확인 "
-                        f"{_gs_confirmed_cnt}/{len(_gs_confirm_targets)}건"
                     )
 
             elif market_type == "lottehome":
@@ -9310,8 +9425,10 @@ async def sync_orders_from_markets(
     except Exception as _upd_err:
         logger.warning(f"[주문동기화] 원주문 일괄 업데이트 실패: {_upd_err}")
 
-    # PlayAuto 미매칭 주문 자동 백필 — 동기화 후 collected_product_id IS NULL 잔존 해소.
+    # PlayAuto/롯데홈쇼핑 미매칭 주문 자동 백필 — 동기화 후 collected_product_id IS NULL 잔존 해소.
     # 현대H몰 등 PlayAuto 경유 마켓 주문은 style_code 매칭이 실패해도 DB에 저장은 됨.
+    # 롯데홈쇼핑도 인입 당시 수집상품이 없거나 다중후보면 NULL로 남는데, 과거엔
+    # playauto 전용이라 재시도 루프가 없어 누적됐다(2026-06-29 1,957건 적체 확인).
     # 매 sync 완료 시 재시도해 누적 미매칭 해소.
     try:
         from sqlalchemy import text as _pa_bf_text
@@ -9320,7 +9437,7 @@ async def sync_orders_from_markets(
             await session.execute(
                 _pa_bf_text(
                     "SELECT id, product_name FROM samba_order "
-                    "WHERE source = 'playauto' "
+                    "WHERE source IN ('playauto', 'lottehome') "
                     "AND collected_product_id IS NULL "
                     "AND product_name IS NOT NULL AND product_name != '' "
                     "LIMIT 500"
@@ -9373,10 +9490,10 @@ async def sync_orders_from_markets(
                 if _pa_linked:
                     await session.commit()
                     logger.info(
-                        f"[주문동기화] PlayAuto 미매칭 자동 백필 {_pa_linked}건 완료"
+                        f"[주문동기화] PlayAuto/롯데홈 미매칭 자동 백필 {_pa_linked}건 완료"
                     )
     except Exception as _pa_bf_err:
-        logger.warning(f"[주문동기화] PlayAuto 백필 실패(무시): {_pa_bf_err}")
+        logger.warning(f"[주문동기화] PlayAuto/롯데홈 백필 실패(무시): {_pa_bf_err}")
 
     if total_synced > 0:
         from backend.utils.kakao_notify import send_kakao_message
@@ -9965,6 +10082,106 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "customer_address_detail": addr_detail,
         "customer_postal_code": postal_code,
         "customer_note": item.get("dvMsg", "") or "",
+        "paid_at": paid_at,
+        # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
+    }
+
+
+def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
+    """POIZON(得物) 주문 데이터 → SambaOrder dict 변환."""
+    from backend.utils import kst_str_to_utc
+
+    # 주문 상태 코드(order_status, int) → 내부 status 매핑
+    # 1000 결제대기, 2000 발송준비, 2100~3040 배송/검수, 2800/4000 완료, 7000~ 취소
+    order_status = item.get("order_status")
+    try:
+        _status_code = int(order_status) if order_status is not None else 0
+    except (TypeError, ValueError):
+        _status_code = 0
+    poison_status_map = {
+        1000: "pending",
+        2000: "preparing",
+        2100: "shipping",
+        2200: "shipping",
+        2500: "shipping",
+        2550: "shipping",
+        2600: "shipping",
+        2650: "shipping",
+        2700: "shipping",
+        3040: "shipping",
+        2800: "delivered",
+        4000: "delivered",
+        7000: "cancelled",
+        8000: "cancelled",
+        8010: "cancelled",
+        8080: "cancelled",
+    }
+    status = poison_status_map.get(_status_code, "preparing")
+
+    # 결제일시 — "yyyy-MM-dd HH:mm:ss" (셀러 타임존 KST 가정) → UTC
+    paid_at = kst_str_to_utc(item.get("pay_time") or "")
+
+    # 수량 안전 파싱
+    try:
+        quantity = max(1, int(item.get("qty") or 1))
+    except (TypeError, ValueError):
+        quantity = 1
+
+    # 결제금액 — pay_amount(통화 최소단위 정수). TODO: currency(item.get("currency"))
+    # 가 KRW가 아닌 경우 환율 환산 필요. 현재는 원본 값을 그대로 저장.
+    try:
+        product_price = int(item.get("pay_amount") or 0)
+    except (TypeError, ValueError):
+        product_price = 0
+
+    # 배송지(delivery_address_platform) — 수취인/주소 분리 저장
+    dap = item.get("delivery_address_platform") or {}
+    if not isinstance(dap, dict):
+        dap = {}
+    customer_name = (dap.get("name") or "").strip()
+    customer_phone = (dap.get("mobile") or "").strip()
+    _addr_parts = [
+        (dap.get("province") or "").strip(),
+        (dap.get("city") or "").strip(),
+        (dap.get("district") or "").strip(),
+    ]
+    customer_address = " ".join(p for p in _addr_parts if p)
+    customer_address_detail = (dap.get("address_detail") or "").strip()
+
+    _order_no = str(item.get("order_no", "") or "")
+    _currency = str(item.get("currency", "") or "")
+
+    return {
+        "channel_id": account_id,
+        "channel_name": label,
+        "source": "poison",
+        "order_number": _order_no,
+        "od_no": _order_no,
+        # 원본 식별자 보존 (메모 컬럼)
+        "shipment_id": str(item.get("seller_bidding_no", "") or ""),
+        "product_id": str(item.get("spu_id", "") or item.get("sku_id", "") or ""),
+        "product_name": item.get("title", "") or "",
+        "product_option": item.get("properties", "") or "",
+        "quantity": quantity,
+        "sale_price": product_price,
+        "cost": 0,
+        "status": status,
+        "shipping_status": "",
+        "customer_name": customer_name,
+        "customer_phone": customer_phone,
+        "customer_address": customer_address,
+        "customer_address_detail": customer_address_detail,
+        # currency != KRW 인 경우 환산 TODO. 메모에 원본 통화/품번 보존.
+        "customer_note": " / ".join(
+            p
+            for p in (
+                f"통화:{_currency}" if _currency else "",
+                f"품번:{item.get('article_number', '')}"
+                if item.get("article_number")
+                else "",
+            )
+            if p
+        ),
         "paid_at": paid_at,
         # created_at은 명시 X — DB default_factory(now)가 실제 삽입 시각 기록
     }

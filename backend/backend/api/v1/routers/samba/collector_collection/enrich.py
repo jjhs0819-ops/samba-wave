@@ -513,20 +513,49 @@ async def enrich_product(
         shipping_fee = detail.get("shipping_fee", 0) or 0
         new_cost = new_sale + shipping_fee
 
-        new_options = detail.get("options") or []
+        new_options = detail.get("options") or None
+        opts_fetched = bool(detail.get("_options_fetched"))
+        html_sold_out = bool(detail.get("is_sold_out"))
         updates: dict[str, Any] = {
             "sale_price": new_sale,
             "original_price": new_orig,
             "cost": new_cost,
             "sourcing_shipping_fee": shipping_fee,
         }
-        # 품절 판정
-        if new_options and all(o.get("stock", 0) <= 0 for o in new_options):
-            updates["sale_status"] = "sold_out"
-        elif not new_options:
-            updates["sale_status"] = "sold_out"
-        else:
-            updates["sale_status"] = detail.get("saleStatus", "in_stock")
+
+        # 사이즈별 품절 복원: 패션플러스는 품절 사이즈를 옵션 API 응답에서 아예 제거한다.
+        # old 옵션 중 new에 없는 것을 stock=0 으로 되살려 마켓에 사이즈별 품절을 전달한다.
+        # (refresher._parse_fashionplus #499 와 동일 로직 — enrich 경로 누락분 #500)
+        old_options = list(product.options or [])
+        if opts_fetched and new_options and old_options:
+            new_keys = {
+                (o.get("name") or "").strip()
+                for o in new_options
+                if isinstance(o, dict)
+            }
+            for oo in old_options:
+                if not isinstance(oo, dict):
+                    continue
+                nm = (oo.get("name") or "").strip()
+                if nm and nm not in new_keys:
+                    merged = dict(oo)
+                    merged["stock"] = 0
+                    merged["isSoldOut"] = True
+                    new_options.append(merged)
+
+        # 품절 판정 (제품레벨 isSoldout > 옵션 fetch성공+0개 완전품절 > 잔여옵션 전부 재고0)
+        # opts_fetched=False(차단/네트워크 실패로 빈 배열)는 품절로 오판하지 않는다(#500).
+        is_sold_out = False
+        if html_sold_out:
+            is_sold_out = True
+        elif opts_fetched and not new_options:
+            is_sold_out = True
+        elif new_options:
+            is_sold_out = all(
+                (opt.get("stock", 0) if isinstance(opt, dict) else 0) <= 0
+                for opt in new_options
+            )
+        updates["sale_status"] = "sold_out" if is_sold_out else "in_stock"
         if new_options:
             updates["options"] = new_options
 

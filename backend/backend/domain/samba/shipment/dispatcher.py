@@ -200,7 +200,7 @@ SUPPORTED_MARKETS = get_supported_markets()
 # gmarket/auction 은 ESM Plus 통합 API (sa2.esmplus.com) 로 지원 가능 —
 # proxy/esmplus.py + plugins/markets/{gmarket,auction}.py 구현 완료.
 # 활성화 조건: ESMPLUS_HOSTING_ID, ESMPLUS_SECRET_KEY env 주입 + samba_market_account 등록.
-UNSUPPORTED_MARKETS = ["homeand", "hmall"]
+UNSUPPORTED_MARKETS = ["homeand"]
 
 
 # ═══════════════════════════════════════════════
@@ -1075,6 +1075,21 @@ async def _delete_poison(
     return {"success": ok, "message": msg, "data": results}
 
 
+async def _delete_hmall(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """Hmall 판매중지 — 플러그인 delete() 위임."""
+    from backend.domain.samba.plugins.markets.hmall import HmallPlugin
+
+    product_no = (product.get("market_product_nos") or {}).get("hmall", "")
+    if not product_no:
+        return {"success": False, "message": "Hmall 상품코드 없음 (건너뜀)"}
+    plugin = HmallPlugin()
+    return await plugin.delete(session, product_no, account)
+
+
 MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "poison": _delete_poison,
     "smartstore": _delete_smartstore,
@@ -1088,4 +1103,5 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "playauto": _delete_playauto,
     "gmarket": _delete_gmarket,
     "auction": _delete_auction,
+    "hmall": _delete_hmall,
 }

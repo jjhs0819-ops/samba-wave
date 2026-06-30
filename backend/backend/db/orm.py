@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator
 from weakref import WeakKeyDictionary
@@ -111,8 +112,10 @@ def _build_write_engine() -> AsyncEngine:
         # 90개(write 60 + read 30) 까지 차오를 수 있어 Cloud SQL max=100 한계 임박.
         # (2026-06-22) bg semaphore 증가(6→26)에 맞춰 write pool +20: max=60→80.
         # Cloud SQL max=100, read pool max=20 → 여유 ~20개.
-        pool_size=20,
-        max_overflow=40,
+        # (2026-06-29) env 조절 가능화 — worker 다수(8) 시 프로세스당 풀 축소로
+        # Cloud SQL/로컬 max_connections 안에서 코어 활용. 기본=기존(20+40=60).
+        pool_size=int(os.getenv("DB_WRITE_POOL_SIZE", "20")),
+        max_overflow=int(os.getenv("DB_WRITE_MAX_OVERFLOW", "40")),
         # (2026-05-27 PM) recycle 45→120 — transmit 잡 평균 30~45s 트랜잭션 중에
         # recycle 45초 만료되면 mid-tx close → greenlet_spawn 예외로 잡 전체 실패
         # (memory: jobworker_connection_close_greenlet). IIT=120s 와 정렬해
@@ -159,8 +162,9 @@ def _build_read_engine() -> AsyncEngine:
         # (2026-05-27 PM) read 풀 상한 축소: 15+15=30 → 10+10=20.
         # Cloud SQL 97/100 위험 대응. 오토튠 코디네이터 read 전환으로 read 부하 ↑ 이지만
         # scroll_products 병렬화 진입당 ~3 세션 + 백그라운드 sync 루프 합산해도 20 안.
-        pool_size=10,
-        max_overflow=10,
+        # (2026-06-29) env 조절 가능화 — 기본=기존(10+10=20)
+        pool_size=int(os.getenv("DB_READ_POOL_SIZE", "10")),
+        max_overflow=int(os.getenv("DB_READ_MAX_OVERFLOW", "10")),
         # (2026-05-27 PM) recycle 45→120 — read 트랜잭션도 scroll_products 등에서
         # 30s 이상 걸리는 케이스 보호. read IIT=30s 라 좀비 회수는 IIT 가 담당.
         pool_recycle=120,

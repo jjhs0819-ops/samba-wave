@@ -912,6 +912,72 @@ async def playauto_auth_test(
 
 
 # ═══════════════════════════════════════════════
+# Hmall 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+class HmallAuthTestRequest(BaseModel):
+    api_id: str = ""
+    api_key: str = ""
+    store_id: str = ""
+    business_name: str = ""
+    account_id: Optional[str] = None
+
+
+@router.post("/hmall/auth-test")
+async def hmall_auth_test(
+    body: HmallAuthTestRequest = HmallAuthTestRequest(),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> dict[str, Any]:
+    """Hmall OPEN API 인증 테스트 — 상품 목록 조회로 실제 연결 확인."""
+    from backend.domain.samba.proxy.hmall import HmallClient, HmallApiError
+
+    form_payload: Optional[dict] = None
+    if body.api_id or body.api_key:
+        form_payload = {
+            "apiId": body.api_id,
+            "apiKey": body.api_key,
+            "storeId": body.store_id,
+            "businessName": body.business_name,
+        }
+
+    creds = await _resolve_creds(
+        session,
+        tenant_id,
+        market_type="hmall",
+        store_key="store_hmall",
+        form_payload=form_payload,
+        account_id=body.account_id,
+        allow_default_fallback=True,
+    )
+    if not creds:
+        return {"success": False, "message": "Hmall 인증정보가 저장되지 않았습니다."}
+
+    oauser_id = creds.get("apiId", "")
+    oause_key = creds.get("apiKey", "")
+    ven_cd = creds.get("storeId", "")
+
+    if not oauser_id or not oause_key:
+        return {"success": False, "message": "APIM ID 또는 OPEN API KEY가 없습니다."}
+
+    try:
+        client = HmallClient(
+            oauser_id=oauser_id,
+            oause_key=oause_key,
+            user_id=oauser_id,
+            ven_cd=ven_cd,
+        )
+        await client.list_products(page_size=1)
+        return {"success": True, "message": "Hmall 연결 성공 — API 인증 확인됨"}
+    except HmallApiError as e:
+        return {"success": False, "message": f"Hmall 인증 실패: {e}"}
+    except Exception as e:
+        logger.warning(f"[Hmall] auth-test 오류: {e}")
+        return {"success": False, "message": f"인증 테스트 오류: {e}"}
+
+
+# ═══════════════════════════════════════════════
 # 통합 마켓 인증 테스트 (범용)
 # ═══════════════════════════════════════════════
 

@@ -63,16 +63,31 @@ class SambaForbiddenService:
         오토튠 PC 분담 저장처럼 멀티 워커가 동시에 같은 key 를 쓰는 경로에서 빈번.
         """
         from datetime import UTC, datetime
+        from sqlalchemy import func
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+        from backend.core.tenant_context import current_tenant_id
+
         now = datetime.now(UTC)
-        stmt = (
-            pg_insert(SambaSettings)
-            .values(key=key, value=value, updated_at=now)
-            .on_conflict_do_update(
-                index_elements=["key"],
-                set_={"value": value, "updated_at": now},
-            )
+        # tenant_id 컬럼을 명시로 채운다. Core insert 라 db/tenant_filter 의
+        # before_flush 자동주입(ORM session.new 한정)을 우회하기 때문 — 안 채우면
+        # tenant_id=NULL 로 저장돼 HTTP 조회(WHERE tenant_id=tid, NULL 미포함)에서
+        # 안 보이는 버그(설정 저장은 되는데 빈 값) 발생.
+        tid = current_tenant_id.get()
+        ins = pg_insert(SambaSettings).values(
+            key=key, value=value, updated_at=now, tenant_id=tid
+        )
+        stmt = ins.on_conflict_do_update(
+            index_elements=["key"],
+            set_={
+                "value": value,
+                "updated_at": now,
+                # 기존 tenant_id 보존: 새 값이 NULL(worker 컨텍스트)이면 안 덮어쓰고,
+                # 기존이 NULL인데 새 값이 있으면(HTTP 컨텍스트) 채워서 자가 교정.
+                "tenant_id": func.coalesce(
+                    ins.excluded.tenant_id, SambaSettings.__table__.c.tenant_id
+                ),
+            },
         )
         session = self.settings_repo.session
         await session.execute(stmt)

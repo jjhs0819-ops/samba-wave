@@ -402,7 +402,16 @@ export default function TetrisBoard() {
         >
           {sortedMarkets.map(market => {
             const totalRegistered = market.accounts.reduce((s, a) => s + a.total_registered, 0)
-            const totalCollected  = market.accounts.reduce((s, a) => s + a.total_collected, 0)
+            // 수집 합계는 (소싱처, 브랜드) 기준 중복 제거 후 합산
+            // collected_count 는 계정과 무관한 브랜드 전체 수집수이므로,
+            // 같은 브랜드를 여러 계정에 배치하면 단순 합산 시 계정 수만큼 중복 계산됨
+            const collectedByBrand = new Map<string, number>()
+            for (const acc of market.accounts) {
+              for (const b of acc.assignments) {
+                collectedByBrand.set(`${b.source_site}|${b.brand_name}`, b.collected_count)
+              }
+            }
+            const totalCollected = Array.from(collectedByBrand.values()).reduce((s, c) => s + c, 0)
             const allExcluded = market.accounts.length > 0 && market.accounts.every(a => !!a.tetris_excluded)
             return (
               <div

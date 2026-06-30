@@ -452,6 +452,10 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                                 ),
                                 {"img": _cp_thumb, "src": _cp_src, "cpid": _pid},
                             )
+                            # 배지 UPDATE를 마켓삭제 이전에 독립 commit.
+                            # delete_from_market 디스패처가 예외 시 session.rollback()을
+                            # 호출해 같은 세션의 pending UPDATE까지 날리는 버그 방지.
+                            await _del_sess.commit()
 
                         # 2) 마켓 삭제 (등록된 계정 전체)
                         if _reg_accounts:

@@ -139,8 +139,30 @@ _GS_KEYWORD_RULES: list[tuple[tuple[str, ...], str]] = [
         ),
         "B43071907|1662747",
     ),
-    # ── 잡화 ──
-    (("모자", "캡", "비니", "버킷", "햇", "볼캡"), "B43071901|1662747"),
+    # ── 가방 (정보고시 동적조회·전시매장 prdDispYn=Y, 등록검증 완료) ──
+    (("백팩", "배낭"), "B69050105|1734355"),
+    (("크로스백", "메신저백"), "B69050115|1663438"),
+    (("숄더백",), "B69050109|1663437"),
+    (("토트백", "서류가방"), "B69050117|1663436"),
+    (
+        (
+            "힙색",
+            "웨이스트백",
+            "벨트백",
+            "슬링백",
+            "보스턴백",
+            "더플백",
+            "여행가방",
+            "에코백",
+            "가방",
+        ),
+        "B69050105|1734355",
+    ),
+    # ── 잡화 (그룹13 패션잡화 정보고시, 등록검증 완료) ──
+    (("양말", "삭스"), "B43071915|1660957"),
+    (("모자", "캡", "비니", "버킷", "햇", "볼캡", "썬캡"), "B43071901|1660954"),
+    (("장갑", "글러브"), "B43071913|1660958"),
+    (("머플러", "스카프", "목도리", "넥워머", "워머"), "B43150301|1661269"),
 ]
 
 
@@ -330,11 +352,61 @@ def _truncate_prdnm(name: str, max_bytes: int = 30) -> str:
     return out.strip() or s[:15]
 
 
+_GOV_ITEMS_CACHE: dict[str, list[dict[str, Any]] | None] = {}
+
+
+async def _resolve_gov_items(
+    client: Any, category_id: str, gs_settings: dict[str, Any] | None
+) -> list[dict[str, Any]] | None:
+    """분류 상세조회(getPrdClsDtlInfo)로 prdClsCd의 정보고시 항목 목록을 받는다.
+    분류별 모듈 캐시. 실패 시 None(→ _build_gov_publs 가 의류/신발 폴백).
+    이걸로 의류·신발뿐 아니라 가방(12)·패션잡화(13) 등 모든 정보고시 그룹 자동 대응.
+    """
+    cid = str(category_id or "")
+    if "|" in cid:
+        prd_cls = cid.split("|", 1)[0].strip()
+    elif cid and not cid.strip().isdigit():
+        prd_cls = cid.strip()
+    else:
+        prd_cls = ""
+    prd_cls = prd_cls or str((gs_settings or {}).get("prdClsCd") or "").strip()
+    if not prd_cls:
+        return None
+    if prd_cls in _GOV_ITEMS_CACHE:
+        return _GOV_ITEMS_CACHE[prd_cls]
+    items: list[dict[str, Any]] | None = None
+    try:
+        r = await client.get_prd_cls_dtl_info(prd_cls)
+        data = r.get("data") or {}
+        if isinstance(data.get("data"), dict):
+            data = data["data"]
+        grps = data.get("govPublsGrpList") or []
+        if grps:
+            items = grps[0].get("govPublsGrpItmList") or None
+            logger.info(
+                f"[GS샵] 정보고시 그룹 동적조회: {prd_cls} → "
+                f"{grps[0].get('govPublsPrdGrpNm')} ({len(items or [])}항목)"
+            )
+    except Exception as e:
+        logger.warning(f"[GS샵] 정보고시 그룹 조회 실패({prd_cls}): {e}")
+    # 성공(항목 확보) 시에만 캐시. 일시 실패의 None을 영구 캐시하면
+    # 가방/잡화가 의류·신발 폴백으로 굳어 등록 거부가 재시작 전까지 지속됨.
+    if items is not None:
+        _GOV_ITEMS_CACHE[prd_cls] = items
+    return items
+
+
 def _build_gov_publs(
-    product: dict[str, Any], brand: str, prd_cls_cd: str
+    product: dict[str, Any],
+    brand: str,
+    prd_cls_cd: str,
+    gov_items: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
-    """정보고시 — 분류(prdClsCd)별 그룹. B25=신발(1101~1109), 그외=의류(1001~1009).
-    수집데이터(소재·색상·제조자·제조국 등) 우선, 없으면 '상품 페이지 참조' (메모리 원칙).
+    """정보고시 — 분류(prdClsCd)별 그룹. 수집데이터 우선, 없으면 '상품 페이지 참조'.
+
+    gov_items(분류 상세조회 getPrdClsDtlInfo 결과)가 있으면 **항목명 기반으로 동적**
+    구성 → 의류·신발뿐 아니라 가방(12)·패션잡화(13) 등 모든 정보고시 그룹 자동 대응.
+    없으면(API 실패) 의류(10)/신발(11) 하드코딩으로 폴백.
     """
 
     def g(v: Any, default: str = "상품 페이지 참조") -> str:
@@ -351,6 +423,51 @@ def _build_gov_publs(
     quality = g(
         product.get("quality_guarantee"), "관련 법령 및 소비자분쟁해결기준에 따름"
     )
+    size = g(product.get("size_notice"))
+    _cat = str(product.get("category") or "").strip()
+    kind = g(_cat.split(">")[-1].strip() if _cat else "")
+
+    # 동적: 분류 상세조회 항목명으로 매핑 (모든 정보고시 그룹 대응)
+    if gov_items:
+
+        def _content(itm_name: str) -> str:
+            n = str(itm_name or "")
+            if "소재" in n or "조성" in n:
+                return material
+            if "색상" in n:
+                return color
+            if "굽" in n or "높이" in n:
+                return g(product.get("heel_height"), "해당없음")
+            if "발길이" in n or "사이즈" in n or "치수" in n or "크기" in n:
+                return size
+            if "제조국" in n or "원산지" in n:
+                return origin_ko
+            if "제조자" in n or "수입자" in n or "제조원" in n or "수입원" in n:
+                return maker
+            if "제조연월" in n or "제조일" in n:
+                return g(product.get("manufacture_date"))
+            if "세탁" in n or "취급" in n:
+                return care
+            if "A/S" in n or "AS" in n or "전화" in n or "책임자" in n:
+                return as_phone
+            if "품질" in n or "보증" in n:
+                return quality
+            if "종류" in n:
+                return kind
+            return "상품 페이지 참조"
+
+        out = []
+        for it in gov_items:
+            cd = str(it.get("govPublsItmCd") or "").strip()
+            if cd:
+                out.append(
+                    {
+                        "govPublsItmCd": cd,
+                        "govPublsItmCntnt": _content(it.get("govPublsItmNm")),
+                    }
+                )
+        if out:
+            return out
 
     if str(prd_cls_cd).startswith("B25"):  # 신발 (그룹11: 1101~1109)
         return [
@@ -393,6 +510,7 @@ def _transform_for_gsshop(
     sub_sup_cd: str = "",
     gs_margin_rate: int = 0,
     gs_settings: dict[str, Any] | None = None,
+    gov_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """수집 상품 → GS샵 V3 ProductV3 형식 변환.
 
@@ -437,12 +555,9 @@ def _transform_for_gsshop(
         for b in sorted(brands, key=lambda x: -len(_bn(x))):
             if _bn(b) and _bn(b) in pn:
                 return str(b.get("brandCd") or "")
-        # 4) 폴백: legacy 단일 brandCd → 브랜드가 1개뿐일 때만 그 브랜드.
-        #    매칭 실패 + 다중 브랜드면 임의 선택(오등록)하지 말고 빈값 → GS가 brandCd 필수로 막게 둠.
-        if single:
-            return single
-        if len(brands) == 1:
-            return str((brands[0] or {}).get("brandCd") or "")
+        # 4) 매칭 실패 → 빈값. 단일/다중 브랜드 임의 적용(오등록) 금지.
+        #    상품 브랜드/상품명이 정책 브랜드와 안 맞으면 등록을 막는다(execute에서 차단).
+        #    legacy 단일 brandCd(gs.brandCd, brands 없는 구정책)는 상단 `if not brands` 에서 처리.
         return ""
 
     brand_cd = _resolve_brand_cd()
@@ -619,7 +734,10 @@ def _transform_for_gsshop(
             # 없으면 "상품 페이지 참조" 기본값.
             "prdGovPublsItmList": gs.get("prdGovPublsItmList")
             or _build_gov_publs(
-                product, brand, category_prd_cls_cd or str(gs.get("prdClsCd") or "")
+                product,
+                brand,
+                category_prd_cls_cd or str(gs.get("prdClsCd") or ""),
+                gov_items,
             ),
         }
     )
@@ -775,9 +893,25 @@ class GsShopPlugin(MarketPlugin):
                 client, product, existing_no, gs_margin_rate, gs_settings, sub_sup_cd
             )
 
+        # 분류별 정보고시 그룹 동적 조회 (의류/신발/가방/패션잡화 등 모든 분류 자동)
+        gov_items = await _resolve_gov_items(client, category_id, gs_settings)
         goods_data = _transform_for_gsshop(
-            product, category_id, sub_sup_cd, gs_margin_rate, gs_settings
+            product, category_id, sub_sup_cd, gs_margin_rate, gs_settings, gov_items
         )
+
+        # 브랜드 매핑 가드 — 상품 브랜드/상품명이 정책 GS 브랜드와 매칭 안 되면 등록 차단.
+        # (단일/다중 브랜드 임의 폴백 제거: 안 맞는 브랜드를 엉뚱한 코드로 오등록하지 않도록)
+        if not str(
+            (goods_data.get("prdBaseAddInfo") or {}).get("brandCd") or ""
+        ).strip():
+            _pbrand = str(product.get("brand") or "").strip() or "(브랜드 없음)"
+            return {
+                "success": False,
+                "message": (
+                    f"브랜드 매핑 없음: 상품 브랜드 '{_pbrand}'가 GS 정책 브랜드 목록에 없습니다. "
+                    f"정책관리 > GS샵 > 브랜드에 추가 후 등록하세요."
+                ),
+            }
 
         # prdSectList 없으면 prdClsCd 이름 기반 전시매장 자동 매핑
         if not goods_data.get("prdSectList"):
@@ -827,10 +961,14 @@ class GsShopPlugin(MarketPlugin):
         # GS API 수정/삭제 endpoint URL이 supPrdCd 기준 (/api/v3/products/{supPrdCd}/price)
         sup_prd_cd_registered = goods_data.get("supPrdCd") or str(prd_cd or "")
 
+        # prdCd(=GS 부여 상품번호) 는 판매페이지 URL(prd.gs?prdid=) 용으로 별도 반환.
+        # supPrdCd 와 값이 달라, market_product_nos 의 {account_id}_pid 키로 저장된다
+        # (쿠팡 coupang_product_id 와 동일 패턴 — service.py 상품번호 추출부 참조).
         return {
             "success": True,
             "message": "GS샵 등록 성공",
             "product_id": sup_prd_cd_registered,
+            "gsshop_prd_cd": str(prd_cd or ""),
             "data": result,
         }
 
@@ -860,38 +998,49 @@ class GsShopPlugin(MarketPlugin):
         options = product.get("options") or []
         attr_prd_list = _build_attr_prd_list(options, now_dtm, end_dtm, brand)
 
+        # 요청된 필드만 전송 — 재고는 재고만, 가격은 가격만.
+        # 오토튠 재고전송(품절)이 가격까지 보내 "동일" 거부로 거짓실패 나고,
+        # 멀쩡한 가격을 MD승인 대기로 밀어넣던 문제 차단.
+        # update_items 미지정(신규등록/수동 전체전송)이면 종전대로 둘 다 전송.
+        _items = product.get("_update_items")
+        _do_price = (not _items) or ("price" in _items)
+        _do_stock = (not _items) or ("stock" in _items)
+
         errors = []
         _price_md_pending = False
+        price_result: dict[str, Any] = {}
 
-        # 가격 수정
-        price_result = await client.update_goods_price(
-            prd_cd,
-            {
-                "prdPrcValidStrDtm": now_dtm,
-                "prdPrcValidEndDtm": end_dtm,
-                "prdPrcSalePrc": sale_price,
-                "prdPrcSupGivRtamt": sup_prc,
-                "prdPrcSupGivRtamtCd": "01",
-            },
-        )
-        price_raw = price_result.get("data", {})
-        if isinstance(price_raw, dict):
-            _pr = price_raw.get("result", "")
-            _pm = price_raw.get("message", "")
-            if _pr == "fail":
-                errors.append(f"가격: {_pm or '실패'}")
-            elif _pr == "success":
-                # "요청" 포함 = MD승인 대기 (즉시반영 아님)
-                # 즉시반영: "P : 처리하였습니다."
-                # MD대기: "P : 가격변경 요청되었습니다."
-                if "요청" in _pm or "대기" in _pm:
-                    _price_md_pending = True
-                    logger.info(
-                        f"[GS샵] 가격 MD승인 대기: {prd_cd} → {sale_price}원 (승인 후 반영)"
-                    )
+        # 가격 수정 (요청 시에만)
+        if _do_price:
+            price_result = await client.update_goods_price(
+                prd_cd,
+                {
+                    "prdPrcValidStrDtm": now_dtm,
+                    "prdPrcValidEndDtm": end_dtm,
+                    "prdPrcSalePrc": sale_price,
+                    "prdPrcSupGivRtamt": sup_prc,
+                    "prdPrcSupGivRtamtCd": "01",
+                },
+            )
+            price_raw = price_result.get("data", {})
+            if isinstance(price_raw, dict):
+                _pr = price_raw.get("result", "")
+                _pm = price_raw.get("message", "")
+                # "동일합니다" = 무변경(no-op) → 실패 아님
+                if _pr == "fail" and "동일" not in _pm:
+                    errors.append(f"가격: {_pm or '실패'}")
+                elif _pr == "success":
+                    # "요청" 포함 = MD승인 대기 (즉시반영 아님)
+                    # 즉시반영: "P : 처리하였습니다."
+                    # MD대기: "P : 가격변경 요청되었습니다."
+                    if "요청" in _pm or "대기" in _pm:
+                        _price_md_pending = True
+                        logger.info(
+                            f"[GS샵] 가격 MD승인 대기: {prd_cd} → {sale_price}원 (승인 후 반영)"
+                        )
 
-        # 옵션/재고 수정 (옵션 있을 때만)
-        if attr_prd_list:
+        # 옵션/재고 수정 (요청 시 + 옵션 있을 때만)
+        if _do_stock and attr_prd_list:
             attr_result = await client.update_attributes(
                 prd_cd,
                 attr_prd_list,
@@ -900,7 +1049,10 @@ class GsShopPlugin(MarketPlugin):
             )
             attr_raw = attr_result.get("data", {})
             if isinstance(attr_raw, dict) and attr_raw.get("result") == "fail":
-                errors.append(f"재고: {attr_raw.get('message', '실패')}")
+                _am = str(attr_raw.get("message", "실패"))
+                # "동일합니다" = 무변경(no-op) → 실패 아님
+                if "동일" not in _am:
+                    errors.append(f"재고: {_am}")
 
         if errors:
             return {

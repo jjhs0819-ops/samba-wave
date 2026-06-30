@@ -12,6 +12,8 @@ import httpx
 
 from typing import Any
 
+from sqlalchemy import text
+
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
@@ -384,6 +386,56 @@ class CoupangPlugin(MarketPlugin):
         # update_product PUT(/seller-products/{id})은 쿠팡 spec 미정의(404)라 폴백이
         # 일시 504를 영구 404로 둔갑시키던 버그가 있었어 제거함.
         if not existing_no:
+            _product_id = str(product.get("id") or "").strip()
+            _account_id = str(getattr(account, "id", "") or "")
+            # ── 레이스 안전 가드 (2026-06-25 중복등록 사고 대응) ──
+            # 같은 상품·계정을 거의 동시에 두 번 등록하면 아래 find_by_external_sku
+            # 가드(2026-06-08 추가) 가 있어도 쿠팡 식별키 검색 색인 지연 때문에 둘 다
+            # "없음" 으로 통과해 중복 리스팅이 생긴다(실측: 동일 externalVendorSku 가
+            # 6초 간격 2건 생성). 쿠팡 색인은 못 믿지만 우리 DB 는 즉시 정확하므로:
+            #   (1) pg_advisory_xact_lock 으로 동일 (상품,계정) 등록을 직렬화
+            #   (2) 락 확보 후 DB market_product_nos 재확인 — 직전 등록분을 즉시 본다.
+            #       있으면 재등록 안 하고 기존 번호 채택.
+            # 락은 본 트랜잭션(transmit self.session) 커밋 시 풀리고, 등록 직후
+            # 같은 세션에서 매핑을 즉시 기록하므로(아래) 대기 잡이 커밋 후 재확인에서
+            # 중복을 걸러낸다.
+            if _product_id and _account_id and session is not None:
+                try:
+                    await session.execute(
+                        text(
+                            "SELECT pg_advisory_xact_lock("
+                            "hashtext(CAST(:k1 AS text)), hashtext(CAST(:k2 AS text)))"
+                        ),
+                        {"k1": f"coupang_reg:{_product_id}", "k2": _account_id},
+                    )
+                    _row = (
+                        await session.execute(
+                            text(
+                                "SELECT market_product_nos ->> (CAST(:acct AS text)) "
+                                "FROM samba_collected_product "
+                                "WHERE id = CAST(:pid AS text)"
+                            ),
+                            {"acct": _account_id, "pid": _product_id},
+                        )
+                    ).first()
+                    _existing_db_no = (_row[0] if _row else None) or ""
+                    if _existing_db_no:
+                        logger.warning(
+                            f"[쿠팡] 중복등록 방지(DB 재확인) — 상품 {_product_id} "
+                            f"계정 {_account_id} 에 이미 {_existing_db_no} 등록됨 → 기존 연결"
+                        )
+                        return {
+                            "success": True,
+                            "product_no": _existing_db_no,
+                            "message": "쿠팡 기등록 상품 재연결 (DB 재확인 중복차단)",
+                            "data": {"sellerProductId": _existing_db_no},
+                            "_already_registered": True,
+                        }
+                except Exception as _lock_e:
+                    logger.warning(
+                        f"[쿠팡] 레이스 가드(advisory lock/DB 재확인) 실패 — 등록 진행: {_lock_e}"
+                    )
+
             # 중복등록 방지(유령 차단): 등록 전 {product.id}_{vendor_id} 키로
             # 쿠팡 기존 등록 확인. DB 매핑이 유실돼 existing_no가 비어도 쿠팡에 이미
             # 있으면 재등록(중복 생성) 대신 기존 sellerProductId를 채택한다.
@@ -432,6 +484,36 @@ class CoupangPlugin(MarketPlugin):
                     "message": f"쿠팡 등록 실패: sellerProductId 미수신 (응답: {str(result)[:300]})",
                     "data": result,
                 }
+
+            # 등록 성공 — advisory_xact_lock 보유 중인 같은 트랜잭션에서 즉시 DB 매핑 기록.
+            # 락은 이 트랜잭션 커밋 시 풀리므로 대기 중인 동일 (상품,계정) 등록 잡은
+            # 매핑이 보이는 시점에야 재개되어 위 'DB 재확인' 에서 중복을 걸러낸다.
+            # worker 측 최종 writeback 과 멱등 중복이지만 무해(같은 값 merge).
+            if _product_id and _account_id and session is not None:
+                try:
+                    await session.execute(
+                        text(
+                            "UPDATE samba_collected_product SET "
+                            "  market_product_nos = COALESCE(market_product_nos, '{}'::jsonb) "
+                            "    || jsonb_build_object(CAST(:acct AS text), to_jsonb(CAST(:no AS text))), "
+                            "  registered_accounts = CASE "
+                            "    WHEN registered_accounts @> jsonb_build_array(CAST(:acct AS text)) "
+                            "      THEN registered_accounts "
+                            "    ELSE COALESCE(registered_accounts, '[]'::jsonb) "
+                            "      || jsonb_build_array(CAST(:acct AS text)) "
+                            "  END "
+                            "WHERE id = CAST(:pid AS text)"
+                        ),
+                        {
+                            "acct": _account_id,
+                            "no": seller_product_id,
+                            "pid": _product_id,
+                        },
+                    )
+                except Exception as _wb_e:
+                    logger.warning(
+                        f"[쿠팡] 등록 후 DB 매핑 즉시기록 실패(worker 기록에 위임): {_wb_e}"
+                    )
 
             # NOTE: approve_product 호출하지 않음 — 호출 시 contributorType 이
             # None → API_SELLER 로 변경되어 Wing UI 노출 트랙에서 이탈하는
