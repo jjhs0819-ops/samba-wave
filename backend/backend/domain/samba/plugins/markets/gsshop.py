@@ -436,8 +436,10 @@ def _build_gov_publs(
     """
 
     def g(v: Any, default: str = "상품 페이지 참조") -> str:
+        # GS 정보고시는 항목당 2글자 이상 필수("정보고시항목 내용은 2글자 이상" 거부).
+        # 빈값뿐 아니라 1글자(예: 소재 "면", 굽높이 "5")도 기본값으로 대체해 등록 실패 방지.
         s = str(v or "").strip()
-        return s if s else default
+        return s if len(s) >= 2 else default
 
     origin = str(product.get("origin") or "").strip()
     origin_ko = _ORIGIN_KO.get(origin.lower(), origin) if origin else "상품 페이지 참조"
