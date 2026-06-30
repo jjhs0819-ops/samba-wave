@@ -14,7 +14,6 @@ const copyableTextStyle: React.CSSProperties = {
 }
 
 const handleCopyText = async (value: string | null | undefined) => {
-  const c = useTheme()
   let text = (value || '').trim()
   text = text.replace(/\([^)]*\)/g, '').trim()
   if (!text) {

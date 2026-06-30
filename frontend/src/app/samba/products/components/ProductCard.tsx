@@ -71,7 +71,6 @@ const MARKET_NAME_BYTE_LIMITS: Record<string, number> = {
 }
 
 function truncateToBytes(text: string, maxBytes: number): string {
-  const c = useTheme()
   const encoded = new TextEncoder().encode(text)
   if (encoded.length <= maxBytes) return text
   return new TextDecoder('utf-8', { fatal: false }).decode(encoded.slice(0, maxBytes))
