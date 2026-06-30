@@ -607,20 +607,53 @@ class GsShopClient:
         delivery_no: str,
         cmpul_dlv: str = "",
     ) -> dict[str, Any]:
-        """배송처리 — 송장 전송 (ORD03).
+        """출고완료(송장) 전송 — ORD02 출고데이터처리, processType="C".
 
-        delivery_cd: 택배사코드 (DH=CJ대한통운, CI=천일택배 등)
-        delivery_no: 송장번호
+        GS 명세서(ORD02_출고데이터처리 V1.1) 정확 형식:
+        - body는 **평면(flat)** — ordNo/ordItemNo/deliveryCd/deliveryNo가 최상위
+          (orderList 배열로 감싸면 GS가 "주문이 없거나 출고완료 대상 아님"으로 거부).
+        - processType="C"(출고완료). 신규주문을 발주확인 없이 바로 C로 처리.
+        delivery_cd: 택배사코드(HD=롯데택배 등, [택배사목록] 시트 기준) / delivery_no: 송장번호
         """
-        item: dict[str, Any] = {
+        token = self._generate_token()
+        url = self.base_url + "/b2b/aliaSupCommonReceiveOrderInfo.gs"
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "supCd": self.sup_cd,
+            "token": token,
+        }
+        body: dict[str, Any] = {
+            "sender": self.sup_cd,
+            "receiver": "GS SHOP",
+            "documentId": "DLVINF",
+            "processType": "C",
             "ordNo": ord_no,
             "ordItemNo": ord_item_no,
             "deliveryCd": delivery_cd,
             "deliveryNo": delivery_no,
         }
         if cmpul_dlv:
-            item["cmpulDlv"] = cmpul_dlv
-        return await self._send_order_info("DLVSTRT", [item])
+            body["cmpulDlv"] = cmpul_dlv
+        timeout = httpx.Timeout(30.0, connect=10.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=headers, json=body)
+            text = resp.text
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                data = {"raw": text}
+        logger.info(
+            f"[GS샵출고] {ord_no}:{ord_item_no} deliveryCd={delivery_cd} -> "
+            f"{resp.status_code} resultCd={data.get('resultCd', '')} {data.get('resultMsg', '')}"
+        )
+        if not resp.is_success:
+            raise GsShopApiError(
+                code=resp.status_code,
+                message=(data.get("resultMsg") or text[:120]),
+                data=data,
+            )
+        return data
 
     async def cancel_order(
         self,
