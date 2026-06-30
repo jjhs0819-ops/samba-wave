@@ -8107,7 +8107,11 @@ async def sync_orders_from_markets(
                 # 한 주문에 여러 라인(ord_prd_seq)을 분리해 내려주는 마켓은
                 # (order_number, ord_prd_seq) 복합키로 매칭 — 2번째+ 라인 누락/덮어쓰기
                 # 방지. 11번가(#422)·SSG(#424). 타 마켓은 order_number 단독(무회귀).
-                if _src in ("11st", "ssg"):
+                # SSG 클레임 합성 레코드는 ord_prd_seq 없음(#521) — seq 없으면 단독 키로
+                # fallback해 원본 주문을 덮어쓰기(status/shipping_status 갱신)할 수 있게 함.
+                if _src == "ssg":
+                    return (_onum, str(_seq)) if _seq else _onum
+                if _src == "11st":
                     return (_onum, str(_seq or ""))
                 return _onum
 
@@ -8142,6 +8146,11 @@ async def sync_orders_from_markets(
                     _k = _existing_key(_br[1], _br[2], _br[3])
                     if _k not in _existing_id_map:
                         _existing_id_map[_k] = _br[0]
+                    # SSG 클레임 합성 레코드(#521): ord_prd_seq 없어서 order_number 단독
+                    # 키로 조회 → 원본 행(복합키로 저장) 못 찾아 유령 행 생성 방지.
+                    # 원본 행을 order_number 단독 키로도 등록해 클레임 레코드가 찾을 수 있게 함.
+                    if _br[2] == "ssg" and _br[1] not in _existing_id_map:
+                        _existing_id_map[_br[1]] = _br[0]
                 logger.info(
                     f"[주문동기화] {label}: 배치 중복 조회 완료 "
                     f"{len(_existing_id_map)}/{len(_non_lotteon_nos)}건 기존"
