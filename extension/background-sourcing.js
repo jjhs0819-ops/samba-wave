@@ -482,6 +482,15 @@ function _serializeMusinsaTracking(fn) {
 
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
+  // [적립금 우선 모드] storage.rewardOnlyMode 켜져 있으면 reward(적립금) 외 잡(송장/점수/가구매/수집)은
+  // 스킵 → 적립금이 다른 잡 뒤에서 안 밀리고 바로 처리된다. 스킵된 잡은 결과 미보고라 백엔드가
+  // 나중에 재배포(유실 없음). 모드 끄면 원복.
+  if (job.type !== 'reward') {
+    try {
+      const st = await chrome.storage.local.get('rewardOnlyMode')
+      if (st.rewardOnlyMode) return
+    } catch {}
+  }
   // 적립금 자동 적립 잡(type=reward) — 가격수집과 격리, 사이트 세마포어 사용
   if (job.type === 'reward') {
     await _siteSemAcquire(site)
@@ -710,7 +719,7 @@ const _REWARD_ACTION_AUTO_LOGIN = {
   musinsa_snap_like: 'musinsa',
   musinsa_balance: 'musinsa',
   musinsa_review: 'musinsa',
-  abcmart_attendance: 'abcmart',
+  abcmart_attendance: 'member', // [2026-06-29] 출첵은 member.a-rt.com 도메인 — abcmart 와 세션 분리라 member 별도 자동로그인 필요
   abcmart_review: 'abcmart',
   ssg_review: 'ssg',
   gs_review: 'gs',
@@ -726,14 +735,28 @@ const _REVIEW_META = {
     listUrl: 'https://www.musinsa.com/mypage/myreview',
     buildWriteUrl: path => `https://www.musinsa.com${path}?channelSource=musinsa`,
     site: 'MUSINSA',
+    // 작성 가능한 후기가 상품권·구매확정대기 항목들 뒤에 깊숙이 있어, 매 작성마다 맨 위로
+    // 리셋하면(refresh) 8번 스크롤하고 포기해 영영 못 닿는다. → 리스트 스크롤 위치 유지(리셋 X) +
+    // 진짜 바닥까지 스크롤(깊이 한도 ↑). 작성한 항목은 processed 로 중복 방지.
+    keepListScroll: true,
+    scrollLimit: 150,
+    dailyLimit: 100, // 작성가능 후기가 수백 개라 한 번에 더 많이 처리 (3~7초 간격 유지). 무신사가
+    // rate-limit 으로 차단하면 줄일 것.
   },
   abcmart_review: {
     mode: 'inplace',
-    listUrl: 'https://abcmart.a-rt.com/mypage/claim/claim-order-main?orderPrdtStatCodeClick=10007',
+    reloadBetween: true, // [2026-06-29] 등록 후 ABC가 '작성한 후기' 탭(#tabContent2)으로 전환 + 모달 잔여 → 매 건 목록 새로고침으로 '작성 가능한' 탭 복귀
+    // [2026-06-29] '나의 상품후기' 페이지 — 작성가능(배송완료+구매확정) 항목만 노출.
+    // 이전 claim-order-main(주문/배송 현황)은 미구매확정 주문까지 떠서 '후기작성' 클릭 시
+    // "구매확정 후 가능" alert → 전건 실패. product-review 페이지가 정답(수동 검증: 작성됨).
+    listUrl: 'https://abcmart.a-rt.com/mypage/shopping/notebook/product-review?page=1',
     site: 'ABCmart',
   },
   ssg_review: {
     mode: 'navigate',
+    // SSG 게이트(myPdtEvalRegGate.ssg)는 window.opener 없으면 로드 후 홈으로 리다이렉트한다.
+    // → debugger 트러스티드 클릭으로 window.open 팝업을 띄워(opener 존재) 게이트 진입.
+    popupClick: true,
     listUrl: 'https://www.ssg.com/myssg/activityMng/pdtEvalList.ssg?quick=pdtEvalList',
     buildWriteUrl: path => path.startsWith('http') ? path : `https://www.ssg.com${path}`,
     site: 'SSG',
@@ -787,6 +810,155 @@ function _stopKeepAlive() {
   }
 }
 
+// ─── SSG 리뷰 전용 헬퍼 (탭 URL/textarea 대기 + 트러스티드 클릭 팝업) ─────────────
+async function _waitTabUrl(tabId, matchFn, timeoutMs) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      if (tab && tab.status === 'complete' && matchFn(tab.url || '')) return tab.url || ''
+    } catch {}
+    await new Promise(r => setTimeout(r, 400))
+  }
+  return null
+}
+
+async function _waitTextarea(tabId, timeoutMs) {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const [r] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => !!(document.querySelector('#ui_textarea') ||
+          document.querySelector('textarea[name="postngCntt"]') ||
+          document.querySelector('textarea')),
+      })
+      if (r?.result) return true
+    } catch {}
+    await new Promise(r => setTimeout(r, 500))
+  }
+  return false
+}
+
+// SSG 게이트(myPdtEvalRegGate.ssg)는 로드 후 window.opener 가 없으면 홈으로 리다이렉트한다
+// (라이브 확인 2026-06-25: 같은 탭 이동은 유저활성 있어도 별점창 떴다 홈으로 튕김).
+// 사용자가 손으로 '리뷰쓰기' 누르면 되는 건 fn_save→window.open 팝업(opener 존재)이라서다.
+// → 리스트 탭에 window.open 버튼을 주입하고 debugger 로 '진짜 클릭'을 날려(팝업차단/유저활성
+//   회피) 팝업을 띄운 뒤, 팝업 탭에서 별점→작성→제출을 처리한다.
+async function _dispatchTrustedClick(tabId, x, y) {
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 })
+  await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 })
+}
+
+// window.open 으로 생성되는 팝업 탭을 잡는다 (openerTabId 또는 게이트 URL 매칭).
+function _waitForPopup(listTabId, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (id) => { if (done) return; done = true; clearTimeout(timer); try { chrome.tabs.onCreated.removeListener(onCreated) } catch {} ; resolve(id) }
+    const timer = setTimeout(async () => {
+      // onCreated 를 놓쳤을 수 있어 기존 탭에서 게이트 팝업(opener=목록탭)을 한 번 더 탐색.
+      try {
+        const tabs = await chrome.tabs.query({})
+        const t = tabs.find(t => t.openerTabId === listTabId && (t.url || '').includes('myPdtEvalReg'))
+        finish(t ? t.id : null)
+      } catch { finish(null) }
+    }, timeoutMs)
+    const onCreated = (tab) => {
+      const u = tab.url || tab.pendingUrl || ''
+      if (tab.openerTabId === listTabId || u.includes('myPdtEvalReg')) finish(tab.id)
+    }
+    chrome.tabs.onCreated.addListener(onCreated)
+  })
+}
+
+// 리스트 탭에 고정 버튼 주입(onclick=window.open 게이트) → debugger 트러스티드 클릭 → 팝업 탭 반환.
+async function _ssgOpenGatePopup(listTabId, gateUrl) {
+  let coords
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId: listTabId }, world: 'MAIN',
+      func: (u) => {
+        let btn = document.getElementById('__samba_ssg_open')
+        if (!btn) {
+          btn = document.createElement('button')
+          btn.id = '__samba_ssg_open'
+          btn.type = 'button'
+          btn.style.cssText = 'position:fixed;left:20px;top:120px;width:140px;height:48px;z-index:2147483647;opacity:0.01'
+          document.body.appendChild(btn)
+        }
+        btn.onclick = () => { window.open(u, 'popCmt', 'width=520,height=810,scrollbars=yes,resizable=no') }
+        const rc = btn.getBoundingClientRect()
+        return { x: Math.round(rc.left + rc.width / 2), y: Math.round(rc.top + rc.height / 2) }
+      },
+      args: [gateUrl],
+    })
+    coords = r?.result
+  } catch (e) { return { ok: false, error: `버튼 주입 실패: ${e?.message || e}` } }
+  if (!coords) return { ok: false, error: '버튼 좌표 없음' }
+
+  let attached = false
+  try { await chrome.debugger.attach({ tabId: listTabId }, '1.3'); attached = true }
+  catch (e) { return { ok: false, error: `debugger attach 실패: ${e?.message || e}` } }
+  // 디버거 부착 직후 첫 클릭은 가끔 씹힘 → 팝업 잡힐 때까지 최대 3회 클릭 (popCmt 이름이라 창 재사용).
+  let popupTabId = null
+  try {
+    for (let attempt = 0; attempt < 3 && !popupTabId; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 600))
+      const popupPromise = _waitForPopup(listTabId, attempt === 0 ? 6000 : 5000)
+      await _dispatchTrustedClick(listTabId, coords.x, coords.y)
+      popupTabId = await popupPromise
+    }
+  } catch (e) {
+    if (attached) { try { await chrome.debugger.detach({ tabId: listTabId }) } catch {} }
+    return { ok: false, error: `트러스티드 클릭 실패: ${e?.message || e}` }
+  }
+  if (attached) { try { await chrome.debugger.detach({ tabId: listTabId }) } catch {} }
+  if (!popupTabId) return { ok: false, error: '팝업 안 열림(window.open 차단/실패)' }
+  return { ok: true, popupTabId }
+}
+
+// 팝업 탭에서 별점 게이트 → reg 작성 → 제출. 핵심: 별점 클릭/제출은 페이지 네비게이션을
+// 일으켜 콘텐츠 스크립트 컨텍스트가 파괴되며 sendMessage 채널이 닫힌다("message channel closed").
+// 이 채널 닫힘은 '실패'가 아니라 '정상 진행 신호'로 처리한다.
+async function _ssgHandleGateReg(tabId, contentFile) {
+  const entered = await _waitTabUrl(tabId, (u) => u.includes('myPdtEvalReg'), 20000)
+  if (!entered) {
+    let cur = ''
+    try { cur = (await chrome.tabs.get(tabId)).url || '' } catch {}
+    return { success: false, error: `게이트 로드 실패 — URL: ${cur}` }
+  }
+  await new Promise(r => setTimeout(r, 1200))
+
+  // 작성폼(textarea) 이미 있나? 별점 게이트 단계면 아직 없음.
+  let hasForm = await _waitTextarea(tabId, 4000)
+
+  // [게이트 단계] 폼 없으면 별점 5점 클릭 → reg 네비게이션. 응답은 채널이 닫혀 못 받을 수 있어 무시.
+  if (!hasForm) {
+    try { await chrome.scripting.executeScript({ target: { tabId }, files: [contentFile] }) } catch {}
+    await chrome.tabs.sendMessage(tabId, { action: 'samba_review_fillAndSubmit' }).catch(() => {})
+    hasForm = await _waitTextarea(tabId, 15000) // reg 폼 출현 대기
+    if (!hasForm) {
+      let cur = ''
+      try { cur = (await chrome.tabs.get(tabId)).url || '' } catch {}
+      return { success: false, error: `별점→작성폼 안 뜸 — URL: ${cur}` }
+    }
+  }
+
+  // [작성 단계] 폼 채우고 제출. 제출 클릭이 네비게이션을 일으켜 채널이 닫히면 = 작성·제출됨(성공).
+  await new Promise(r => setTimeout(r, 800))
+  try {
+    await chrome.scripting.executeScript({ target: { tabId }, files: [contentFile] })
+  } catch (e) {
+    return { success: false, error: `작성 스크립트 주입 실패: ${e?.message || e}` }
+  }
+  let channelClosed = false
+  const r = await chrome.tabs.sendMessage(tabId, { action: 'samba_review_fillAndSubmit' })
+    .catch(() => { channelClosed = true; return null })
+  if (r?.success) return { success: true }
+  if (channelClosed) return { success: true } // 제출 후 네비게이션으로 채널 닫힘 = 작성됨
+  return { success: false, error: r?.error || 'reg 작성 실패' }
+}
+
 // 리뷰 잡 처리 (사이트 공통 orchestrator) — keepalive 래퍼로 감싼다.
 async function handleReviewJob(job) {
   _startKeepAlive()
@@ -801,14 +973,14 @@ async function _handleReviewJobInner(job) {
   const { requestId, action, sourcingAccountId, site } = job
   const meta = _REVIEW_META[action]
   if (!meta) {
-    await postResult('sourcing-accounts/extension/reward-result', {
+    await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
       request_id: requestId, account_id: sourcingAccountId || '', site_name: site, action,
       success: false, error: `unknown review action: ${action}`,
     })
     return
   }
   const contentFile = _REWARD_ACTION_CONTENT[action]
-  const DAILY_LIMIT = 30 // 안전 한도 — 무신사 미차단 경험 기반
+  const DAILY_LIMIT = meta.dailyLimit || 30 // 사이트별 한도(meta) 우선, 기본 30 — 무신사 미차단 경험 기반
   let writeCount = 0
   let lastError = ''
   const processed = new Set()
@@ -832,6 +1004,7 @@ async function _handleReviewJobInner(job) {
           break
         }
         const result = await chrome.tabs.sendMessage(listTabId, { action: 'samba_review_processOne' }).catch(e => ({ success: false, error: e?.message || String(e) }))
+        if (result?._diag) console.log(`[적립금-리뷰][ABC진단] 후기작성버튼=${result._diag.btnTotal} 페이지구매확정=${result._diag.hasConfirm} 블록=${result._diag.blkTag} url=${result._diag.url} 첫블록="${result._diag.sample}"`)
         if (result?.noItems || result?.allReviewed) {
           // 더보기 시도
           const more = await chrome.tabs.sendMessage(listTabId, { action: 'samba_review_loadMore' }).catch(() => ({ ok: false }))
@@ -866,7 +1039,7 @@ async function _handleReviewJobInner(job) {
           await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000))
         }
       }
-      await postResult('sourcing-accounts/extension/reward-result', {
+      await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
         request_id: requestId,
         account_id: sourcingAccountId || '',
         site_name: site,
@@ -899,7 +1072,7 @@ async function _handleReviewJobInner(job) {
         const more = (sr?.generalPaths || sr?.paths || []).filter(p => !processed.has(p))
         if (more.length === 0) {
           noNewCount++
-          if (sr?.atBottom || noNewCount >= 8) break
+          if (sr?.atBottom || noNewCount >= (meta.scrollLimit || 8)) break
           continue
         }
         // 다음 루프에서 getPageInfo 재시도
@@ -912,41 +1085,59 @@ async function _handleReviewJobInner(job) {
       const writeUrl = meta.buildWriteUrl(path)
       console.log(`[적립금-리뷰] ${action} 작성 시도: ${path}`)
 
-      // write 탭 열고 폼 채우기
-      let writeTabId = null
-      try {
-        const wt = await chrome.tabs.create({ url: writeUrl, active: false })
-        writeTabId = wt.id
-        try { await waitForTabLoad(writeTabId, 25000) } catch {}
-        await new Promise(r => setTimeout(r, 1500))
-        try {
-          await chrome.scripting.executeScript({ target: { tabId: writeTabId }, files: [contentFile] })
-        } catch (e) {
-          lastError = `write 스크립트 주입 실패: ${e?.message || e}`
-        }
-        const result = await chrome.tabs.sendMessage(writeTabId, { action: 'samba_review_fillAndSubmit' }).catch(e => ({ success: false, error: e?.message || String(e) }))
-        if (result?.success) {
-          writeCount++
-          console.log(`[적립금-리뷰] ${action} ${writeCount}건 완료`)
+      // write — SSG(popupClick)는 debugger 트러스티드 클릭으로 window.open 팝업을 띄워 게이트
+      // opener 검사를 통과시키고, 팝업 탭에서 별점→작성→제출. 그 외(무신사/GS)는 새 탭에서 작성.
+      let result
+      if (meta.popupClick) {
+        const pop = await _ssgOpenGatePopup(listTabId, writeUrl)
+        if (!pop.ok) {
+          result = { success: false, error: pop.error }
         } else {
-          lastError = result?.error || 'unknown'
-          console.log(`[적립금-리뷰] ${action} 실패: ${lastError}`)
+          try {
+            result = await _ssgHandleGateReg(pop.popupTabId, contentFile)
+          } finally {
+            try { await chrome.tabs.remove(pop.popupTabId) } catch {}
+          }
         }
-      } finally {
-        if (writeTabId) {
-          try { await chrome.tabs.remove(writeTabId) } catch {}
+      } else {
+        let writeTabId = null
+        try {
+          const wt = await chrome.tabs.create({ url: writeUrl, active: false })
+          writeTabId = wt.id
+          try { await waitForTabLoad(writeTabId, 25000) } catch {}
+          await new Promise(r => setTimeout(r, 1500))
+          try {
+            await chrome.scripting.executeScript({ target: { tabId: writeTabId }, files: [contentFile] })
+          } catch (e) {
+            lastError = `write 스크립트 주입 실패: ${e?.message || e}`
+          }
+          result = await chrome.tabs.sendMessage(writeTabId, { action: 'samba_review_fillAndSubmit' }).catch(e => ({ success: false, error: e?.message || String(e) }))
+        } finally {
+          if (writeTabId) {
+            try { await chrome.tabs.remove(writeTabId) } catch {}
+          }
         }
+      }
+      if (result?.success) {
+        writeCount++
+        console.log(`[적립금-리뷰] ${action} ${writeCount}건 완료`)
+      } else {
+        lastError = result?.error || 'unknown'
+        console.log(`[적립금-리뷰] ${action} 실패: ${lastError}`)
       }
 
       // 작성 간 랜덤 대기 (3~7초) — 무신사 rate limit 회피
       await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000))
 
-      // 목록 페이지로 복귀 + 새로고침
-      try {
-        await chrome.tabs.update(listTabId, { url: meta.listUrl })
-        await waitForTabLoad(listTabId, 30000)
-        await new Promise(r => setTimeout(r, 3000))
-      } catch {}
+      // 목록 페이지로 복귀 + 새로고침. 무신사(keepListScroll)는 스크롤 위치를 유지해야
+      // 깊은 곳의 작성가능 항목까지 이어서 처리하므로 리셋(새로고침) 생략.
+      if (!meta.keepListScroll) {
+        try {
+          await chrome.tabs.update(listTabId, { url: meta.listUrl })
+          await waitForTabLoad(listTabId, 30000)
+          await new Promise(r => setTimeout(r, 3000))
+        } catch {}
+      }
     }
   } catch (e) {
     lastError = String(e?.message || e)
@@ -957,7 +1148,7 @@ async function _handleReviewJobInner(job) {
     }
   }
 
-  await postResult('sourcing-accounts/extension/reward-result', {
+  await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
     request_id: requestId,
     account_id: sourcingAccountId || '',
     site_name: site,
@@ -1337,7 +1528,7 @@ async function handleRewardJob(job) {
 
   const contentFile = _REWARD_ACTION_CONTENT[action]
   if (!contentFile) {
-    await postResult('sourcing-accounts/extension/reward-result', {
+    await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
       request_id: requestId,
       account_id: sourcingAccountId || '',
       site_name: site,
@@ -1361,7 +1552,7 @@ async function handleRewardJob(job) {
     // → 별도 reward-result 콜백 없이 8초 대기 후 종료(기존 sync-balance가 DB 갱신)
     if (action === 'musinsa_balance') {
       await new Promise(r => setTimeout(r, 8000))
-      await postResult('sourcing-accounts/extension/reward-result', {
+      await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
         request_id: requestId,
         account_id: sourcingAccountId || '',
         site_name: site,
@@ -1371,6 +1562,17 @@ async function handleRewardJob(job) {
       })
       return
     }
+
+    // 결과 수신 pending 을 '주입 전'에 등록 — 콘텐츠 스크립트가 즉시 send 해도 누락되지 않게.
+    // (이전엔 주입 후 등록이라, 빠른 send / navListener 재주입과 레이스로 결과를 놓쳐 timeout)
+    const timeoutMs = action === 'musinsa_snap_like' ? 90000 : 45000
+    const resultPromise = new Promise((resolve) => {
+      const timeoutId = setTimeout(() => {
+        _rewardPending.delete(tabId)
+        resolve({ success: false, error: 'timeout: 적립 결과 수신 실패' })
+      }, timeoutMs)
+      _rewardPending.set(tabId, { resolve, timeoutId, tabId, action, requestId })
+    })
 
     // content script 주입
     try {
@@ -1382,9 +1584,12 @@ async function handleRewardJob(job) {
       throw new Error(`스크립트 주입 실패: ${e?.message || e}`)
     }
 
-    // 스냅 좋아요는 페이지 이동(미션→피드→미션복귀) 마다 스크립트 재주입 필요
+    // 스냅 좋아요는 페이지 이동(미션→피드→미션복귀) 마다 스크립트 재주입 필요.
+    // 무신사 출석도 events/attendance 진입 시 페이지가 리다이렉트/리로드되며 콘텐츠 스크립트가
+    // 사망(결과 미보고 → 45초 timeout)할 수 있어 동일하게 네비게이션마다 재주입한다. 재주입은
+    // __sambaRewardAttendanceSent__ 가드로 같은 문서면 무시(중복 출석 없음), 새 문서면 재실행.
     let navListener = null
-    if (action === 'musinsa_snap_like') {
+    if (action === 'musinsa_snap_like' || action === 'musinsa_attendance') {
       navListener = (changedTabId, info) => {
         if (changedTabId !== tabId || info.status !== 'complete') return
         // 미션/스냅 페이지 모두 같은 스크립트 사용 (페이지 내부에서 location.href 분기)
@@ -1397,19 +1602,12 @@ async function handleRewardJob(job) {
     }
 
     // 결과 수신 대기 — 스냅은 멀티스텝이라 90초, 그 외 45초
-    const timeoutMs = action === 'musinsa_snap_like' ? 90000 : 45000
-    const result = await new Promise((resolve) => {
-      const timeoutId = setTimeout(() => {
-        _rewardPending.delete(tabId)
-        resolve({ success: false, error: 'timeout: 적립 결과 수신 실패' })
-      }, timeoutMs)
-      _rewardPending.set(tabId, { resolve, timeoutId, tabId, action, requestId })
-    })
+    const result = await resultPromise
     if (navListener) {
       try { chrome.tabs.onUpdated.removeListener(navListener) } catch {}
     }
 
-    await postResult('sourcing-accounts/extension/reward-result', {
+    await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
       request_id: requestId,
       account_id: sourcingAccountId || '',
       site_name: site,
@@ -1424,11 +1622,11 @@ async function handleRewardJob(job) {
       stamp_score: result.stampScore !== undefined ? Number(result.stampScore) : null,
       error: result.error || '',
     })
-    console.log(`[적립금] 결과 전송 ${site}/${action} success=${result.success} reward=${result.reward || 0}`)
+    console.log(`[적립금] 결과 전송 ${site}/${action} success=${result.success} reward=${result.reward || 0}${result.error ? ` err='${result.error}'` : ''}`)
   } catch (err) {
     console.warn(`[적립금] 처리 실패 req=${requestId}:`, err)
     try {
-      await postResult('sourcing-accounts/extension/reward-result', {
+      await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
         request_id: requestId,
         account_id: sourcingAccountId || '',
         site_name: site,
@@ -1454,6 +1652,9 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
     clearTimeout(pending.timeoutId)
     _rewardPending.delete(tabId)
     pending.resolve(msg)
+  } else {
+    // [임시진단] 결과는 왔는데 pending 이 없음 = tabId 불일치 또는 등록 누락 → 키 목록 출력
+    console.warn(`[적립금] REWARD_RESULT 수신했으나 pending 없음 tab=${tabId} action=${msg.rewardAction} keys=[${[..._rewardPending.keys()].join(',')}]`)
   }
 })
 

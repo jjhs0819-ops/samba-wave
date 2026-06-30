@@ -165,7 +165,12 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 async function postResult(endpoint, body) {
   // 503/429/502/504 일시적 장애 자동 재시도 (지수 백오프 0.5s/1.5s/3s)
   // 백엔드가 일시적으로 응답 못 하면 결과가 유실되어 가격 갱신 차단으로 이어짐
-  const url = `${PROXY_URL}${API_PREFIX}/${endpoint}`
+  // endpoint 가 '/' 로 시작하면 절대경로(PROXY_URL 직속) — API_PREFIX(/proxy) 미부착.
+  // reward-result 라우트는 /proxy 가 아닌 /api/v1/samba/sourcing-accounts 에 있어
+  // (sync-balance 와 동일 라우터) 절대경로로 보내야 한다. 안 그러면 /proxy 가 붙어 404.
+  const url = endpoint.startsWith('/')
+    ? `${PROXY_URL}${endpoint}`
+    : `${PROXY_URL}${API_PREFIX}/${endpoint}`
   const headers = { 'Content-Type': 'application/json' }
   const payload = JSON.stringify(body)
   const RETRY_STATUSES = new Set([429, 502, 503, 504])

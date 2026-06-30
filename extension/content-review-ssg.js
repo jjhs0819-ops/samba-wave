@@ -76,28 +76,28 @@
 
   async function fillAndSubmit() {
     try {
-      // gate 페이지: 5점 클릭 → reg로 자동 이동
-      if (isGatePage()) {
-        await sleep(1000)
+      const findTextarea = () => document.querySelector('#ui_textarea')
+        || document.querySelector('textarea[name="postngCntt"]')
+        || document.querySelector('textarea')
+
+      // 단계 판별을 URL 대신 콘텐츠로: in-page 이동 시 URL 은 myPdtEvalRegGate.ssg 그대로일 수
+      // 있고(폼이 같은 페이지/다음 페이지 둘 다 가능) 홈 리다이렉트도 회피됨. 작성폼(textarea)이
+      // 없고 별점 버튼만 있으면 게이트(별점) 단계 → 5점 클릭, reg 폼 로드는 background 가 대기 후 재주입.
+      if (!findTextarea() && document.querySelector('button.rating_star_check')) {
+        await sleep(800)
         const stars = document.querySelectorAll('button.rating_star_check')
+        let clicked = false
         for (const s of stars) {
-          if (s.textContent.includes('5점')) { s.click(); break }
+          if (s.textContent.includes('5점')) { s.click(); clicked = true; break }
         }
-        if (stars.length > 0 && !document.querySelector('button.rating_star_check.on')) {
-          stars[stars.length - 1].click()
-        }
-        await sleep(2500)
-        // reg 페이지로 자동 이동되면 이 스크립트는 종료, background가 재주입
+        if (!clicked && stars.length > 0) stars[stars.length - 1].click()
+        await sleep(2000)
         return { success: false, error: 'gate→reg 이동 대기 중', _navigating: true }
       }
 
-      if (!isRegPage()) return { success: false, error: `reg 페이지 아님: ${location.pathname}` }
-
-      await sleep(1500)
-      const ta = document.querySelector('#ui_textarea')
-        || document.querySelector('textarea[name="postngCntt"]')
-        || document.querySelector('textarea')
-      if (!ta) return { success: false, error: 'textarea 없음' }
+      await sleep(1200)
+      const ta = findTextarea()
+      if (!ta) return { success: false, error: `작성 폼(textarea) 없음: ${location.pathname}` }
       ta.focus()
       ta.value = nextText()
       for (const ev of ['focus', 'input', 'change', 'keyup', 'blur']) {

@@ -5,6 +5,16 @@
     try { chrome.runtime.onMessage.removeListener(window.__sambaAbcmartReviewListener) } catch {}
   }
 
+  // [2026-06-29] 네이티브 alert/confirm 억제 — ABC는 후기 등록 후 "후기 작성으로 500P 적립" alert()를 띄우는데,
+  // 네이티브 다이얼로그는 렌더러 메인스레드를 막아 content script 까지 멈춘다(=다음 건 진행 불가, 사용자가 확인 눌러야 풀림).
+  // 페이지 컨텍스트에서 alert=no-op / confirm=true / onbeforeunload=null 로 덮어 자동 통과(격리월드라 직접은 못 막음).
+  try {
+    const _sup = document.createElement('script')
+    _sup.textContent = '(function(){try{window.alert=function(){};window.confirm=function(){return true;};window.onbeforeunload=null;}catch(e){}})();'
+    ;(document.documentElement || document.head || document.body).appendChild(_sup)
+    _sup.remove()
+  } catch (e) {}
+
   const TEXTS = [
     '편하게 잘 신고 다니고 있습니다 만족해요',
     '가볍고 착화감이 좋아서 매일 신게 되네요',
@@ -22,12 +32,17 @@
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
   function rand(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a }
 
+  // 후기작성 버튼이 속한 '주문 블록' — 중복처리 방지용 dataset 마킹 대상. 구조 변경 대비 폴백.
+  function getReviewBlock(btn) {
+    return btn.closest('tbody, tr, li') || btn.parentElement?.parentElement?.parentElement || btn.parentElement
+  }
   function getReviewableItems() {
+    // [2026-06-29] '구매확정' 텍스트 필수조건 제거 — ABC는 '후기작성' 버튼 노출 자체가 작성가능 신호이고,
+    // 페이지 구조상 버튼 블록에 '구매확정' 문구가 없는 경우가 있어 전건이 걸러지던 문제(0건 멈춤) 해결.
     return Array.from(document.querySelectorAll('button')).filter(b => {
       if (b.textContent.trim() !== '후기작성') return false
-      const block = b.closest('tbody') || b.parentElement?.parentElement?.parentElement
-      if (!block || block.dataset.sambaReviewed) return false
-      return block.textContent.includes('구매확정')
+      const block = getReviewBlock(b)
+      return block && !block.dataset.sambaReviewed
     })
   }
 
@@ -135,7 +150,16 @@
 
   async function processOne() {
     const items = getReviewableItems()
-    if (items.length === 0) return { noItems: true }
+    if (items.length === 0) {
+      // 진단 — 0건 원인을 SW 로그로 회신 (후기작성버튼 총수 / 페이지 구매확정 존재 / 첫 블록 구조·텍스트)
+      const allBtns = Array.from(document.querySelectorAll('button')).filter(b => b.textContent.trim() === '후기작성')
+      let sample = '', blkTag = 'null'
+      if (allBtns[0]) {
+        const blk = getReviewBlock(allBtns[0])
+        if (blk) { blkTag = blk.tagName + '.' + ((blk.className || '').split(' ')[0] || ''); sample = (blk.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) }
+      }
+      return { noItems: true, _diag: { btnTotal: allBtns.length, hasConfirm: document.body.textContent.includes('구매확정'), blkTag, url: location.href, sample } }
+    }
     const btn = items[0]
     await dismissBlockers()
     await sleep(500)
@@ -163,7 +187,7 @@
 
     if (!dialog || dialog === 'blocker') {
       await closeAllModals()
-      btn.closest('tbody')?.setAttribute('data-samba-reviewed', 'true')
+      getReviewBlock(btn)?.setAttribute('data-samba-reviewed', 'true')
       return { success: false, error: '리뷰 모달 안 열림' }
     }
 
@@ -174,7 +198,7 @@
     starToggle = starToggle === 4 ? 5 : 4
     const ok = await setStarRating(dialog, star)
     if (!ok) {
-      btn.closest('tbody')?.setAttribute('data-samba-reviewed', 'true')
+      getReviewBlock(btn)?.setAttribute('data-samba-reviewed', 'true')
       return { success: false, error: '별점 설정 실패' }
     }
     await sleep(rand(500, 900))
@@ -187,7 +211,7 @@
 
     const ta = dialog.querySelector('textarea[name="rvwContText"], textarea#rvw-cont-text, textarea')
     if (!ta) {
-      btn.closest('tbody')?.setAttribute('data-samba-reviewed', 'true')
+      getReviewBlock(btn)?.setAttribute('data-samba-reviewed', 'true')
       return { success: false, error: 'textarea 없음' }
     }
     ta.focus(); await sleep(300)
@@ -200,7 +224,7 @@
       || Array.from(dialog.querySelectorAll('a, button')).find(a => a.textContent.trim() === '등록'
         && !a.className.includes('light-gray') && !a.className.includes('btn-dialog') && a.id !== 'reviewMySizeSetBtn')
     if (!reg) {
-      btn.closest('tbody')?.setAttribute('data-samba-reviewed', 'true')
+      getReviewBlock(btn)?.setAttribute('data-samba-reviewed', 'true')
       return { success: false, error: '등록 버튼 없음' }
     }
     reg.click()
@@ -213,7 +237,7 @@
     await sleep(1200)
     await closeAllModals()
 
-    const block = btn.closest('tbody') || btn.parentElement?.parentElement?.parentElement
+    const block = getReviewBlock(btn)
     if (block) block.dataset.sambaReviewed = 'true'
     return { success: true }
   }
