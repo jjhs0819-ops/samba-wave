@@ -12,23 +12,29 @@ ORDER_POLL_INTERVAL = int(os.environ.get("ORDER_POLL_INTERVAL_SECONDS", str(30 *
 KST = timezone(timedelta(hours=9))
 
 
-async def _fetch_new_order_numbers(
-    session,
-) -> tuple[dict[str, list[str]], set[str | None]]:
+async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | None]]:
     """각 마켓 계정에서 최근 1일치 주문 번호를 조회하고, DB에 없는 신규 건만 반환.
 
     Returns:
         (new_by_market, tenant_ids_with_new_orders)
+
+    [2026-06-30] 세션 미점유 리팩토링: 과거엔 write 세션을 열어둔 채 모든 마켓 API 를
+    순차 호출 → 세션 최대 542초 점유로 write 풀 고갈 + api 단일워커 이벤트루프 142초
+    블로킹(헬스 실패, 무신사 코디 658초 무진척→좀비화 연쇄)의 근본 원인. 이제 DB 조회
+    (계정 목록 / 롯데홈 자격증명 / 신규판정)만 그때그때 짧은 read 세션으로 감싸고,
+    느린 마켓 API 호출 동안에는 DB 세션을 전혀 점유하지 않는다. 이 함수는 SELECT 만 한다.
     """
     from sqlalchemy import text as _text
     from sqlmodel import select
 
+    from backend.db.orm import get_read_session
     from backend.domain.samba.account.model import SambaMarketAccount
 
-    result = await session.exec(
-        select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)  # noqa: E712
-    )
-    accounts = result.all()
+    async with get_read_session() as _acc_session:
+        result = await _acc_session.exec(
+            select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)  # noqa: E712
+        )
+        accounts = result.all()
 
     new_by_market: dict[str, list[str]] = defaultdict(list)
     tenant_ids_with_new: set[str | None] = set()
@@ -101,13 +107,14 @@ async def _fetch_new_order_numbers(
                 from backend.domain.samba.forbidden.model import SambaSettings
                 from backend.domain.samba.proxy.lottehome import LotteHomeClient
 
-                _lh_creds_result = await session.exec(
-                    select(SambaSettings).where(
-                        SambaSettings.key == "lottehome_credentials"
+                async with get_read_session() as _lh_session:
+                    _lh_creds_result = await _lh_session.exec(
+                        select(SambaSettings).where(
+                            SambaSettings.key == "lottehome_credentials"
+                        )
                     )
-                )
-                _lh_creds_row = _lh_creds_result.first()
-                lh_creds = _lh_creds_row.value if _lh_creds_row else {}
+                    _lh_creds_row = _lh_creds_result.first()
+                    lh_creds = _lh_creds_row.value if _lh_creds_row else {}
 
                 lh_user_id = (
                     lh_creds.get("userId", "")
@@ -203,15 +210,16 @@ async def _fetch_new_order_numbers(
             if not raw_order_numbers:
                 continue
 
-            # DB에 이미 있는 order_number 필터링
-            rows = await session.execute(
-                _text(
-                    "SELECT order_number FROM samba_order "
-                    "WHERE order_number = ANY(:nums) AND channel_id = :cid"
-                ),
-                {"nums": raw_order_numbers, "cid": account.id},
-            )
-            existing = {r[0] for r in rows}
+            # DB에 이미 있는 order_number 필터링 (짧은 read 세션 — API 호출 중엔 미점유)
+            async with get_read_session() as _chk_session:
+                rows = await _chk_session.execute(
+                    _text(
+                        "SELECT order_number FROM samba_order "
+                        "WHERE order_number = ANY(:nums) AND channel_id = :cid"
+                    ),
+                    {"nums": raw_order_numbers, "cid": account.id},
+                )
+                existing = {r[0] for r in rows}
             fresh = [n for n in raw_order_numbers if n not in existing]
 
             if fresh:
@@ -332,7 +340,6 @@ async def _create_cs_sync_job(session, tenant_id: str | None) -> None:
 
 async def start_order_poller() -> None:
     """백그라운드 주문 폴링 루프 (lifecycle.py에서 asyncio.create_task로 실행)."""
-    from backend.db.orm import get_write_session
     from backend.utils.kakao_notify import send_kakao_message
 
     # 서버 완전 기동 대기
@@ -344,11 +351,12 @@ async def start_order_poller() -> None:
             now_kst = datetime.now(KST)
             is_night = 0 <= now_kst.hour < 8  # 0~8시 제외
 
-            async with get_write_session() as session:
-                new_by_market, tenant_ids = await _fetch_new_order_numbers(session)
+            # _fetch_new_order_numbers 가 자체적으로 짧은 read 세션만 쓰므로(마켓 API
+            # 호출 중 세션 미점유), 여기서 write 세션을 542초 잡던 문제 제거.
+            new_by_market, tenant_ids = await _fetch_new_order_numbers()
 
-                # CS 문의 동기화는 주문 자동수집 루프(lifecycle._order_auto_sync_loop)로
-                # 이관됨 — 여기 30분 폴러에서는 더 이상 cs_sync 잡을 만들지 않는다.
+            # CS 문의 동기화는 주문 자동수집 루프(lifecycle._order_auto_sync_loop)로
+            # 이관됨 — 여기 30분 폴러에서는 더 이상 cs_sync 잡을 만들지 않는다.
 
             if new_by_market and not is_night:
                 # api 루프 블로킹 방지 — 직접 동기화 대신 전송워커(B)에 order_sync 잡 위임
