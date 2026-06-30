@@ -1,8 +1,5 @@
-import { light as c } from '@/lib/samba/colors'
 import type { CSSProperties } from 'react'
 import { card, inputStyle } from '@/lib/samba/styles'
-
-import { btn } from '@/lib/samba/buttons'
 
 export type TabType = 'overview' | 'auto-posting' | 'posts' | 'products' | 'revenue' | 'settings'
 
@@ -87,13 +84,13 @@ export const cardPad = { ...card, padding: '20px' }
 
 export function getStatusBadge(status: string) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
-    published: { bg: 'rgba(81,207,102,0.15)', color: c.success, label: '발행됨' },
-    failed: { bg: 'rgba(255,107,107,0.15)', color: c.danger, label: '실패' },
-    pending: { bg: 'rgba(138,149,176,0.15)', color: c.textMuted, label: '대기' },
-    running: { bg: 'rgba(81,207,102,0.15)', color: c.success, label: '실행중' },
-    stopped: { bg: 'rgba(255,107,107,0.15)', color: c.danger, label: '중지' },
-    connected: { bg: 'rgba(81,207,102,0.15)', color: c.success, label: '연결됨' },
-    disconnected: { bg: 'rgba(138,149,176,0.15)', color: c.textMuted, label: '미연결' },
+    published: { bg: 'rgba(81,207,102,0.15)', color: '#51CF66', label: '발행됨' },
+    failed: { bg: 'rgba(255,107,107,0.15)', color: '#FF6B6B', label: '실패' },
+    pending: { bg: 'rgba(138,149,176,0.15)', color: '#8A95B0', label: '대기' },
+    running: { bg: 'rgba(81,207,102,0.15)', color: '#51CF66', label: '실행중' },
+    stopped: { bg: 'rgba(255,107,107,0.15)', color: '#FF6B6B', label: '중지' },
+    connected: { bg: 'rgba(81,207,102,0.15)', color: '#51CF66', label: '연결됨' },
+    disconnected: { bg: 'rgba(138,149,176,0.15)', color: '#8A95B0', label: '미연결' },
   }
   const s = map[status] || map.pending
   return (
@@ -104,36 +101,36 @@ export function getStatusBadge(status: string) {
 }
 
 export const btnPrimary: CSSProperties = {
-  ...btn('primary'),
-  padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', whiteSpace: 'nowrap',
+  padding: '6px 14px', fontSize: '0.78rem', background: '#FF8C00', color: '#000',
+  border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap',
 }
 
 export const btnDanger: CSSProperties = {
-  ...btn('danger'),
-  padding: '4px 10px', fontSize: '0.72rem', borderRadius: '6px', whiteSpace: 'nowrap',
+  padding: '4px 10px', fontSize: '0.72rem', background: 'rgba(255,107,107,0.15)', color: '#FF6B6B',
+  border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap',
 }
 
 export const btnOutline: CSSProperties = {
-  ...btn('accent'),
-  padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', whiteSpace: 'nowrap',
+  padding: '6px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00',
+  border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, whiteSpace: 'nowrap',
 }
 
 export const thStyle: CSSProperties = {
-  padding: '10px', textAlign: 'left', fontSize: '0.75rem', color: c.textSub, fontWeight: 500,
+  padding: '10px', textAlign: 'left', fontSize: '0.75rem', color: '#8A95B0', fontWeight: 500,
 }
 
 export const tdStyle: CSSProperties = {
-  padding: '10px', fontSize: '0.8rem', color: c.text,
+  padding: '10px', fontSize: '0.8rem', color: '#E5E5E5',
 }
 
 export const sectionTitle: CSSProperties = {
-  fontSize: '0.9rem', fontWeight: 600, color: c.text, margin: 0, marginBottom: '16px',
+  fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5', margin: 0, marginBottom: '16px',
 }
 
 export const inputBox: CSSProperties = {
   ...inputStyle,
-  background: c.inputBg,
-  border: `1px solid ${c.border}`,
+  background: 'rgba(255,255,255,0.05)',
+  border: '1px solid #3D3D3D',
   borderRadius: '8px',
 }
 

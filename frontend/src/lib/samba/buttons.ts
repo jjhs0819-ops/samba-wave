@@ -26,7 +26,7 @@
  */
 
 import type { CSSProperties } from 'react'
-import { light, type Palette } from './colors'
+import { dark, type Palette } from './colors'
 
 export type BtnVariant = 'primary' | 'secondary' | 'accent' | 'send' | 'ghost' | 'danger' | 'dangerSolid' | 'link'
 
@@ -46,7 +46,7 @@ const BASE: CSSProperties = {
 
 /** 버튼 변형의 색·배경·테두리 기본 스타일. 크기는 호출부에서 스프레드 뒤에 덮는다.
  *  palette 생략 시 라이트 팔레트 기본값. 테마 반응형이 필요하면 useTheme()의 c를 전달. */
-export function btn(variant: BtnVariant, palette: Palette = light): CSSProperties {
+export function btn(variant: BtnVariant, palette: Palette = dark): CSSProperties {
   const c = palette
   const variants: Record<BtnVariant, CSSProperties> = {
     primary: { background: c.btnSolidBg, color: c.btnSolidText, border: 'none', fontWeight: 700 },

@@ -1,4 +1,3 @@
-import { light as c } from '@/lib/samba/colors'
 /**
  * SambaWave 공용 스타일 상수
  * policies, settings 등 여러 페이지에서 공유
@@ -7,19 +6,19 @@ import { light as c } from '@/lib/samba/colors'
 export const LOG_FONT_FAMILY = 'Consolas, "Malgun Gothic", "Noto Sans KR", monospace'
 
 export const card = {
-  background: c.surface,
+  background: 'rgba(30,30,30,0.5)',
   backdropFilter: 'blur(20px)',
-  border: `1px solid ${c.border}`,
+  border: '1px solid #2D2D2D',
   borderRadius: '12px',
 }
 
 export const inputStyle = {
   width: '100%',
   padding: '0.5rem 0.75rem',
-  background: c.inputBg,
-  border: `1px solid ${c.border}`,
+  background: '#1A1A1A',
+  border: '1px solid #2D2D2D',
   borderRadius: '6px',
-  color: c.text,
+  color: '#E5E5E5',
   fontSize: '0.875rem',
   outline: 'none',
   boxSizing: 'border-box' as const,
