@@ -82,6 +82,7 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
       ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
       lotteon: `https://www.lotteon.com/p/product/${productNo}`,
       lottehome: `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${productNo}`,
+      gsshop: `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`,
       kream: `https://kream.co.kr/products/${productNo}`,
       ebay: `https://www.ebay.com/itm/${productNo}`,
     }
