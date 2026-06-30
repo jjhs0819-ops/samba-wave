@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect } from 'react'
-
 import { useProxySettings } from './hooks/useProxySettings'
 import { ProxySettingsPanel } from './components/ProxySettingsPanel'
 import { useExternalSettings } from './hooks/useExternalSettings'
@@ -12,10 +11,8 @@ import { useSourcingAccounts } from './hooks/useSourcingAccounts'
 import { SourcingAccountsPanel } from './components/SourcingAccountsPanel'
 import { LicensePanel } from './components/LicensePanel'
 import { OfficeShippingPanel } from './components/OfficeShippingPanel'
-import { useTheme } from '@/lib/samba/useTheme'
 
 export default function SettingsPage() {
-  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-설정' }, [])
 
   // 훅
@@ -43,7 +40,7 @@ export default function SettingsPage() {
   }, [loadExchangeRates, loadExternalSettings, loadProbeStatus, loadStoreSettings])
 
   return (
-    <div style={{ color: c.text }}>
+    <div style={{ color: '#E5E5E5' }}>
       <StoreSettingsPanel {...storeSettings} />
 
       {/* 소싱처 계정 관리 */}

@@ -3,11 +3,8 @@
 import { collectorApi, categoryApi, type SambaSearchFilter } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { MAPPING_MARKETS } from '../constants'
 import MappingMarketRow from './MappingMarketRow'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface MappingModalProps {
   open: boolean
@@ -31,7 +28,6 @@ export default function MappingModal({
   onClose,
   onSaved,
 }: MappingModalProps) {
-  const c = useTheme()
   if (!open || !filter) return null
 
   return (
@@ -40,11 +36,11 @@ export default function MappingModal({
       onClick={onClose}
     >
       <div
-        style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
+        style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
         onClick={e => e.stopPropagation()}
       >
-        <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: c.text }}>카테고리 매핑</h3>
-        <p style={{ margin: '0 0 16px', fontSize: '0.75rem', color: c.textMuted }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>카테고리 매핑</h3>
+        <p style={{ margin: '0 0 16px', fontSize: '0.75rem', color: '#888' }}>
           {filter.name} — 각 마켓별 카테고리를 지정하세요
         </p>
 
@@ -75,7 +71,7 @@ export default function MappingModal({
               } catch (e) { showAlert(e instanceof Error ? e.message : 'AI 매핑 실패', 'error') }
               finally { setMappingLoading(false) }
             }}
-            style={{ ...btn('accent'), ...(mappingLoading ? btnDisabled : null), padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px' }}
+            style={{ padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px', cursor: mappingLoading ? 'not-allowed' : 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600, opacity: mappingLoading ? 0.6 : 1 }}
           >{mappingLoading ? 'AI 분석중...' : 'AI 매핑'}</button>
           <button
             onClick={async () => {
@@ -87,7 +83,7 @@ export default function MappingModal({
                 onSaved()
               } catch (e) { showAlert(e instanceof Error ? e.message : '초기화 실패', 'error') }
             }}
-            style={{ ...btn('danger'), padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px' }}
+            style={{ padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,107,107,0.5)', background: 'rgba(255,107,107,0.1)', color: '#FF6B6B' }}
           >매핑 초기화</button>
         </div>
 
@@ -105,7 +101,7 @@ export default function MappingModal({
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
           <button
             onClick={onClose}
-            style={{ ...btn('ghost'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
+            style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}
           >취소</button>
           <button
             onClick={async () => {
@@ -117,7 +113,7 @@ export default function MappingModal({
                 onSaved()
               } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
             }}
-            style={{ ...btn('primary'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
+            style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(81,207,102,0.5)', background: 'rgba(81,207,102,0.15)', color: '#51CF66', fontWeight: 600 }}
           >
             저장 ({fmtNum(Object.values(mappingData).filter(Boolean).length)}개 마켓)
           </button>

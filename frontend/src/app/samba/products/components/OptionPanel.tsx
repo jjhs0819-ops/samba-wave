@@ -7,9 +7,6 @@ import {
 } from '@/lib/samba/api/commerce'
 import { fmtNum } from '@/lib/samba/styles'
 
-import { btn } from '@/lib/samba/buttons'
-import { useTheme } from '@/lib/samba/useTheme'
-
 /** 옵션 패널 — 옵션명/가격/재고 편집 + 일괄수정. */
 const OptionPanel = React.memo(function OptionPanel({
   options,
@@ -26,7 +23,6 @@ const OptionPanel = React.memo(function OptionPanel({
   nameRule?: import('@/lib/samba/api/support').SambaNameRule
   curSym?: string
 }) {
-  const c = useTheme()
   const [open, setOpen] = useState(false)
   const [selectAll, setSelectAll] = useState(true)
   const [editingName, setEditingName] = useState<number | null>(null)
@@ -82,10 +78,14 @@ const OptionPanel = React.memo(function OptionPanel({
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <span style={{ color: c.textSub, fontSize: '0.78rem' }}>{fmtNum(opts.length)}개 옵션</span>
+        <span style={{ color: '#888', fontSize: '0.78rem' }}>{fmtNum(opts.length)}개 옵션</span>
         <button
           onClick={() => setOpen(!open)}
-          style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '2px 8px' }}
+          style={{
+            fontSize: '0.7rem', padding: '2px 8px',
+            border: '1px solid #2D2D2D', borderRadius: '4px',
+            color: '#888', background: 'transparent', cursor: 'pointer',
+          }}
         >
           {open ? '접기' : '펼치기'}
         </button>
@@ -93,48 +93,48 @@ const OptionPanel = React.memo(function OptionPanel({
       {open && (
         <div style={{ marginTop: '8px' }}>
           {/* 안내문구 */}
-          <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '0.75rem', lineHeight: 1.5 }}>
+          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '0.75rem', lineHeight: 1.5 }}>
             ※ 옵션별로 가격 및 재고 수정이 가능합니다. 가격/재고를 수정하시면 해외 가격/재고는 무시되고, 수정하신 가격/재고로 반영됩니다.<br />
             ※ 체크박스에 체크되어 있는 상품만 마켓으로 전송됩니다. 전송을 원하지 않는 옵션은 체크를 해제하신 후 옵션저장 버튼을 클릭해주세요.
           </p>
 
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+              <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                 <th style={{ width: '36px', padding: '0.5rem', textAlign: 'center' }}>
-                  <input type="checkbox" checked={selectAll} onChange={(e) => setSelectAll(e.target.checked)} style={{ cursor: 'pointer', accentColor: c.primary }} />
+                  <input type="checkbox" checked={selectAll} onChange={(e) => setSelectAll(e.target.checked)} style={{ cursor: 'pointer', accentColor: '#FF8C00' }} />
                 </th>
-                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   옵션명
                   <button
                     onClick={() => setEditingName(editingName === -1 ? null : -1)}
-                    style={{ ...btn(editingName === -1 ? 'accent' : 'secondary'), marginLeft: '0.4rem', fontSize: '0.7rem', padding: '1px 6px' }}
+                    style={{ marginLeft: '0.4rem', fontSize: '0.7rem', padding: '1px 6px', background: editingName === -1 ? 'rgba(255,140,0,0.3)' : 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '3px', cursor: 'pointer' }}
                   >{editingName === -1 ? '편집완료' : '옵션명변경'}</button>
                   <button
                     onClick={() => { setBulkModal('addOption'); setBulkValue('') }}
-                    style={{ ...btn('secondary'), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
+                    style={{ marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer' }}
                   >옵션추가</button>
                 </th>
-                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
-                  원가<br /><span style={{ fontSize: '0.7rem', color: c.textSub, fontWeight: 400 }}>(일반배송)</span>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                  원가<br /><span style={{ fontSize: '0.7rem', color: '#555', fontWeight: 400 }}>(일반배송)</span>
                 </th>
                 {sourceSite === 'KREAM' && (
-                  <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
-                    빠른배송<br /><span style={{ fontSize: '0.7rem', color: c.textSub, fontWeight: 400 }}>(KREAM)</span>
+                  <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
+                    빠른배송<br /><span style={{ fontSize: '0.7rem', color: '#555', fontWeight: 400 }}>(KREAM)</span>
                   </th>
                 )}
-                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   상품가<br />
                   <button
                     onClick={() => { setBulkModal('price'); setBulkValue('') }}
-                    style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '1px 6px', marginTop: '2px' }}
+                    style={{ fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer', marginTop: '2px' }}
                   >일괄수정</button>
                 </th>
-                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
+                <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: '#999', fontWeight: 500 }}>
                   옵션재고
                   <button
                     onClick={() => { setBulkModal('stock'); setBulkValue('') }}
-                    style={{ ...btn('secondary'), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
+                    style={{ marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', border: '1px solid #3D3D3D', borderRadius: '3px', cursor: 'pointer' }}
                   >일괄수정</button>
                 </th>
               </tr>
@@ -155,9 +155,9 @@ const OptionPanel = React.memo(function OptionPanel({
 
                 let stockDisplay: React.ReactNode
                 if (isBrandDelivery) {
-                  stockDisplay = <span style={{ color: c.textSub, fontWeight: 600, fontSize: '0.78rem' }}>브랜드배송</span>
+                  stockDisplay = <span style={{ color: '#6B8AFF', fontWeight: 600, fontSize: '0.78rem' }}>브랜드배송</span>
                 } else if (isSoldOut) {
-                  stockDisplay = <span style={{ color: c.danger, fontWeight: 600 }}>품절</span>
+                  stockDisplay = <span style={{ color: '#FF6B6B', fontWeight: 600 }}>품절</span>
                 } else if (stock < 0 || stock >= 999) {
                   stockDisplay = (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
@@ -174,9 +174,9 @@ const OptionPanel = React.memo(function OptionPanel({
                             saveOptions(newOpts)
                           }
                         }}
-                        style={{ width: '70px', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
+                        style={{ width: '70px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
-                      <span style={{ fontSize: '0.72rem', color: c.success }}>{stock >= 999 ? '충분' : '재고있음'}</span>
+                      <span style={{ fontSize: '0.72rem', color: '#51CF66' }}>{stock >= 999 ? '충분' : '재고있음'}</span>
                     </span>
                   )
                 } else {
@@ -194,18 +194,18 @@ const OptionPanel = React.memo(function OptionPanel({
                             saveOptions(newOpts)
                           }
                         }}
-                        style={{ width: '60px', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
+                        style={{ width: '60px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
                     </span>
                   )
                 }
 
                 return (
-                  <tr key={idx} style={{ borderBottom: `1px solid ${c.border}`, opacity: isSoldOut ? 0.5 : 1 }}>
+                  <tr key={idx} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)', opacity: isSoldOut ? 0.5 : 1 }}>
                     <td style={{ padding: '0.5rem', textAlign: 'center' }}>
-                      <input type="checkbox" defaultChecked={isChecked} style={{ cursor: 'pointer', accentColor: c.primary }} />
+                      <input type="checkbox" defaultChecked={isChecked} style={{ cursor: 'pointer', accentColor: '#FF8C00' }} />
                     </td>
-                    <td style={{ padding: '0.5rem', fontSize: '0.875rem', color: c.text }}>
+                    <td style={{ padding: '0.5rem', fontSize: '0.875rem', color: '#E5E5E5' }}>
                       {editingName === -1 ? (
                         <input
                           type="text"
@@ -215,24 +215,24 @@ const OptionPanel = React.memo(function OptionPanel({
                             newOpts[idx] = { ...newOpts[idx], name: e.target.value }
                             saveOptions(newOpts)
                           }}
-                          style={{ width: '100%', background: c.inputBg, border: `1px solid #a9ddd2`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.875rem' }}
+                          style={{ width: '100%', background: 'rgba(255,255,255,0.05)', border: '1px solid #FF8C00', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.875rem' }}
                         />
                       ) : (
                         optionName
                       )}
                     </td>
-                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: c.text }}>
+                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#C5C5C5' }}>
                       {sourceSite === 'KREAM'
                         ? (Number(o.kreamGeneralPrice || o.kreamNormalPrice || o.price || 0) > 0 ? `${curSym}${fmtNum(Number(o.kreamGeneralPrice || o.kreamNormalPrice || o.price || 0))}` : '-')
                         : (optionCost > 0 ? `${curSym}${fmtNum(optionCost)}` : '-')
                       }
                     </td>
                     {sourceSite === 'KREAM' && (
-                      <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: c.text }}>
+                      <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#6B8AFF' }}>
                         {Number(o.kreamFastPrice || 0) > 0 ? `${curSym}${fmtNum(Number(o.kreamFastPrice))}` : '-'}
                       </td>
                     )}
-                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: c.text, whiteSpace: 'nowrap' }}>
+                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5', whiteSpace: 'nowrap' }}>
                       <input
                         type="text"
                         inputMode="numeric"
@@ -254,11 +254,11 @@ const OptionPanel = React.memo(function OptionPanel({
                             saveOptions(newOpts)
                           }
                         }}
-                        style={{ width: '80px', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
+                        style={{ width: '80px', background: 'rgba(255,255,255,0.05)', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem' }}
                       />
                       <span style={{ marginLeft: '2px' }}>{curSym === '$' ? '$' : '원'}</span>
                     </td>
-                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: c.text }}>
+                    <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: '#E5E5E5' }}>
                       {stockDisplay}
                     </td>
                   </tr>
@@ -275,10 +275,10 @@ const OptionPanel = React.memo(function OptionPanel({
               alignItems: 'center', justifyContent: 'center',
             }} onClick={() => setBulkModal(null)}>
               <div style={{
-                background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px',
+                background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '10px',
                 padding: '20px 24px', width: 'min(360px, 90vw)',
               }} onClick={e => e.stopPropagation()}>
-                <h4 style={{ margin: '0 0 12px', fontSize: '0.85rem', color: c.text }}>
+                <h4 style={{ margin: '0 0 12px', fontSize: '0.85rem', color: '#E5E5E5' }}>
                   {bulkModal === 'price' ? '상품가 일괄수정' : bulkModal === 'stock' ? '옵션재고 일괄수정' : '옵션 추가'}
                 </h4>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -301,13 +301,13 @@ const OptionPanel = React.memo(function OptionPanel({
                         setBulkModal(null)
                       }
                     }}
-                    style={{ flex: 1, padding: '8px 12px', fontSize: '0.85rem', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '6px' }}
+                    style={{ flex: 1, padding: '8px 12px', fontSize: '0.85rem', background: '#1A1A1A', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }}
                   />
-                  {bulkModal !== 'addOption' && <span style={{ color: c.textMuted, fontSize: '0.8rem' }}>{bulkModal === 'price' ? (curSym === '$' ? '$' : '원') : '개'}</span>}
+                  {bulkModal !== 'addOption' && <span style={{ color: '#888', fontSize: '0.8rem' }}>{bulkModal === 'price' ? (curSym === '$' ? '$' : '원') : '개'}</span>}
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                   <button onClick={() => setBulkModal(null)}
-                    style={{ ...btn('ghost'), padding: '6px 16px', fontSize: '0.8rem' }}>취소</button>
+                    style={{ padding: '6px 16px', fontSize: '0.8rem', borderRadius: '6px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>취소</button>
                   <button onClick={() => {
                     if (bulkModal === 'addOption') {
                       if (bulkValue.trim()) {
@@ -317,7 +317,7 @@ const OptionPanel = React.memo(function OptionPanel({
                       applyBulk(bulkModal, bulkValue)
                     }
                     setBulkModal(null)
-                  }} style={{ ...btn('primary'), padding: '6px 16px', fontSize: '0.8rem' }}>
+                  }} style={{ padding: '6px 16px', fontSize: '0.8rem', borderRadius: '6px', border: 'none', background: '#FF8C00', color: '#fff', cursor: 'pointer', fontWeight: 600 }}>
                     {bulkModal === 'addOption' ? '추가' : '적용'}
                   </button>
                 </div>

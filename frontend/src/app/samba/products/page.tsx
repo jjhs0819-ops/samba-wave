@@ -2207,7 +2207,7 @@ export default function ProductsPage() {
           <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={aiImgScope[key]}
               onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
-              style={{ accentColor: c.primary, width: '13px', height: '13px' }} />
+              style={{ accentColor: "#FF8C00", width: '13px', height: '13px' }} />
             <span style={{ fontSize: '0.78rem', color: c.text }}>{label}</span>
           </label>
         ))}
@@ -2588,7 +2588,7 @@ export default function ProductsPage() {
               type="checkbox"
               checked={selectAll && selectScope === 'search'}
               onChange={(e) => handleSelectAll(e.target.checked)}
-              style={{ accentColor: c.primary, width: "13px", height: "13px", cursor: "pointer" }}
+              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
             />
             <span style={{ fontSize: "0.72rem", color: c.textMuted, userSelect: "none" }}>검색</span>
           </label>
@@ -2597,7 +2597,7 @@ export default function ProductsPage() {
               type="checkbox"
               checked={selectAll && selectScope === 'page'}
               onChange={(e) => handleSelectPage(e.target.checked)}
-              style={{ accentColor: c.primary, width: "13px", height: "13px", cursor: "pointer" }}
+              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
             />
             <span style={{ fontSize: "0.72rem", color: c.textMuted, userSelect: "none" }}>1PG</span>
           </label>
@@ -2958,7 +2958,7 @@ export default function ProductsPage() {
                 onClick={e => e.stopPropagation()}
                 style={{
                   position: "absolute", top: "6px", left: "6px", zIndex: 1,
-                  accentColor: c.primary, width: "14px", height: "14px", cursor: "pointer",
+                  accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
                 }}
               />
               <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>

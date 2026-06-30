@@ -2,13 +2,10 @@
 
 import { useState } from 'react'
 
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { verifyLicenseKey } from '@/lib/samba/api/license'
 import { setLicenseKey } from '@/hooks/useLicenseCheck'
-import { useTheme } from '@/lib/samba/useTheme'
 
 export default function LicensePage() {
-  const c = useTheme()
   const [key, setKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -34,15 +31,15 @@ export default function LicensePage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: c.pageBg }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#0F0F0F' }}>
       <div
         className="w-full max-w-md p-8 rounded-xl"
-        style={{ background: c.surface, border: `1px solid ${c.border}` }}
+        style={{ background: '#1A1A1A', border: '1px solid #2A2A2A' }}
       >
-        <h1 className="text-2xl font-bold mb-2" style={{ color: c.text }}>
+        <h1 className="text-2xl font-bold mb-2" style={{ color: '#E5E5E5' }}>
           라이선스 인증
         </h1>
-        <p className="text-sm mb-8" style={{ color: c.textMuted }}>
+        <p className="text-sm mb-8" style={{ color: '#888' }}>
           구매 시 발급받은 라이선스 키를 입력하세요.
         </p>
         <input
@@ -52,14 +49,14 @@ export default function LicensePage() {
           placeholder="SW-XXXX-XXXX-XXXX-XXXX"
           className="w-full rounded-lg px-4 py-3 text-sm font-mono mb-3 focus:outline-none"
           style={{
-            background: c.inputBg,
-            border: `1px solid ${c.border}`,
-            color: c.text,
+            background: '#0F0F0F',
+            border: '1px solid #3A3A3A',
+            color: '#E5E5E5',
           }}
           onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
         />
         {error && (
-          <p className="text-sm mb-3" style={{ color: c.danger }}>
+          <p className="text-sm mb-3" style={{ color: '#FF6B6B' }}>
             {error}
           </p>
         )}
@@ -68,9 +65,9 @@ export default function LicensePage() {
           disabled={loading || !key.trim()}
           className="w-full font-semibold py-3 rounded-lg transition-colors"
           style={{
-            ...btn('primary'),
-            width: '100%',
-            ...(loading || !key.trim() ? btnDisabled : null),
+            background: loading || !key.trim() ? '#7A4A00' : '#FF8C00',
+            color: '#fff',
+            cursor: loading || !key.trim() ? 'not-allowed' : 'pointer',
           }}
         >
           {loading ? '확인 중...' : '인증하기'}

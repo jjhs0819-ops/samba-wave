@@ -20,9 +20,6 @@ import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 
-import { btn } from '@/lib/samba/buttons'
-import { useTheme } from '@/lib/samba/useTheme'
-
 const JOB_POLL_INTERVAL_MS = 1000
 const DELETE_POLL_INTERVAL_MS = 1000
 const BG_LOG_POLL_INTERVAL_MS = 2000
@@ -80,7 +77,6 @@ async function fetchProductsByIdsChunked(ids: string[]) {
 }
 
 export default function ShipmentsPage() {
-  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
   const searchParams = useSearchParams()
   // 상품관리에서 selected/fromStorage로 넘어온 경우 즉시 로드, 그 외엔 검색버튼 클릭 후 로드
@@ -1188,19 +1184,19 @@ export default function ShipmentsPage() {
   }
 
   return (
-    <div style={{ color: c.text }}>
+    <div style={{ color: '#E5E5E5' }}>
       {/* 이전 단계 연결 */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.5rem' }}>
-        <a href="/samba/policies" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>← 정책관리</a>
-        <a href="/samba/categories" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>← 카테고리매핑</a>
-        <a href="/samba/products" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>← 상품관리</a>
+        <a href="/samba/policies" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 정책관리</a>
+        <a href="/samba/categories" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 카테고리매핑</a>
+        <a href="/samba/products" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 상품관리</a>
       </div>
 
       {/* 전송 설정 패널 */}
-      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '10px', fontSize: '0.8rem' }}>
+      <div style={{ background: 'rgba(14,14,20,0.98)', border: '1px solid #1E2030', borderRadius: '8px', marginBottom: '10px', fontSize: '0.8rem' }}>
         {/* 검색항목 */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
-          <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>검색항목</span>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
+          <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>검색항목</span>
           <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
@@ -1212,15 +1208,15 @@ export default function ShipmentsPage() {
           <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색 (콤마로 다중)' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
         </div>
         {/* 소싱사이트 필터 */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
-          <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>소싱사이트</span>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
+          <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>소싱사이트</span>
           <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
             {SOURCE_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         {/* 품절여부 */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
-          <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>품절여부</span>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
+          <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>품절여부</span>
           <select value={soldOutFilter} onChange={e => setSoldOutFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
             <option value="전체">전체</option>
             <option value="품절">품절</option>
@@ -1228,8 +1224,8 @@ export default function ShipmentsPage() {
           </select>
         </div>
         {/* 마켓등록 */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
-          <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>마켓등록</span>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: '1px solid #181C28', gap: '8px' }}>
+          <span style={{ minWidth: '72px', color: '#666', fontSize: '0.78rem' }}>마켓등록</span>
           <select value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)} style={{ ...inputStyle, width: '180px' }}>
             <option value="전체">전체</option>
             <optgroup label="── 전체 ──">
@@ -1262,24 +1258,24 @@ export default function ShipmentsPage() {
           </select>
         </div>
         {/* 검색하기 버튼 */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: `2px solid ${c.border}`, flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '2px solid #181C28', flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleSearch} style={{ ...btn('primary'), padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, borderRadius: '6px' }}>검색하기</button>
-            <button onClick={handleResetSearch} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: `1px solid ${c.border}`, color: c.textSub, borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
+            <button onClick={handleSearch} style={{ padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, background: '#2A2F3E', border: '1px solid #3D4560', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer' }}>검색하기</button>
+            <button onClick={handleResetSearch} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: '1px solid #2A3040', color: '#9AA5C0', borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
 
         {/* 소싱사이트 체크박스 */}
-        <div style={{ padding: '10px 16px 12px', borderBottom: `1px solid ${c.border}` }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: c.text, marginBottom: '10px', paddingBottom: '6px', borderBottom: `1px solid ${c.border}` }}>소싱사이트</div>
+        <div style={{ padding: '10px 16px 12px', borderBottom: '1px solid #181C28' }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#C5C5C5', marginBottom: '10px', paddingBottom: '6px', borderBottom: '1px solid #1C1E2A' }}>소싱사이트</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 24px' }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: c.text, cursor: 'pointer', fontWeight: 600 }}>
-              <input type="checkbox" checked={selectedSites.length === allSites.length} onChange={toggleAllSites} style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: '#C5C5C5', cursor: 'pointer', fontWeight: 600 }}>
+              <input type="checkbox" checked={selectedSites.length === allSites.length} onChange={toggleAllSites} style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
               전체
             </label>
             {allSites.map(site => (
-              <label key={site} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: c.textMuted, cursor: 'pointer' }}>
-                <input type="checkbox" checked={selectedSites.includes(site)} onChange={() => toggleSite(site)} style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
+              <label key={site} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: '#8A95B0', cursor: 'pointer' }}>
+                <input type="checkbox" checked={selectedSites.includes(site)} onChange={() => toggleSite(site)} style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
                 {site}
               </label>
             ))}
@@ -1288,13 +1284,13 @@ export default function ShipmentsPage() {
 
         {/* 마켓 체크박스 (마켓별 통합 — 선택 시 해당 마켓의 모든 계정에 전송) */}
         <div style={{ padding: '10px 16px 12px' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: c.text, marginBottom: '8px', paddingBottom: '6px', borderBottom: `1px solid ${c.border}` }}>마켓</div>
+          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#C5C5C5', marginBottom: '8px', paddingBottom: '6px', borderBottom: '1px solid #1C1E2A' }}>마켓</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px' }}>
             {accounts.length === 0 ? (
-              <span style={{ color: c.textMuted, fontSize: '0.8rem' }}>설정 탭에서 마켓을 등록해주세요</span>
+              <span style={{ color: '#555', fontSize: '0.8rem' }}>설정 탭에서 마켓을 등록해주세요</span>
             ) : (
               <>
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: c.text, cursor: 'pointer', fontWeight: 600 }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: '#FF8C00', cursor: 'pointer', fontWeight: 600 }}>
                   <input type="checkbox"
                     checked={(() => {
                       const allTypes = [...new Set(accounts.map(a => a.market_type))]
@@ -1311,18 +1307,18 @@ export default function ShipmentsPage() {
                         setSelectedAccounts(getAccountIdsByMarkets(allTypes))
                       }
                     }}
-                    style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
+                    style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
                   전체
                 </label>
                 {[...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()].map(([type, name]) => (
-                  <label key={type} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: c.textMuted, cursor: 'pointer' }}>
+                  <label key={type} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: '#8A95B0', cursor: 'pointer' }}>
                     <input type="checkbox" checked={selectedMarkets.includes(type)}
                       onChange={() => {
                         const next = selectedMarkets.includes(type) ? selectedMarkets.filter(m => m !== type) : [...selectedMarkets, type]
                         setSelectedMarkets(next)
                         setSelectedAccounts(getAccountIdsByMarkets(next))
                       }}
-                      style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
+                      style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }} />
                     {name}
                   </label>
                 ))}
@@ -1350,11 +1346,11 @@ export default function ShipmentsPage() {
         const transmitCount = runningAll.filter(j => j.kind !== 'delete').length
         const deleteCount = runningAll.filter(j => j.kind === 'delete').length
         return (
-          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '8px', overflow: 'visible' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
+          <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'visible' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
               <span style={{ width: '6px', height: '6px', borderRadius: '50%',
-                background: runningAll.length > 0 ? c.success : c.warn }} />
-              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: c.textSub }}>
+                background: runningAll.length > 0 ? '#51CF66' : '#FAB005' }} />
+              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
                 Job {'진행상황'}
                 {transmitCount > 0 && ` — 전송 중 ${fmtNum(transmitCount)}건`}
                 {deleteCount > 0 && `${transmitCount > 0 ? ' · ' : ' — '}삭제 중 ${fmtNum(deleteCount)}건`}
@@ -1382,30 +1378,30 @@ export default function ShipmentsPage() {
                 const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join(' · ') : `${sites.slice(0, 3).join(' · ')} 외 ${fmtNum(sites.length - 3)}`) : ''
                 const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join(' · ') : `${brands.slice(0, 3).join(' · ')} 외 ${fmtNum(brands.length - 3)}`) : ''
                 return (
-                  <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: c.text, borderBottom: `1px solid ${c.border}`, paddingBottom: '4px', marginBottom: '0' }}>
-                    <span style={{ color: j.kind === 'delete' ? c.danger : c.success, fontWeight: 600, minWidth: '40px' }}>
+                  <div key={`r-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                    <span style={{ color: j.kind === 'delete' ? '#FF6B6B' : '#51CF66', fontWeight: 600, minWidth: '40px' }}>
                       {j.kind === 'delete' ? '삭제중' : '전송중'}
                     </span>
-                    <span style={{ color: c.textMuted, minWidth: '92px', flexShrink: 0 }}>{'시작'} {startedStr}</span>
-                    <span style={{ color: c.text, whiteSpace: 'nowrap', flexShrink: 0, overflow: 'visible' }} title={j.markets}>
+                    <span style={{ color: '#8A95B0', minWidth: '92px', flexShrink: 0 }}>{'시작'} {startedStr}</span>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0, overflow: 'visible' }} title={j.markets}>
                       {j.markets}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
-                      {sitesStr && <span style={{ color: c.textSub }}>{sitesStr}</span>}
-                      {sitesStr && brandsStr && <span style={{ color: c.textMuted }}>{' · '}</span>}
-                      {brandsStr && <span style={{ color: c.text }}>{brandsStr}</span>}
+                      {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                      {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}>{' · '}</span>}
+                      {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
                     </span>
-                    <span style={{ color: c.textSub, minWidth: '92px', textAlign: 'right', flexShrink: 0 }}>
+                    <span style={{ color: '#9AA5C0', minWidth: '92px', textAlign: 'right', flexShrink: 0 }}>
                       {fmtNum(j.current)} / {fmtNum(j.total)} ({pct}%)
                     </span>
-                    <span style={{ color: c.textMuted, minWidth: '56px', textAlign: 'right', fontSize: '0.7rem', flexShrink: 0 }}>
+                    <span style={{ color: '#6E7A95', minWidth: '56px', textAlign: 'right', fontSize: '0.7rem', flexShrink: 0 }}>
                       {perItemStr}
                     </span>
                     <button
                       onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
                       disabled={!j.id || busy}
                       title={'이 잡만 취소'}
-                      style={{ ...btn('danger'), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', minWidth: '40px', flexShrink: 0, ...(busy ? { opacity: 0.6 } : null) }}
+                      style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
                     >{busy ? '취소중' : '취소'}</button>
                   </div>
                 )
@@ -1417,23 +1413,23 @@ export default function ShipmentsPage() {
                 const sitesStr = sites.length > 0 ? (sites.length <= 3 ? sites.join(' · ') : `${sites.slice(0, 3).join(' · ')} 외 ${fmtNum(sites.length - 3)}`) : ''
                 const brandsStr = brands.length > 0 ? (brands.length <= 3 ? brands.join(' · ') : `${brands.slice(0, 3).join(' · ')} 외 ${fmtNum(brands.length - 3)}`) : ''
                 return (
-                  <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: c.textMuted, borderBottom: `1px solid ${c.border}`, paddingBottom: '4px', marginBottom: '0' }}>
-                    <span style={{ color: c.warn, fontWeight: 600, minWidth: '40px' }}>{'대기'}</span>
+                  <div key={`p-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0', borderBottom: '1px solid #151822', paddingBottom: '4px', marginBottom: '0' }}>
+                    <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>{'대기'}</span>
                     <span style={{ minWidth: '92px', flexShrink: 0 }}>{'—'}</span>
-                    <span style={{ color: c.text, whiteSpace: 'nowrap', flexShrink: 0, overflow: 'visible' }} title={j.markets}>
+                    <span style={{ color: '#C4CAD8', whiteSpace: 'nowrap', flexShrink: 0, overflow: 'visible' }} title={j.markets}>
                       {j.markets}
                     </span>
                     <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={[sitesStr, brandsStr].filter(Boolean).join(' / ')}>
-                      {sitesStr && <span style={{ color: c.textSub }}>{sitesStr}</span>}
-                      {sitesStr && brandsStr && <span style={{ color: c.textMuted }}>{' · '}</span>}
-                      {brandsStr && <span style={{ color: c.text }}>{brandsStr}</span>}
+                      {sitesStr && <span style={{ color: '#7BB0FF' }}>{sitesStr}</span>}
+                      {sitesStr && brandsStr && <span style={{ color: '#3A4258' }}>{' · '}</span>}
+                      {brandsStr && <span style={{ color: '#A78BFA' }}>{brandsStr}</span>}
                     </span>
                     <span style={{ minWidth: '110px', textAlign: 'right', flexShrink: 0 }}>{fmtNum(j.product_count)}{'건'}</span>
                     <button
                       onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
                       disabled={!j.id || busy}
                       title={'이 잡만 취소'}
-                      style={{ ...btn('danger'), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', minWidth: '40px', flexShrink: 0, ...(busy ? { opacity: 0.6 } : null) }}
+                      style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '40px', flexShrink: 0 }}
                     >{busy ? '취소중' : '취소'}</button>
                   </div>
                 )
@@ -1444,13 +1440,13 @@ export default function ShipmentsPage() {
       })()}
 
       {/* 전송 로그 */}
-      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
+      <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: c.textSub }}>전송 로그</span>
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>전송 로그</span>
           </div>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: `1px solid ${c.btnBorder}`, color: c.textMuted, borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
             <button onClick={async () => {
               setLogMessages(['로그가 초기화되었습니다.'])
               sinceIdxRef.current = 0
@@ -1458,9 +1454,9 @@ export default function ShipmentsPage() {
                 const { API_BASE_URL: apiBase } = await import('@/config/api')
                 await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/shipment-logs/clear`, { method: 'POST' })
               } catch { /* ignore */ }
-            }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: `1px solid ${c.btnBorder}`, color: c.textMuted, borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+            }} style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'transparent', border: '1px solid #252B3B', color: '#666', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
             <button onClick={handleMarketDelete}
-              style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: c.danger, borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
+              style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}>마켓삭제</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('cancel')
                 const ts = fmtTime()
@@ -1496,10 +1492,10 @@ export default function ShipmentsPage() {
                 setTransmitting(false)
                 setStopping('')
               }}
-                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,180,0,0.4)' : 'rgba(255,180,0,0.15)', color: c.warn, border: '1px solid rgba(255,180,0,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'cancel' ? 'rgba(255,180,0,0.4)' : 'rgba(255,180,0,0.15)', color: '#FFB800', border: '1px solid rgba(255,180,0,0.4)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: stopping ? 0.7 : 1 }}
               >{stopping === 'cancel' ? '일시정지중...' : '일시정지'}</button>
             <button disabled={!pausedJobPayload || transmitting || !!stopping} onClick={handleResume}
-                style={{ padding: '4px 14px', fontSize: '0.78rem', background: pausedJobPayload && !transmitting && !stopping ? 'rgba(76,175,80,0.15)' : 'rgba(76,175,80,0.06)', color: pausedJobPayload && !transmitting && !stopping ? c.success : `${c.success}55`, border: `1px solid ${pausedJobPayload && !transmitting && !stopping ? 'rgba(76,175,80,0.4)' : 'rgba(76,175,80,0.15)'}`, borderRadius: '4px', cursor: pausedJobPayload && !transmitting && !stopping ? 'pointer' : 'not-allowed', fontWeight: 600, opacity: pausedJobPayload && !transmitting && !stopping ? 1 : 0.5 }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: pausedJobPayload && !transmitting && !stopping ? 'rgba(76,175,80,0.15)' : 'rgba(76,175,80,0.06)', color: pausedJobPayload && !transmitting && !stopping ? '#4CAF50' : '#4CAF5055', border: `1px solid ${pausedJobPayload && !transmitting && !stopping ? 'rgba(76,175,80,0.4)' : 'rgba(76,175,80,0.15)'}`, borderRadius: '4px', cursor: pausedJobPayload && !transmitting && !stopping ? 'pointer' : 'not-allowed', fontWeight: 600, opacity: pausedJobPayload && !transmitting && !stopping ? 1 : 0.5 }}
               >이어하기</button>
             <button disabled={!!stopping} onClick={async () => {
                 setStopping('emergency')
@@ -1521,11 +1517,11 @@ export default function ShipmentsPage() {
                 setTransmitting(false)
                 setStopping('')
               }}
-                style={{ ...btn('danger'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: stopping === 'emergency' ? 'rgba(255,50,50,0.6)' : 'rgba(255,50,50,0.3)', color: '#FF4444', border: '1px solid rgba(255,50,50,0.6)', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
               >{stopping === 'emergency' ? '취소중...' : '작업취소'}</button>
             {<>
               <button onClick={() => handleStart()}
-                style={{ ...btn('secondary'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px' }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.4)', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >선택전송</button>
               <button onClick={async () => {
                 // 전체 상품 ID를 서버에서 조회 → Job에 직접 전달 (프론트 필터링 스킵)
@@ -1670,10 +1666,10 @@ export default function ShipmentsPage() {
                   }, JOB_POLL_INTERVAL_MS)
                 } catch (e) { showAlert(e instanceof Error ? e.message : '전송 실패', 'error') }
               }}
-                style={{ ...btn('primary'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px' }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 600 }}
               >검색결과전송 ({fmtNum(totalCount)})</button>
               <button onClick={handleSearchDelete}
-                style={{ ...btn('danger'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer' }}
+                style={{ padding: '4px 14px', fontSize: '0.78rem', background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.35)', color: '#FF6B6B', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer', fontWeight: 600 }}
               >검색결과삭제 ({fmtNum(totalCount)})</button>
             </>}
           </div>
@@ -1686,10 +1682,10 @@ export default function ShipmentsPage() {
             // 바닥에서 40px 이내면 "끝에 붙어있음"으로 간주 — 사용자가 위로 스크롤하면 자동 따라감 해제
             stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
           }}
-          style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: c.text }}
+          style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.73rem', lineHeight: 1.8, color: '#DCE0E8' }}
         >
           {logMessages.map((msg, i) => (
-            <div key={i} style={{ color: c.text }}>{fmtTextNumbers(msg)}</div>
+            <div key={i} style={{ color: '#DCE0E8' }}>{fmtTextNumbers(msg)}</div>
           ))}
         </div>
         {/* 프로그레스바 */}
@@ -1697,10 +1693,10 @@ export default function ShipmentsPage() {
       </div>
 
       {/* 상품 목록 테이블 */}
-      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', overflow: 'hidden' }}>
+      <div style={{ background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D', borderRadius: '12px', overflow: 'hidden' }}>
         {/* 상단 탭 */}
-        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
-          <span style={{ fontSize: '0.8rem', color: c.textMuted }}>총 <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(totalCount)}</span> 개의 상품이 검색되었습니다.</span>
+        <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid #2D2D2D', gap: '8px' }}>
+          <span style={{ fontSize: '0.8rem', color: '#888' }}>총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(totalCount)}</span> 개의 상품이 검색되었습니다.</span>
           <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
             <option value="update-desc">상품업데이트 날짜순 ▼</option>
             <option value="update-asc">상품업데이트 날짜순 ▲</option>
@@ -1721,53 +1717,53 @@ export default function ShipmentsPage() {
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
           <thead>
-            <tr style={{ background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
-              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={pageProducts.length > 0 && pageProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: c.primary }} /></th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: c.textSub, width: '40px' }}>No</th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: c.textSub }}>상품번호</th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: c.textSub }}>사이트</th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: c.textSub }}>상품명</th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: c.textSub }}>상품업데이트</th>
-              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: c.textSub }}>마켓 전송</th>
+            <tr style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid #2D2D2D' }}>
+              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={pageProducts.length > 0 && pageProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: '#F59E0B' }} /></th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#888', width: '40px' }}>No</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>상품번호</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>사이트</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: '#888' }}>상품명</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#888' }}>상품업데이트</th>
+              <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: '#888' }}>마켓 전송</th>
             </tr>
           </thead>
           <tbody>
             {!hasSearchedRef.current ? (
-              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>검색 조건을 입력하고 검색 버튼을 눌러주세요</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>검색 조건을 입력하고 검색 버튼을 눌러주세요</td></tr>
             ) : loading ? (
-              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
             ) : products.length === 0 ? (
-              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>상품이 없습니다</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>상품이 없습니다</td></tr>
             ) : pageProducts.map((p, idx) => {
               const regAccounts = p.registered_accounts || []
               const regMarkets = regAccounts.map(aid => accountsById.get(aid)?.market_name).filter(Boolean)
               const optCount = (p.options || []).length
               return (
-                <tr key={p.id} style={{ borderBottom: `1px solid ${c.border}`, verticalAlign: 'top' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = c.surfaceAlt)}
+                <tr key={p.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)', verticalAlign: 'top' }}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center' }}>
-                    <input type="checkbox" checked={selectedProducts.includes(p.id)} onChange={() => toggleProduct(p.id)} style={{ accentColor: c.primary }} />
+                    <input type="checkbox" checked={selectedProducts.includes(p.id)} onChange={() => toggleProduct(p.id)} style={{ accentColor: '#F59E0B' }} />
                   </td>
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: c.textMuted, fontSize: '0.72rem' }}>{(currentPage - 1) * pageSize + idx + 1}</td>
-                  <td style={{ padding: '0.625rem 0.5rem', color: c.textMuted, fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
+                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#666', fontSize: '0.72rem' }}>{(currentPage - 1) * pageSize + idx + 1}</td>
+                  <td style={{ padding: '0.625rem 0.5rem', color: '#666', fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
                   <td style={{ padding: '0.625rem 0.5rem' }}>
-                    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, color: SITE_COLORS[p.source_site] || c.textMuted, background: `${SITE_COLORS[p.source_site] || c.textMuted}18`, border: `1px solid ${SITE_COLORS[p.source_site] || c.textMuted}40` }}>{p.source_site}</span>
+                    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, color: SITE_COLORS[p.source_site] || '#888', background: `${SITE_COLORS[p.source_site] || '#888'}18`, border: `1px solid ${SITE_COLORS[p.source_site] || '#888'}40` }}>{p.source_site}</span>
                   </td>
                   <td style={{ padding: '0.625rem 0.5rem' }}>
                     <div>
-                      <a href={`/samba/products?highlight=${p.id}`} style={{ color: c.text, textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
+                      <a href={`/samba/products?highlight=${p.id}`} style={{ color: '#DCE0E8', textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
                         onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
                         onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
                       >
-                        [{p.site_product_id || ''}] {p.brand ? <span style={{ color: c.text, fontWeight: 600 }}>[{p.brand}]</span> : ''}{p.brand ? ' ' : ''}{p.name} {optCount > 0 ? <span style={{ color: c.text }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
+                        [{p.site_product_id || ''}] {p.brand ? <span style={{ color: '#A78BFA', fontWeight: 600 }}>[{p.brand}]</span> : ''}{p.brand ? ' ' : ''}{p.name} {optCount > 0 ? <span style={{ color: '#DCE0E8' }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
                       </a>
                     </div>
                     {regMarkets.length > 0 && (
-                      <div style={{ fontSize: '0.72rem', color: c.textSub, marginTop: '2px' }}>
+                      <div style={{ fontSize: '0.72rem', color: '#888', marginTop: '2px' }}>
                         (등록된 마켓 : {regMarkets.map((m, i) => (
-                          <span key={i}><span style={{ color: c.text }}>{m}</span>{i < regMarkets.length - 1 ? ' / ' : ''}</span>
+                          <span key={i}><span style={{ color: '#FF8C00' }}>{m}</span>{i < regMarkets.length - 1 ? ' / ' : ''}</span>
                         ))})
                       </div>
                     )}
@@ -1778,14 +1774,14 @@ export default function ShipmentsPage() {
                       if (!ts) return '-'
                       const d = new Date(ts)
                       return (
-                        <span style={{ color: c.textSub }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
+                        <span style={{ color: '#AAB0BC' }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
                       )
                     })()}
                   </td>
                   <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
                     {(() => {
                       const regAccs = (p.registered_accounts || [])
-                      if (regAccs.length === 0) return <span style={{ color: c.textMuted }}>-</span>
+                      if (regAccs.length === 0) return <span style={{ color: '#555' }}>-</span>
                       const sent = p.last_sent_data || {}
                       return regAccs.map(aid => {
                         const acc = accountsById.get(aid)
@@ -1797,8 +1793,8 @@ export default function ShipmentsPage() {
                         })() : ''
                         return (
                           <div key={aid} style={{ marginBottom: '2px', fontSize: '0.68rem' }}>
-                            <span style={{ color: c.success }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
-                            {timeLabel && <span style={{ color: c.textSub, marginLeft: '6px' }}>{timeLabel}</span>}
+                            <span style={{ color: '#51CF66' }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
+                            {timeLabel && <span style={{ color: '#AAB0BC', marginLeft: '6px' }}>{timeLabel}</span>}
                           </div>
                         )
                       })
@@ -1816,20 +1812,20 @@ export default function ShipmentsPage() {
             <button
               disabled={currentPage <= 1}
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: currentPage <= 1 ? c.textMuted : c.text, cursor: currentPage <= 1 ? 'default' : 'pointer' }}
+              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage <= 1 ? '#444' : '#C5C5C5', cursor: currentPage <= 1 ? 'default' : 'pointer' }}
             >◀</button>
             {Array.from({ length: Math.ceil(totalCount / pageSize) }, (_, i) => i + 1)
               .filter(page => Math.abs(page - currentPage) <= 2 || page === 1 || page === Math.ceil(totalCount / pageSize))
               .map((page, i, arr) => (
                 <span key={page}>
-                  {i > 0 && arr[i - 1] !== page - 1 && <span style={{ color: c.textMuted }}>…</span>}
+                  {i > 0 && arr[i - 1] !== page - 1 && <span style={{ color: '#555' }}>…</span>}
                   <button
                     onClick={() => setCurrentPage(page)}
                     style={{
                       padding: '4px 10px', fontSize: '0.78rem', borderRadius: '4px', cursor: 'pointer',
-                      background: page === currentPage ? '#e3f4f0' : 'transparent',
-                      border: page === currentPage ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
-                      color: page === currentPage ? '#0f6a5b' : c.text,
+                      background: page === currentPage ? 'rgba(255,140,0,0.2)' : 'transparent',
+                      border: page === currentPage ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+                      color: page === currentPage ? '#FF8C00' : '#C5C5C5',
                       fontWeight: page === currentPage ? 600 : 400,
                     }}
                   >{page}</button>
@@ -1838,9 +1834,9 @@ export default function ShipmentsPage() {
             <button
               disabled={currentPage >= Math.ceil(totalCount / pageSize)}
               onClick={() => setCurrentPage(p => p + 1)}
-              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? c.textMuted : c.text, cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
+              style={{ padding: '4px 10px', fontSize: '0.78rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: currentPage >= Math.ceil(totalCount / pageSize) ? '#444' : '#C5C5C5', cursor: currentPage >= Math.ceil(totalCount / pageSize) ? 'default' : 'pointer' }}
             >▶</button>
-            <span style={{ fontSize: '0.72rem', color: c.textMuted, marginLeft: '8px' }}>
+            <span style={{ fontSize: '0.72rem', color: '#666', marginLeft: '8px' }}>
               {fmtNum(totalCount)}개 중 {fmtNum((currentPage - 1) * pageSize + 1)}~{fmtNum(Math.min(currentPage * pageSize, totalCount))}
             </span>
           </div>

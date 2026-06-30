@@ -5,10 +5,7 @@ import { aiSourcingApi, type AISourcingResult } from '@/lib/samba/api/operations
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtNum } from '@/lib/samba/styles'
-
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { SITES } from '../constants'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   aiResult: AISourcingResult
@@ -27,7 +24,6 @@ interface Props {
 }
 
 export default function AiSourcingConfirmStep(props: Props) {
-  const c = useTheme()
   const {
     aiResult, aiSelectedCombos, aiExcludedBrands, aiMinCount, aiCreating, aiSourceSite,
     setAiSelectedCombos, setAiExcludedBrands, setAiSourcingStep, setAiResult, setAiCreating,
@@ -41,18 +37,18 @@ export default function AiSourcingConfirmStep(props: Props) {
         display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '16px',
       }}>
         {[
-          { label: '발견 브랜드', value: aiResult.summary.total_brands_found, color: c.text },
-          { label: '발견 키워드쌍', value: aiResult.summary.total_pairs || 0, color: c.text },
-          { label: 'IP안전', value: aiResult.summary.safe_brands, color: c.success },
-          { label: '생성 그룹', value: aiResult.summary.total_combinations, color: c.text },
-          { label: '예상 상품', value: fmtNum(aiResult.summary.total_estimated_products), color: c.text },
+          { label: '발견 브랜드', value: aiResult.summary.total_brands_found, color: '#4C9AFF' },
+          { label: '발견 키워드쌍', value: aiResult.summary.total_pairs || 0, color: '#E5A0FF' },
+          { label: 'IP안전', value: aiResult.summary.safe_brands, color: '#51CF66' },
+          { label: '생성 그룹', value: aiResult.summary.total_combinations, color: '#FFB84D' },
+          { label: '예상 상품', value: fmtNum(aiResult.summary.total_estimated_products), color: '#A29BFE' },
         ].map(s => (
           <div key={s.label} style={{
-            background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px',
+            background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px',
             padding: '10px', textAlign: 'center',
           }}>
             <div style={{ fontSize: '1.1rem', fontWeight: 700, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: '0.72rem', color: c.textSub }}>{s.label}</div>
+            <div style={{ fontSize: '0.72rem', color: '#888' }}>{s.label}</div>
           </div>
         ))}
       </div>
@@ -60,11 +56,11 @@ export default function AiSourcingConfirmStep(props: Props) {
       {/* 선택된 소싱처 표시 */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px',
-        background: c.accentBg, border: `1px solid ${c.warn}`,
+        background: 'rgba(255,140,0,0.06)', border: '1px solid rgba(255,140,0,0.2)',
         borderRadius: '8px', padding: '8px 14px',
       }}>
-        <span style={{ fontSize: '0.78rem', color: c.text, fontWeight: 600 }}>수집 소싱처: {SITES.find(s => s.id === aiSourceSite)?.label || aiSourceSite}</span>
-        <span style={{ fontSize: '0.7rem', color: c.textMuted }}>그룹명: {aiSourceSite}_브랜드_키워드</span>
+        <span style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600 }}>수집 소싱처: {SITES.find(s => s.id === aiSourceSite)?.label || aiSourceSite}</span>
+        <span style={{ fontSize: '0.7rem', color: '#666' }}>그룹명: {aiSourceSite}_브랜드_키워드</span>
       </div>
 
       {/* 근거 데이터 */}
@@ -81,12 +77,12 @@ export default function AiSourcingConfirmStep(props: Props) {
         const entries = Object.entries(sourceMap)
         if (entries.length === 0) return null
         return (
-          <div style={{ marginBottom: '14px', padding: '12px 14px', background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', maxHeight: '300px', overflowY: 'auto' }}>
-            <div style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '8px', fontWeight: 600 }}>분석 근거 <span style={{ color: c.textMuted, fontWeight: 400 }}>— 클릭하여 제외</span></div>
+          <div style={{ marginBottom: '14px', padding: '12px 14px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+            <div style={{ fontSize: '0.75rem', color: '#888', marginBottom: '8px', fontWeight: 600 }}>분석 근거 <span style={{ color: '#555', fontWeight: 400 }}>— 클릭하여 제외</span></div>
             {entries.map(([src, data]) => (
               <div key={src} style={{ marginBottom: '6px', fontSize: '0.78rem', lineHeight: 1.8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '2px' }}>
-                <span style={{ color: c.text, fontWeight: 600 }}>{src}</span>
-                <span style={{ color: c.textMuted }}> : </span>
+                <span style={{ color: '#FFB84D', fontWeight: 600 }}>{src}</span>
+                <span style={{ color: '#666' }}> : </span>
                 {data.brands.map(brand => {
                   const excluded = aiExcludedBrands.has(brand)
                   return (
@@ -112,8 +108,8 @@ export default function AiSourcingConfirmStep(props: Props) {
                       }}
                       style={{
                         cursor: 'pointer', marginRight: '6px', padding: '1px 6px', borderRadius: '4px',
-                        background: excluded ? 'rgba(255,107,107,0.1)' : c.surfaceAlt,
-                        color: excluded ? c.danger : c.text,
+                        background: excluded ? 'rgba(255,107,107,0.1)' : 'rgba(255,255,255,0.05)',
+                        color: excluded ? '#FF6B6B' : '#E5E5E5',
                         textDecoration: excluded ? 'line-through' : 'none',
                         opacity: excluded ? 0.5 : 1, transition: 'all 0.15s',
                       }}
@@ -122,7 +118,7 @@ export default function AiSourcingConfirmStep(props: Props) {
                 })}
                 {data.keywords.length > 0 && (
                   <>
-                    <span style={{ color: c.textMuted }}> / </span>
+                    <span style={{ color: '#666' }}> / </span>
                     {data.keywords.map(kw => {
                       const kwExcluded = aiExcludedBrands.has(`__kw__${kw}`)
                       return (
@@ -149,8 +145,8 @@ export default function AiSourcingConfirmStep(props: Props) {
                           }}
                           style={{
                             cursor: 'pointer', marginRight: '6px', padding: '1px 6px', borderRadius: '4px',
-                            background: kwExcluded ? 'rgba(255,107,107,0.1)' : c.surfaceAlt,
-                            color: kwExcluded ? c.danger : c.text,
+                            background: kwExcluded ? 'rgba(255,107,107,0.1)' : 'rgba(76,154,255,0.08)',
+                            color: kwExcluded ? '#FF6B6B' : '#4C9AFF',
                             textDecoration: kwExcluded ? 'line-through' : 'none',
                             opacity: kwExcluded ? 0.5 : 1, transition: 'all 0.15s',
                           }}
@@ -171,9 +167,9 @@ export default function AiSourcingConfirmStep(props: Props) {
         if (unsafeBrands.length === 0) return null
         return (
           <div style={{ marginBottom: '14px', padding: '12px 14px', background: 'rgba(255,107,107,0.04)', border: '1px solid rgba(255,107,107,0.15)', borderRadius: '8px' }}>
-            <div style={{ fontSize: '0.75rem', color: c.danger, marginBottom: '8px', fontWeight: 600 }}>
+            <div style={{ fontSize: '0.75rem', color: '#FF6B6B', marginBottom: '8px', fontWeight: 600 }}>
               IP위험 브랜드 ({fmtNum(unsafeBrands.length)}개)
-              {aiExcludedBrands.size > 0 && <span style={{ color: c.textMuted, fontWeight: 400 }}> — {fmtNum(aiExcludedBrands.size)}개 제외</span>}
+              {aiExcludedBrands.size > 0 && <span style={{ color: '#888', fontWeight: 400 }}> — {fmtNum(aiExcludedBrands.size)}개 제외</span>}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
               {unsafeBrands.map(b => {
@@ -204,7 +200,7 @@ export default function AiSourcingConfirmStep(props: Props) {
                       fontSize: '0.75rem', padding: '3px 10px', borderRadius: '12px', cursor: 'pointer',
                       background: excluded ? 'rgba(255,107,107,0.12)' : 'rgba(255,107,107,0.06)',
                       border: `1px solid rgba(255,107,107,${excluded ? '0.4' : '0.2'})`,
-                      color: c.danger,
+                      color: '#FF6B6B',
                       textDecoration: 'line-through',
                       opacity: excluded ? 0.5 : 1,
                       transition: 'all 0.15s',
@@ -215,7 +211,7 @@ export default function AiSourcingConfirmStep(props: Props) {
                 )
               })}
             </div>
-            <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '6px' }}>
+            <div style={{ fontSize: '0.68rem', color: '#666', marginTop: '6px' }}>
               취소선 = IP위험 · 클릭하여 제외 (흐리게 처리됨)
             </div>
           </div>
@@ -226,7 +222,7 @@ export default function AiSourcingConfirmStep(props: Props) {
       <div style={{ maxHeight: '350px', overflowY: 'auto', marginBottom: '12px' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
           <thead>
-            <tr style={{ borderBottom: `1px solid ${c.border}`, position: 'sticky', top: 0, background: c.surfaceAlt }}>
+            <tr style={{ borderBottom: '1px solid #2D2D2D', position: 'sticky', top: 0, background: '#1A1A1A' }}>
               <th style={{ padding: '8px 6px', textAlign: 'left', width: '36px' }}>
                 <input type='checkbox'
                   checked={(() => {
@@ -245,14 +241,14 @@ export default function AiSourcingConfirmStep(props: Props) {
                       setAiSelectedCombos(new Set())
                     }
                   }}
-                  style={{ accentColor: c.primary }}
+                  style={{ accentColor: '#FF8C00' }}
                 />
               </th>
-              <th style={{ padding: '8px 6px', textAlign: 'left', color: c.textSub }}>소싱처</th>
-              <th style={{ padding: '8px 6px', textAlign: 'left', color: c.textSub }}>브랜드</th>
-              <th style={{ padding: '8px 6px', textAlign: 'left', color: c.textSub }}>키워드</th>
-              <th style={{ padding: '8px 6px', textAlign: 'right', color: c.textSub }}>예상상품수</th>
-              <th style={{ padding: '8px 6px', textAlign: 'center', color: c.textSub }}>
+              <th style={{ padding: '8px 6px', textAlign: 'left', color: '#888' }}>소싱처</th>
+              <th style={{ padding: '8px 6px', textAlign: 'left', color: '#888' }}>브랜드</th>
+              <th style={{ padding: '8px 6px', textAlign: 'left', color: '#888' }}>키워드</th>
+              <th style={{ padding: '8px 6px', textAlign: 'right', color: '#888' }}>예상상품수</th>
+              <th style={{ padding: '8px 6px', textAlign: 'center', color: '#888' }}>
                 <span>IP안전</span>
                 {aiResult.combinations.some(c => !c.is_safe && aiSelectedCombos.has(aiResult.combinations.indexOf(c))) && (
                   <button
@@ -263,7 +259,11 @@ export default function AiSourcingConfirmStep(props: Props) {
                       })
                       setAiSelectedCombos(next)
                     }}
-                    style={{ ...btn('danger'), marginLeft: '4px', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px' }}
+                    style={{
+                      marginLeft: '4px', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px',
+                      background: 'rgba(255,107,107,0.12)', border: '1px solid rgba(255,107,107,0.3)',
+                      color: '#FF6B6B', cursor: 'pointer',
+                    }}
                   >위험 해제</button>
                 )}
               </th>
@@ -275,8 +275,8 @@ export default function AiSourcingConfirmStep(props: Props) {
               if (combo.estimated_count < aiMinCount) return null
               return (
                 <tr key={idx} style={{
-                  borderBottom: `1px solid ${c.border}`,
-                  background: isExcluded ? 'rgba(255,107,107,0.04)' : aiSelectedCombos.has(idx) ? 'rgba(21,120,106,0.06)' : 'transparent',
+                  borderBottom: '1px solid #1D1D1D',
+                  background: isExcluded ? 'rgba(255,107,107,0.04)' : aiSelectedCombos.has(idx) ? 'rgba(108,92,231,0.06)' : 'transparent',
                   opacity: isExcluded ? 0.4 : 1,
                 }}>
                   <td style={{ padding: '6px' }}>
@@ -288,21 +288,21 @@ export default function AiSourcingConfirmStep(props: Props) {
                         e.target.checked ? next.add(idx) : next.delete(idx)
                         setAiSelectedCombos(next)
                       }}
-                      style={{ accentColor: c.primary }}
+                      style={{ accentColor: '#FF8C00' }}
                     />
                   </td>
-                  <td style={{ padding: '6px', color: SITE_COLORS[combo.source_site] || c.textMuted }}>
+                  <td style={{ padding: '6px', color: SITE_COLORS[combo.source_site] || '#888' }}>
                     {combo.source_site}
                   </td>
-                  <td style={{ padding: '6px', color: !combo.is_safe ? c.danger : isExcluded ? c.textMuted : c.text, fontWeight: 500, textDecoration: !combo.is_safe ? 'line-through' : 'none' }}>{combo.brand}</td>
-                  <td style={{ padding: '6px', color: c.text }}>{combo.keyword || combo.category}</td>
-                  <td style={{ padding: '6px', textAlign: 'right', color: c.text, fontWeight: 600 }}>
+                  <td style={{ padding: '6px', color: !combo.is_safe ? '#FF6B6B' : isExcluded ? '#888' : '#E5E5E5', fontWeight: 500, textDecoration: !combo.is_safe ? 'line-through' : 'none' }}>{combo.brand}</td>
+                  <td style={{ padding: '6px', color: '#C5C5C5' }}>{combo.keyword || combo.category}</td>
+                  <td style={{ padding: '6px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
                     {fmtNum(combo.estimated_count)}
                   </td>
                   <td style={{ padding: '6px', textAlign: 'center' }}>
                     {combo.is_safe
-                      ? <span style={{ color: c.success, fontSize: '0.85rem' }}>안전</span>
-                      : <span style={{ color: c.danger, fontSize: '0.85rem' }}>위험</span>
+                      ? <span style={{ color: '#51CF66', fontSize: '0.85rem' }}>안전</span>
+                      : <span style={{ color: '#FF6B6B', fontSize: '0.85rem' }}>위험</span>
                     }
                   </td>
                 </tr>
@@ -314,7 +314,7 @@ export default function AiSourcingConfirmStep(props: Props) {
 
       {/* 선택 요약 + 버튼 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '0.82rem', color: c.textMuted }}>
+        <span style={{ fontSize: '0.82rem', color: '#888' }}>
           {fmtNum(aiResult.combinations.filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`)).length)}개 선택 / 예상{' '}
           {aiResult.combinations
             .filter((c, i) => aiSelectedCombos.has(i) && !aiExcludedBrands.has(c.brand) && !aiExcludedBrands.has(`__kw__${c.keyword || c.category}`))
@@ -325,7 +325,11 @@ export default function AiSourcingConfirmStep(props: Props) {
           <button onClick={() => {
             setAiSourcingStep('config')
             setAiResult(null)
-          }} style={{ ...btn('secondary'), padding: '8px 16px', borderRadius: '6px' }}>다시 설정</button>
+          }} style={{
+            padding: '8px 16px', borderRadius: '6px',
+            background: 'transparent', border: '1px solid #3D3D3D',
+            color: '#888', cursor: 'pointer',
+          }}>다시 설정</button>
           <button
             onClick={async () => {
               const selected = aiResult.combinations
@@ -351,8 +355,11 @@ export default function AiSourcingConfirmStep(props: Props) {
             }}
             disabled={aiCreating || aiSelectedCombos.size === 0}
             style={{
-              ...btn('primary'), ...(aiCreating || aiSelectedCombos.size === 0 ? btnDisabled : null),
-              padding: '8px 20px', borderRadius: '6px', fontSize: '0.85rem',
+              padding: '8px 20px', borderRadius: '6px',
+              background: aiCreating ? 'rgba(108,92,231,0.1)' : 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
+              color: '#fff', fontWeight: 700, fontSize: '0.85rem',
+              border: 'none', cursor: aiCreating ? 'not-allowed' : 'pointer',
+              opacity: aiSelectedCombos.size === 0 ? 0.5 : 1,
             }}
           >
             {aiCreating ? '생성중...' : `${fmtNum(aiSelectedCombos.size)}개 그룹 생성`}

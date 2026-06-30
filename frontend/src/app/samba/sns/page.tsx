@@ -6,8 +6,6 @@ import { snsApi, wholesaleApi } from '@/lib/samba/api/operations'
 import { fmtNum } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
-
-import { useTheme } from '@/lib/samba/useTheme'
 import {
   type TabType, type DashboardData, type PostItem, type PostsResponse,
   type WpSite, type KeywordGroup, type SseLog,
@@ -21,7 +19,6 @@ const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 // ── 메인 컴포넌트 ──
 
 export default function SNSPage() {
-  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-SNS' }, [])
   const [tab, setTab] = useState<TabType>('overview')
 
@@ -310,16 +307,16 @@ export default function SNSPage() {
       {/* 헤더 + 탭 */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
         <div>
-          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: c.text, margin: 0 }}>SNS 마케팅</h2>
-          <p style={{ fontSize: '0.78rem', color: c.textMuted, marginTop: '4px' }}>자동 포스팅 · 도매몰 연동 · 수익 대시보드</p>
+          <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#E5E5E5', margin: 0 }}>SNS 마케팅</h2>
+          <p style={{ fontSize: '0.78rem', color: '#8A95B0', marginTop: '4px' }}>자동 포스팅 · 도매몰 연동 · 수익 대시보드</p>
         </div>
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
           {TAB_LIST.map(t => (
             <button key={t.key} onClick={() => setTab(t.key)} style={{
               padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600,
-              background: tab === t.key ? c.primary : c.surfaceAlt,
-              color: tab === t.key ? '#fff' : c.textMuted,
-              border: tab === t.key ? 'none' : `1px solid ${c.border}`,
+              background: tab === t.key ? '#FF8C00' : 'rgba(255,255,255,0.05)',
+              color: tab === t.key ? '#000' : '#8A95B0',
+              border: tab === t.key ? 'none' : '1px solid #2D2D2D',
               whiteSpace: 'nowrap',
             }}>
               {t.label}
@@ -334,19 +331,19 @@ export default function SNSPage() {
           {/* KPI 카드 */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
             <div style={cardPad}>
-              <div style={{ fontSize: '0.7rem', color: c.textSub, marginBottom: '4px' }}>오늘 포스팅</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: c.text }}>{fmtNum(dashboard?.today_posts ?? 0)}건</div>
+              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>오늘 포스팅</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#4C9AFF' }}>{fmtNum(dashboard?.today_posts ?? 0)}건</div>
             </div>
             <div style={cardPad}>
-              <div style={{ fontSize: '0.7rem', color: c.textSub, marginBottom: '4px' }}>전체 포스팅</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: c.success }}>{fmtNum(dashboard?.total_posts ?? 0)}건</div>
+              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>전체 포스팅</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#51CF66' }}>{fmtNum(dashboard?.total_posts ?? 0)}건</div>
             </div>
             <div style={cardPad}>
-              <div style={{ fontSize: '0.7rem', color: c.textSub, marginBottom: '4px' }}>성공률</div>
-              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: c.text }}>{dashboard?.success_rate ?? 0}%</div>
+              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>성공률</div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 700, color: '#FF8C00' }}>{dashboard?.success_rate ?? 0}%</div>
             </div>
             <div style={cardPad}>
-              <div style={{ fontSize: '0.7rem', color: c.textSub, marginBottom: '4px' }}>자동화 상태</div>
+              <div style={{ fontSize: '0.7rem', color: '#8A95B0', marginBottom: '4px' }}>자동화 상태</div>
               <div style={{ marginTop: '4px' }}>
                 {getStatusBadge(dashboard?.auto_status === 'running' ? 'running' : 'stopped')}
               </div>
@@ -357,13 +354,13 @@ export default function SNSPage() {
           <div style={cardPad}>
             <h3 style={sectionTitle}>최근 포스팅 5건</h3>
             {recentPosts.length === 0 ? (
-              <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted, fontSize: '0.85rem' }}>
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
                 아직 포스팅 이력이 없습니다.
               </div>
             ) : (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                  <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                     <th style={thStyle}>제목</th>
                     <th style={{ ...thStyle, textAlign: 'center' }}>카테고리</th>
                     <th style={{ ...thStyle, textAlign: 'center' }}>상태</th>
@@ -372,11 +369,11 @@ export default function SNSPage() {
                 </thead>
                 <tbody>
                   {recentPosts.map(p => (
-                    <tr key={p.id} style={{ borderBottom: `1px solid ${c.border}` }}>
+                    <tr key={p.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                       <td style={tdStyle}>{p.title}</td>
                       <td style={{ ...tdStyle, textAlign: 'center' }}>{p.category}</td>
                       <td style={{ ...tdStyle, textAlign: 'center' }}>{getStatusBadge(p.status)}</td>
-                      <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: c.textMuted }}>{fmtDate(p.published_at)}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: '#8A95B0' }}>{fmtDate(p.published_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -394,7 +391,7 @@ export default function SNSPage() {
             <h3 style={sectionTitle}>워드프레스 연결</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: '10px', alignItems: 'end' }}>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>사이트 URL</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>사이트 URL</label>
                 <input
                   style={inputBox}
                   placeholder="https://myblog.com"
@@ -403,7 +400,7 @@ export default function SNSPage() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>사용자명</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>사용자명</label>
                 <input
                   style={inputBox}
                   placeholder="admin"
@@ -412,7 +409,7 @@ export default function SNSPage() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>앱 비밀번호</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>앱 비밀번호</label>
                 <input
                   style={inputBox}
                   type="password"
@@ -433,16 +430,16 @@ export default function SNSPage() {
             {/* 연결된 사이트 목록 */}
             {wpSites.length > 0 && (
               <div style={{ marginTop: '16px' }}>
-                <div style={{ fontSize: '0.78rem', color: c.textSub, marginBottom: '8px' }}>연결된 WP 사이트</div>
+                <div style={{ fontSize: '0.78rem', color: '#8A95B0', marginBottom: '8px' }}>연결된 WP 사이트</div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   {wpSites.map(s => (
                     <div key={s.id}
                       onClick={() => setActiveSiteId(s.id)}
                       style={{
                         padding: '6px 12px', borderRadius: '8px', fontSize: '0.78rem', cursor: 'pointer', fontWeight: 600,
-                        background: activeSiteId === s.id ? '#e3f4f0' : c.surfaceAlt,
-                        color: activeSiteId === s.id ? '#0f6a5b' : c.textMuted,
-                        border: activeSiteId === s.id ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+                        background: activeSiteId === s.id ? 'rgba(255,140,0,0.15)' : 'rgba(255,255,255,0.03)',
+                        color: activeSiteId === s.id ? '#FF8C00' : '#8A95B0',
+                        border: activeSiteId === s.id ? '1px solid rgba(255,140,0,0.3)' : '1px solid #2D2D2D',
                       }}>
                       {s.site_name || s.site_url}
                     </div>
@@ -457,7 +454,7 @@ export default function SNSPage() {
             <h3 style={sectionTitle}>키워드 그룹 관리</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 2fr auto', gap: '10px', alignItems: 'end' }}>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>그룹명</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>그룹명</label>
                 <input
                   style={inputBox}
                   placeholder="그룹 이름"
@@ -466,7 +463,7 @@ export default function SNSPage() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>카테고리</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>카테고리</label>
                 <select
                   style={selectStyle}
                   value={kwForm.category}
@@ -478,7 +475,7 @@ export default function SNSPage() {
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>키워드 (콤마 구분)</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>키워드 (콤마 구분)</label>
                 <input
                   style={inputBox}
                   placeholder="키워드1, 키워드2, 키워드3"
@@ -495,14 +492,14 @@ export default function SNSPage() {
                 {keywordGroups.map(g => (
                   <div key={g.id} style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '10px 14px', background: c.surfaceAlt, borderRadius: '8px', border: `1px solid ${c.border}`,
+                    padding: '10px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid #2D2D2D',
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: c.text }}>{g.name}</span>
-                      <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '8px', background: c.surfaceAlt, color: c.textSub }}>
+                      <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#E5E5E5' }}>{g.name}</span>
+                      <span style={{ fontSize: '0.68rem', padding: '2px 8px', borderRadius: '8px', background: 'rgba(76,154,255,0.15)', color: '#4C9AFF' }}>
                         {ISSUE_CATEGORIES.find(c => c.value === g.category)?.label || g.category}
                       </span>
-                      <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{g.keywords.join(', ')}</span>
+                      <span style={{ fontSize: '0.72rem', color: '#8A95B0' }}>{g.keywords.join(', ')}</span>
                     </div>
                     <button style={btnDanger} onClick={() => handleDeleteKeywordGroup(g.id)}>삭제</button>
                   </div>
@@ -516,7 +513,7 @@ export default function SNSPage() {
             <h3 style={sectionTitle}>자동 포스팅 제어</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '16px' }}>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>포스팅 간격 (초)</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>포스팅 간격 (초)</label>
                 <input
                   style={inputBox}
                   type="number"
@@ -525,7 +522,7 @@ export default function SNSPage() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>일일 최대 포스팅</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>일일 최대 포스팅</label>
                 <input
                   style={inputBox}
                   type="number"
@@ -534,7 +531,7 @@ export default function SNSPage() {
                 />
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>언어</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>언어</label>
                 <select
                   style={selectStyle}
                   value={autoConfig.language}
@@ -556,7 +553,7 @@ export default function SNSPage() {
 
             {/* 상품 배너 HTML */}
             <div style={{ marginBottom: '16px' }}>
-              <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>상품 배너 HTML (선택)</label>
+              <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>상품 배너 HTML (선택)</label>
               <textarea
                 style={{ ...inputBox, minHeight: '60px', resize: 'vertical', fontFamily: 'monospace', fontSize: '0.75rem' }}
                 placeholder='<a href="https://shop.com/product"><img src="banner.jpg" /></a>'
@@ -567,24 +564,24 @@ export default function SNSPage() {
 
             {/* SSE 실시간 로그 */}
             <div>
-              <div style={{ fontSize: '0.78rem', color: c.textSub, marginBottom: '6px' }}>실시간 로그</div>
+              <div style={{ fontSize: '0.78rem', color: '#8A95B0', marginBottom: '6px' }}>실시간 로그</div>
               <div style={{
-                background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px',
+                background: '#0D0D0D', border: '1px solid #2D2D2D', borderRadius: '8px',
                 padding: '12px', maxHeight: '280px', overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.72rem',
               }}>
                 {sseLogs.length === 0 ? (
-                  <div style={{ color: c.textMuted }}>자동 포스팅을 시작하면 로그가 표시됩니다.</div>
+                  <div style={{ color: '#555' }}>자동 포스팅을 시작하면 로그가 표시됩니다.</div>
                 ) : (
                   sseLogs.map((log, i) => (
                     <div key={i} style={{
                       padding: '2px 0',
-                      color: log.event === 'success' ? c.success
-                        : log.event === 'fail' ? c.danger
-                        : log.event === 'error' ? c.danger
-                        : log.event === 'done' ? c.link
-                        : c.textMuted,
+                      color: log.event === 'success' ? '#51CF66'
+                        : log.event === 'fail' ? '#FF6B6B'
+                        : log.event === 'error' ? '#FF6B6B'
+                        : log.event === 'done' ? '#4C9AFF'
+                        : '#8A95B0',
                     }}>
-                      <span style={{ color: c.textMuted, marginRight: '6px' }}>[{log.event}]</span>
+                      <span style={{ color: '#555', marginRight: '6px' }}>[{log.event}]</span>
                       {log.message}
                     </div>
                   ))
@@ -601,7 +598,7 @@ export default function SNSPage() {
         <div style={cardPad}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
             <h3 style={{ ...sectionTitle, marginBottom: 0 }}>
-              포스팅 이력 <span style={{ fontSize: '0.72rem', color: c.textMuted, fontWeight: 400 }}>({fmtNum(postsTotal)}건)</span>
+              포스팅 이력 <span style={{ fontSize: '0.72rem', color: '#8A95B0', fontWeight: 400 }}>({fmtNum(postsTotal)}건)</span>
             </h3>
             <div style={{ display: 'flex', gap: '6px' }}>
               {[
@@ -611,9 +608,9 @@ export default function SNSPage() {
               ].map(f => (
                 <button key={f.value} onClick={() => { setPostsFilter(f.value); setPostsPage(1) }} style={{
                   padding: '4px 12px', fontSize: '0.72rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600,
-                  background: postsFilter === f.value ? c.primary : c.surfaceAlt,
-                  color: postsFilter === f.value ? '#fff' : c.textMuted,
-                  border: postsFilter === f.value ? 'none' : `1px solid ${c.border}`,
+                  background: postsFilter === f.value ? '#FF8C00' : 'rgba(255,255,255,0.05)',
+                  color: postsFilter === f.value ? '#000' : '#8A95B0',
+                  border: postsFilter === f.value ? 'none' : '1px solid #2D2D2D',
                 }}>
                   {f.label}
                 </button>
@@ -622,14 +619,14 @@ export default function SNSPage() {
           </div>
 
           {posts.length === 0 ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted, fontSize: '0.85rem' }}>
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
               포스팅 이력이 없습니다.
             </div>
           ) : (
             <>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                  <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                     <th style={thStyle}>제목</th>
                     <th style={{ ...thStyle, textAlign: 'center' }}>카테고리</th>
                     <th style={{ ...thStyle, textAlign: 'center' }}>키워드</th>
@@ -639,12 +636,12 @@ export default function SNSPage() {
                 </thead>
                 <tbody>
                   {posts.map(p => (
-                    <tr key={p.id} style={{ borderBottom: `1px solid ${c.border}` }}>
+                    <tr key={p.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                       <td style={{ ...tdStyle, maxWidth: '300px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.title}</td>
                       <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem' }}>{p.category}</td>
-                      <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: c.textMuted }}>{p.keyword}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: '#8A95B0' }}>{p.keyword}</td>
                       <td style={{ ...tdStyle, textAlign: 'center' }}>{getStatusBadge(p.status)}</td>
-                      <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: c.textMuted }}>{fmtDate(p.published_at)}</td>
+                      <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: '#8A95B0' }}>{fmtDate(p.published_at)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -660,7 +657,7 @@ export default function SNSPage() {
                   >
                     이전
                   </button>
-                  <span style={{ padding: '6px 12px', fontSize: '0.78rem', color: c.textMuted }}>
+                  <span style={{ padding: '6px 12px', fontSize: '0.78rem', color: '#8A95B0' }}>
                     {postsPage} / {postsTotalPages}
                   </span>
                   <button
@@ -685,7 +682,7 @@ export default function SNSPage() {
             <h3 style={sectionTitle}>도매몰 소싱 검색</h3>
             <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr auto', gap: '10px', alignItems: 'end' }}>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>소스</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>소스</label>
                 <select
                   style={selectStyle}
                   value={wsSource}
@@ -696,7 +693,7 @@ export default function SNSPage() {
                 </select>
               </div>
               <div>
-                <label style={{ fontSize: '0.72rem', color: c.textSub, display: 'block', marginBottom: '4px' }}>키워드</label>
+                <label style={{ fontSize: '0.72rem', color: '#8A95B0', display: 'block', marginBottom: '4px' }}>키워드</label>
                 <input
                   style={inputBox}
                   placeholder="검색할 상품 키워드"
@@ -719,7 +716,7 @@ export default function SNSPage() {
               <div style={{ marginTop: '16px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                    <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                       <th style={{ ...thStyle, width: '60px' }}>이미지</th>
                       <th style={thStyle}>상품명</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>가격</th>
@@ -728,17 +725,17 @@ export default function SNSPage() {
                   </thead>
                   <tbody>
                     {wsResults.map(p => (
-                      <tr key={p.id} style={{ borderBottom: `1px solid ${c.border}` }}>
+                      <tr key={p.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                         <td style={tdStyle}>
                           {p.image ? (
                             <img src={p.image} alt="" style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: '4px' }} />
                           ) : (
-                            <div style={{ width: '44px', height: '44px', background: c.surfaceAlt, borderRadius: '4px' }} />
+                            <div style={{ width: '44px', height: '44px', background: '#2D2D2D', borderRadius: '4px' }} />
                           )}
                         </td>
                         <td style={{ ...tdStyle, fontSize: '0.8rem' }}>{p.name}</td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 600 }}>{fmtNum(p.price)}원</td>
-                        <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: c.textMuted }}>{p.source}</td>
+                        <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: '#8A95B0' }}>{p.source}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -750,7 +747,7 @@ export default function SNSPage() {
           {/* 배너 HTML 설정 */}
           <div style={cardPad}>
             <h3 style={sectionTitle}>배너 HTML 설정</h3>
-            <p style={{ fontSize: '0.75rem', color: c.textMuted, marginBottom: '10px' }}>
+            <p style={{ fontSize: '0.75rem', color: '#8A95B0', marginBottom: '10px' }}>
               자동 포스팅 시 본문 하단에 삽입할 상품 배너 HTML을 입력하세요.
             </p>
             <textarea
@@ -784,20 +781,20 @@ export default function SNSPage() {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: c.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>1</span>
-                <span style={{ fontSize: '0.8rem', color: c.text }}>구글 에드센스에 가입합니다.</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>1</span>
+                <span style={{ fontSize: '0.8rem', color: '#E5E5E5' }}>구글 에드센스에 가입합니다.</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: c.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>2</span>
-                <span style={{ fontSize: '0.8rem', color: c.text }}>워드프레스에 에드센스 코드를 삽입합니다.</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>2</span>
+                <span style={{ fontSize: '0.8rem', color: '#E5E5E5' }}>워드프레스에 에드센스 코드를 삽입합니다.</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: c.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>3</span>
-                <span style={{ fontSize: '0.8rem', color: c.text }}>자동 포스팅이 트래픽을 모읍니다.</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>3</span>
+                <span style={{ fontSize: '0.8rem', color: '#E5E5E5' }}>자동 포스팅이 트래픽을 모읍니다.</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(81,207,102,0.15)', color: c.success, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>$</span>
-                <span style={{ fontSize: '0.8rem', color: c.success, fontWeight: 600 }}>광고 수익이 발생합니다!</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(81,207,102,0.15)', color: '#51CF66', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>$</span>
+                <span style={{ fontSize: '0.8rem', color: '#51CF66', fontWeight: 600 }}>광고 수익이 발생합니다!</span>
               </div>
             </div>
             <a
@@ -813,27 +810,27 @@ export default function SNSPage() {
           {/* 쿠팡 파트너스 안내 */}
           <div style={cardPad}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'rgba(255,107,107,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', color: c.danger, fontWeight: 700 }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: 'rgba(255,107,107,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', color: '#FF6B6B', fontWeight: 700 }}>
                 CP
               </div>
               <h3 style={{ ...sectionTitle, marginBottom: 0 }}>쿠팡 파트너스</h3>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: c.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>1</span>
-                <span style={{ fontSize: '0.8rem', color: c.text }}>쿠팡 파트너스에 가입합니다.</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>1</span>
+                <span style={{ fontSize: '0.8rem', color: '#E5E5E5' }}>쿠팡 파트너스에 가입합니다.</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: c.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>2</span>
-                <span style={{ fontSize: '0.8rem', color: c.text }}>배너 코드를 생성합니다.</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>2</span>
+                <span style={{ fontSize: '0.8rem', color: '#E5E5E5' }}>배너 코드를 생성합니다.</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: c.text, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>3</span>
-                <span style={{ fontSize: '0.8rem', color: c.text }}>상품 연동 탭에서 배너 HTML을 설정합니다.</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>3</span>
+                <span style={{ fontSize: '0.8rem', color: '#E5E5E5' }}>상품 연동 탭에서 배너 HTML을 설정합니다.</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(81,207,102,0.15)', color: c.success, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>$</span>
-                <span style={{ fontSize: '0.8rem', color: c.success, fontWeight: 600 }}>구매 커미션 수익이 발생합니다!</span>
+                <span style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'rgba(81,207,102,0.15)', color: '#51CF66', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 700 }}>$</span>
+                <span style={{ fontSize: '0.8rem', color: '#51CF66', fontWeight: 600 }}>구매 커미션 수익이 발생합니다!</span>
               </div>
             </div>
             <a
@@ -850,21 +847,21 @@ export default function SNSPage() {
           <div style={{ ...cardPad, gridColumn: '1 / -1' }}>
             <h3 style={sectionTitle}>수익 구조 안내</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
-              <div style={{ padding: '16px', background: c.surfaceAlt, borderRadius: '8px', border: `1px solid ${c.border}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: c.text, marginBottom: '6px' }}>에드센스 광고 수익</div>
-                <div style={{ fontSize: '0.75rem', color: c.textMuted, lineHeight: 1.5 }}>
+              <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4C9AFF', marginBottom: '6px' }}>에드센스 광고 수익</div>
+                <div style={{ fontSize: '0.75rem', color: '#8A95B0', lineHeight: 1.5 }}>
                   블로그 방문자가 광고를 클릭/조회하면 수익이 발생합니다. 월 1,000건 이상 포스팅 시 안정적 수익이 기대됩니다.
                 </div>
               </div>
-              <div style={{ padding: '16px', background: c.surfaceAlt, borderRadius: '8px', border: `1px solid ${c.border}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: c.text, marginBottom: '6px' }}>쿠팡 파트너스 커미션</div>
-                <div style={{ fontSize: '0.75rem', color: c.textMuted, lineHeight: 1.5 }}>
+              <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#FF8C00', marginBottom: '6px' }}>쿠팡 파트너스 커미션</div>
+                <div style={{ fontSize: '0.75rem', color: '#8A95B0', lineHeight: 1.5 }}>
                   블로그 배너를 통해 쿠팡에서 구매가 발생하면 최대 3% 커미션을 받습니다.
                 </div>
               </div>
-              <div style={{ padding: '16px', background: c.surfaceAlt, borderRadius: '8px', border: `1px solid ${c.border}` }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: c.success, marginBottom: '6px' }}>자사몰 유입</div>
-                <div style={{ fontSize: '0.75rem', color: c.textMuted, lineHeight: 1.5 }}>
+              <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+                <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#51CF66', marginBottom: '6px' }}>자사몰 유입</div>
+                <div style={{ fontSize: '0.75rem', color: '#8A95B0', lineHeight: 1.5 }}>
                   도매몰 상품 배너를 통해 자사 쇼핑몰로 트래픽을 유도하여 직접 판매 수익을 올립니다.
                 </div>
               </div>
@@ -878,13 +875,13 @@ export default function SNSPage() {
         <div style={cardPad}>
           <h3 style={sectionTitle}>등록된 WP 사이트</h3>
           {wpSites.length === 0 ? (
-            <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted, fontSize: '0.85rem' }}>
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
               등록된 워드프레스 사이트가 없습니다. 자동 포스팅 탭에서 사이트를 연결하세요.
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
                   <th style={thStyle}>사이트 URL</th>
                   <th style={{ ...thStyle, textAlign: 'center' }}>사이트명</th>
                   <th style={{ ...thStyle, textAlign: 'center' }}>상태</th>
@@ -894,15 +891,15 @@ export default function SNSPage() {
               </thead>
               <tbody>
                 {wpSites.map(s => (
-                  <tr key={s.id} style={{ borderBottom: `1px solid ${c.border}` }}>
+                  <tr key={s.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
                     <td style={tdStyle}>
-                      <a href={s.site_url} target="_blank" rel="noopener noreferrer" style={{ color: c.link, textDecoration: 'none', fontSize: '0.8rem' }}>
+                      <a href={s.site_url} target="_blank" rel="noopener noreferrer" style={{ color: '#4C9AFF', textDecoration: 'none', fontSize: '0.8rem' }}>
                         {s.site_url}
                       </a>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>{s.site_name || '-'}</td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>{getStatusBadge(s.status || 'connected')}</td>
-                    <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: c.textMuted }}>{fmtDate(s.created_at)}</td>
+                    <td style={{ ...tdStyle, textAlign: 'center', fontSize: '0.75rem', color: '#8A95B0' }}>{fmtDate(s.created_at)}</td>
                     <td style={{ ...tdStyle, textAlign: 'center' }}>
                       <button style={btnDanger} onClick={() => handleDeleteWpSite(s.id)}>삭제</button>
                     </td>

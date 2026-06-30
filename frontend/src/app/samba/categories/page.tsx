@@ -7,9 +7,7 @@ import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } fro
 import { MARKET_LABELS, MARKETS, expandSyncMarkets } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
 import { card, fmtNum } from '@/lib/samba/styles'
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
-
 import type { CatLevel, MappingRow } from './types'
 import { COST_PER_CALL_KRW, COST_BASIS, MARKET_KEYS } from './constants'
 import {
@@ -22,13 +20,11 @@ import {
   itemStyle,
 } from './styles'
 import { buildCategoryTree, getCatList } from './categoryTree'
-import { useTheme } from '@/lib/samba/useTheme'
 
 // 카테고리 동기화 제외 마켓 (롯데홈쇼핑·플레이오토는 동기화 대상에서 제외)
 const SYNC_EXCLUDED_MARKETS = new Set(['lottehome', 'playauto'])
 
 export default function CategoriesPage() {
-  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
   const router = useRouter()
   const [loading, setLoading] = useState(true)
@@ -999,11 +995,11 @@ export default function CategoriesPage() {
   }
 
   return (
-    <div style={{ color: c.text }}>
+    <div style={{ color: '#E5E5E5' }}>
       {/* 단계 연결 */}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginBottom: '0.25rem' }}>
-        <a href="/samba/policies" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>← 정책관리</a>
-        <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: c.link, textDecoration: 'none' }}>상품전송 →</a>
+        <a href="/samba/policies" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>← 정책관리</a>
+        <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>상품전송 →</a>
       </div>
       {/* 헤더 + 카테고리 동기화 */}
       <div style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1018,37 +1014,41 @@ export default function CategoriesPage() {
           }}
           disabled={seedLoading}
           style={{
-            ...btn('secondary'),
             padding: '0.375rem 0.875rem',
             fontSize: '0.8125rem',
-            ...(seedLoading ? btnDisabled : null),
+            fontWeight: 600,
+            background: seedLoading ? '#333' : 'rgba(81,207,102,0.12)',
+            border: `1px solid ${seedLoading ? '#444' : 'rgba(81,207,102,0.35)'}`,
+            borderRadius: '6px',
+            color: seedLoading ? '#666' : '#51CF66',
+            cursor: seedLoading ? 'not-allowed' : 'pointer',
           }}
         >{seedLoading ? '동기화 중...' : '마켓 카테고리 동기화'}</button>
       </div>
 
       {/* AI 사용량 (SMS 잔여량 스타일 — 항상 표시) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
-        <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>AI 비용</span>
-        <span style={{ fontSize: '0.8125rem', color: c.text }}>
-          예상 <span style={{ color: c.text, fontWeight: 700 }}>₩{fmtNum(costEstimate.cost)}</span>
-          <span style={{ color: c.textMuted }}> ({fmtNum(costEstimate.calls)}회)</span>
+        <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 비용</span>
+        <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+          예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩{fmtNum(costEstimate.cost)}</span>
+          <span style={{ color: '#888' }}> ({fmtNum(costEstimate.calls)}회)</span>
         </span>
         {lastAiUsage && (
           <>
-            <span style={{ color: c.border }}>|</span>
-            <span style={{ fontSize: '0.8125rem', color: c.text }}>
-              최근 <span style={{ color: c.success, fontWeight: 700 }}>₩{fmtNum(lastAiUsage.cost)}</span>
-              <span style={{ color: c.textMuted }}> ({fmtNum(lastAiUsage.calls)}회 / ~{fmtNum(lastAiUsage.tokens)}토큰)</span>
+            <span style={{ color: '#2D2D2D' }}>|</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{fmtNum(lastAiUsage.cost)}</span>
+              <span style={{ color: '#888' }}> ({fmtNum(lastAiUsage.calls)}회 / ~{fmtNum(lastAiUsage.tokens)}토큰)</span>
             </span>
-            <span style={{ fontSize: '0.6875rem', color: c.textMuted }}>{lastAiUsage.date}</span>
+            <span style={{ fontSize: '0.6875rem', color: '#555' }}>{lastAiUsage.date}</span>
           </>
         )}
-        <span style={{ fontSize: '0.625rem', color: c.textMuted, marginLeft: 'auto', cursor: 'help' }} title={`산정 근거: ${COST_BASIS}\n1회: ~1,500 in + ~300 out = ~₩15`}>근거</span>
+        <span style={{ fontSize: '0.625rem', color: '#555', marginLeft: 'auto', cursor: 'help' }} title={`산정 근거: ${COST_BASIS}\n1회: ~1,500 in + ~300 out = ~₩15`}>근거</span>
       </div>
 
       {/* AI 안내 + 버튼 */}
       <div style={{ background: 'rgba(255,140,0,0.05)', border: '1px solid rgba(255,140,0,0.25)', borderRadius: '8px', padding: '0.875rem 1.25rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
-        <span style={{ fontSize: '0.8125rem', color: c.textMuted, flex: 1 }}>
+        <span style={{ fontSize: '0.8125rem', color: '#888', flex: 1 }}>
           {selectedPath
             ? `선택: ${selectedPath} (${fmtNum(selectedProducts.length)}개) — AI가 마켓별 카테고리를 추천합니다`
             : '카테고리 선택 시 단건 매핑, 미선택 시 전체 미매핑 자동 처리'}
@@ -1057,10 +1057,14 @@ export default function CategoriesPage() {
           <button
             onClick={handleOpenAiMarketSelect}
             style={{
-              ...btn('primary'),
               padding: '0.5rem 1rem',
+              background: 'rgba(255,140,0,0.12)',
+              border: '1px solid rgba(255,140,0,0.35)',
               borderRadius: '8px',
+              color: '#FF8C00',
               fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: 'pointer',
               whiteSpace: 'nowrap',
             }}
           >{selectedSite && selectedCat1 ? 'AI 매핑' : 'AI 전체 자동 매핑'}</button>
@@ -1068,12 +1072,15 @@ export default function CategoriesPage() {
             onClick={handleBulkDelete}
             disabled={filteredMappings.length === 0}
             style={{
-              ...btn('danger'),
               padding: '0.5rem 1rem',
+              background: 'rgba(239,68,68,0.08)',
+              border: '1px solid rgba(239,68,68,0.25)',
               borderRadius: '8px',
+              color: filteredMappings.length === 0 ? '#555' : '#EF4444',
               fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: filteredMappings.length === 0 ? 'not-allowed' : 'pointer',
               whiteSpace: 'nowrap',
-              ...(filteredMappings.length === 0 ? btnDisabled : null),
             }}
           >매핑 일괄 삭제 ({fmtNum(filteredMappings.length)})</button>
         </div>
@@ -1082,15 +1089,15 @@ export default function CategoriesPage() {
       {/* 5단 드릴다운 테이블 (사이트 포함) */}
       <div style={{ ...card, overflow: 'hidden', marginBottom: '1.25rem' }}>
         {/* 헤더 */}
-        <div style={{ display: 'flex', borderBottom: `1px solid ${c.border}`, background: c.surfaceAlt }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid #2D2D2D', background: 'rgba(255,255,255,0.03)' }}>
           {['사이트', '대분류', '중분류', '소분류', '세분류'].map((h, i) => {
             const selections = [selectedSite, selectedCat1, selectedCat2, selectedCat3, selectedCat4]
             return (
               <div key={h} style={{
                 flex: 1, minWidth: '140px', padding: '0.625rem 0.75rem',
                 fontSize: '0.75rem', fontWeight: 600,
-                color: catEntry === i || selections[i] ? '#0f6a5b' : c.textMuted,
-                borderRight: i < 4 ? `1px solid ${c.border}` : 'none',
+                color: catEntry === i || selections[i] ? '#FF8C00' : '#888',
+                borderRight: i < 4 ? '1px solid #2D2D2D' : 'none',
                 cursor: 'pointer',
               }}
               onClick={() => {
@@ -1106,16 +1113,16 @@ export default function CategoriesPage() {
         </div>
 
         {loading ? (
-          <div style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>카테고리 트리를 로딩 중...</div>
+          <div style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>카테고리 트리를 로딩 중...</div>
         ) : (
           <div style={{ display: 'flex' }}>
             {/* 사이트: 항상 표시 */}
             <div style={colStyle}>
               {getCrossSites().length === 0 ? (
-                <div style={{ padding: '1rem', color: c.textMuted, fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
+                <div style={{ padding: '1rem', color: '#555', fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
               ) : getCrossSites().map(site => (
                 <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
-                  onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = c.surfaceAlt }}
+                  onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                   onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
                 >{site}</div>
               ))}
@@ -1125,7 +1132,7 @@ export default function CategoriesPage() {
               {selectedSite ? (
                 getCat1List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat1 === cat)} onClick={() => handleCat1Click(cat)}
-                    onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                     onMouseLeave={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
                 ))
@@ -1136,7 +1143,7 @@ export default function CategoriesPage() {
               {selectedCat1 ? (
                 getCat2List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat2 === cat)} onClick={() => handleCat2Click(cat)}
-                    onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                     onMouseLeave={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
                 ))
@@ -1147,7 +1154,7 @@ export default function CategoriesPage() {
               {selectedCat2 ? (
                 getCat3List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat3 === cat)} onClick={() => handleCat3Click(cat)}
-                    onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                     onMouseLeave={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
                 ))
@@ -1158,7 +1165,7 @@ export default function CategoriesPage() {
               {selectedCat3 ? (
                 getCat4List().map(cat => (
                   <div key={cat} style={itemStyle(selectedCat4 === cat)} onClick={() => handleCat4Click(cat)}
-                    onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'rgba(255,255,255,0.03)' }}
                     onMouseLeave={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
                 ))
@@ -1173,7 +1180,7 @@ export default function CategoriesPage() {
         <div style={{ marginBottom: '1.25rem' }}>
           <h3 style={{ fontSize: '1.125rem', fontWeight: 700, marginBottom: '0.75rem' }}>
             매핑 현황{' '}
-            <span style={{ fontSize: '0.875rem', fontWeight: 400, color: c.textMuted }}>
+            <span style={{ fontSize: '0.875rem', fontWeight: 400, color: '#888' }}>
               ({filteredMappings.length === baseFilteredMappings.length
                 ? `총 ${fmtNum(baseFilteredMappings.length)}건`
                 : `${fmtNum(filteredMappings.length)}건 / 전체 ${fmtNum(baseFilteredMappings.length)}건`})
@@ -1182,11 +1189,11 @@ export default function CategoriesPage() {
           <div ref={tableScrollRef} style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
-                <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: `1px solid ${c.border}`, background: c.surface }}>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadA }}>사이트</th>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadB }}>소싱 카테고리</th>
+                <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: '1px solid #2D2D2D', background: '#1F1F1F' }}>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadA }}>사이트</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadB }}>소싱 카테고리</th>
                   {MARKET_KEYS.map(mk => (
-                    <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
+                    <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: '#888', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem', alignItems: 'center' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
                         <span>{MARKET_LABELS[mk]}</span>
@@ -1199,15 +1206,15 @@ export default function CategoriesPage() {
                               background: 'none',
                               border: '1px solid transparent',
                               borderRadius: '3px',
-                              color: esmCopyLoading ? c.text : c.textMuted,
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
                               fontSize: '0.5625rem',
                               cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
                               padding: '1px 3px',
                               lineHeight: 1,
                               fontWeight: 700,
                             }}
-                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.border } }}
-                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = c.textMuted; e.currentTarget.style.borderColor = 'transparent' } }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
                             title="G마켓 매핑을 옥션으로 크로스매핑 복사"
                           >{esmCopyLoading ? '...' : 'G→A'}</button>
                         )}
@@ -1219,15 +1226,15 @@ export default function CategoriesPage() {
                               background: 'none',
                               border: '1px solid transparent',
                               borderRadius: '3px',
-                              color: esmCopyLoading ? c.text : c.textMuted,
+                              color: esmCopyLoading ? '#4C9AFF' : '#555',
                               fontSize: '0.5625rem',
                               cursor: esmCopyLoading ? 'not-allowed' : 'pointer',
                               padding: '1px 3px',
                               lineHeight: 1,
                               fontWeight: 700,
                             }}
-                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.border } }}
-                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = c.textMuted; e.currentTarget.style.borderColor = 'transparent' } }}
+                            onMouseEnter={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#4C9AFF'; e.currentTarget.style.borderColor = 'rgba(76,154,255,0.3)' } }}
+                            onMouseLeave={e => { if (!esmCopyLoading) { e.currentTarget.style.color = '#555'; e.currentTarget.style.borderColor = 'transparent' } }}
                             title="옥션 매핑을 G마켓으로 크로스매핑 복사"
                           >{esmCopyLoading ? '...' : 'A→G'}</button>
                         )}
@@ -1238,7 +1245,7 @@ export default function CategoriesPage() {
                             background: 'none',
                             border: '1px solid transparent',
                             borderRadius: '3px',
-                            color: marketAiLoading === mk ? '#0f6a5b' : c.textMuted,
+                            color: marketAiLoading === mk ? '#FF8C00' : '#555',
                             fontSize: '0.625rem',
                             cursor: marketAiLoading !== null ? 'not-allowed' : 'pointer',
                             padding: '1px 3px',
@@ -1247,13 +1254,13 @@ export default function CategoriesPage() {
                           }}
                           onMouseEnter={e => {
                             if (!marketAiLoading) {
-                              e.currentTarget.style.color = '#0f6a5b'
+                              e.currentTarget.style.color = '#FF8C00'
                               e.currentTarget.style.borderColor = 'rgba(255,140,0,0.3)'
                             }
                           }}
                           onMouseLeave={e => {
                             if (marketAiLoading !== mk) {
-                              e.currentTarget.style.color = c.textMuted
+                              e.currentTarget.style.color = '#555'
                               e.currentTarget.style.borderColor = 'transparent'
                             }
                           }}
@@ -1265,28 +1272,28 @@ export default function CategoriesPage() {
                           style={{
                             background: 'none',
                             border: 'none',
-                            color: c.textMuted,
+                            color: '#444',
                             fontSize: '0.625rem',
                             cursor: filteredMappings.length === 0 ? 'not-allowed' : 'pointer',
                             padding: '1px 2px',
                             lineHeight: 1,
                           }}
-                          onMouseEnter={e => { e.currentTarget.style.color = c.danger }}
-                          onMouseLeave={e => { e.currentTarget.style.color = c.textMuted }}
+                          onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
+                          onMouseLeave={e => { e.currentTarget.style.color = '#444' }}
                           title={`${MARKET_LABELS[mk]} 카테고리 일괄 삭제 (${fmtNum(filteredMappings.length)}건)`}
                         >✕</button>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.375rem' }}>
-                        <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? c.success : c.danger }}>
+                        <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B' }}>
                           {fmtNum(marketCatCounts[mk] || 0)}개
                         </span>
                         <button
                           onClick={() => toggleMarketUnmappedFilter(mk)}
                           style={{
                             background: marketUnmappedFilters[mk] ? 'rgba(255,140,0,0.14)' : 'transparent',
-                            border: `1px solid ${marketUnmappedFilters[mk] ? 'rgba(255,140,0,0.45)' : c.border}`,
+                            border: `1px solid ${marketUnmappedFilters[mk] ? 'rgba(255,140,0,0.45)' : '#2D2D2D'}`,
                             borderRadius: '999px',
-                            color: marketUnmappedFilters[mk] ? c.text : c.textMuted,
+                            color: marketUnmappedFilters[mk] ? '#FFB84D' : '#777',
                             fontSize: '0.625rem',
                             padding: '1px 6px',
                             cursor: 'pointer',
@@ -1312,7 +1319,7 @@ export default function CategoriesPage() {
               }}>
                 {filteredMappings.length === 0 && !isLeafCategory ? (
                   <tr style={{ display: 'block' }}>
-                    <td style={{ display: 'block', padding: '1.5rem', textAlign: 'center', color: c.textMuted }}>
+                    <td style={{ display: 'block', padding: '1.5rem', textAlign: 'center', color: '#555' }}>
                       {Object.values(marketUnmappedFilters).some(Boolean)
                         ? '선택한 판매처 기준 미매핑 카테고리가 없습니다'
                         : selectedSite ? `${selectedSite}에 매핑된 카테고리가 없습니다` : '매핑 데이터가 없습니다'}
@@ -1321,9 +1328,9 @@ export default function CategoriesPage() {
                 ) : null}
                 {/* 최하단 카테고리 선택 + 매핑 없음 → 신규 편집 행 */}
                 {isLeafCategory && filteredMappings.length === 0 && (
-                  <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: `1px solid ${c.border}`, background: 'rgba(255,140,0,0.04)', alignItems: 'center' }}>
-                    <td style={{ padding: '0.5rem 0.75rem', color: c.text, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: c.surfaceAlt }}>{selectedSite}</td>
-                    <td style={{ padding: '0.5rem 0.75rem', color: c.text, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: c.surfaceAlt }}>{getSourceCategory()}</td>
+                  <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: '1px solid #2D2D2D', background: 'rgba(255,140,0,0.04)', alignItems: 'center' }}>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: '#1F1612' }}>{selectedSite}</td>
+                    <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: '#1F1612' }}>{getSourceCategory()}</td>
                     {MARKET_KEYS.map(mk => {
                       const isEditing = inlineFocusedMarket === mk || editingCell?.id === '__new__' && editingCell?.market === mk
                       return (
@@ -1349,9 +1356,9 @@ export default function CategoriesPage() {
                               onBlur={() => { setTimeout(() => { if (inlineFocusedMarket === mk) { setInlineFocusedMarket(null); setInlineSuggestions([]); setDropdownPos(null) } }, 250) }}
                               placeholder="검색..."
                               style={{
-                                width: '100%', padding: '0.375rem 0.5rem', background: c.inputBg,
-                                border: `1px solid ${isEditing ? '#0f6a5b' : manualEdits[mk]?.trim() ? 'rgba(255,140,0,0.3)' : c.border}`,
-                                borderRadius: '4px', color: c.text, fontSize: '0.75rem', outline: 'none',
+                                width: '100%', padding: '0.375rem 0.5rem', background: '#1A1A1A',
+                                border: `1px solid ${isEditing ? '#FF8C00' : manualEdits[mk]?.trim() ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`,
+                                borderRadius: '4px', color: '#E5E5E5', fontSize: '0.75rem', outline: 'none',
                               }}
                             />
                           </div>
@@ -1364,7 +1371,7 @@ export default function CategoriesPage() {
                         disabled={Object.values(manualEdits).filter(v => v.trim()).length === 0}
                         style={{
                           background: 'none', border: 'none', fontSize: '0.875rem', cursor: 'pointer', padding: '0.25rem',
-                          color: Object.values(manualEdits).filter(v => v.trim()).length > 0 ? c.success : c.textMuted,
+                          color: Object.values(manualEdits).filter(v => v.trim()).length > 0 ? '#22C55E' : '#444',
                         }}
                         title="매핑 저장"
                       >✓</button>
@@ -1375,9 +1382,9 @@ export default function CategoriesPage() {
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
                   const row = filteredMappings[virtualRow.index]
                   return (
-                    <tr key={row.id} style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: `1px solid ${c.border}`, alignItems: 'center' }}>
-                      <td style={{ padding: '0.5rem 0.75rem', color: c.text, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: c.surface }}>{row.source_site}</td>
-                      <td style={{ padding: '0.5rem 0.75rem', color: c.text, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: c.surface }}>{row.source_category}</td>
+                    <tr key={row.id} style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: '1px solid #2D2D2D', alignItems: 'center' }}>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#FFB84D', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColA, background: '#161616' }}>{row.source_site}</td>
+                      <td style={{ padding: '0.5rem 0.75rem', color: '#E5E5E5', whiteSpace: 'nowrap', overflow: 'hidden', ...stickyColB, background: '#161616' }}>{row.source_category}</td>
                       {MARKET_KEYS.map(mk => {
                         const val = row.target_mappings?.[mk] || ''
                         const isEditing = editingCell?.id === row.id && editingCell?.market === mk
@@ -1402,10 +1409,10 @@ export default function CategoriesPage() {
                                   style={{
                                     width: '100%',
                                     padding: '0.375rem 0.5rem',
-                                    background: c.inputBg,
-                                    border: `1px solid #0f6a5b`,
+                                    background: '#1A1A1A',
+                                    border: '1px solid #FF8C00',
                                     borderRadius: '4px',
-                                    color: c.text,
+                                    color: '#E5E5E5',
                                     fontSize: '0.75rem',
                                     outline: 'none',
                                   }}
@@ -1418,14 +1425,14 @@ export default function CategoriesPage() {
                                   padding: '0.375rem 0.5rem',
                                   borderRadius: '4px',
                                   cursor: 'pointer',
-                                  color: val ? c.text : c.textMuted,
+                                  color: val ? '#C5C5C5' : '#555',
                                   fontSize: '0.75rem',
                                   transition: 'background 0.15s',
                                   overflow: 'hidden',
                                   textOverflow: 'ellipsis',
                                   whiteSpace: 'nowrap',
                                 }}
-                                onMouseEnter={e => { e.currentTarget.style.background = c.surfaceAlt }}
+                                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                                 title={val || '클릭하여 매핑 추가'}
                               >
@@ -1437,21 +1444,21 @@ export default function CategoriesPage() {
                       })}
                       <td style={{ padding: '0.5rem 0.5rem', textAlign: 'center' }}>
                         {row.id.startsWith('unmapped_') ? (
-                          <span style={{ color: c.textMuted, fontSize: '0.7rem' }}>미매핑</span>
+                          <span style={{ color: '#555', fontSize: '0.7rem' }}>미매핑</span>
                         ) : (
                           <button
                             onClick={() => handleDeleteMapping(row.id)}
                             style={{
                               background: 'none',
                               border: 'none',
-                              color: c.textMuted,
+                              color: '#666',
                               fontSize: '0.875rem',
                               cursor: 'pointer',
                               padding: '0.25rem',
                               lineHeight: 1,
                             }}
-                            onMouseEnter={e => { e.currentTarget.style.color = c.danger }}
-                            onMouseLeave={e => { e.currentTarget.style.color = c.textMuted }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#666' }}
                             title="매핑 삭제"
                           >✕</button>
                         )}
@@ -1473,12 +1480,12 @@ export default function CategoriesPage() {
           left: dropdownPos.left,
           width: dropdownPos.width,
           zIndex: 99999,
-          background: c.surface,
-          border: `1px solid ${c.border}`,
+          background: '#1E1E1E',
+          border: '1px solid #3D3D3D',
           borderRadius: '6px',
           maxHeight: '200px',
           overflowY: 'auto',
-          boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
         }}>
           {(() => {
             const list = suggestions.length > 0 ? suggestions : inlineSuggestions
@@ -1512,12 +1519,12 @@ export default function CategoriesPage() {
               style={{
                 padding: '0.5rem 0.75rem',
                 fontSize: '0.75rem',
-                color: c.text,
+                color: '#C5C5C5',
                 cursor: 'pointer',
-                borderBottom: i < (suggestions.length > 0 ? suggestions : inlineSuggestions).length - 1 ? `1px solid ${c.border}` : 'none',
+                borderBottom: i < (suggestions.length > 0 ? suggestions : inlineSuggestions).length - 1 ? '1px solid #2D2D2D' : 'none',
               }}
-              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,0,0.1)'; e.currentTarget.style.color = c.text }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = c.text }}
+              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,0,0.1)'; e.currentTarget.style.color = '#FF8C00' }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#C5C5C5' }}
             >{s}</div>
             ))
           })()}
@@ -1528,9 +1535,9 @@ export default function CategoriesPage() {
       {selectedPath && (
         <div>
           <div style={{ marginBottom: '1rem', fontSize: '0.875rem' }}>
-            <span style={{ color: c.textMuted }}>[선택카테고리]</span>{' '}
-            <span style={{ color: c.text, fontWeight: 600 }}>{selectedPath}</span>{' '}
-            <span style={{ color: c.textMuted }}>상품 {fmtNum(selectedProducts.length)}개</span>
+            <span style={{ color: '#888' }}>[선택카테고리]</span>{' '}
+            <span style={{ color: '#FF8C00', fontWeight: 600 }}>{selectedPath}</span>{' '}
+            <span style={{ color: '#888' }}>상품 {fmtNum(selectedProducts.length)}개</span>
           </div>
 
           {selectedProducts.length > 0 && (
@@ -1541,24 +1548,24 @@ export default function CategoriesPage() {
                     onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
                   >
                     {/* 이미지 */}
-                    <div style={{ width: '100%', aspectRatio: '1', background: c.surfaceAlt, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                    <div style={{ width: '100%', aspectRatio: '1', background: '#1A1A1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                       {p.images && p.images.length > 0 ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img src={p.images[0]} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                       ) : (
-                        <span style={{ color: c.textMuted, fontSize: '2rem' }}>🖼</span>
+                        <span style={{ color: '#555', fontSize: '2rem' }}>🖼</span>
                       )}
                     </div>
                     <div style={{ padding: '0.75rem' }}>
-                      <p style={{ fontSize: '0.8125rem', color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
-                      <p style={{ fontSize: '0.875rem', fontWeight: 600, color: c.text }}>₩{fmtNum(p.sale_price || 0)}</p>
+                      <p style={{ fontSize: '0.8125rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: '0.25rem' }}>{p.name}</p>
+                      <p style={{ fontSize: '0.875rem', fontWeight: 600, color: '#FF8C00' }}>₩{fmtNum(p.sale_price || 0)}</p>
                     </div>
                   </div>
                 ))}
               </div>
               {hasMore && (
                 <div style={{ textAlign: 'center', marginTop: '1rem' }}>
-                  <button onClick={loadMoreProducts} style={{ padding: '0.5rem 2rem', background: c.btnBg, color: c.btnText, border: `1px solid ${c.btnBorder}`, borderRadius: '6px', cursor: 'pointer', fontSize: '0.8125rem' }}>
+                  <button onClick={loadMoreProducts} style={{ padding: '0.5rem 2rem', background: '#333', color: '#ccc', border: '1px solid #555', borderRadius: '6px', cursor: 'pointer', fontSize: '0.8125rem' }}>
                     더 보기
                   </button>
                 </div>
@@ -1580,7 +1587,7 @@ export default function CategoriesPage() {
         >
           <div
             style={{
-              background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
+              background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '12px',
               width: 'min(560px, 92vw)', maxHeight: '80vh', overflow: 'auto',
             }}
             onClick={e => e.stopPropagation()}
@@ -1588,21 +1595,21 @@ export default function CategoriesPage() {
             {/* 모달 헤더 */}
             <div style={{
               padding: '1.25rem 1.5rem',
-              borderBottom: `1px solid ${c.border}`,
+              borderBottom: '1px solid #2D2D2D',
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <div>
-                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>
                   {selectedSite && selectedCat1 ? 'AI 카테고리 매핑' : 'AI 전체 자동 매핑'}
                 </h3>
-                <p style={{ fontSize: '0.75rem', color: c.textMuted }}>
+                <p style={{ fontSize: '0.75rem', color: '#888' }}>
                   {selectedSite && selectedCat1 ? selectedPath : '미매핑 카테고리 일괄 처리 + 누락 마켓 보충'}
                 </p>
               </div>
               {!aiLoading && (
                 <button
                   onClick={() => setAiModalOpen(false)}
-                  style={{ background: 'none', border: 'none', color: c.textMuted, fontSize: '1.25rem', cursor: 'pointer' }}
+                  style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}
                 >✕</button>
               )}
             </div>
@@ -1610,14 +1617,14 @@ export default function CategoriesPage() {
             {/* 모달 본문 */}
             <div style={{ padding: '1.25rem 1.5rem' }}>
               {aiLoading ? (
-                <div style={{ textAlign: 'center', padding: '2rem 0', color: c.textMuted }}>
+                <div style={{ textAlign: 'center', padding: '2rem 0', color: '#888' }}>
                   <div style={{ fontSize: '1.5rem', marginBottom: '0.75rem' }}>🤖</div>
                   <p style={{ fontSize: '0.875rem' }}>
                     {bulkResult === null && !selectedSite
                       ? 'Claude가 미매핑 카테고리를 일괄 분석하고 있어요...'
                       : 'Claude가 카테고리를 분석하고 있어요...'}
                   </p>
-                  <p style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.5rem' }}>
                     중단해도 이미 저장된 매핑은 유지됩니다
                   </p>
                   <button
@@ -1630,7 +1637,7 @@ export default function CategoriesPage() {
                       borderRadius: '6px',
                       border: '1px solid rgba(239,68,68,0.4)',
                       background: 'rgba(239,68,68,0.1)',
-                      color: c.danger,
+                      color: '#FCA5A5',
                       cursor: 'pointer',
                     }}
                   >
@@ -1648,12 +1655,12 @@ export default function CategoriesPage() {
                   gap: '0.75rem',
                 }}>
                   <div style={{ fontSize: '2rem' }}>⚠️</div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 700, color: c.danger }}>
+                  <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#EF4444' }}>
                     AI 매핑을 실행할 수 없습니다
                   </div>
                   <div style={{
                     fontSize: '0.8125rem',
-                    color: c.text,
+                    color: '#E5E5E5',
                     background: 'rgba(239,68,68,0.08)',
                     border: '1px solid rgba(239,68,68,0.25)',
                     borderRadius: '8px',
@@ -1679,7 +1686,7 @@ export default function CategoriesPage() {
                       borderRadius: '8px',
                     }}>
                       <span style={{ fontSize: '1rem' }}>⚠️</span>
-                      <div style={{ fontSize: '0.8125rem', color: c.danger, lineHeight: 1.6 }}>
+                      <div style={{ fontSize: '0.8125rem', color: '#FECACA', lineHeight: 1.6 }}>
                         {aiFailMessage}
                       </div>
                     </div>
@@ -1687,25 +1694,25 @@ export default function CategoriesPage() {
                   {/* 요약 카드 */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
                     <div style={{ padding: '1rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: c.success }}>{fmtNum(bulkResult.mapped)}</div>
-                      <div style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.25rem' }}>신규 매핑</div>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#22C55E' }}>{fmtNum(bulkResult.mapped)}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>신규 매핑</div>
                     </div>
-                    <div style={{ padding: '1rem', background: '#e3f4f0', border: '1px solid #a9ddd2', borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#0f6a5b' }}>{fmtNum(bulkResult.updated)}</div>
-                      <div style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.25rem' }}>마켓 보충</div>
+                    <div style={{ padding: '1rem', background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.25)', borderRadius: '8px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#3B82F6' }}>{fmtNum(bulkResult.updated)}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>마켓 보충</div>
                     </div>
-                    <div style={{ padding: '1rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: c.textMuted }}>{fmtNum(bulkResult.skipped)}</div>
-                      <div style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.25rem' }}>건너뜀</div>
+                    <div style={{ padding: '1rem', background: 'rgba(255,255,255,0.03)', border: '1px solid #2D2D2D', borderRadius: '8px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#888' }}>{fmtNum(bulkResult.skipped)}</div>
+                      <div style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.25rem' }}>건너뜀</div>
                     </div>
                   </div>
                   {/* 에러 목록 */}
                   {bulkResult.errors.length > 0 && (
                     <div style={{ padding: '0.75rem 1rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px' }}>
-                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: c.danger, marginBottom: '0.5rem' }}>오류 {fmtNum(bulkResult.errors.length)}건</div>
+                      <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#EF4444', marginBottom: '0.5rem' }}>오류 {fmtNum(bulkResult.errors.length)}건</div>
                       <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
                         {bulkResult.errors.map((err, i) => (
-                          <div key={i} style={{ fontSize: '0.75rem', color: c.textMuted, padding: '0.125rem 0' }}>{err}</div>
+                          <div key={i} style={{ fontSize: '0.75rem', color: '#999', padding: '0.125rem 0' }}>{err}</div>
                         ))}
                       </div>
                     </div>
@@ -1715,7 +1722,7 @@ export default function CategoriesPage() {
                 /* 단건 모드 결과 */
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                   {Object.keys(aiResult).length === 0 ? (
-                    <p style={{ color: c.textMuted, textAlign: 'center', padding: '1rem' }}>
+                    <p style={{ color: '#888', textAlign: 'center', padding: '1rem' }}>
                       추천 결과가 없습니다
                     </p>
                   ) : (
@@ -1723,15 +1730,15 @@ export default function CategoriesPage() {
                       <div key={market} style={{
                         display: 'flex', alignItems: 'center', gap: '0.75rem',
                         padding: '0.75rem',
-                        background: c.surfaceAlt,
+                        background: 'rgba(255,255,255,0.02)',
                         borderRadius: '8px',
-                        border: `1px solid ${c.border}`,
+                        border: '1px solid #2D2D2D',
                       }}>
                         <div style={{
                           minWidth: '100px',
                           fontSize: '0.8125rem',
                           fontWeight: 600,
-                          color: c.text,
+                          color: '#FFB84D',
                         }}>
                           {MARKET_LABELS[market] || market}
                         </div>
@@ -1741,10 +1748,10 @@ export default function CategoriesPage() {
                           style={{
                             flex: 1,
                             padding: '0.5rem 0.75rem',
-                            background: c.inputBg,
-                            border: `1px solid ${c.border}`,
+                            background: '#1A1A1A',
+                            border: '1px solid #2D2D2D',
                             borderRadius: '6px',
-                            color: cat ? c.text : c.textMuted,
+                            color: cat ? '#E5E5E5' : '#555',
                             fontSize: '0.8125rem',
                             outline: 'none',
                           }}
@@ -1764,23 +1771,23 @@ export default function CategoriesPage() {
             {!aiLoading && (bulkResult || aiFailMessage || Object.keys(aiResult).length > 0) && (
               <div style={{
                 padding: '1rem 1.5rem',
-                borderTop: `1px solid ${c.border}`,
+                borderTop: '1px solid #2D2D2D',
                 display: 'flex', justifyContent: 'flex-end', gap: '0.5rem',
               }}>
                 {bulkResult ? (
                   <button
                     onClick={() => { setAiModalOpen(false); load() }}
                     style={{
-                      ...btn('primary'),
                       padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
+                      border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600,
                     }}
                   >확인</button>
                 ) : aiFailMessage ? (
                   <button
                     onClick={() => { setAiModalOpen(false); setAiFailMessage(null) }}
                     style={{
-                      ...btn('ghost'),
                       padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
+                      border: '1px solid #3D3D3D', background: '#2A2A2A', color: '#E5E5E5', cursor: 'pointer', fontWeight: 600,
                     }}
                   >닫기</button>
                 ) : (
@@ -1788,15 +1795,15 @@ export default function CategoriesPage() {
                     <button
                       onClick={() => setAiModalOpen(false)}
                       style={{
-                        ...btn('ghost'),
                         padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
+                        border: '1px solid #3D3D3D', background: '#2A2A2A', color: '#999', cursor: 'pointer',
                       }}
                     >취소</button>
                     <button
                       onClick={handleAiSave}
                       style={{
-                        ...btn('primary'),
                         padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
+                        border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600,
                       }}
                     >매핑 저장</button>
                   </>
@@ -1824,17 +1831,17 @@ export default function CategoriesPage() {
         >
           <div
             style={{
-              background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
+              background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '12px',
               width: 'min(420px, 90vw)', overflow: 'hidden',
             }}
             onClick={e => e.stopPropagation()}
           >
             {/* 헤더 */}
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${c.border}` }}>
-              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D' }}>
+              <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>
                 {MARKET_LABELS[marketAiProgress.market]} AI 카테고리 매핑
               </h3>
-              <p style={{ fontSize: '0.75rem', color: c.textMuted }}>
+              <p style={{ fontSize: '0.75rem', color: '#888' }}>
                 {marketAiProgress.current >= marketAiProgress.total
                   ? '매핑 완료'
                   : `${fmtNum(marketAiProgress.current)} / ${fmtNum(marketAiProgress.total)}건 처리 중...`}
@@ -1844,11 +1851,11 @@ export default function CategoriesPage() {
             {/* 본문 */}
             <div style={{ padding: '1.5rem' }}>
               {/* 진행바 */}
-              <div style={{ background: c.gaugeTrack, borderRadius: '4px', height: '8px', overflow: 'hidden', marginBottom: '1rem' }}>
+              <div style={{ background: '#2D2D2D', borderRadius: '4px', height: '8px', overflow: 'hidden', marginBottom: '1rem' }}>
                 <div style={{
                   width: `${Math.round((marketAiProgress.current / marketAiProgress.total) * 100)}%`,
                   height: '100%',
-                  background: marketAiProgress.current >= marketAiProgress.total ? c.success : '#0f6a5b',
+                  background: marketAiProgress.current >= marketAiProgress.total ? '#22C55E' : '#FF8C00',
                   borderRadius: '4px',
                   transition: 'width 0.3s',
                 }} />
@@ -1857,22 +1864,22 @@ export default function CategoriesPage() {
               {/* 결과 카드 */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
                 <div style={{ padding: '0.75rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: c.success }}>{fmtNum(marketAiProgress.success)}</div>
-                  <div style={{ fontSize: '0.6875rem', color: c.textMuted }}>성공</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{fmtNum(marketAiProgress.success)}</div>
+                  <div style={{ fontSize: '0.6875rem', color: '#888' }}>성공</div>
                 </div>
                 <div style={{ padding: '0.75rem', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: c.danger }}>{fmtNum(marketAiProgress.fail)}</div>
-                  <div style={{ fontSize: '0.6875rem', color: c.textMuted }}>실패</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#EF4444' }}>{fmtNum(marketAiProgress.fail)}</div>
+                  <div style={{ fontSize: '0.6875rem', color: '#888' }}>실패</div>
                 </div>
-                <div style={{ padding: '0.75rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', textAlign: 'center' }}>
-                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: c.textMuted }}>{fmtNum(marketAiProgress.total - marketAiProgress.current)}</div>
-                  <div style={{ fontSize: '0.6875rem', color: c.textMuted }}>대기</div>
+                <div style={{ padding: '0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid #2D2D2D', borderRadius: '8px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#888' }}>{fmtNum(marketAiProgress.total - marketAiProgress.current)}</div>
+                  <div style={{ fontSize: '0.6875rem', color: '#888' }}>대기</div>
                 </div>
               </div>
 
               {/* 진행 중 안내 or 완료 버튼 */}
               {marketAiProgress.current < marketAiProgress.total ? (
-                <div style={{ textAlign: 'center', marginTop: '1rem', color: c.textMuted, fontSize: '0.8125rem' }}>
+                <div style={{ textAlign: 'center', marginTop: '1rem', color: '#888', fontSize: '0.8125rem' }}>
                   🤖 Claude가 카테고리를 분석하고 있어요...
                 </div>
               ) : (
@@ -1880,8 +1887,8 @@ export default function CategoriesPage() {
                   <button
                     onClick={() => { setMarketAiProgress(null); load() }}
                     style={{
-                      ...btn('primary'),
                       padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
+                      border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600,
                     }}
                   >확인</button>
                 </div>
@@ -1902,7 +1909,7 @@ export default function CategoriesPage() {
         >
           <div
             style={{
-              background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
+              background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '12px',
               width: 'min(480px, 92vw)', maxHeight: '80vh', overflow: 'auto',
             }}
             onClick={e => e.stopPropagation()}
@@ -1910,9 +1917,9 @@ export default function CategoriesPage() {
             {(!selectedSite || !selectedCat1) ? (
               /* 벌크 모드: 계정 연결된 마켓만 표시 */
               <>
-                <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${c.border}` }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>AI 전체 자동 매핑 — 마켓 선택</h3>
-                  <p style={{ fontSize: '0.75rem', color: c.textMuted }}>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 전체 자동 매핑 — 마켓 선택</h3>
+                  <p style={{ fontSize: '0.75rem', color: '#888' }}>
                     계정 연결된 마켓만 표시됩니다 · 미매핑 카테고리를 선택된 마켓으로 일괄 매핑
                   </p>
                 </div>
@@ -1926,24 +1933,24 @@ export default function CategoriesPage() {
                         activeMarketTypes.forEach(t => { updated[t] = e.target.checked })
                         setBulkSelectedMarkets(updated)
                       }}
-                      style={{ accentColor: c.primary }}
+                      style={{ accentColor: '#FF8C00' }}
                     />
-                    <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>전체 선택</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>전체 선택</span>
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
                     {activeMarketTypes.map(t => (
-                      <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: bulkSelectedMarkets[t] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${bulkSelectedMarkets[t] ? 'rgba(255,140,0,0.3)' : c.border}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
+                      <label key={t} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: bulkSelectedMarkets[t] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${bulkSelectedMarkets[t] ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
                         <input
                           type="checkbox"
                           checked={!!bulkSelectedMarkets[t]}
                           onChange={e => setBulkSelectedMarkets(prev => ({ ...prev, [t]: e.target.checked }))}
-                          style={{ accentColor: c.primary }}
+                          style={{ accentColor: '#FF8C00' }}
                         />
-                        <span style={{ fontSize: '0.8125rem', color: bulkSelectedMarkets[t] ? c.text : c.textMuted }}>{MARKET_LABELS[t] || t}</span>
+                        <span style={{ fontSize: '0.8125rem', color: bulkSelectedMarkets[t] ? '#FF8C00' : '#999' }}>{MARKET_LABELS[t] || t}</span>
                       </label>
                     ))}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.75rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
                     선택: {fmtNum(activeMarketTypes.filter(t => bulkSelectedMarkets[t]).length)}개 마켓
                   </div>
                 </div>
@@ -1951,9 +1958,9 @@ export default function CategoriesPage() {
             ) : (
               /* 단건 모드: 전체 마켓 표시 */
               <>
-                <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${c.border}` }}>
-                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>AI 매핑 — 마켓 선택</h3>
-                  <p style={{ fontSize: '0.75rem', color: c.textMuted }}>
+                <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D' }}>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 매핑 — 마켓 선택</h3>
+                  <p style={{ fontSize: '0.75rem', color: '#888' }}>
                     {selectedPath} — AI가 선택된 마켓의 카테고리를 추천합니다
                   </p>
                 </div>
@@ -1963,37 +1970,37 @@ export default function CategoriesPage() {
                       type="checkbox"
                       checked={MARKET_KEYS.every(mk => aiSelectedMarkets[mk])}
                       onChange={e => handleAiMarketSelectAll(e.target.checked)}
-                      style={{ accentColor: c.primary }}
+                      style={{ accentColor: '#FF8C00' }}
                     />
-                    <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>전체 선택</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>전체 선택</span>
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
                     {MARKET_KEYS.map(mk => (
-                      <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.3)' : c.border}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
+                      <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.625rem', background: aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.08)' : 'transparent', border: `1px solid ${aiSelectedMarkets[mk] ? 'rgba(255,140,0,0.3)' : '#2D2D2D'}`, borderRadius: '6px', cursor: 'pointer', transition: 'all 0.15s' }}>
                         <input
                           type="checkbox"
                           checked={!!aiSelectedMarkets[mk]}
                           onChange={e => setAiSelectedMarkets(prev => ({ ...prev, [mk]: e.target.checked }))}
-                          style={{ accentColor: c.primary }}
+                          style={{ accentColor: '#FF8C00' }}
                         />
-                        <span style={{ fontSize: '0.8125rem', color: aiSelectedMarkets[mk] ? c.text : c.textMuted }}>{MARKET_LABELS[mk]}</span>
+                        <span style={{ fontSize: '0.8125rem', color: aiSelectedMarkets[mk] ? '#FF8C00' : '#999' }}>{MARKET_LABELS[mk]}</span>
                       </label>
                     ))}
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.75rem' }}>
+                  <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.75rem' }}>
                     선택: {fmtNum(MARKET_KEYS.filter(mk => aiSelectedMarkets[mk]).length)}개 마켓 · 예상 비용 ₩{fmtNum(COST_PER_CALL_KRW)}
                   </div>
                 </div>
               </>
             )}
-            <div style={{ padding: '1rem 1.5rem', borderTop: `1px solid ${c.border}`, display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+            <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               <button
                 onClick={() => setAiMarketSelectOpen(false)}
-                style={{ ...btn('ghost'), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
+                style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px', border: '1px solid #3D3D3D', background: '#2A2A2A', color: '#999', cursor: 'pointer' }}
               >취소</button>
               <button
                 onClick={handleAiMarketConfirm}
-                style={{ ...btn('primary'), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
+                style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px', border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600 }}
               >AI 매핑 시작</button>
             </div>
           </div>
@@ -2003,9 +2010,9 @@ export default function CategoriesPage() {
       {/* 카테고리 동기화 마켓 선택 모달 */}
       {syncModalOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
-            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>마켓 카테고리 동기화</h3>
-            <p style={{ fontSize: '0.8125rem', color: c.textMuted, marginBottom: '1rem' }}>동기화할 마켓을 선택하세요. API 계정이 등록된 마켓만 동기화됩니다.</p>
+          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '480px', maxWidth: '90vw' }}>
+            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '1rem' }}>마켓 카테고리 동기화</h3>
+            <p style={{ fontSize: '0.8125rem', color: '#888', marginBottom: '1rem' }}>동기화할 마켓을 선택하세요. API 계정이 등록된 마켓만 동기화됩니다.</p>
 
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
               <button
@@ -2014,30 +2021,30 @@ export default function CategoriesPage() {
                   MARKETS.filter(m => !m.categoryOnly && !SYNC_EXCLUDED_MARKETS.has(m.id)).forEach(m => { all[m.id] = true })
                   setSyncSelected(all)
                 }}
-                style={{ ...btn('ghost'), fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}
               >전체선택</button>
               <button
                 onClick={() => setSyncSelected({})}
-                style={{ ...btn('ghost'), fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', background: 'transparent', border: '1px solid #3D3D3D', borderRadius: '4px', color: '#888', cursor: 'pointer' }}
               >전체해제</button>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1.25rem' }}>
               {Object.entries(MARKET_LABELS).filter(([mk]) => !MARKETS.find(m => m.id === mk)?.categoryOnly && !SYNC_EXCLUDED_MARKETS.has(mk)).map(([mk, label]) => (
-                <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', padding: '0.375rem 0.5rem', background: syncSelected[mk] ? 'rgba(81,207,102,0.1)' : c.surface, border: `1px solid ${syncSelected[mk] ? 'rgba(81,207,102,0.3)' : c.border}`, borderRadius: '6px' }}>
+                <label key={mk} style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', padding: '0.375rem 0.5rem', background: syncSelected[mk] ? 'rgba(81,207,102,0.1)' : 'rgba(30,30,30,0.5)', border: `1px solid ${syncSelected[mk] ? 'rgba(81,207,102,0.3)' : '#2D2D2D'}`, borderRadius: '6px' }}>
                   <input
                     type="checkbox"
                     checked={!!syncSelected[mk]}
                     onChange={e => setSyncSelected(prev => ({ ...prev, [mk]: e.target.checked }))}
-                    style={{ accentColor: c.success, width: '14px', height: '14px' }}
+                    style={{ accentColor: '#51CF66', width: '14px', height: '14px' }}
                   />
-                  <span style={{ fontSize: '0.8125rem', color: syncSelected[mk] ? c.text : c.textMuted }}>{label}</span>
-                  <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? c.success : c.danger, marginLeft: 'auto' }}>{fmtNum(marketCatCounts[mk] || 0)}</span>
+                  <span style={{ fontSize: '0.8125rem', color: syncSelected[mk] ? '#E5E5E5' : '#666' }}>{label}</span>
+                  <span style={{ fontSize: '0.625rem', color: (marketCatCounts[mk] || 0) >= 1000 ? '#51CF66' : '#FF6B6B', marginLeft: 'auto' }}>{fmtNum(marketCatCounts[mk] || 0)}</span>
                   {syncProgress[mk] && (() => {
                     const p = syncProgress[mk]
-                    if (p.status === 'loading') return <span style={{ fontSize: '0.625rem', color: '#0f6a5b' }}>...</span>
-                    if (p.status === 'ok') return <span style={{ fontSize: '0.625rem', color: c.success }}>{fmtNum(p.count)}</span>
-                    return <span style={{ fontSize: '0.625rem', color: c.danger }}>X</span>
+                    if (p.status === 'loading') return <span style={{ fontSize: '0.625rem', color: '#FF8C00' }}>...</span>
+                    if (p.status === 'ok') return <span style={{ fontSize: '0.625rem', color: '#51CF66' }}>{fmtNum(p.count)}</span>
+                    return <span style={{ fontSize: '0.625rem', color: '#FF6B6B' }}>X</span>
                   })()}
                 </label>
               ))}
@@ -2045,17 +2052,17 @@ export default function CategoriesPage() {
 
             {/* 동기화 결과 */}
             {Object.values(syncProgress).some(p => p.status !== 'loading') && (
-              <div style={{ background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', maxHeight: '200px', overflowY: 'auto' }}>
-                <p style={{ fontSize: '0.75rem', color: c.textMuted, marginBottom: '0.5rem', fontWeight: 600 }}>동기화 결과</p>
+              <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', marginBottom: '1rem', maxHeight: '200px', overflowY: 'auto' }}>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '0.5rem', fontWeight: 600 }}>동기화 결과</p>
                 {Object.entries(syncProgress)
                   .filter(([, p]) => p.status !== 'loading')
                   .map(([mk, p]) => (
-                    <div key={mk} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: `1px solid ${c.border}` }}>
-                      <span style={{ fontSize: '0.8125rem', color: c.text }}>{MARKET_LABELS[mk] || mk}</span>
+                    <div key={mk} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.25rem 0', borderBottom: '1px solid #1C1C1C' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>{MARKET_LABELS[mk] || mk}</span>
                       {p.status === 'ok' ? (
-                        <span style={{ fontSize: '0.8125rem', color: c.success, fontWeight: 600 }}>{fmtNum(p.count)}개</span>
+                        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>{fmtNum(p.count)}개</span>
                       ) : (
-                        <span style={{ fontSize: '0.8125rem', color: c.danger }}>{p.error || '실패'}</span>
+                        <span style={{ fontSize: '0.8125rem', color: '#FF6B6B' }}>{p.error || '실패'}</span>
                       )}
                     </div>
                   ))}
@@ -2066,7 +2073,7 @@ export default function CategoriesPage() {
               <button
                 onClick={() => setSyncModalOpen(false)}
                 disabled={seedLoading}
-                style={{ ...btn('ghost'), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
+                style={{ padding: '0.5rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}
               >닫기</button>
               <button
                 onClick={async () => {
@@ -2098,7 +2105,7 @@ export default function CategoriesPage() {
                   showAlert(`동기화 완료: ${fmtNum(okCount)}건 성공${failCount > 0 ? `, ${fmtNum(failCount)}건 실패` : ''}`, failCount > 0 ? 'error' : 'success')
                 }}
                 disabled={seedLoading}
-                style={{ ...btn('primary'), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', ...(seedLoading ? btnDisabled : null) }}
+                style={{ padding: '0.5rem 1.25rem', background: seedLoading ? '#333' : '#51CF66', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: seedLoading ? 'not-allowed' : 'pointer' }}
               >{seedLoading ? '동기화 중...' : '동기화 시작'}</button>
             </div>
           </div>

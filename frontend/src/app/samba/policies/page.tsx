@@ -24,12 +24,9 @@ import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OV
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { SITE_COLORS } from '@/lib/samba/constants'
-
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
 import TetrisBoard from './tetris/TetrisBoard'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface RangeMargin {
   min: number
@@ -135,6 +132,7 @@ interface MarketPolicyForm {
   ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
 }
 
+
 // 마켓 목록은 @/lib/samba/markets에서 import
 const MARKET_KEY_MAP = MARKET_ID_BY_LABEL
 
@@ -236,8 +234,8 @@ function extractMdGroups(data: unknown): LotteMdGroup[] {
   return result
 }
 
+
 export default function PoliciesPage() {
-  const c = useTheme()
   const TETRIS_MATCHING_ENABLED_KEY = 'tetris_matching_enabled'
   useEffect(() => { document.title = 'SAMBA-정책관리' }, [])
   const searchParams = useSearchParams()
@@ -349,6 +347,7 @@ export default function PoliciesPage() {
   // 담당MD·출고지·반품지·브랜드를 불러올지 선택. '' 이면 accountIds[0] 폴백.
   const [gsQueryAccId, setGsQueryAccId] = useState('')
 
+
   // 현재 마켓 정책 가져오기 (부분 데이터에도 기본값 보장)
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
     const defaults: MarketPolicyForm = { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5, origin: '', streetPriceRate: 0, ssgBrandMappings: [], gsSettings: {} }
@@ -414,6 +413,7 @@ export default function PoliciesPage() {
       .then(res => { if (res.interval_hours > 0) setSyncIntervalInput(res.interval_hours) })
       .catch(() => {})
   }, [])
+
 
   // URL highlight 파라미터로 정책 자동 선택
   useEffect(() => {
@@ -522,6 +522,7 @@ export default function PoliciesPage() {
     }, 300)
     return () => clearTimeout(timer)
   }, [gsBrandKeyword, gsAccountId])
+
 
   // GS샵 출고지/반품지 목록 로드 (조회 기준 계정 gsAccountId 기준 — 계정 바뀌면 재조회)
   const loadGsDelivPlaces = useCallback(async () => {
@@ -834,7 +835,7 @@ export default function PoliciesPage() {
   const mp = getCurrentMarketPolicy()
 
   return (
-    <div style={{ color: c.text }}>
+    <div style={{ color: '#E5E5E5' }}>
       {/* 헤더 + 탭 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -844,9 +845,9 @@ export default function PoliciesPage() {
               padding: '0.375rem 0.75rem',
               fontSize: '0.75rem',
               borderRadius: '6px',
-              border: mainTab === '테트리스 매칭' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
-              background: mainTab === '테트리스 매칭' ? '#e3f4f0' : 'transparent',
-              color: mainTab === '테트리스 매칭' ? '#0f6a5b' : c.textMuted,
+              border: mainTab === '테트리스 매칭' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+              background: mainTab === '테트리스 매칭' ? 'rgba(255,140,0,0.12)' : 'transparent',
+              color: mainTab === '테트리스 매칭' ? '#FF8C00' : '#888',
               cursor: 'pointer',
               fontWeight: 600,
             }}
@@ -859,9 +860,9 @@ export default function PoliciesPage() {
               padding: '0.375rem 0.75rem',
               fontSize: '0.75rem',
               borderRadius: '6px',
-              border: mainTab === '정책관리' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
-              background: mainTab === '정책관리' ? '#e3f4f0' : 'transparent',
-              color: mainTab === '정책관리' ? '#0f6a5b' : c.textMuted,
+              border: mainTab === '정책관리' ? '1px solid #FF8C00' : '1px solid #2D2D2D',
+              background: mainTab === '정책관리' ? 'rgba(255,140,0,0.12)' : 'transparent',
+              color: mainTab === '정책관리' ? '#FF8C00' : '#888',
               cursor: 'pointer',
               fontWeight: 600,
             }}
@@ -870,31 +871,31 @@ export default function PoliciesPage() {
           </button>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <a href="/samba/categories" style={{ fontSize: '0.75rem', color: c.link, textDecoration: 'none' }}>카테고리매핑 →</a>
-          <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>상품전송 →</a>
+          <a href="/samba/categories" style={{ fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none' }}>카테고리매핑 →</a>
+          <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: '#888', textDecoration: 'none' }}>상품전송 →</a>
         </div>
       </div>
 
       {/* 정책관리 탭 내용 */}
       <div style={{ display: mainTab === '정책관리' ? 'block' : 'none' }}>
         {/* AI 비용 (SMS 잔여량 스타일) */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '0.75rem' }}>
-        <span style={{ fontSize: '0.8125rem', color: c.textSub, fontWeight: 600 }}>AI 비용</span>
-        <span style={{ fontSize: '0.8125rem', color: c.text }}>
-          예상 <span style={{ color: c.text, fontWeight: 700 }}>₩15</span>
-          <span style={{ color: c.textMuted }}> (1회)</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(167,139,250,0.08)', border: '1px solid rgba(167,139,250,0.2)', borderRadius: '8px', marginBottom: '0.75rem' }}>
+        <span style={{ fontSize: '0.8125rem', color: '#A78BFA', fontWeight: 600 }}>AI 비용</span>
+        <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+          예상 <span style={{ color: '#FFB84D', fontWeight: 700 }}>₩15</span>
+          <span style={{ color: '#888' }}> (1회)</span>
         </span>
         {lastAiUsage && (
           <>
-            <span style={{ color: c.border }}>|</span>
-            <span style={{ fontSize: '0.8125rem', color: c.text }}>
-              최근 <span style={{ color: c.success, fontWeight: 700 }}>₩{fmtNum(lastAiUsage.cost)}</span>
-              <span style={{ color: c.textMuted }}> ({fmtNum(lastAiUsage.calls)}회 / ~{fmtNum(lastAiUsage.tokens)}토큰)</span>
+            <span style={{ color: '#2D2D2D' }}>|</span>
+            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+              최근 <span style={{ color: '#51CF66', fontWeight: 700 }}>₩{fmtNum(lastAiUsage.cost)}</span>
+              <span style={{ color: '#888' }}> ({fmtNum(lastAiUsage.calls)}회 / ~{fmtNum(lastAiUsage.tokens)}토큰)</span>
             </span>
-            <span style={{ fontSize: '0.6875rem', color: c.textMuted }}>{lastAiUsage.date}</span>
+            <span style={{ fontSize: '0.6875rem', color: '#555' }}>{lastAiUsage.date}</span>
           </>
         )}
-        <span style={{ fontSize: '0.625rem', color: c.textMuted, marginLeft: 'auto', cursor: 'help' }} title={'산정 근거: Sonnet4 $3/M in + $15/M out × ₩1,450\n1회: ~1,500 in + ~300 out = ~₩15'}>근거</span>
+        <span style={{ fontSize: '0.625rem', color: '#555', marginLeft: 'auto', cursor: 'help' }} title={'산정 근거: Sonnet4 $3/M in + $15/M out × ₩1,450\n1회: ~1,500 in + ~300 out = ~₩15'}>근거</span>
       </div>
 
       {/* 정책 선택 */}
@@ -969,7 +970,7 @@ export default function PoliciesPage() {
             openEdit(copied)
             showAlert('정책이 복사되었습니다', 'success')
           }}
-            style={{ ...btn('ghost'), fontSize: '0.8125rem', padding: '0.4rem 1rem', whiteSpace: 'nowrap' }}
+            style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '8px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >정책 복사</button>
           <button
             onClick={() => {
@@ -978,13 +979,13 @@ export default function PoliciesPage() {
               setAiPolicyApplied(0)
               setAiPolicyCommand('')
             }}
-            style={{ ...btn('accent'), fontSize: '0.8125rem', padding: '0.4rem 1rem', borderRadius: '8px', whiteSpace: 'nowrap' }}
+            style={{ fontSize: '0.8125rem', padding: '0.4rem 1rem', background: 'rgba(167,139,250,0.1)', border: '1px solid rgba(167,139,250,0.3)', borderRadius: '8px', color: '#A78BFA', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >✦ AI정책변경</button>
         </div>
         {/* 정책명 표시/수정 — 신규/수정 모두 표시 */}
         {showForm && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.75rem' }}>
-            <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>정책명</span>
+            <span style={{ color: '#888', fontSize: '0.8125rem' }}>정책명</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -995,9 +996,9 @@ export default function PoliciesPage() {
               value={policyColor}
               onChange={(e) => { setPolicyColor(e.target.value); triggerAutoSave() }}
               title="정책 색상"
-              style={{ width: 32, height: 32, padding: 2, background: 'none', border: `1px solid ${c.border}`, borderRadius: 6, cursor: 'pointer', flexShrink: 0 }}
+              style={{ width: 32, height: 32, padding: 2, background: 'none', border: '1px solid #2D2D2D', borderRadius: 6, cursor: 'pointer', flexShrink: 0 }}
             />
-            <span style={{ fontSize: '0.75rem', color: c.textMuted }}>색상</span>
+            <span style={{ fontSize: '0.75rem', color: '#666' }}>색상</span>
           </div>
         )}
       </div>
@@ -1010,22 +1011,22 @@ export default function PoliciesPage() {
             <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>가격계산 정책 설정</h3>
             {/* 첫 번째 행: 체크박스 + 배송비 + 마진율 + 기준통화 */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8125rem', color: c.textSub, cursor: 'pointer' }}>
-                <input type="checkbox" checked={pricing.useRangeMargin} onChange={(e) => setPricing({ ...pricing, useRangeMargin: e.target.checked })} style={{ accentColor: c.primary }} />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8125rem', color: '#C5C5C5', cursor: 'pointer' }}>
+                <input type="checkbox" checked={pricing.useRangeMargin} onChange={(e) => setPricing({ ...pricing, useRangeMargin: e.target.checked })} style={{ accentColor: '#FF8C00' }} />
                 상품가격별 범위 마진 설정
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>배송비</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>배송비</span>
                 <NumInput value={pricing.shippingCost} onChange={(v) => { setPricing({ ...pricing, shippingCost: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="원" />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>마진율</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>마진율</span>
                 <NumInput value={pricing.marginRate} onChange={(v) => { setPricing({ ...pricing, marginRate: v }); triggerAutoSave() }} style={{ width: '62px' }} suffix="%" />
-                <span style={{ color: c.textMuted }}>/</span>
+                <span style={{ color: '#555' }}>/</span>
                 <NumInput value={pricing.extraCharge} onChange={(v) => { setPricing({ ...pricing, extraCharge: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="원" />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>기준통화</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>기준통화</span>
                 <select style={{ ...inputStyle, width: 'auto' }} value={pricing.currency} onChange={(e) => setPricing({ ...pricing, currency: e.target.value })}>
                   <option value="KRW">KRW(원화)</option>
                   <option value="USD">USD</option>
@@ -1039,74 +1040,74 @@ export default function PoliciesPage() {
                 {pricing.rangeMargins.map((rm, idx) => (
                   <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
                     <NumInput value={rm.min} onChange={(v) => updateRangeMargin(idx, 'min', v)} style={{ width: '100px' }} />
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>~</span>
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>~</span>
                     <NumInput value={rm.max} onChange={(v) => updateRangeMargin(idx, 'max', v)} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, margin: '0 0.25rem' }}>│</span>
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>마진율</span>
+                    <span style={{ color: '#555', margin: '0 0.25rem' }}>│</span>
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>마진율</span>
                     <NumInput value={rm.rate} onChange={(v) => updateRangeMargin(idx, 'rate', v)} style={{ width: '60px' }} suffix="%" />
-                    <span style={{ color: c.textMuted }}>/</span>
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>마진금액</span>
+                    <span style={{ color: '#555' }}>/</span>
+                    <span style={{ color: '#888', fontSize: '0.75rem' }}>마진금액</span>
                     <NumInput value={rm.amount} onChange={(v) => updateRangeMargin(idx, 'amount', v)} style={{ width: '90px' }} suffix="원" placeholder="선택" />
-                    <button onClick={() => removeRangeMargin(idx)} style={{ color: c.danger, background: 'transparent', fontSize: '0.75rem', cursor: 'pointer', border: 'none', marginLeft: '0.5rem' }}>삭제</button>
+                    <button onClick={() => removeRangeMargin(idx)} style={{ color: '#FF6B6B', background: 'transparent', fontSize: '0.75rem', cursor: 'pointer', border: 'none', marginLeft: '0.5rem' }}>삭제</button>
                   </div>
                 ))}
-                <button onClick={addRangeMargin} style={{ ...btn('secondary'), marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.25rem 0.75rem' }}>+ 가격범위 추가하기</button>
+                <button onClick={addRangeMargin} style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: '#FF8C00', background: 'transparent', border: '1px dashed #FF8C00', borderRadius: '6px', padding: '0.25rem 0.75rem', cursor: 'pointer' }}>+ 가격범위 추가하기</button>
               </div>
             )}
 
             {/* 추가요금 + 관세 + 최소마진 + 할인 */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginBottom: '0.75rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>추가요금</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>추가요금</span>
                 <NumInput value={pricing.extraCharge} onChange={(v) => { setPricing({ ...pricing, extraCharge: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>관세/부가세</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>관세/부가세</span>
                 <select style={{ ...inputStyle, width: 'auto' }} value={pricing.customsIncluded ? 'Y' : 'N'} onChange={(e) => setPricing({ ...pricing, customsIncluded: e.target.value === 'Y' })}>
                   <option value="N">N</option><option value="Y">Y</option>
                 </select>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>최소마진금액</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>최소마진금액</span>
                 <NumInput value={pricing.minMarginAmount} onChange={(v) => { setPricing({ ...pricing, minMarginAmount: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>할인율/금액</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem' }}>할인율/금액</span>
                 <NumInput value={pricing.discountType === 'rate' ? pricing.discountValue : 0} onChange={(v) => { setPricing({ ...pricing, discountType: 'rate', discountValue: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="%" />
-                <span style={{ color: c.textMuted }}>/</span>
+                <span style={{ color: '#555' }}>/</span>
                 <NumInput value={pricing.discountType === 'amount' ? pricing.discountValue : 0} onChange={(v) => { setPricing({ ...pricing, discountType: 'amount', discountValue: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="원" />
               </div>
             </div>
 
             {/* 가격 계산 공식 */}
-            <div style={{ background: c.surfaceAlt, borderRadius: '8px', padding: '0.75rem 1rem', border: `1px solid ${c.border}`, fontSize: '0.8rem', color: c.textMuted }}>
+            <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '8px', padding: '0.75rem 1rem', border: '1px solid #2D2D2D', fontSize: '0.8rem', color: '#888' }}>
               [상품금액] = [원가] + [마진] + [배송비] + [소싱처 추가 마진] + [관세] + [마켓 수수료]
             </div>
 
             {/* 소싱처별 추가 마진 설정 */}
-            <div style={{ marginTop: '1rem', borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+            <div style={{ marginTop: '1rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
               <div
                 onClick={() => setShowSourceSiteMargins(!showSourceSiteMargins)}
                 style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem', userSelect: 'none' }}
               >
-                <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>{showSourceSiteMargins ? '▼' : '▶'}</span>
-                <span style={{ color: c.textSub, fontSize: '0.8125rem', fontWeight: 600 }}>소싱처별 추가 마진 설정</span>
+                <span style={{ color: '#888', fontSize: '0.75rem' }}>{showSourceSiteMargins ? '▼' : '▶'}</span>
+                <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', fontWeight: 600 }}>소싱처별 추가 마진 설정</span>
                 {Object.values(pricing.sourceSiteMargins).some(v => v.marginRate !== 0 || v.marginAmount !== 0) && (
-                  <span style={{ fontSize: '0.7rem', color: c.textSub }}>
+                  <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
                     ({fmtNum(Object.values(pricing.sourceSiteMargins).filter(v => v.marginRate !== 0 || v.marginAmount !== 0).length)}개 설정됨)
                   </span>
                 )}
-                <span style={{ fontSize: '0.7rem', color: c.textMuted, marginLeft: '0.25rem' }}>— 기본 마진에 추가로 가산 (수수료 역산 전 적용)</span>
+                <span style={{ fontSize: '0.7rem', color: '#555', marginLeft: '0.25rem' }}>— 기본 마진에 추가로 가산 (수수료 역산 전 적용)</span>
               </div>
               {showSourceSiteMargins && (
                 <div style={{ marginTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
-                    <span style={{ width: '90px', fontSize: '0.7rem', color: c.textMuted }}>소싱처</span>
-                    <span style={{ width: '100px', fontSize: '0.7rem', color: c.textMuted, textAlign: 'center' }}>추가 마진율(%)</span>
-                    <span style={{ width: '110px', fontSize: '0.7rem', color: c.textMuted, textAlign: 'center' }}>추가 마진금액(원)</span>
-                    <span title="0이면 전체 적용, 입력 시 원가가 이 값 미만인 상품에만 추가 마진 적용" style={{ width: '120px', fontSize: '0.7rem', color: c.textMuted, textAlign: 'center' }}>기준원가 미만만(원)</span>
-                    <span style={{ width: '170px', fontSize: '0.7rem', color: c.textMuted, textAlign: 'center' }}>적립금 사용가능 상품만</span>
-                    <span style={{ width: '170px', fontSize: '0.7rem', color: c.textMuted, textAlign: 'center' }}>보유적립금 할인 제외</span>
+                    <span style={{ width: '90px', fontSize: '0.7rem', color: '#555' }}>소싱처</span>
+                    <span style={{ width: '100px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>추가 마진율(%)</span>
+                    <span style={{ width: '110px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>추가 마진금액(원)</span>
+                    <span title="0이면 전체 적용, 입력 시 원가가 이 값 미만인 상품에만 추가 마진 적용" style={{ width: '120px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>기준원가 미만만(원)</span>
+                    <span style={{ width: '170px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>적립금 사용가능 상품만</span>
+                    <span style={{ width: '170px', fontSize: '0.7rem', color: '#555', textAlign: 'center' }}>보유적립금 할인 제외</span>
                   </div>
                   {Object.keys(SOURCING_SITE_LABELS).map(siteId => {
                     const ssm = pricing.sourceSiteMargins[siteId] || { marginRate: 0, marginAmount: 0 }
@@ -1119,7 +1120,7 @@ export default function PoliciesPage() {
                       <div key={siteId} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <span style={{
                           width: '90px', fontSize: '0.75rem', fontWeight: 600,
-                          color: isSet ? (SITE_COLORS[siteId] || c.textMuted) : c.textMuted,
+                          color: isSet ? (SITE_COLORS[siteId] || '#888') : '#555',
                         }}>
                           {SOURCING_SITE_LABELS[siteId]}
                         </span>
@@ -1150,7 +1151,7 @@ export default function PoliciesPage() {
                             justifyContent: 'center',
                             gap: '0.25rem',
                             fontSize: '0.7rem',
-                            color: supportsPointOnly ? c.textSub : c.textMuted,
+                            color: supportsPointOnly ? '#C5C5C5' : '#444',
                             cursor: supportsPointOnly ? 'pointer' : 'not-allowed',
                             opacity: supportsPointOnly ? 1 : 0.45,
                           }}
@@ -1173,7 +1174,7 @@ export default function PoliciesPage() {
                             justifyContent: 'center',
                             gap: '0.25rem',
                             fontSize: '0.7rem',
-                            color: supportsExcludeHeldPoint ? c.textSub : c.textMuted,
+                            color: supportsExcludeHeldPoint ? '#C5C5C5' : '#444',
                             cursor: supportsExcludeHeldPoint ? 'pointer' : 'not-allowed',
                             opacity: supportsExcludeHeldPoint ? 1 : 0.45,
                           }}
@@ -1188,7 +1189,7 @@ export default function PoliciesPage() {
                           <span>보유적립금 제외</span>
                         </label>
                         {isSet && (
-                          <span style={{ fontSize: '0.7rem', color: c.textSub }}>
+                          <span style={{ fontSize: '0.7rem', color: '#FF8C00' }}>
                             {ssm.marginRate > 0 ? '+' : ''}{ssm.marginRate !== 0 ? `${ssm.marginRate}%` : ''}{ssm.marginRate !== 0 && ssm.marginAmount !== 0 ? ' + ' : ''}{ssm.marginAmount > 0 ? '+' : ''}{ssm.marginAmount !== 0 ? `${fmtNum(ssm.marginAmount)}원` : ''}
                             {(ssm.costThreshold || 0) > 0 ? ` · 원가 ${fmtNum(ssm.costThreshold || 0)}원 미만만` : ''}
                             {ssm.pointOnly && supportsPointOnly ? ' · 적립금가능만' : ''}
@@ -1203,26 +1204,28 @@ export default function PoliciesPage() {
             </div>
           </div>
 
+
+
           {/* 마켓정책 설정 */}
           <div style={{ ...card, padding: '1.5rem', marginBottom: '1.25rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-              <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: c.text, textTransform: 'uppercase', letterSpacing: '0.05em' }}>마켓정책 설정</h4>
-              <span style={{ fontSize: '0.75rem', color: c.textMuted }}>** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
+              <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#FF8C00', textTransform: 'uppercase', letterSpacing: '0.05em' }}>마켓정책 설정</h4>
+              <span style={{ fontSize: '0.75rem', color: '#888' }}>** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
             </div>
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center', marginBottom: '0.375rem' }}>
-                <span style={{ fontSize: '0.68rem', color: c.text, fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>국내</span>
+                <span style={{ fontSize: '0.68rem', color: '#FF8C00', fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>국내</span>
                 {POLICY_MARKETS_DOMESTIC.map(m => (
                   <button key={m} onClick={() => setMarketPolicyTab(m)}
-                    style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #a9ddd2' : `1px solid ${c.border}`, background: marketPolicyTab === m ? '#e3f4f0' : 'transparent', color: marketPolicyTab === m ? '#0f6a5b' : c.textMuted }}
+                    style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #FF8C00' : '1px solid #2D2D2D', background: marketPolicyTab === m ? 'rgba(255,140,0,0.12)' : 'transparent', color: marketPolicyTab === m ? '#FF8C00' : '#888' }}
                   >{m === '신세계몰(전시)' ? '신세계몰' : m}</button>
                 ))}
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center' }}>
-                <span style={{ fontSize: '0.68rem', color: c.text, fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>해외</span>
+                <span style={{ fontSize: '0.68rem', color: '#4C9AFF', fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>해외</span>
                 {POLICY_MARKETS_OVERSEAS.map(m => (
                   <button key={m} onClick={() => setMarketPolicyTab(m)}
-                    style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #a9ddd2' : `1px solid ${c.border}`, background: marketPolicyTab === m ? '#e3f4f0' : 'transparent', color: marketPolicyTab === m ? '#0f6a5b' : c.textMuted }}
+                    style={{ padding: '0.375rem 0.75rem', borderRadius: '6px', fontSize: '0.75rem', cursor: 'pointer', border: marketPolicyTab === m ? '1px solid #FF8C00' : '1px solid #2D2D2D', background: marketPolicyTab === m ? 'rgba(255,140,0,0.12)' : 'transparent', color: marketPolicyTab === m ? '#FF8C00' : '#888' }}
                   >{m}</button>
                 ))}
               </div>
@@ -1230,7 +1233,7 @@ export default function PoliciesPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
               {/* 연결 계정 선택 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', gridColumn: '1 / -1' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>연결 계정</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>연결 계정</span>
                 {(() => {
                   const accsForMarket = marketAccounts.filter(a => a.market_type === MARKET_KEY_MAP[marketPolicyTab])
                   // 현재 존재하는 계정 ID만 필터 (삭제된 계정의 오래된 ID 제거)
@@ -1246,49 +1249,49 @@ export default function PoliciesPage() {
                       {accsForMarket.map(acc => {
                         const linked = linkedIds.includes(acc.id)
                         return (
-                          <label key={acc.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: linked ? c.text : c.textMuted }}>
-                            <input type="checkbox" checked={linked} onChange={() => toggleAccLink(acc.id)} style={{ accentColor: c.success }} />
+                          <label key={acc.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: linked ? '#E5E5E5' : '#666' }}>
+                            <input type="checkbox" checked={linked} onChange={() => toggleAccLink(acc.id)} style={{ accentColor: '#51CF66' }} />
                             {acc.business_name || acc.market_name}({acc.seller_id || acc.account_label || '-'})
                           </label>
                         )
                       })}
                       {linkedIds.length > 0 && (
-                        <span style={{ fontSize: '0.7rem', color: c.success, padding: '0.15rem 0.4rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>{fmtNum(linkedIds.length)}개 연결</span>
+                        <span style={{ fontSize: '0.7rem', color: '#51CF66', padding: '0.15rem 0.4rem', background: 'rgba(81,207,102,0.1)', borderRadius: '4px' }}>{fmtNum(linkedIds.length)}개 연결</span>
                       )}
                     </div>
                   ) : (
-                    <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>설정 탭에서 {marketPolicyTab} 계정을 먼저 등록해주세요</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#666' }}>설정 탭에서 {marketPolicyTab} 계정을 먼저 등록해주세요</span>
                   )
                 })()}
               </div>
               {/* 롯데홈쇼핑 전용: MD상품군, 표준카테고리, 전시카테고리, 브랜드 + 배송정책/품목정보 */}
               {marketPolicyTab === '롯데홈쇼핑' && (
-                <div style={{ gridColumn: '1 / -1', borderBottom: `1px solid ${c.border}`, paddingBottom: '0.75rem', marginBottom: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: c.text, fontWeight: 600 }}>롯데홈쇼핑 기본 설정</span>
+                <div style={{ gridColumn: '1 / -1', borderBottom: '1px solid #2D2D2D', paddingBottom: '0.75rem', marginBottom: '0.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>롯데홈쇼핑 기본 설정</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '50%' }}>
                     {/* ── 차세대 API 필드 (2026-06-22 ~) ── */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.text, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>MD코드</span>
-                      <input type="text" placeholder="MD코드 (md_code)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>MD코드</span>
+                      <input type="text" placeholder="MD코드 (md_code)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.mdCode}
                         onChange={e => setLottePolicy(p => ({ ...p, mdCode: e.target.value }))} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.text, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>상품분류</span>
-                      <input type="text" placeholder="상품분류코드 (goods_grp_code)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>상품분류</span>
+                      <input type="text" placeholder="상품분류코드 (goods_grp_code)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.goodsGrpCode}
                         onChange={e => setLottePolicy(p => ({ ...p, goodsGrpCode: e.target.value, dispNo: '', dispNm: '', stdCatNo: '', stdCatNm: '' }))} />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.text, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>옵션코드</span>
-                      <input type="text" placeholder="옵션타입코드 (opt_type_code, 6월 말~)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>옵션코드</span>
+                      <input type="text" placeholder="옵션타입코드 (opt_type_code, 6월 말~)" style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.optTypeCode}
                         onChange={e => setLottePolicy(p => ({ ...p, optTypeCode: e.target.value }))} />
                     </div>
                     {/* ── 구 API (MD상품군) — 차세대 이전 계정 호환 ── */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>MD상품군</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>MD상품군</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.mdGsgrNo}
                         onChange={e => {
                           const selected = lotteMdGroups.find(g => g.md_gsgr_no === e.target.value)
@@ -1300,8 +1303,8 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>전시카테고리</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, opacity: !(lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo) ? 0.5 : 1 }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>전시카테고리</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', opacity: !(lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo) ? 0.5 : 1 }}
                         value={lottePolicy.dispNo} disabled={!(lottePolicy.goodsGrpCode || lottePolicy.mdGsgrNo)}
                         onChange={e => {
                           const selected = lotteCategories.find(c => c.disp_no === e.target.value)
@@ -1316,8 +1319,8 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>표준카테고리</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, opacity: !lottePolicy.dispNo ? 0.5 : 1 }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>표준카테고리</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', opacity: !lottePolicy.dispNo ? 0.5 : 1 }}
                         value={lottePolicy.stdCatNo} disabled={!lottePolicy.dispNo}
                         onChange={e => {
                           const sel = lotteStdCategories.find(c => c.no === e.target.value)
@@ -1328,8 +1331,8 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>과/면세</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>과/면세</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.taxType}
                         onChange={e => setLottePolicy(p => ({ ...p, taxType: e.target.value }))}>
                         <option value="">선택하세요</option>
@@ -1340,34 +1343,34 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0, paddingTop: '0.3rem' }}>브랜드</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0, paddingTop: '0.3rem' }}>브랜드</span>
                       <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                         {lottePolicy.brandMappings.map(b => (
                           <div key={b.brnd_no} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.2rem' }}>
-                            <span style={{ fontSize: '0.8rem', color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{b.brnd_no}] {b.brnd_nm}</span>
+                            <span style={{ fontSize: '0.8rem', color: '#FF8C00', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{b.brnd_no}] {b.brnd_nm}</span>
                             <button onClick={() => setLottePolicy(p => ({ ...p, brandMappings: p.brandMappings.filter(x => x.brnd_no !== b.brnd_no) }))}
-                              style={{ fontSize: '0.75rem', color: c.textMuted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}>✕</button>
+                              style={{ fontSize: '0.75rem', color: '#888', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}>✕</button>
                           </div>
                         ))}
                         <input
-                          style={{ width: '100%', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, boxSizing: 'border-box' }}
+                          style={{ width: '100%', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', boxSizing: 'border-box' }}
                           placeholder="브랜드명 검색 (예: nike)"
                           value={lotteBrandKeyword}
                           onChange={e => setLotteBrandKeyword(e.target.value)}
                         />
                         {lotteBrandLoading && (
-                          <span style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: c.textMuted }}>검색 중...</span>
+                          <span style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#666' }}>검색 중...</span>
                         )}
                         {!lotteBrandLoading && lotteBrandError && lotteBrandKeyword.trim() && (
-                          <div style={{ marginTop: '0.2rem', fontSize: '0.75rem', color: c.danger }}>{lotteBrandError}</div>
+                          <div style={{ marginTop: '0.2rem', fontSize: '0.75rem', color: '#e05c5c' }}>{lotteBrandError}</div>
                         )}
                         {lotteBrands.length > 0 && (
-                          <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
+                          <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '4px', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
                             {lotteBrands.map(b => (
                               <div key={b.brnd_no}
                                 onClick={() => { setLottePolicy(p => ({ ...p, brandMappings: p.brandMappings.some(x => x.brnd_no === b.brnd_no) ? p.brandMappings : [...p.brandMappings, { brnd_no: b.brnd_no, brnd_nm: b.brnd_nm }] })); setLotteBrandKeyword(''); setLotteBrands([]); setLotteBrandError('') }}
-                                style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', color: c.text, cursor: 'pointer' }}
-                                onMouseEnter={e => (e.currentTarget.style.background = c.surfaceAlt)}
+                                style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', color: '#E5E5E5', cursor: 'pointer' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,140,0,0.12)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                               >
                                 [{b.brnd_no}] {b.brnd_nm}{b.brnd_en ? ` (${b.brnd_en})` : ''}
@@ -1378,8 +1381,8 @@ export default function PoliciesPage() {
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>매입형태</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>매입형태</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.purchaseType}
                         onChange={e => setLottePolicy(p => ({ ...p, purchaseType: e.target.value }))}>
                         <option value="">선택하세요</option>
@@ -1388,8 +1391,8 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>구입제한나이</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>구입제한나이</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.ageLimit}
                         onChange={e => setLottePolicy(p => ({ ...p, ageLimit: e.target.value }))}>
                         <option value="">선택하세요</option>
@@ -1398,34 +1401,34 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>마진율</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>마진율</span>
                       <div style={{ display: 'flex', alignItems: 'center' }}>
                         <input
                           type="text"
-                          style={{ width: '60px', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px 0 0 4px', color: c.text }}
+                          style={{ width: '60px', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px 0 0 4px', color: '#E5E5E5' }}
                           placeholder="30"
                           value={lottePolicy.marginRate}
                           onChange={e => { setLottePolicy(p => ({ ...p, marginRate: e.target.value })); setCurrentMarketPolicy({ ...mp, feeRate: Number(e.target.value) || 0 }); triggerAutoSave() }}
                         />
-                        <span style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderLeft: 'none', borderRadius: '0 4px 4px 0', color: c.textMuted }}>%</span>
+                        <span style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#252525', border: '1px solid #2D2D2D', borderLeft: 'none', borderRadius: '0 4px 4px 0', color: '#888' }}>%</span>
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>추가수수료율</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>추가수수료율</span>
                       <div style={{ display: 'flex', alignItems: 'center' }}>
                         <input
                           type="text"
-                          style={{ width: '60px', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px 0 0 4px', color: c.text }}
+                          style={{ width: '60px', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px 0 0 4px', color: '#E5E5E5' }}
                           placeholder="0"
                           value={lottePolicy.extraFeeRate}
                           onChange={e => { setLottePolicy(p => ({ ...p, extraFeeRate: e.target.value })); setCurrentMarketPolicy({ ...mp, extraFeeRate: Number(e.target.value) || 0 }); triggerAutoSave() }}
                         />
-                        <span style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderLeft: 'none', borderRadius: '0 4px 4px 0', color: c.textMuted }}>%</span>
+                        <span style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', background: '#252525', border: '1px solid #2D2D2D', borderLeft: 'none', borderRadius: '0 4px 4px 0', color: '#888' }}>%</span>
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>판매형태</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>판매형태</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.saleType}
                         onChange={e => setLottePolicy(p => ({ ...p, saleType: e.target.value }))}>
                         <option value="">선택하세요</option>
@@ -1434,8 +1437,8 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>판매방식구분</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>판매방식구분</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.saleMethod}
                         onChange={e => setLottePolicy(p => ({ ...p, saleMethod: e.target.value }))}>
                         <option value="">선택하세요</option>
@@ -1448,47 +1451,47 @@ export default function PoliciesPage() {
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>가격비교노출</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>가격비교노출</span>
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         {(['노출', '노출안함'] as const).map(v => (
                           <button key={v} onClick={() => setLottePolicy(p => ({ ...p, priceCompareDisplay: p.priceCompareDisplay === v ? '' : v }))}
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.priceCompareDisplay === v ? '#a9ddd2' : c.border, background: lottePolicy.priceCompareDisplay === v ? '#e3f4f0' : c.inputBg, color: lottePolicy.priceCompareDisplay === v ? '#0f6a5b' : c.textMuted, fontWeight: lottePolicy.priceCompareDisplay === v ? 600 : 400 }}>
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.priceCompareDisplay === v ? '#FF8C00' : '#2D2D2D', background: lottePolicy.priceCompareDisplay === v ? '#FF8C0022' : '#1A1A1A', color: lottePolicy.priceCompareDisplay === v ? '#FF8C00' : '#888', fontWeight: lottePolicy.priceCompareDisplay === v ? 600 : 400 }}>
                             {v}
                           </button>
                         ))}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>구매수량제한</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>구매수량제한</span>
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         {(['사용', '사용안함'] as const).map(v => (
                           <button key={v} onClick={() => setLottePolicy(p => ({ ...p, purchaseQtyLimit: p.purchaseQtyLimit === v ? '' : v }))}
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.purchaseQtyLimit === v ? '#a9ddd2' : c.border, background: lottePolicy.purchaseQtyLimit === v ? '#e3f4f0' : c.inputBg, color: lottePolicy.purchaseQtyLimit === v ? '#0f6a5b' : c.textMuted, fontWeight: lottePolicy.purchaseQtyLimit === v ? 600 : 400 }}>
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.purchaseQtyLimit === v ? '#FF8C00' : '#2D2D2D', background: lottePolicy.purchaseQtyLimit === v ? '#FF8C0022' : '#1A1A1A', color: lottePolicy.purchaseQtyLimit === v ? '#FF8C00' : '#888', fontWeight: lottePolicy.purchaseQtyLimit === v ? 600 : 400 }}>
                             {v}
                           </button>
                         ))}
                       </div>
                     </div>
                   </div>
-                  <span style={{ fontSize: '0.75rem', color: c.text, fontWeight: 600 }}>기타상품정보</span>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>기타상품정보</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '50%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>옵션수정여부</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>옵션수정여부</span>
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         {(['수정함', '수정안함'] as const).map(v => (
                           <button key={v} onClick={() => setLottePolicy(p => ({ ...p, optionModify: p.optionModify === v ? '' : v }))}
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.optionModify === v ? '#a9ddd2' : c.border, background: lottePolicy.optionModify === v ? '#e3f4f0' : c.inputBg, color: lottePolicy.optionModify === v ? '#0f6a5b' : c.textMuted, fontWeight: lottePolicy.optionModify === v ? 600 : 400 }}>
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.optionModify === v ? '#FF8C00' : '#2D2D2D', background: lottePolicy.optionModify === v ? '#FF8C0022' : '#1A1A1A', color: lottePolicy.optionModify === v ? '#FF8C00' : '#888', fontWeight: lottePolicy.optionModify === v ? 600 : 400 }}>
                             {v}
                           </button>
                         ))}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>재고관리여부</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>재고관리여부</span>
                       <div style={{ display: 'flex', gap: '0.25rem' }}>
                         {(['사용함', '사용안함'] as const).map(v => (
                           <button key={v} onClick={() => setLottePolicy(p => ({ ...p, optionStockMgmt: p.optionStockMgmt === v ? '' : v }))}
-                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.optionStockMgmt === v ? '#a9ddd2' : c.border, background: lottePolicy.optionStockMgmt === v ? '#e3f4f0' : c.inputBg, color: lottePolicy.optionStockMgmt === v ? '#0f6a5b' : c.textMuted, fontWeight: lottePolicy.optionStockMgmt === v ? 600 : 400 }}>
+                            style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.optionStockMgmt === v ? '#FF8C00' : '#2D2D2D', background: lottePolicy.optionStockMgmt === v ? '#FF8C0022' : '#1A1A1A', color: lottePolicy.optionStockMgmt === v ? '#FF8C00' : '#888', fontWeight: lottePolicy.optionStockMgmt === v ? 600 : 400 }}>
                             {v}
                           </button>
                         ))}
@@ -1496,29 +1499,29 @@ export default function PoliciesPage() {
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                        <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>이미지리사이징</span>
+                        <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>이미지리사이징</span>
                         <div style={{ display: 'flex', gap: '0.25rem' }}>
                           {(['적용안함', '적용함'] as const).map(v => (
                             <button key={v} onClick={() => setLottePolicy(p => ({ ...p, imageResize: p.imageResize === v ? '' : v }))}
-                              style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.imageResize === v ? '#a9ddd2' : c.border, background: lottePolicy.imageResize === v ? '#e3f4f0' : c.inputBg, color: lottePolicy.imageResize === v ? '#0f6a5b' : c.textMuted, fontWeight: lottePolicy.imageResize === v ? 600 : 400 }}>
+                              style={{ padding: '0.25rem 0.6rem', fontSize: '0.8rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid', borderColor: lottePolicy.imageResize === v ? '#FF8C00' : '#2D2D2D', background: lottePolicy.imageResize === v ? '#FF8C0022' : '#1A1A1A', color: lottePolicy.imageResize === v ? '#FF8C00' : '#888', fontWeight: lottePolicy.imageResize === v ? 600 : 400 }}>
                               {v}
                             </button>
                           ))}
                         </div>
                       </div>
-                      <span style={{ fontSize: '0.75rem', color: c.textMuted, paddingLeft: '76px' }}>- 적용함 선택 시 상품 등록 시 이미지를 롯데홈쇼핑 규격에 맞게 자동 리사이징합니다.</span>
-                      <span style={{ fontSize: '0.75rem', color: c.textMuted, paddingLeft: '76px' }}>- 등록하시려는 이미지가 1024 x 1024 보다 클 경우, 1024 x 1024 사이즈로 리사이징 합니다.</span>
+                      <span style={{ fontSize: '0.75rem', color: '#666', paddingLeft: '76px' }}>- 적용함 선택 시 상품 등록 시 이미지를 롯데홈쇼핑 규격에 맞게 자동 리사이징합니다.</span>
+                      <span style={{ fontSize: '0.75rem', color: '#666', paddingLeft: '76px' }}>- 등록하시려는 이미지가 1024 x 1024 보다 클 경우, 1024 x 1024 사이즈로 리사이징 합니다.</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>출고일</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>출고일</span>
                       <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
                     </div>
                   </div>
-                  <span style={{ fontSize: '0.75rem', color: c.text, fontWeight: 600 }}>품목정보</span>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>품목정보</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '50%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>상품품목코드</span>
-                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text }}
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '72px', flexShrink: 0 }}>상품품목코드</span>
+                      <select style={{ flex: 1, minWidth: 0, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5' }}
                         value={lottePolicy.ecGoodsArtcCd}
                         onChange={e => {
                           const sel = lotteMdGroups.find(g => g.md_gsgr_no === lottePolicy.mdGsgrNo)?.artcItems.find(a => a.artc === e.target.value)
@@ -1541,7 +1544,7 @@ export default function PoliciesPage() {
                         showAlert(res.success ? '저장되었습니다.' : (res.message || '저장 실패'))
                       } catch { showAlert('저장 중 오류가 발생했습니다.') }
                       finally { setLotteSaving(false) }
-                    }} style={{ ...btn('secondary'), padding: '0.4rem 1.25rem', borderRadius: '6px', fontSize: '0.8125rem', ...(lotteSaving ? btnDisabled : null) }}>
+                    }} style={{ padding: '0.4rem 1.25rem', background: lotteSaving ? '#333' : '#FF8C00', color: lotteSaving ? '#888' : '#111', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: lotteSaving ? 'not-allowed' : 'pointer', fontSize: '0.8125rem' }}>
                       {lotteSaving ? '저장 중...' : '저장'}
                     </button>
                   </div>
@@ -1549,18 +1552,18 @@ export default function PoliciesPage() {
               )}
               {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '포이즌' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송형태</span>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: c.textSub }}>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송형태</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
                     <input type="radio" name="ship-type" checked={mp.shipType === 'domestic'} onChange={() => { setCurrentMarketPolicy({ ...mp, shipType: 'domestic' }); triggerAutoSave() }} /> 국내배송
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: c.textSub }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
                     <input type="radio" name="ship-type" checked={mp.shipType === 'overseas'} onChange={() => { setCurrentMarketPolicy({ ...mp, shipType: 'overseas' }); triggerAutoSave() }} /> 해외배송
                   </label>
                 </div>
               )}
               {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
                   <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
                 </div>
               )}
@@ -1568,30 +1571,30 @@ export default function PoliciesPage() {
               {marketPolicyTab === '포이즌' && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소 수수료</span>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>최소 수수료</span>
                     <NumInput value={mp.minFeeAmount ?? 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, minFeeAmount: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>POIZON 건당 최소 {fmtNum(15000)}원 — 이 금액 이상 마진 보장</span>
+                    <span style={{ color: '#555', fontSize: '0.72rem' }}>POIZON 건당 최소 {fmtNum(15000)}원 — 이 금액 이상 마진 보장</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>공통 마진</span>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', fontSize: '0.8125rem', color: c.textSub }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>공통 마진</span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer', fontSize: '0.8125rem', color: '#C5C5C5' }}>
                       <input type="checkbox" checked={!!mp.ignoreCommonMargin} onChange={(e) => { setCurrentMarketPolicy({ ...mp, ignoreCommonMargin: e.target.checked }); triggerAutoSave() }} />
                       정책 공통 마진 설정 무시
                     </label>
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>체크 시 위 공통 마진율/범위마진 대신 포이즌 자체 가격(최소 수수료 기준)만 적용</span>
+                    <span style={{ color: '#555', fontSize: '0.72rem' }}>체크 시 위 공통 마진율/범위마진 대신 포이즌 자체 가격(최소 수수료 기준)만 적용</span>
                   </div>
                 </>
               )}
               {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                   <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
                 </div>
               )}
               {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑·신세계몰은 자체 블록에서 출고일 표시 */}
               {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
               </div>
               )}
@@ -1599,52 +1602,52 @@ export default function PoliciesPage() {
               {marketPolicyTab === '플레이오토' && (
               <>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>원산지</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>원산지</span>
                 <input type="text" value={mp.origin || ''} onChange={(e) => { setCurrentMarketPolicy({ ...mp, origin: e.target.value }); triggerAutoSave() }}
-                  placeholder="국내=서울=서울시" style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none', width: '200px' }} />
-                <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>예: 국내=서울=서울시, 기타=기타=기타</span>
+                  placeholder="국내=서울=서울시" style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none', width: '200px' }} />
+                <span style={{ color: '#555', fontSize: '0.72rem' }}>예: 국내=서울=서울시, 기타=기타=기타</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>시중가</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>시중가</span>
                 <NumInput value={mp.streetPriceRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, streetPriceRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>판매가 대비 시중가 비율 (예: 150 → 판매가의 1.5배)</span>
+                <span style={{ color: '#555', fontSize: '0.72rem' }}>판매가 대비 시중가 비율 (예: 150 → 판매가의 1.5배)</span>
               </div>
               </>
               )}
               {/* 신세계몰 전용: 주문수량, 브랜드, 고시정보 */}
               {marketPolicyTab === '신세계몰(전시)' && (
-                <div style={{ gridColumn: '1 / -1', borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '0.75rem', color: c.text, fontWeight: 600 }}>신세계몰 기본 설정</span>
+                <div style={{ gridColumn: '1 / -1', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>신세계몰 기본 설정</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxWidth: '50%' }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px', flexShrink: 0, paddingTop: '0.3rem' }}>브랜드</span>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px', flexShrink: 0, paddingTop: '0.3rem' }}>브랜드</span>
                     <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
                       {(mp.ssgBrandMappings || []).map(b => (
                         <div key={b.brandId} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', marginBottom: '0.2rem' }}>
-                          <span style={{ fontSize: '0.8rem', color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{b.brandId}] {b.brandNm}</span>
+                          <span style={{ fontSize: '0.8rem', color: '#FF8C00', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>[{b.brandId}] {b.brandNm}</span>
                           <button onClick={() => { setCurrentMarketPolicy({ ...mp, ssgBrandMappings: (mp.ssgBrandMappings || []).filter(x => x.brandId !== b.brandId) }); triggerAutoSave() }}
-                            style={{ fontSize: '0.75rem', color: c.textMuted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}>✕</button>
+                            style={{ fontSize: '0.75rem', color: '#888', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px', flexShrink: 0 }}>✕</button>
                         </div>
                       ))}
                       <input
-                        style={{ width: '100%', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, boxSizing: 'border-box' }}
+                        style={{ width: '100%', padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', boxSizing: 'border-box' }}
                         placeholder="브랜드명 검색 (예: nike)"
                         value={ssgBrandKeyword}
                         onChange={e => setSsgBrandKeyword(e.target.value)}
                       />
                       {ssgBrandLoading && (
-                        <span style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: c.textMuted }}>검색 중...</span>
+                        <span style={{ position: 'absolute', right: '0.5rem', top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#666' }}>검색 중...</span>
                       )}
                       {!ssgBrandLoading && ssgBrandError && ssgBrandKeyword.trim() && (
-                        <div style={{ marginTop: '0.2rem', fontSize: '0.75rem', color: c.danger }}>{ssgBrandError}</div>
+                        <div style={{ marginTop: '0.2rem', fontSize: '0.75rem', color: '#e05c5c' }}>{ssgBrandError}</div>
                       )}
                       {ssgBrands.length > 0 && (
-                        <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
+                        <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, right: 0, background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '4px', zIndex: 50, maxHeight: '180px', overflowY: 'auto' }}>
                           {ssgBrands.map(b => (
                             <div key={b.brandId}
                               onClick={() => { setCurrentMarketPolicy({ ...mp, ssgBrandMappings: (mp.ssgBrandMappings || []).some(x => x.brandId === b.brandId) ? (mp.ssgBrandMappings || []) : [...(mp.ssgBrandMappings || []), { brandId: b.brandId, brandNm: b.brandNm }] }); triggerAutoSave(); setSsgBrandKeyword(''); setSsgBrands([]); setSsgBrandError('') }}
-                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', color: c.text, cursor: 'pointer' }}
-                              onMouseEnter={e => (e.currentTarget.style.background = c.surfaceAlt)}
+                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem', color: '#E5E5E5', cursor: 'pointer' }}
+                              onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,140,0,0.12)')}
                               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                             >
                               [{b.brandId}] {b.brandNm}
@@ -1655,29 +1658,29 @@ export default function PoliciesPage() {
                     </div>
                   </div>
                   {/* 신세계몰 전용: 고시정보 */}
-                  <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <span style={{ fontSize: '0.75rem', color: c.text, fontWeight: 600 }}>고시정보</span>
+                  <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>고시정보</span>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '120px', flexShrink: 0 }}>A/S 책임자 및 전화번호</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '120px', flexShrink: 0 }}>A/S 책임자 및 전화번호</span>
                       <input
                         type="text"
                         value={mp.ssgNoticeAsContact || ''}
                         onChange={e => { setCurrentMarketPolicy({ ...mp, ssgNoticeAsContact: e.target.value }); triggerAutoSave() }}
                         placeholder="예: 고객센터 010-1234-5678"
-                        style={{ flex: 1, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none' }}
+                        style={{ flex: 1, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none' }}
                       />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '120px', flexShrink: 0 }}>고시항목 제외</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '120px', flexShrink: 0 }}>고시항목 제외</span>
                       <input
                         type="text"
                         value={mp.ssgNoticeDropProps || ''}
                         onChange={e => { setCurrentMarketPolicy({ ...mp, ssgNoticeDropProps: e.target.value }); triggerAutoSave() }}
                         placeholder="예: 0000000001,0000000003"
-                        style={{ flex: 1, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none' }}
+                        style={{ flex: 1, padding: '0.3rem 0.4rem', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none' }}
                       />
                     </div>
-                    <span style={{ fontSize: '0.72rem', color: c.textMuted }}>나머지 항목(소재·색상·치수·수입여부 등)은 소싱 데이터 자동 입력. 카테고리에서 거부하는 itemMngPropId 는 콤마로 구분 입력(예: 0000000001 거부 시 등록 실패 시 자동 재시도 됨).</span>
+                    <span style={{ fontSize: '0.72rem', color: '#444' }}>나머지 항목(소재·색상·치수·수입여부 등)은 소싱 데이터 자동 입력. 카테고리에서 거부하는 itemMngPropId 는 콤마로 구분 입력(예: 0000000001 거부 시 등록 실패 시 자동 재시도 됨).</span>
                   </div>
                   </div>
                 </div>
@@ -1701,52 +1704,52 @@ export default function PoliciesPage() {
                   triggerAutoSave()
                 }
                 return (
-                  <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem', borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+                  <div style={{ gridColumn: '1 / -1', display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                     {/* 설정 대상 계정 (연결 계정 2개 이상일 때만 노출) — 이 계정으로 등록할 MD/출고지/반품지/브랜드를 따로 저장 */}
                     {gsLinkedAccs.length > 1 && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <span style={{ color: c.text, fontSize: '0.8125rem', minWidth: '90px', fontWeight: 600 }}>설정 계정</span>
-                        <select value={gsAccountId} onChange={e => setGsQueryAccId(e.target.value)} style={{ flex: 1, maxWidth: 230, background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px' }}>
+                        <span style={{ color: '#FF8C00', fontSize: '0.8125rem', minWidth: '90px', fontWeight: 600 }}>설정 계정</span>
+                        <select value={gsAccountId} onChange={e => setGsQueryAccId(e.target.value)} style={{ flex: 1, maxWidth: 230, background: '#1F2937', border: '1px solid #FF8C00', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
                           {gsLinkedAccs.map(a => <option key={a.id} value={a.id}>{a.business_name || a.market_name}({a.seller_id || a.account_label || '-'})</option>)}
                         </select>
-                        <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이 계정으로 등록할 담당MD·출고지·반품지·브랜드를 따로 저장합니다</span>
+                        <span style={{ color: '#666', fontSize: '0.72rem' }}>이 계정으로 등록할 담당MD·출고지·반품지·브랜드를 따로 저장합니다</span>
                       </div>
                     )}
                     {/* MD */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px' }}>담당 MD</span>
-                      <select value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} onClick={() => loadGsMdList()} style={{ flex: 1, maxWidth: 200, background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>담당 MD</span>
+                      <select value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} onClick={() => loadGsMdList()} style={{ flex: 1, maxWidth: 200, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
                         <option value="">{gsMdLoading ? '불러오는 중...' : '선택하세요'}</option>
                         {gsMdList.map(m => <option key={m.operMdId} value={m.operMdId}>{m.operMdNm} (수수료 {fmtNum(m.fixMargnRt)}%)</option>)}
                       </select>
-                      <input value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} placeholder="MD ID 직접입력" style={{ width: 80, background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px' }} />
+                      <input value={gs.operMdId || ''} onChange={e => setGs({ operMdId: e.target.value })} placeholder="MD ID 직접입력" style={{ width: 80, background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }} />
                     </div>
                     {/* 판매수수료 (계정별) — 판매가 형성용. 마켓별 공통 '수수료' 칸 대신 계정마다 따로 받음 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px' }}>판매수수료</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>판매수수료</span>
                       <NumInput value={gs.feeRate ?? (mp.feeRate || 0)} onChange={(v) => setGs({ feeRate: v })} style={{ width: '70px' }} suffix="%" />
-                      <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>판매가 형성 수수료 (계정별 — 예: 마놀 25, 캐논 13)</span>
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>판매가 형성 수수료 (계정별 — 예: 마놀 25, 캐논 13)</span>
                     </div>
                     {/* 마켓마진율 (계정별) — 공급가 계산용 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px' }}>마켓마진율</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>마켓마진율</span>
                       <NumInput value={gs.gsMarginRate ?? (mp.gsMarginRate || 0)} onChange={(v) => setGs({ gsMarginRate: v })} style={{ width: '70px' }} suffix="%" />
-                      <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>MD 협의 필수항목 (공급가 계산 · 계정별)</span>
+                      <span style={{ color: '#666', fontSize: '0.75rem' }}>MD 협의 필수항목 (공급가 계산 · 계정별)</span>
                     </div>
                     {/* 전시카테고리는 정책 고정이 아니라 수집상품 카테고리매핑(없으면 상품명 키워드)으로
                         등록 시 자동 결정되므로 정책 설정에서 제외함 */}
                     {/* 출고지 / 반품지 (GS샵 등록 주소 — getSupAddrList) */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px' }}>출고지</span>
-                      <select value={gs.prdRelspAddrCd || ''} onChange={e => setGs({ prdRelspAddrCd: e.target.value })} style={{ background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px', maxWidth: 230 }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>출고지</span>
+                      <select value={gs.prdRelspAddrCd || ''} onChange={e => setGs({ prdRelspAddrCd: e.target.value })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px', maxWidth: 230 }}>
                         <option value="">선택 (기본 0001)</option>
                         {gsDelivPlaces.map(p => <option key={p.supAddrCd} value={p.supAddrCd}>{p.label} ({p.supAddrCd})</option>)}
                         {gs.prdRelspAddrCd && !gsDelivPlaces.some(p => p.supAddrCd === gs.prdRelspAddrCd) && <option value={gs.prdRelspAddrCd}>{gs.prdRelspAddrCd}</option>}
                       </select>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px' }}>반품지</span>
-                      <select value={gs.prdRetpAddrCd || ''} onChange={e => setGs({ prdRetpAddrCd: e.target.value })} style={{ background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px', maxWidth: 230 }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>반품지</span>
+                      <select value={gs.prdRetpAddrCd || ''} onChange={e => setGs({ prdRetpAddrCd: e.target.value })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px', maxWidth: 230 }}>
                         <option value="">선택 (기본 0001)</option>
                         {gsDelivPlaces.map(p => <option key={p.supAddrCd} value={p.supAddrCd}>{p.label} ({p.supAddrCd})</option>)}
                         {gs.prdRetpAddrCd && !gsDelivPlaces.some(p => p.supAddrCd === gs.prdRetpAddrCd) && <option value={gs.prdRetpAddrCd}>{gs.prdRetpAddrCd}</option>}
@@ -1754,8 +1757,8 @@ export default function PoliciesPage() {
                     </div>
                     {/* 택배사 (GS샵 출고일수는 +1일 고정이라 미노출) */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px' }}>택배사</span>
-                      <select value={gs.dlvsCoCd || 'DH'} onChange={e => setGs({ dlvsCoCd: e.target.value })} style={{ background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px' }}>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px' }}>택배사</span>
+                      <select value={gs.dlvsCoCd || 'DH'} onChange={e => setGs({ dlvsCoCd: e.target.value })} style={{ background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px' }}>
                         <option value="DH">CJ대한통운 (DH)</option>
                         <option value="HJ">한진택배 (HJ)</option>
                         <option value="HD">롯데택배 (HD)</option>
@@ -1769,19 +1772,19 @@ export default function PoliciesPage() {
                       const gsBrandList = gs.brands || (gs.brandCd ? [{ brandCd: gs.brandCd, brandNm: gs.brandNm || '' }] : [])
                       return (
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
-                      <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '90px', paddingTop: '0.3rem' }}>브랜드</span>
+                      <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '90px', paddingTop: '0.3rem' }}>브랜드</span>
                       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.25rem' }}>
                         {/* 검색 입력 (위) — 드롭다운은 입력창에 앵커 */}
                         <div style={{ position: 'relative', width: '100%', maxWidth: 220 }}>
-                          <input value={gsBrandKeyword} onChange={e => setGsBrandKeyword(e.target.value)} placeholder="브랜드명 검색 (한글/영문)" style={{ width: '100%', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: 4, color: c.text, fontSize: '0.8125rem', padding: '3px 6px', boxSizing: 'border-box' }} />
-                          {gsBrandLoading && <span style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', color: c.textMuted, fontSize: '0.7rem' }}>검색중</span>}
+                          <input value={gsBrandKeyword} onChange={e => setGsBrandKeyword(e.target.value)} placeholder="브랜드명 검색 (한글/영문)" style={{ width: '100%', background: '#1F2937', border: '1px solid #374151', borderRadius: 4, color: '#E2E8F0', fontSize: '0.8125rem', padding: '3px 6px', boxSizing: 'border-box' }} />
+                          {gsBrandLoading && <span style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', color: '#888', fontSize: '0.7rem' }}>검색중</span>}
                           {gsBrands.length > 0 && (
-                            <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, width: '100%', maxHeight: 140, overflowY: 'auto', background: c.surface, border: `1px solid ${c.border}`, borderRadius: 4, zIndex: 50 }}>
+                            <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 0, width: '100%', maxHeight: 140, overflowY: 'auto', background: '#111827', border: '1px solid #374151', borderRadius: 4, zIndex: 50 }}>
                               {gsBrands.map(b => {
                                 const nm = b.brandHanglNm || b.brandNm
                                 return (
-                                  <div key={b.brandCd} onClick={() => { setGs({ brands: gsBrandList.some(x => x.brandCd === b.brandCd) ? gsBrandList : [...gsBrandList, { brandCd: b.brandCd, brandNm: nm }], brandCd: undefined, brandNm: undefined }); setGsBrandKeyword(''); setGsBrands([]) }} style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8125rem', color: c.text, borderBottom: `1px solid ${c.border}` }}>
-                                    {nm} <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>({b.brandCd})</span>
+                                  <div key={b.brandCd} onClick={() => { setGs({ brands: gsBrandList.some(x => x.brandCd === b.brandCd) ? gsBrandList : [...gsBrandList, { brandCd: b.brandCd, brandNm: nm }], brandCd: undefined, brandNm: undefined }); setGsBrandKeyword(''); setGsBrands([]) }} style={{ padding: '4px 8px', cursor: 'pointer', fontSize: '0.8125rem', color: '#D1D5DB', borderBottom: '1px solid #1F2937' }}>
+                                    {nm} <span style={{ color: '#6B7280', fontSize: '0.75rem' }}>({b.brandCd})</span>
                                   </div>
                                 )
                               })}
@@ -1801,10 +1804,10 @@ export default function PoliciesPage() {
                         </div>
                         {/* 선택된 브랜드 (밑으로 나열) */}
                         {gsBrandList.map(b => (
-                          <div key={b.brandCd} style={{ display: 'flex', width: 'fit-content', maxWidth: '100%', alignItems: 'center', gap: '0.3rem', background: c.inputBg, borderRadius: 4, padding: '2px 6px' }}>
-                            <span style={{ fontSize: '0.8rem', color: c.text }}>{b.brandNm} <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>({b.brandCd})</span></span>
+                          <div key={b.brandCd} style={{ display: 'flex', width: 'fit-content', maxWidth: '100%', alignItems: 'center', gap: '0.3rem', background: '#1F2937', borderRadius: 4, padding: '2px 6px' }}>
+                            <span style={{ fontSize: '0.8rem', color: '#E2E8F0' }}>{b.brandNm} <span style={{ color: '#6B7280', fontSize: '0.72rem' }}>({b.brandCd})</span></span>
                             <button onClick={() => setGs({ brands: gsBrandList.filter(x => x.brandCd !== b.brandCd), brandCd: undefined, brandNm: undefined })}
-                              style={{ fontSize: '0.72rem', color: c.textMuted, background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px' }}>✕</button>
+                              style={{ fontSize: '0.72rem', color: '#888', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0 2px' }}>✕</button>
                           </div>
                         ))}
                       </div>
@@ -1817,17 +1820,17 @@ export default function PoliciesPage() {
               {/* 옥션/G마켓 전용: 복수구매 할인, 스마일캐시 지급 */}
               {(marketPolicyTab === '옥션' || marketPolicyTab === 'G마켓') && (
                 <>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>복수구매 할인</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem', borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>복수구매 할인</span>
                     <NumInput value={mp.bulkDiscountQty || 2} onChange={(v) => { setCurrentMarketPolicy({ ...mp, bulkDiscountQty: v }); triggerAutoSave() }} style={{ width: '50px' }} suffix="개" />
-                    <span style={{ color: c.textMuted, fontSize: '0.8rem' }}>이상</span>
+                    <span style={{ color: '#666', fontSize: '0.8rem' }}>이상</span>
                     <NumInput value={mp.bulkDiscountPrice || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, bulkDiscountPrice: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.8rem' }}>할인</span>
+                    <span style={{ color: '#666', fontSize: '0.8rem' }}>할인</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스마일캐시</span>
+                    <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>스마일캐시</span>
                     <NumInput value={mp.smileCashRate || 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, smileCashRate: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.8rem' }}>지급</span>
+                    <span style={{ color: '#666', fontSize: '0.8rem' }}>지급</span>
                   </div>
                 </>
               )}
@@ -1840,14 +1843,14 @@ export default function PoliciesPage() {
       {/* 정책 선택 드롭다운 (테이블 대체) */}
       {policies.length > 0 && !showForm && (
         <div style={{ ...card, padding: '1rem 1.5rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>저장된 정책</span>
-          <select style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, outline: 'none', flex: 1, maxWidth: '300px' }}
+          <span style={{ color: '#888', fontSize: '0.8125rem' }}>저장된 정책</span>
+          <select style={{ padding: '0.375rem 0.75rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', outline: 'none', flex: 1, maxWidth: '300px' }}
             value={selectedPolicyId || ''} onChange={(e) => { const p = policies.find(x => x.id === e.target.value); if (p) openEdit(p) }}>
             <option value="">정책 선택하여 수정</option>
             {policies.map(p => <option key={p.id} value={p.id}>{p.name} ({p.site_name || '전체'})</option>)}
           </select>
           <button onClick={() => { const p = policies.find(x => x.id === selectedPolicyId); if (p) handleDelete(p.id) }}
-            style={{ padding: '0.375rem 0.875rem', fontSize: '0.8rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: c.danger, cursor: 'pointer' }}>삭제</button>
+            style={{ padding: '0.375rem 0.875rem', fontSize: '0.8rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer' }}>삭제</button>
         </div>
       )}
 
@@ -1859,7 +1862,7 @@ export default function PoliciesPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <span style={{ fontSize: '1rem', fontWeight: 700 }}>상세페이지</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>템플릿선택</span>
+            <span style={{ color: '#888', fontSize: '0.8125rem' }}>템플릿선택</span>
             <select style={{ ...inputStyle, width: '200px' }} value={selectedDetailTemplateId} onChange={async (e) => {
               if (e.target.value === '__new__') {
                 const t = await detailTemplateApi.create({ name: `템플릿 ${detailTemplates.length + 1}` })
@@ -1879,7 +1882,7 @@ export default function PoliciesPage() {
               if (!t) return
               await detailTemplateApi.update(t.id, { name: t.name, main_image_index: t.main_image_index }).catch(() => {})
               showAlert('템플릿이 저장되었습니다.', 'success')
-            }} style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.78rem', borderRadius: '6px', whiteSpace: 'nowrap' }}>저장</button>
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
             <button onClick={async () => {
               if (!selectedDetailTemplateId) return
               const src = detailTemplates.find(x => x.id === selectedDetailTemplateId)
@@ -1899,13 +1902,13 @@ export default function PoliciesPage() {
                 setSelectedDetailTemplateId(created.id)
                 showAlert('템플릿이 복사되었습니다.', 'success')
               } catch { showAlert('복사 실패', 'error') }
-            }} style={{ ...btn('ghost'), padding: '0.3rem 0.75rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>복사</button>
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}>복사</button>
             <button onClick={async () => {
               if (!selectedDetailTemplateId) return
               await detailTemplateApi.delete(selectedDetailTemplateId).catch(() => {})
               setDetailTemplates(prev => prev.filter(x => x.id !== selectedDetailTemplateId))
               setSelectedDetailTemplateId('')
-            }} style={{ ...btn('danger'), padding: '0.3rem 0.75rem', fontSize: '0.78rem', borderRadius: '6px', whiteSpace: 'nowrap' }}>설정 삭제</button>
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}>설정 삭제</button>
           </div>
         </div>
 
@@ -1915,14 +1918,14 @@ export default function PoliciesPage() {
 
           // 이미지 순서 state (템플릿별로 관리 — 간단하게 로컬)
           const IMG_ITEMS = [
-            { id: 'topImg', label: '상단이미지', color: c.warn, bg: 'rgba(232,133,42,0.06)', border: 'rgba(232,133,42,0.3)' },
-            { id: 'main', label: '대표이미지', color: c.link, bg: 'rgba(76,154,255,0.05)', border: 'rgba(76,154,255,0.3)' },
-            { id: 'sub', label: '대표추가이미지 (상세페이지)', color: c.success, bg: 'rgba(81,207,102,0.05)', border: 'rgba(81,207,102,0.3)' },
-            { id: 'title', label: '상품제목', color: c.warn, bg: 'rgba(255,217,61,0.05)', border: 'rgba(255,217,61,0.3)' },
-            { id: 'option', label: '옵션이미지', color: c.textMuted, bg: 'rgba(136,136,136,0.05)', border: 'rgba(136,136,136,0.3)' },
+            { id: 'topImg', label: '상단이미지', color: '#FF8C00', bg: 'rgba(255,140,0,0.05)', border: 'rgba(255,140,0,0.3)' },
+            { id: 'main', label: '대표이미지', color: '#4C9AFF', bg: 'rgba(76,154,255,0.05)', border: 'rgba(76,154,255,0.3)' },
+            { id: 'sub', label: '대표추가이미지 (상세페이지)', color: '#51CF66', bg: 'rgba(81,207,102,0.05)', border: 'rgba(81,207,102,0.3)' },
+            { id: 'title', label: '상품제목', color: '#FFD93D', bg: 'rgba(255,217,61,0.05)', border: 'rgba(255,217,61,0.3)' },
+            { id: 'option', label: '옵션이미지', color: '#888', bg: 'rgba(136,136,136,0.05)', border: 'rgba(136,136,136,0.3)' },
             { id: 'detail', label: '상세이미지', color: '#CC5DE8', bg: 'rgba(204,93,232,0.05)', border: 'rgba(204,93,232,0.3)' },
             { id: 'sizeChart', label: '실측표 (무신사 의류)', color: '#20C997', bg: 'rgba(32,201,151,0.05)', border: 'rgba(32,201,151,0.3)' },
-            { id: 'bottomImg', label: '하단이미지', color: c.warn, bg: 'rgba(232,133,42,0.06)', border: 'rgba(232,133,42,0.3)' },
+            { id: 'bottomImg', label: '하단이미지', color: '#FF8C00', bg: 'rgba(255,140,0,0.05)', border: 'rgba(255,140,0,0.3)' },
           ]
 
           // 외부 호스팅 이미지 URL 저장 핸들러
@@ -1967,14 +1970,14 @@ export default function PoliciesPage() {
               <h4 style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem' }}>대표 이미지 설정</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem', marginBottom: '1.25rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>템플릿명</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>템플릿명</span>
                   <input value={t.name}
                     onChange={(e) => setDetailTemplates(prev => prev.map(x => x.id === t.id ? { ...x, name: e.target.value } : x))}
                     onBlur={() => detailTemplateApi.update(t.id, { name: t.name }).catch(() => {})}
                     style={{ ...inputStyle, width: '300px' }} />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>대표이미지</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>대표이미지</span>
                   <input type="number" min={1} max={10} value={(t.main_image_index ?? 0) + 1}
                     onChange={(e) => {
                       const v = Math.max(0, Number(e.target.value) - 1)
@@ -1982,11 +1985,11 @@ export default function PoliciesPage() {
                       detailTemplateApi.update(t.id, { main_image_index: v }).catch(() => {})
                     }}
                     style={{ ...inputStyle, width: '50px', textAlign: 'center' }} />
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>번 째 이미지 사용</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem' }}>번 째 이미지 사용</span>
                 </div>
                 {/* 대표추가이미지(갤러리) 토글 — 마켓 썸네일/갤러리 추가이미지 포함 여부 (#342) */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>대표추가이미지</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px' }}>대표추가이미지</span>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
@@ -2000,14 +2003,14 @@ export default function PoliciesPage() {
                           console.error('gallery_include_sub 저장 실패:', err)
                         }
                       }}
-                      style={{ accentColor: c.success }}
+                      style={{ accentColor: '#51CF66' }}
                     />
-                    <span style={{ color: c.textSub, fontSize: '0.8rem' }}>마켓 썸네일·갤러리에 추가이미지 포함</span>
+                    <span style={{ color: '#bbb', fontSize: '0.8rem' }}>마켓 썸네일·갤러리에 추가이미지 포함</span>
                   </label>
                 </div>
                 {/* 상단/하단 이미지 URL 입력 */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px', paddingTop: '0.5rem' }}>상단이미지</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px', paddingTop: '0.5rem' }}>상단이미지</span>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <input
@@ -2022,13 +2025,13 @@ export default function PoliciesPage() {
                         disabled={imgSaving === 'topImg'}
                         style={{ ...inputStyle, flex: 1, fontSize: '0.8rem' }}
                       />
-                      {t.top_image_s3_key && <span style={{ color: c.success, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>등록됨</span>}
+                      {t.top_image_s3_key && <span style={{ color: '#51CF66', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>등록됨</span>}
                     </div>
-                    <span style={{ color: c.textMuted, fontSize: '0.7rem' }}>ESM+ 등 외부 호스팅 이미지 주소를 입력하세요 (입력 후 Enter 또는 포커스 해제 시 저장)</span>
+                    <span style={{ color: '#555', fontSize: '0.7rem' }}>ESM+ 등 외부 호스팅 이미지 주소를 입력하세요 (입력 후 Enter 또는 포커스 해제 시 저장)</span>
                   </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px', paddingTop: '0.5rem' }}>하단이미지</span>
+                  <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '80px', paddingTop: '0.5rem' }}>하단이미지</span>
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <input
@@ -2043,39 +2046,39 @@ export default function PoliciesPage() {
                         disabled={imgSaving === 'bottomImg'}
                         style={{ ...inputStyle, flex: 1, fontSize: '0.8rem' }}
                       />
-                      {t.bottom_image_s3_key && <span style={{ color: c.success, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>등록됨</span>}
+                      {t.bottom_image_s3_key && <span style={{ color: '#51CF66', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>등록됨</span>}
                     </div>
-                    <span style={{ color: c.textMuted, fontSize: '0.7rem' }}>ESM+ 등 외부 호스팅 이미지 주소를 입력하세요 (입력 후 Enter 또는 포커스 해제 시 저장)</span>
+                    <span style={{ color: '#555', fontSize: '0.7rem' }}>ESM+ 등 외부 호스팅 이미지 주소를 입력하세요 (입력 후 Enter 또는 포커스 해제 시 저장)</span>
                   </div>
                 </div>
               </div>
               {/* 상세페이지 이미지 순서 설정 */}
-              <h4 style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem', borderTop: `1px solid ${c.border}`, paddingTop: '1rem' }}>상세페이지 이미지 순서 설정</h4>
+              <h4 style={{ fontSize: '0.9375rem', fontWeight: 700, marginBottom: '0.75rem', borderTop: '1px solid #2D2D2D', paddingTop: '1rem' }}>상세페이지 이미지 순서 설정</h4>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '65px' }}>기본 이미지</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px' }}>기본 이미지</span>
                 {IMG_ITEMS.map(item => (
-                  <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer', color: c.textSub }}>
+                  <label key={item.id} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem', cursor: 'pointer', color: '#C5C5C5' }}>
                     <input type="checkbox" checked={imgChecks[item.id] ?? false}
                       onChange={(e) => handleImgCheckToggle(item.id, e.target.checked)}
                       disabled={imgSaving === item.id}
-                      style={{ accentColor: c.primary }} />
+                      style={{ accentColor: '#FF8C00' }} />
                     {item.label}
                   </label>
                 ))}
               </div>
 
               {/* 미리보기 — 최신 상품 기준 + 드래그 순서 변경 */}
-              <div style={{ background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '1rem', minHeight: '200px' }}>
+              <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '1rem', minHeight: '200px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                   {previewProduct ? (
-                    <span style={{ fontSize: '0.75rem', color: c.textMuted }}>예시: {previewProduct.name?.slice(0, 30)}{(previewProduct.name?.length || 0) > 30 ? '...' : ''}</span>
+                    <span style={{ fontSize: '0.75rem', color: '#888' }}>예시: {previewProduct.name?.slice(0, 30)}{(previewProduct.name?.length || 0) > 30 ? '...' : ''}</span>
                   ) : (
-                    <span style={{ fontSize: '0.75rem', color: c.textMuted }}>수집상품이 없습니다</span>
+                    <span style={{ fontSize: '0.75rem', color: '#555' }}>수집상품이 없습니다</span>
                   )}
-                  <span style={{ fontSize: '0.75rem', color: c.textMuted }}>미리보기 (드래그로 순서변경)</span>
+                  <span style={{ fontSize: '0.75rem', color: '#666' }}>미리보기 (드래그로 순서변경)</span>
                 </div>
                 {checkedItems.length === 0 ? (
-                  <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted, fontSize: '0.8rem' }}>체크박스에서 표시할 항목을 선택하세요</div>
+                  <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.8rem' }}>체크박스에서 표시할 항목을 선택하세요</div>
                 ) : checkedItems.map((item, idx) => {
                   const isTopImg = item.id === 'topImg'
                   const isBottomImg = item.id === 'bottomImg'
@@ -2162,10 +2165,10 @@ export default function PoliciesPage() {
         })()}
 
         {/* ── 마켓별 개별 상세페이지 ── */}
-        <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem', marginTop: '1rem' }}>
+        <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.success }}>마켓별 개별 설정</span>
-            <span style={{ fontSize: '0.72rem', color: c.textMuted }}>특정 마켓에 다른 상세페이지 템플릿을 적용합니다</span>
+            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>마켓별 개별 설정</span>
+            <span style={{ fontSize: '0.72rem', color: '#666' }}>특정 마켓에 다른 상세페이지 템플릿을 적용합니다</span>
           </div>
           {/* 설정된 마켓 목록 */}
           {Object.entries(marketDetailTemplates).map(([mkt, tplId]) => {
@@ -2174,7 +2177,7 @@ export default function PoliciesPage() {
             return (
               <div key={mkt} style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'rgba(81,207,102,0.05)', border: '1px solid rgba(81,207,102,0.15)', borderRadius: '6px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: c.success }}>{mLabel}</span>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#51CF66' }}>{mLabel}</span>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <select
                       value={tplId || ''}
@@ -2198,11 +2201,11 @@ export default function PoliciesPage() {
                       delete next[mkt]
                       setMarketDetailTemplates(Object.keys(next).length > 0 ? next : {})
                       triggerAutoSave()
-                    }} style={{ fontSize: '0.65rem', color: c.danger, background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
+                    }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
                   </div>
                 </div>
                 {tplId && (
-                  <span style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '0.25rem', display: 'block' }}>
+                  <span style={{ fontSize: '0.68rem', color: '#888', marginTop: '0.25rem', display: 'block' }}>
                     템플릿: {tplName}
                   </span>
                 )}
@@ -2227,7 +2230,7 @@ export default function PoliciesPage() {
         </div>
 
         {!selectedDetailTemplateId && Object.keys(marketDetailTemplates).length === 0 && (
-          <p style={{ textAlign: 'center', color: c.textMuted, padding: '2rem 0', fontSize: '0.875rem' }}>템플릿을 선택하거나 신규생성하세요</p>
+          <p style={{ textAlign: 'center', color: '#555', padding: '2rem 0', fontSize: '0.875rem' }}>템플릿을 선택하거나 신규생성하세요</p>
         )}
       </div>
 
@@ -2236,7 +2239,7 @@ export default function PoliciesPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <span style={{ fontSize: '1rem', fontWeight: 700 }}>상품/옵션명</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>규칙선택</span>
+            <span style={{ color: '#888', fontSize: '0.8125rem' }}>규칙선택</span>
             <select style={{ ...inputStyle, width: '160px' }} value={selectedNameRuleId} onChange={async (e) => {
               if (e.target.value === '__new__') {
                 const r = await nameRuleApi.create({ name: `규칙 ${nameRules.length + 1}` })
@@ -2268,7 +2271,7 @@ export default function PoliciesPage() {
                   showAlert('규칙이 저장되었습니다.', 'success')
                 }
               } catch { showAlert('저장 실패', 'error') }
-            }} style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.78rem', borderRadius: '6px', whiteSpace: 'nowrap' }}>저장</button>
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '6px', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>저장</button>
             <button onClick={async () => {
               if (!selectedNameRuleId) return
               const src = nameRulesRef.current.find(x => x.id === selectedNameRuleId)
@@ -2292,13 +2295,13 @@ export default function PoliciesPage() {
                 setSelectedNameRuleId(created.id)
                 showAlert('규칙이 복사되었습니다.', 'success')
               } catch { showAlert('복사 실패', 'error') }
-            }} style={{ ...btn('ghost'), padding: '0.3rem 0.75rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>복사</button>
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap' }}>복사</button>
             <button onClick={async () => {
               if (!selectedNameRuleId) return
               await nameRuleApi.delete(selectedNameRuleId).catch(() => {})
               setNameRules(prev => prev.filter(x => x.id !== selectedNameRuleId))
               setSelectedNameRuleId('')
-            }} style={{ ...btn('danger'), padding: '0.3rem 0.75rem', fontSize: '0.78rem', borderRadius: '6px', whiteSpace: 'nowrap' }}>삭제</button>
+            }} style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '6px', color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap' }}>삭제</button>
           </div>
         </div>
 
@@ -2317,7 +2320,7 @@ export default function PoliciesPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               {/* 규칙명 */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '55px' }}>규칙명</span>
+                <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '55px' }}>규칙명</span>
                 <input value={r.name}
                   onChange={(e) => updateRule({ name: e.target.value })}
                   style={{ ...inputStyle, flex: 1 }} />
@@ -2325,115 +2328,115 @@ export default function PoliciesPage() {
               {/* 접두어/접미어 */}
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flex: 1 }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.78rem', minWidth: '40px' }}>접두어</span>
+                  <span style={{ color: '#888', fontSize: '0.78rem', minWidth: '40px' }}>접두어</span>
                   <input value={r.prefix || ''} onChange={(e) => updateRule({ prefix: e.target.value })} style={{ ...inputStyle, flex: 1 }} placeholder="상품명 앞에 추가" />
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', flex: 1 }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.78rem', minWidth: '40px' }}>접미어</span>
+                  <span style={{ color: '#888', fontSize: '0.78rem', minWidth: '40px' }}>접미어</span>
                   <input value={r.suffix || ''} onChange={(e) => updateRule({ suffix: e.target.value })} style={{ ...inputStyle, flex: 1 }} placeholder="상품명 뒤에 추가" />
                 </div>
               </div>
 
               {/* ── 상품명 치환 정책 ── */}
-              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.text }}>상품명 치환</span>
-                  <span style={{ fontSize: '0.72rem', color: c.textMuted }}>수집된 상품명의 텍스트를 치환합니다</span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00' }}>상품명 치환</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>수집된 상품명의 텍스트를 치환합니다</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.78rem' }}>치환방식</span>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>치환방식</span>
                   <select value={r.replace_mode || 'simultaneous'} onChange={(e) => updateRule({ replace_mode: e.target.value })} style={{ ...inputStyle, width: 'auto' }}>
                     <option value="simultaneous">동시치환</option>
                     <option value="sequential">순차치환</option>
                   </select>
-                  <span style={{ fontSize: '0.68rem', color: c.textMuted }}>
+                  <span style={{ fontSize: '0.68rem', color: '#555' }}>
                     {(r.replace_mode || 'simultaneous') === 'simultaneous' ? '정의한 문자열을 동시에 치환 (겹치면 긴 문자열 우선)' : '위에서 아래로 순서대로 치환'}
                   </span>
                 </div>
                 {/* 치환 조건 목록 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.78rem' }}>치환조건</span>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>치환조건</span>
                   <button onClick={() => updateRule({ replacements: [...(r.replacements || []), { from: '', to: '', caseInsensitive: true }] })}
-                    style={{ ...btn('secondary'), fontSize: '0.68rem', borderRadius: '4px', padding: '1px 8px' }}>+ 조건추가</button>
+                    style={{ fontSize: '0.68rem', color: '#4C9AFF', background: 'transparent', border: '1px dashed #4C9AFF', borderRadius: '4px', padding: '1px 8px', cursor: 'pointer' }}>+ 조건추가</button>
                 </div>
                 {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
                   <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
                     <input value={rep.from} placeholder="변경전"
                       onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], from: e.target.value }; updateRule({ replacements: reps }) }}
                       style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>→</span>
+                    <span style={{ color: '#555', fontSize: '0.75rem' }}>→</span>
                     <input value={rep.to} placeholder="변경후"
                       onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], to: e.target.value }; updateRule({ replacements: reps }) }}
                       style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
-                    {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
-                    {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: c.textMuted, whiteSpace: 'nowrap' }}>
+                    {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: '#888', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
+                    {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: '#888', background: 'none', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: '#888', whiteSpace: 'nowrap' }}>
                       <input type="checkbox" checked={rep.caseInsensitive ?? true}
                         onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
-                        style={{ accentColor: c.primary, width: '11px', height: '11px' }} />대소문자무시
+                        style={{ accentColor: '#FF8C00', width: '11px', height: '11px' }} />대소문자무시
                     </label>
                     <button onClick={() => updateRule({ replacements: (r.replacements || []).filter((_: unknown, i: number) => i !== idx) })}
-                      style={{ color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
+                      style={{ color: '#FF6B6B', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
                   </div>
                 ))}
               </div>
 
               {/* ── 옵션명 치환 ── */}
-              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.success }}>옵션명 치환</span>
-                  <span style={{ fontSize: '0.72rem', color: c.textMuted }}>옵션명 텍스트를 치환합니다</span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>옵션명 치환</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>옵션명 텍스트를 치환합니다</span>
                   <button onClick={() => updateRule({ option_rules: [...(r.option_rules || []), { from: '', to: '' }] })}
-                    style={{ ...btn('secondary'), fontSize: '0.68rem', borderRadius: '4px', padding: '1px 8px' }}>+ 추가</button>
+                    style={{ fontSize: '0.68rem', color: '#4C9AFF', background: 'transparent', border: '1px dashed #4C9AFF', borderRadius: '4px', padding: '1px 8px', cursor: 'pointer' }}>+ 추가</button>
                 </div>
                 {(r.option_rules || []).map((opt: {from: string; to: string}, idx: number) => (
                   <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
                     <input value={opt.from} placeholder="변경전"
                       onChange={(e) => { const opts = [...(r.option_rules || [])]; opts[idx] = { ...opts[idx], from: e.target.value }; updateRule({ option_rules: opts }) }}
                       style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>→</span>
+                    <span style={{ color: '#555', fontSize: '0.75rem' }}>→</span>
                     <input value={opt.to} placeholder="변경후"
                       onChange={(e) => { const opts = [...(r.option_rules || [])]; opts[idx] = { ...opts[idx], to: e.target.value }; updateRule({ option_rules: opts }) }}
                       style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
                     <button onClick={() => updateRule({ option_rules: (r.option_rules || []).filter((_: unknown, i: number) => i !== idx) })}
-                      style={{ color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
+                      style={{ color: '#FF6B6B', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
                   </div>
                 ))}
               </div>
 
               {/* ── 상품명 조합 정책 ── */}
-              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.text }}>상품명 조합</span>
-                  <span style={{ fontSize: '0.72rem', color: c.textMuted }}>마켓에 전송될 상품명을 조합합니다</span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#4C9AFF' }}>상품명 조합</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>마켓에 전송될 상품명을 조합합니다</span>
                 </div>
                 {/* 태그 버튼 */}
                 <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                   {COMP_TAGS.map(tag => (
                     <button key={tag} onClick={() => updateRule({ name_composition: [...(r.name_composition || []), tag] })}
-                      style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}>{tag}</button>
+                      style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '4px', color: '#4C9AFF', cursor: 'pointer' }}>{tag}</button>
                   ))}
                 </div>
                 {/* 조합 미리보기 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginBottom: '0.375rem' }}>
-                  <span style={{ color: c.textMuted, fontSize: '0.78rem' }}>조합결과</span>
-                  <div style={{ flex: 1, padding: '0.375rem 0.5rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '4px', fontSize: '0.78rem', color: c.textSub, minHeight: '28px' }}>
+                  <span style={{ color: '#888', fontSize: '0.78rem' }}>조합결과</span>
+                  <div style={{ flex: 1, padding: '0.375rem 0.5rem', background: 'rgba(0,0,0,0.3)', border: '1px solid #2D2D2D', borderRadius: '4px', fontSize: '0.78rem', color: '#C5C5C5', minHeight: '28px' }}>
                     {(r.name_composition || []).length > 0 ? (r.name_composition || []).map((t: string, i: number) => (
-                      <span key={i} style={{ color: COMP_TAGS.includes(t) ? '#0f6a5b' : c.text }}>{t} </span>
-                    )) : <span style={{ color: c.textMuted }}>태그를 클릭하여 조합하세요 (미설정 시 원본 상품명 사용)</span>}
+                      <span key={i} style={{ color: COMP_TAGS.includes(t) ? '#4C9AFF' : '#E5E5E5' }}>{t} </span>
+                    )) : <span style={{ color: '#555' }}>태그를 클릭하여 조합하세요 (미설정 시 원본 상품명 사용)</span>}
                   </div>
                   {(r.name_composition || []).length > 0 && (
                     <button onClick={() => updateRule({ name_composition: [] })}
-                      style={{ ...btn('ghost'), fontSize: '0.68rem', borderRadius: '4px', padding: '2px 8px' }}>초기화</button>
+                      style={{ fontSize: '0.68rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}>초기화</button>
                   )}
                 </div>
               </div>
 
               {/* ── 마켓별 상품명 조합 ── */}
-              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.success }}>마켓별 개별 설정</span>
-                  <span style={{ fontSize: '0.72rem', color: c.textMuted }}>특정 마켓에 다른 상품명 조합을 적용합니다</span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#51CF66' }}>마켓별 개별 설정</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>특정 마켓에 다른 상품명 조합을 적용합니다</span>
                 </div>
                 {/* 설정된 마켓 목록 */}
                 {Object.entries(r.market_name_compositions || {}).map(([mkt, comp]) => {
@@ -2441,12 +2444,12 @@ export default function PoliciesPage() {
                   return (
                     <div key={mkt} style={{ marginBottom: '0.5rem', padding: '0.5rem', background: 'rgba(81,207,102,0.05)', border: '1px solid rgba(81,207,102,0.15)', borderRadius: '6px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.375rem' }}>
-                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: c.success }}>{mLabel}</span>
+                        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#51CF66' }}>{mLabel}</span>
                         <button onClick={() => {
                           const next = { ...(r.market_name_compositions || {}) }
                           delete next[mkt]
                           updateRule({ market_name_compositions: Object.keys(next).length > 0 ? next : undefined })
-                        }} style={{ fontSize: '0.65rem', color: c.danger, background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
+                        }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>삭제</button>
                       </div>
                       <div style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap', marginBottom: '0.375rem' }}>
                         {COMP_TAGS.map(tag => (
@@ -2454,26 +2457,26 @@ export default function PoliciesPage() {
                             const next = { ...(r.market_name_compositions || {}) }
                             next[mkt] = [...(next[mkt] || []), tag]
                             updateRule({ market_name_compositions: next })
-                          }} style={{ fontSize: '0.68rem', padding: '2px 8px', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: c.success, cursor: 'pointer' }}>{tag}</button>
+                          }} style={{ fontSize: '0.68rem', padding: '2px 8px', background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.3)', borderRadius: '4px', color: '#51CF66', cursor: 'pointer' }}>{tag}</button>
                         ))}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
-                        <div style={{ flex: 1, padding: '0.3rem 0.5rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '4px', fontSize: '0.75rem', color: c.textSub, minHeight: '26px' }}>
+                        <div style={{ flex: 1, padding: '0.3rem 0.5rem', background: 'rgba(0,0,0,0.3)', border: '1px solid #2D2D2D', borderRadius: '4px', fontSize: '0.75rem', color: '#C5C5C5', minHeight: '26px' }}>
                           {(comp as string[]).length > 0 ? (comp as string[]).map((t: string, i: number) => (
-                            <span key={i} style={{ color: COMP_TAGS.includes(t) ? c.success : c.text }}>{t} </span>
-                          )) : <span style={{ color: c.textMuted }}>태그를 클릭하세요</span>}
+                            <span key={i} style={{ color: COMP_TAGS.includes(t) ? '#51CF66' : '#E5E5E5' }}>{t} </span>
+                          )) : <span style={{ color: '#555' }}>태그를 클릭하세요</span>}
                         </div>
                         {(comp as string[]).length > 0 && (
                           <button onClick={() => {
                             const next = { ...(r.market_name_compositions || {}) }
                             next[mkt] = []
                             updateRule({ market_name_compositions: next })
-                          }} style={{ fontSize: '0.65rem', color: c.danger, background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>초기화</button>
+                          }} style={{ fontSize: '0.65rem', color: '#FF6B6B', background: 'none', border: '1px solid rgba(255,107,107,0.3)', borderRadius: '4px', padding: '1px 6px', cursor: 'pointer' }}>초기화</button>
                         )}
                       </div>
                       {/* 마켓별 접두어/접미어 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginTop: '0.375rem' }}>
-                        <span style={{ color: c.textMuted, fontSize: '0.72rem', minWidth: '36px' }}>접두어</span>
+                        <span style={{ color: '#888', fontSize: '0.72rem', minWidth: '36px' }}>접두어</span>
                         <input
                           value={(r.market_prefixes || {})[mkt] || ''}
                           onChange={(e) => {
@@ -2484,7 +2487,7 @@ export default function PoliciesPage() {
                           placeholder="예: 매장정품 (비우면 전역 접두어 사용)"
                           style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
                         />
-                        <span style={{ color: c.textMuted, fontSize: '0.72rem', minWidth: '36px' }}>접미어</span>
+                        <span style={{ color: '#888', fontSize: '0.72rem', minWidth: '36px' }}>접미어</span>
                         <input
                           value={(r.market_suffixes || {})[mkt] || ''}
                           onChange={(e) => {
@@ -2517,18 +2520,18 @@ export default function PoliciesPage() {
               </div>
 
               {/* ── 중복단어 필터링 ── */}
-              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem' }}>
+              <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.text }}>중복단어 필터링</span>
-                  <span style={{ fontSize: '0.72rem', color: c.textMuted }}>상품명에서 중복 단어를 제거합니다</span>
+                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#CC5DE8' }}>중복단어 필터링</span>
+                  <span style={{ fontSize: '0.72rem', color: '#666' }}>상품명에서 중복 단어를 제거합니다</span>
                 </div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', cursor: 'pointer' }}>
                   <input type="checkbox" checked={r.dedup_enabled ?? true}
                     onChange={(e) => updateRule({ dedup_enabled: e.target.checked })}
-                    style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
-                  <span style={{ fontSize: '0.8rem', color: c.textSub }}>중복단어를 필터링합니다</span>
+                    style={{ accentColor: '#CC5DE8', width: '14px', height: '14px' }} />
+                  <span style={{ fontSize: '0.8rem', color: '#C5C5C5' }}>중복단어를 필터링합니다</span>
                 </label>
-                <div style={{ marginTop: '0.375rem', fontSize: '0.68rem', color: c.textMuted }}>
+                <div style={{ marginTop: '0.375rem', fontSize: '0.68rem', color: '#555' }}>
                   * 띄어쓰기 기준 중복 단어 1개만 유지 / 치환 완료 후 적용 / 대소문자 구분
                 </div>
               </div>
@@ -2537,7 +2540,7 @@ export default function PoliciesPage() {
         })()}
 
         {!selectedNameRuleId && (
-          <p style={{ textAlign: 'center', color: c.textMuted, padding: '2rem 0', fontSize: '0.875rem' }}>규칙을 선택하거나 신규생성하세요</p>
+          <p style={{ textAlign: 'center', color: '#555', padding: '2rem 0', fontSize: '0.875rem' }}>규칙을 선택하거나 신규생성하세요</p>
         )}
       </div>
 
@@ -2548,8 +2551,8 @@ export default function PoliciesPage() {
       {/* 설정 저장/삭제 버튼 */}
       {showForm && (
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginTop: '1.5rem' }}>
-          <button onClick={handleSubmit} style={{ ...btn('primary'), padding: '0.625rem 2rem', borderRadius: '8px', fontSize: '0.875rem' }}>정책 저장</button>
-          <button onClick={() => { if (editingId) { handleDelete(editingId); setEditingId(null); setName("새 정책"); setSiteName(""); setPricing({ ...defaultPricing }) } }} style={{ ...btn('danger'), padding: '0.625rem 2rem', borderRadius: '8px', fontSize: '0.875rem' }}>정책 삭제</button>
+          <button onClick={handleSubmit} style={{ padding: '0.625rem 2rem', background: 'linear-gradient(135deg, #FF8C00, #FFB84D)', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>정책 저장</button>
+          <button onClick={() => { if (editingId) { handleDelete(editingId); setEditingId(null); setName("새 정책"); setSiteName(""); setPricing({ ...defaultPricing }) } }} style={{ padding: '0.625rem 2rem', background: 'rgba(60,60,60,0.8)', border: '1px solid #3D3D3D', borderRadius: '8px', color: '#C5C5C5', fontSize: '0.875rem', cursor: 'pointer' }}>정책 삭제</button>
         </div>
       )}
       {/* AI 정책 변경 모달 */}
@@ -2559,18 +2562,18 @@ export default function PoliciesPage() {
           onClick={() => { if (!aiPolicyLoading) setAiPolicyModalOpen(false) }}
         >
           <div
-            style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', width: 'min(600px, 92vw)', maxHeight: '80vh', overflow: 'auto' }}
+            style={{ background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '12px', width: 'min(600px, 92vw)', maxHeight: '80vh', overflow: 'auto' }}
             onClick={e => e.stopPropagation()}
           >
             {/* 헤더 */}
-            <div style={{ padding: '1.25rem 1.5rem', borderBottom: `1px solid ${c.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>AI 정책 일괄 변경</h3>
-                <p style={{ fontSize: '0.75rem', color: c.textMuted }}>자연어로 명령하면 관련 마켓의 모든 정책을 자동 수정합니다</p>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>AI 정책 일괄 변경</h3>
+                <p style={{ fontSize: '0.75rem', color: '#888' }}>자연어로 명령하면 관련 마켓의 모든 정책을 자동 수정합니다</p>
               </div>
               {!aiPolicyLoading && (
                 <button onClick={() => setAiPolicyModalOpen(false)}
-                  style={{ background: 'none', border: 'none', color: c.textMuted, fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+                  style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
               )}
             </div>
 
@@ -2604,17 +2607,17 @@ export default function PoliciesPage() {
                       placeholder="예: 지마켓 마진율 1% 올려, 쿠팡 배송비 500원 내려"
                       style={{
                         width: '100%', padding: '0.75rem 1rem',
-                        background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '8px',
-                        color: c.text, fontSize: '0.875rem', outline: 'none',
+                        background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '8px',
+                        color: '#E5E5E5', fontSize: '0.875rem', outline: 'none',
                       }}
                     />
                   </div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.375rem', marginBottom: '0.5rem' }}>
                     {['지마켓 마진율 1% 올려', '쿠팡 배송비 500원 내려', '옥션 수수료 2% 낮춰', '전체 마진율 2% 올려'].map(ex => (
                       <button key={ex} onClick={() => setAiPolicyCommand(ex)}
-                        style={{ padding: '0.25rem 0.5rem', background: 'rgba(255,255,255,0.04)', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textMuted, fontSize: '0.6875rem', cursor: 'pointer' }}
-                        onMouseEnter={e => { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.borderStrong }}
-                        onMouseLeave={e => { e.currentTarget.style.color = c.textMuted; e.currentTarget.style.borderColor = c.border }}
+                        style={{ padding: '0.25rem 0.5rem', background: 'rgba(255,255,255,0.04)', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#666', fontSize: '0.6875rem', cursor: 'pointer' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#A78BFA'; e.currentTarget.style.borderColor = 'rgba(167,139,250,0.3)' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#666'; e.currentTarget.style.borderColor = '#2D2D2D' }}
                       >{ex}</button>
                     ))}
                   </div>
@@ -2637,10 +2640,10 @@ export default function PoliciesPage() {
                     }}
                     disabled={!aiPolicyCommand.trim()}
                     style={{
-                      ...btn('primary'),
-                      width: '100%', padding: '0.625rem', borderRadius: '8px',
-                      fontSize: '0.875rem',
-                      ...(aiPolicyCommand.trim() ? null : btnDisabled),
+                      width: '100%', padding: '0.625rem', borderRadius: '8px', border: 'none',
+                      background: aiPolicyCommand.trim() ? '#A78BFA' : '#2D2D2D',
+                      color: aiPolicyCommand.trim() ? '#FFF' : '#555',
+                      fontSize: '0.875rem', fontWeight: 600, cursor: aiPolicyCommand.trim() ? 'pointer' : 'not-allowed',
                     }}
                   >실행</button>
                 </div>
@@ -2648,10 +2651,10 @@ export default function PoliciesPage() {
 
               {/* 로딩 */}
               {aiPolicyLoading && (
-                <div style={{ textAlign: 'center', padding: '2rem 0', color: c.textMuted }}>
+                <div style={{ textAlign: 'center', padding: '2rem 0', color: '#888' }}>
                   <div style={{ fontSize: '1.5rem', marginBottom: '0.75rem' }}>🤖</div>
                   <p style={{ fontSize: '0.875rem' }}>Claude가 정책을 분석하고 변경 중...</p>
-                  <p style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.25rem' }}>"{aiPolicyCommand}"</p>
+                  <p style={{ fontSize: '0.75rem', color: '#555', marginTop: '0.25rem' }}>"{aiPolicyCommand}"</p>
                 </div>
               )}
 
@@ -2659,8 +2662,8 @@ export default function PoliciesPage() {
               {!aiPolicyLoading && aiPolicyChanges.length > 0 && (
                 <div>
                   <div style={{ padding: '0.75rem 1rem', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: '8px', marginBottom: '1rem', textAlign: 'center' }}>
-                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: c.success }}>{aiPolicyApplied}</span>
-                    <span style={{ fontSize: '0.8125rem', color: c.textMuted, marginLeft: '0.375rem' }}>건 정책 변경 완료</span>
+                    <span style={{ fontSize: '1.25rem', fontWeight: 700, color: '#22C55E' }}>{aiPolicyApplied}</span>
+                    <span style={{ fontSize: '0.8125rem', color: '#888', marginLeft: '0.375rem' }}>건 정책 변경 완료</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     {aiPolicyChanges.map((ch, i) => {
@@ -2670,19 +2673,19 @@ export default function PoliciesPage() {
                       const suffix = isRate ? '%' : ''
                       const diff = ch.after - ch.before
                       return (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: `1px solid ${c.border}` }}>
+                        <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0.75rem', background: 'rgba(255,255,255,0.02)', borderRadius: '6px', border: '1px solid #2D2D2D' }}>
                           <div>
-                            <span style={{ fontSize: '0.8125rem', color: c.text }}>{ch.policy_name}</span>
-                            <span style={{ fontSize: '0.6875rem', color: c.textMuted, marginLeft: '0.5rem' }}>
+                            <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>{ch.policy_name}</span>
+                            <span style={{ fontSize: '0.6875rem', color: '#888', marginLeft: '0.5rem' }}>
                               {ch.market === 'common' ? '공통' : ch.market}
                             </span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <span style={{ fontSize: '0.75rem', color: c.textMuted }}>{fieldLabels[ch.field] || ch.field}</span>
-                            <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>{prefix}{fmtNum(ch.before)}{suffix}</span>
-                            <span style={{ color: c.textMuted }}>→</span>
-                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: c.text }}>{prefix}{fmtNum(ch.after)}{suffix}</span>
-                            <span style={{ fontSize: '0.6875rem', color: diff > 0 ? c.success : c.danger }}>
+                            <span style={{ fontSize: '0.75rem', color: '#888' }}>{fieldLabels[ch.field] || ch.field}</span>
+                            <span style={{ fontSize: '0.8125rem', color: '#666' }}>{prefix}{fmtNum(ch.before)}{suffix}</span>
+                            <span style={{ color: '#555' }}>→</span>
+                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#FF8C00' }}>{prefix}{fmtNum(ch.after)}{suffix}</span>
+                            <span style={{ fontSize: '0.6875rem', color: diff > 0 ? '#22C55E' : '#EF4444' }}>
                               ({diff > 0 ? '+' : ''}{prefix}{fmtNum(diff)}{suffix})
                             </span>
                           </div>
@@ -2694,13 +2697,13 @@ export default function PoliciesPage() {
               )}
 
               {!aiPolicyLoading && aiPolicyChanges.length === 0 && aiPolicyApplied === 0 && aiPolicyCommand && (
-                <p style={{ color: c.textMuted, textAlign: 'center', padding: '1rem' }}>변경할 정책이 없습니다</p>
+                <p style={{ color: '#888', textAlign: 'center', padding: '1rem' }}>변경할 정책이 없습니다</p>
               )}
             </div>
 
             {/* 하단 */}
             {!aiPolicyLoading && aiPolicyChanges.length > 0 && (
-              <div style={{ padding: '1rem 1.5rem', borderTop: `1px solid ${c.border}`, display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid #2D2D2D', display: 'flex', justifyContent: 'flex-end' }}>
                 <button
                   onClick={() => {
                     setAiPolicyModalOpen(false)
@@ -2710,7 +2713,7 @@ export default function PoliciesPage() {
                       if (updated) openEdit(updated)
                     }
                   }}
-                  style={{ ...btn('primary'), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
+                  style={{ padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px', border: 'none', background: '#FF8C00', color: '#FFF', cursor: 'pointer', fontWeight: 600 }}
                 >확인</button>
               </div>
             )}
@@ -2734,10 +2737,10 @@ export default function PoliciesPage() {
             borderRadius: '10px',
           }}>
             <div>
-              <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>
+              <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>
                 테트리스 매칭 실제 상품등록 반영
               </div>
-              <div style={{ fontSize: '0.75rem', color: c.textMuted }}>
+              <div style={{ fontSize: '0.75rem', color: '#888' }}>
                 OFF면 배치 현황 확인용으로만 사용하고, ON이면 상품등록 시 테트리스 매칭을 실제로 적용합니다.
               </div>
             </div>
@@ -2750,16 +2753,16 @@ export default function PoliciesPage() {
                 max={168}
                 style={{
                   width: 48,
-                  background: c.inputBg,
-                  border: `1px solid ${c.border}`,
-                  color: c.textSub,
+                  background: '#2A2A2A',
+                  border: '1px solid #444',
+                  color: '#ccc',
                   borderRadius: 6,
                   padding: '4px 6px',
                   fontSize: '0.8125rem',
                   textAlign: 'center',
                 }}
               />
-              <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>시간</span>
+              <span style={{ color: '#888', fontSize: '0.8125rem' }}>시간</span>
               <button
                 onClick={handleToggleTetrisMatching}
                 disabled={tetrisMatchingSaving}
@@ -2768,8 +2771,8 @@ export default function PoliciesPage() {
                   padding: '0.5rem 0.875rem',
                   borderRadius: '999px',
                   border: tetrisMatchingEnabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,140,0,0.35)',
-                  background: tetrisMatchingEnabled ? c.success : c.surfaceAlt,
-                  color: tetrisMatchingEnabled ? '#fff' : c.textMuted,
+                  background: tetrisMatchingEnabled ? '#22C55E' : '#2A2A2A',
+                  color: tetrisMatchingEnabled ? '#06130A' : '#FFB84D',
                   fontSize: '0.8125rem',
                   fontWeight: 700,
                   cursor: tetrisMatchingSaving ? 'not-allowed' : 'pointer',

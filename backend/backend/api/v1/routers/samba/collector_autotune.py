@@ -4469,6 +4469,15 @@ async def _autotune_loop(device_id: str):
                 if not _is_pc_running(device_id):
                     log.info("[오토튠][%s] 코디네이터 취소 (정상 종료)", _dev_tag)
                     break
+                # pc-sync 좀비 watchdog 가 새 코디로 교체한 경우 → 옛 인스턴스 즉시 종료.
+                # 이 가드 없으면 cancel 당한 옛 코디가 pc_running=True 라 CancelledError 를
+                # 무시하고 재개 → 새 코디와 중복 실행 → 서로의 site task 를 죽여 heartbeat 0 →
+                # 좀비 판정 무한루프(무신사 4분 주기 flapping). [2026-06-30]
+                if _pc_main_task.get(device_id) is not asyncio.current_task():
+                    log.info(
+                        "[오토튠][%s] 코디네이터 교체됨 — 옛 인스턴스 종료", _dev_tag
+                    )
+                    break
                 _pc_restart_count[device_id] = _pc_restart_count.get(device_id, 0) + 1
                 if _pc_restart_count[device_id] >= MAX_RESTART_COUNT:
                     log.error(
@@ -4484,6 +4493,13 @@ async def _autotune_loop(device_id: str):
                 )
                 await asyncio.sleep(2)
             except Exception as e:
+                # 교체됨 → 즉시 종료 (CancelledError 핸들러와 동일, 중복 코디 방지).
+                if _pc_main_task.get(device_id) is not asyncio.current_task():
+                    log.info(
+                        "[오토튠][%s] 코디네이터 교체됨 — 옛 인스턴스 종료(exc)",
+                        _dev_tag,
+                    )
+                    break
                 # 죽은 DB 커넥션(pool_pre_ping=False + pool_recycle=60)으로 인한
                 # 일시적 연결끊김(Transaction.rollback/PreparedStatement.fetch 등)은
                 # 인프라 블립이므로 재시작 상한(MAX_RESTART_COUNT)에 포함하지 않는다.

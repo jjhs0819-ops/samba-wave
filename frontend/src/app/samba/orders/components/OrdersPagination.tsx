@@ -2,7 +2,6 @@
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   totalCount: number
@@ -12,7 +11,6 @@ interface Props {
 }
 
 export default function OrdersPagination({ totalCount, pageSize, currentPage, setCurrentPage }: Props) {
-  const c = useTheme()
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const pages: (number | string)[] = []
   if (totalPages <= 7) {
@@ -25,9 +23,9 @@ export default function OrdersPagination({ totalCount, pageSize, currentPage, se
     pages.push(totalPages)
   }
   const pgBtn = (active: boolean) => ({
-    background: active ? c.primary : c.surface,
-    color: active ? '#fff' : c.textSub,
-    border: active ? 'none' : `1px solid ${c.border}`,
+    background: active ? '#FF8C00' : 'rgba(30,30,30,0.9)',
+    color: active ? '#fff' : '#aaa',
+    border: active ? 'none' : '1px solid #333',
     borderRadius: '6px',
     padding: '0.3rem 0.6rem',
     fontSize: '0.75rem',
@@ -37,9 +35,9 @@ export default function OrdersPagination({ totalCount, pageSize, currentPage, se
   })
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0.5rem', borderTop: `1px solid ${c.border}`, marginTop: '0.5rem' }}>
-      <span style={{ fontSize: '0.75rem', color: c.textSub, whiteSpace: 'nowrap' }}>
-        총 <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(totalCount)}</span>건
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem 0.5rem', borderTop: '1px solid #232323', marginTop: '0.5rem' }}>
+      <span style={{ fontSize: '0.75rem', color: '#888', whiteSpace: 'nowrap' }}>
+        총 <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(totalCount)}</span>건
         {totalCount > pageSize && <> · {fmtNum(currentPage)}/{fmtNum(totalPages)}페이지</>}
       </span>
       {totalPages > 1 && (
@@ -48,7 +46,7 @@ export default function OrdersPagination({ totalCount, pageSize, currentPage, se
           <button style={pgBtn(false)} disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
           {pages.map((p, i) =>
             typeof p === 'string'
-              ? <span key={`dot-${i}`} style={{ color: c.textMuted, padding: '0 4px' }}>…</span>
+              ? <span key={`dot-${i}`} style={{ color: '#555', padding: '0 4px' }}>…</span>
               : <button key={p} style={pgBtn(p === currentPage)} onClick={() => setCurrentPage(p as number)}>{p}</button>
           )}
           <button style={pgBtn(false)} disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)}>›</button>

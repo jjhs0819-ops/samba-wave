@@ -2,7 +2,6 @@
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
 import type { TetrisBrandBlock } from '@/lib/samba/api/tetris'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy {
   id: string
@@ -35,17 +34,16 @@ export default function BrandBlock({
   onPolicyChange,
   onToggleExcluded,
 }: Props) {
-  const c = useTheme()
   const [showPolicies, setShowPolicies] = useState(false)
   const isExcluded = !!block.excluded
-  const baseColor = block.policy_color || c.textMuted
-  const color = isExcluded ? c.textMuted : baseColor
+  const baseColor = block.policy_color || '#6B7280'
+  const color = isExcluded ? '#555' : baseColor
   const isLegacy = block.is_legacy
   const brandColor = isExcluded
-    ? c.textMuted
+    ? '#666'
     : block.ai_tagged_count > 0
-    ? c.text
-    : c.danger
+    ? '#ddd'
+    : '#EF4444'
 
   const fillRatio = block.collected_count > 0
     ? Math.min(1, block.registered_count / block.collected_count)
@@ -61,10 +59,10 @@ export default function BrandBlock({
         height: blockHeight,
         minHeight: blockHeight,
         background: isExcluded
-          ? c.surfaceAlt
+          ? 'rgba(40,40,40,0.55)'
           : isLegacy
-          ? c.surfaceAlt
-          : c.surface,
+          ? 'rgba(50,50,50,0.7)'
+          : 'rgba(28,28,28,0.9)',
         border: `1px solid ${color}50`,
         borderLeft: `3px solid ${color}`,
         borderRadius: 4,
@@ -148,7 +146,7 @@ export default function BrandBlock({
               <span
                 style={{
                   fontSize: 9,
-                  color: '#fff',
+                  color: '#999',
                   background: 'rgba(0,0,0,0.5)',
                   padding: '0 4px',
                   borderRadius: 2,
@@ -161,14 +159,14 @@ export default function BrandBlock({
               </span>
             )}
             {block.brand_name}
-            {isLegacy && <span style={{ color: c.textSub, fontSize: 9, marginLeft: 4 }}>legacy</span>}
+            {isLegacy && <span style={{ color: '#666', fontSize: 9, marginLeft: 4 }}>legacy</span>}
           </div>
           <div style={{ flexShrink: 0, fontSize: 9, whiteSpace: 'nowrap' }}>
-            <span style={{ color: fillRatio >= 1 ? c.success : fillRatio > 0 ? c.warn : c.textMuted }}>
+            <span style={{ color: fillRatio >= 1 ? '#22C55E' : fillRatio > 0 ? '#F59E0B' : '#666' }}>
               {fmtNum(block.registered_count)}
             </span>
-            <span style={{ color: c.border }}>/</span>
-            <span style={{ color: c.text }}>{fmtNum(block.collected_count)}</span>
+            <span style={{ color: '#444' }}>/</span>
+            <span style={{ color: '#fff' }}>{fmtNum(block.collected_count)}</span>
           </div>
         </div>
         {/* 하단: 소싱처명 우측 정렬 */}
@@ -179,7 +177,7 @@ export default function BrandBlock({
         }}>
           <span style={{
             fontSize: 9,
-            color: c.text,
+            color: '#fff',
             fontWeight: 500,
             whiteSpace: 'nowrap',
             opacity: 0.7,
@@ -213,7 +211,7 @@ export default function BrandBlock({
             borderRadius: 4,
             background: 'rgba(239,68,68,0.16)',
             border: '1px solid rgba(239,68,68,0.35)',
-            color: c.danger,
+            color: '#FCA5A5',
             cursor: 'pointer',
             fontSize: 11,
             fontWeight: 700,
@@ -232,14 +230,14 @@ export default function BrandBlock({
             top: '100%',
             left: 0,
             zIndex: 200,
-            background: c.surface,
-            border: `1px solid ${c.border}`,
+            background: '#1a1a1a',
+            border: '1px solid #333',
             borderRadius: 6,
             padding: '6px 8px',
             display: 'flex',
             alignItems: 'center',
             gap: 6,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
             whiteSpace: 'nowrap',
           }}
           onClick={e => e.stopPropagation()}
@@ -251,9 +249,9 @@ export default function BrandBlock({
               width: 16,
               height: 16,
               borderRadius: '50%',
-              background: c.textMuted,
+              background: '#6B7280',
               cursor: 'pointer',
-              border: block.policy_id === null ? `2px solid ${c.text}` : '2px solid transparent',
+              border: block.policy_id === null ? '2px solid #fff' : '2px solid transparent',
               flexShrink: 0,
             }}
           />
@@ -268,7 +266,7 @@ export default function BrandBlock({
                 borderRadius: '50%',
                 background: p.color,
                 cursor: 'pointer',
-                border: p.id === block.policy_id ? `2px solid ${c.text}` : '2px solid transparent',
+                border: p.id === block.policy_id ? '2px solid #fff' : '2px solid transparent',
                 flexShrink: 0,
               }}
             />

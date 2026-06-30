@@ -6,12 +6,9 @@ import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { orderApi } from '@/lib/samba/legacy'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
-
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { formatDateInput, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { showAlert } from '@/components/samba/Modal'
 import { STATUS_MAP } from '../constants'
-import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   isProductMode: boolean
@@ -68,7 +65,6 @@ interface Props {
 }
 
 export default function OrdersFilterBar(props: Props) {
-  const c = useTheme()
   const {
     isProductMode,
     period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd,
@@ -126,7 +122,7 @@ export default function OrdersFilterBar(props: Props) {
   return (
     <>
       {!isProductMode && (
-        <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.625rem 0.875rem', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
             {PERIOD_BUTTONS.map(pb => (
               <button
@@ -144,9 +140,9 @@ export default function OrdersFilterBar(props: Props) {
                   padding: '0.22rem 0.55rem',
                   borderRadius: '5px',
                   fontSize: '0.75rem',
-                  background: period === pb.key ? '#e3f4f0' : c.btnBg,
-                  border: period === pb.key ? '1px solid #a9ddd2' : `1px solid ${c.btnBorder}`,
-                  color: period === pb.key ? '#0f6a5b' : c.btnText,
+                  background: period === pb.key ? 'rgba(80,80,80,0.8)' : 'rgba(50,50,50,0.8)',
+                  border: period === pb.key ? '1px solid #666' : '1px solid #3D3D3D',
+                  color: period === pb.key ? '#fff' : '#C5C5C5',
                   cursor: dateLocked ? 'not-allowed' : 'pointer',
                   opacity: dateLocked && period !== pb.key ? 0.5 : 1,
                 }}
@@ -154,11 +150,11 @@ export default function OrdersFilterBar(props: Props) {
                 {pb.label}
               </button>
             ))}
-            <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: c.danger, color: c.text } : {}) }} />
-            <button onClick={() => setStartLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: startLocked ? c.danger : c.btnBg, border: startLocked ? `1px solid ${c.danger}` : `1px solid ${c.btnBorder}`, color: startLocked ? '#fff' : c.btnText }}>시작고정</button>
-            <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>~</span>
+            <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: '#C0392B', color: '#FF8C00' } : {}) }} />
+            <button onClick={() => setStartLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: startLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: startLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: startLocked ? '#fff' : '#C5C5C5' }}>시작고정</button>
+            <span style={{ color: '#555', fontSize: '0.75rem' }}>~</span>
             <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
-            <button onClick={() => setDateLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: dateLocked ? c.danger : c.btnBg, border: dateLocked ? `1px solid ${c.danger}` : `1px solid ${c.btnBorder}`, color: dateLocked ? '#fff' : c.btnText }}>날짜고정</button>
+            <button onClick={() => setDateLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: dateLocked ? '#8B1A1A' : 'rgba(50,50,50,0.8)', border: dateLocked ? '1px solid #C0392B' : '1px solid #3D3D3D', color: dateLocked ? '#fff' : '#C5C5C5' }}>날짜고정</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
             <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, width: '200px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
@@ -176,7 +172,7 @@ export default function OrdersFilterBar(props: Props) {
                 ])
               })()}
             </select>
-            <button onClick={handleFetch} disabled={syncing} style={{ ...btn('secondary'), ...(syncing ? btnDisabled : null), padding: '0.22rem 0.65rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
+            <button onClick={handleFetch} disabled={syncing} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '4px', cursor: syncing ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
             <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '130px' }}>
               <option value="">일괄 작업 선택</option>
               <option value="pending">주문접수</option>
@@ -193,15 +189,15 @@ export default function OrdersFilterBar(props: Props) {
               <option value="returned">반품완료</option>
               <option value="exchanged">교환완료</option>
             </select>
-            <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? c.danger : c.btnBg, border: `1px solid ${c.btnBorder}`, color: selectedIdsSize > 0 && bulkStatus ? '#fff' : c.textMuted, borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer' }}>{bulkUpdating ? '처리 중...' : `일괄 실행 (${fmtNum(selectedIdsSize)})`}</button>
+            <button onClick={handleBulkAction} disabled={bulkUpdating || !bulkStatus || selectedIdsSize === 0} style={{ padding: '0.22rem 0.65rem', fontSize: '0.75rem', background: selectedIdsSize > 0 && bulkStatus ? '#C0392B' : 'rgba(50,50,50,0.9)', border: '1px solid #3D3D3D', color: selectedIdsSize > 0 && bulkStatus ? '#fff' : '#666', borderRadius: '4px', cursor: bulkUpdating || !bulkStatus || selectedIdsSize === 0 ? 'not-allowed' : 'pointer' }}>{bulkUpdating ? '처리 중...' : `일괄 실행 (${fmtNum(selectedIdsSize)})`}</button>
           </div>
         </div>
       )}
 
-      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.72rem', color: c.textSub }}>
-          <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
-          <span style={{ color: c.text, fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}원</span>
+      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: '0.72rem', color: '#aaa' }}>
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
+          <span style={{ color: '#FF8C00', fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}원</span>
         </span>
         <select style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품명</option>
@@ -210,7 +206,7 @@ export default function OrdersFilterBar(props: Props) {
           <option value="order_number">주문번호</option>
         </select>
         <input style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
-        <button onClick={loadOrders} style={{ ...btn('primary'), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
+        <button onClick={loadOrders} style={{ background: 'linear-gradient(135deg,#FF8C00,#FFB84D)', color: '#fff', padding: '0.22rem 0.75rem', borderRadius: '5px', fontSize: '0.75rem', border: 'none', cursor: 'pointer' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체 마켓</option>
@@ -305,9 +301,9 @@ export default function OrdersFilterBar(props: Props) {
               style={{
                 padding: '0.22rem 0.65rem',
                 fontSize: '0.75rem',
-                background: selectedOrderIds.length > 0 ? c.success : c.btnBg,
-                border: `1px solid ${c.btnBorder}`,
-                color: selectedOrderIds.length > 0 ? '#fff' : c.btnText,
+                background: selectedOrderIds.length > 0 ? '#1F6F3A' : 'rgba(50,50,50,0.9)',
+                border: '1px solid #3D3D3D',
+                color: selectedOrderIds.length > 0 ? '#fff' : '#C5C5C5',
                 borderRadius: '4px',
                 cursor: excelDownloading ? 'not-allowed' : 'pointer',
                 whiteSpace: 'nowrap',
@@ -338,10 +334,10 @@ export default function OrdersFilterBar(props: Props) {
                     top: 'calc(100% + 4px)',
                     right: 0,
                     minWidth: '200px',
-                    background: c.surface,
-                    border: `1px solid ${c.border}`,
+                    background: '#1A1A1A',
+                    border: '1px solid #3D3D3D',
                     borderRadius: '6px',
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
                     zIndex: 30,
                     overflow: 'hidden',
                   }}
@@ -359,15 +355,15 @@ export default function OrdersFilterBar(props: Props) {
                       textAlign: 'left',
                       background: 'transparent',
                       border: 'none',
-                      borderBottom: `1px solid ${c.border}`,
-                      color: c.text,
+                      borderBottom: '1px solid #2A2A2A',
+                      color: '#E5E5E5',
                       cursor: 'pointer',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                   >
                     <div style={{ fontWeight: 600 }}>기본 양식 (UB1 발주)</div>
-                    <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '2px' }}>
+                    <div style={{ fontSize: '0.68rem', color: '#888', marginTop: '2px' }}>
                       마켓·마켓주문번호·구매가격 등 10컬럼
                     </div>
                   </button>
@@ -384,14 +380,14 @@ export default function OrdersFilterBar(props: Props) {
                       textAlign: 'left',
                       background: 'transparent',
                       border: 'none',
-                      color: c.text,
+                      color: '#E5E5E5',
                       cursor: 'pointer',
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
                   >
                     <div style={{ fontWeight: 600 }}>롯데택배 송장 양식</div>
-                    <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '2px' }}>
+                    <div style={{ fontSize: '0.68rem', color: '#888', marginTop: '2px' }}>
                       수령자·연락처·주소·상품명·수량·배송메세지 7컬럼
                     </div>
                   </button>
