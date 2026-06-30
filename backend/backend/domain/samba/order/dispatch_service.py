@@ -697,12 +697,27 @@ async def _send_gsshop(order, account, courier, tracking, session):
         )
         or {}
     )
+    # 인증 로딩은 등록(gsshop.py execute)과 동일하게 — GS 계정은 supCd를 별도
+    # 필드가 아니라 account.seller_id(예: 마놀 1054236)에 저장하고 키는 apiKeyProd/
+    # aesKey 등에 둔다. 폴백이 부족하면 등록은 되는데 송장전송만 "협력사코드/인증키
+    # 누락"으로 막힌다 → seller_id 폴백 + 키 다중 폴백 추가.
     sup_cd = (
-        _creds.get("supCd", "")
-        or _creds.get("storeId", "")
+        extras.get("supCd", "")
         or extras.get("storeId", "")
+        or _creds.get("supCd", "")
+        or _creds.get("storeId", "")
+        or _creds.get("vendorId", "")
+        or getattr(account, "seller_id", "")
+        or ""
     )
-    aes_key = _creds.get("apiKeyProd", "") or extras.get("apiKeyProd", "")
+    aes_key = (
+        extras.get("aesKey", "")
+        or extras.get("apiKeyProd", "")
+        or extras.get("apiKeyDev", "")
+        or _creds.get("aesKey", "")
+        or _creds.get("apiKeyProd", "")
+        or _creds.get("apiKeyDev", "")
+    )
     if not sup_cd or not aes_key:
         return False, "GS샵 협력사코드/인증키 누락"
 
@@ -716,6 +731,9 @@ async def _send_gsshop(order, account, courier, tracking, session):
 
     if not tracking:
         return False, "운송장 번호 누락"
+    # GS deliveryNo는 숫자만 허용(하이픈/공백 불가) — 사용자가 "2612-1376-9375"처럼
+    # 입력해도 하이픈·공백을 제거하고 전송한다(안 그러면 GS가 거부).
+    tracking = str(tracking).replace("-", "").replace(" ", "")
 
     delivery_cd = _GS_COURIER_MAP.get(courier, "")
     if not delivery_cd:
