@@ -256,20 +256,33 @@ async def _resolve_actual_source_site(order, session) -> str:
 
 
 async def _resolve_tracking_owner(session, explicit: Optional[str]) -> str:
-    """송장 잡 전담 PC(데몬 device_id) 해석.
+    """송장 잡 전담 PC(확장앱 device_id) 해석.
 
     explicit 우선 → 없으면 samba_settings 'tracking_owner_device' → 없으면 ''.
-    빈 문자열 = 전담 미지정(아무 데몬 수신, 레거시 동작). 값 있으면 그 데몬만 수신
+    빈 문자열 = 전담 미지정(아무 확장앱 수신, 레거시 동작). 값 있으면 그 PC만 수신
     → 여러 PC가 같은 SSG 계정을 동시 로그인하는 멀티PC 잠금 차단. (사용자 지시 2026-06-04)
+    samba-daemon- prefix 는 확장앱 전환 이후 owner 로 사용 불가 → '' 강등 (#518).
     """
     if explicit and explicit.strip():
-        return explicit.strip()
+        val = explicit.strip()
+        if val.startswith("samba-daemon-"):
+            logger.warning(
+                f"[송장동기화] 데몬 device_id가 explicit owner로 전달됨 → '' 강등: {val}"
+            )
+            return ""
+        return val
     try:
         from backend.api.v1.routers.samba.proxy._helpers import _get_setting
 
         v = await _get_setting(session, "tracking_owner_device")
         if v:
-            return str(v).strip()
+            val = str(v).strip()
+            if val.startswith("samba-daemon-"):
+                logger.warning(
+                    f"[송장동기화] tracking_owner_device 설정값이 데몬 ID → '' 강등: {val}"
+                )
+                return ""
+            return val
     except Exception as exc:
         logger.warning(f"[송장동기화] tracking_owner_device 조회 실패(무시): {exc}")
     return ""

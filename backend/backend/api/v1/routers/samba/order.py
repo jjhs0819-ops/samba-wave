@@ -1866,6 +1866,9 @@ async def sync_order_tracking_bulk(
     # 데몬 device_id(samba-daemon-)만 허용하던 구버전 게이트 제거 — 그 게이트가 확장앱 UUID 를
     # ''로 떨궈 owner 미지정 적재 → 아무 PC나 잡 가로채 계정 왔다갔다·WRONG_ACCOUNT 유발.
     # 빈값이면 설정값 사용(enqueue 내부 해석). 값 있으면 그 PC 를 전담으로 저장 + 잡 owner 지정.
+    # [#518] 데몬 device_id가 오면 '' 강등 — 데몬은 tracking 잡 dequeue 불가 → 데드존.
+    if _owner.startswith("samba-daemon-"):
+        _owner = ""
     if _owner:
         try:
             from backend.api.v1.routers.samba.proxy._helpers import _set_setting
@@ -1898,17 +1901,20 @@ async def get_tracking_owner_device() -> dict:
 
 @router.post("/tracking-sync/owner-device")
 async def set_tracking_owner_device(device: str = Query("")) -> dict:
-    """전담 송장 PC 지정. device='' 면 해제(모든 PC). 데몬 device_id(samba-daemon-)만 허용.
+    """전담 송장 PC 지정. device='' 면 해제(모든 PC). 확장앱 device_id(UUID)만 허용.
 
-    지정 시 송장 잡 owner_device_id 가 그 데몬으로 박혀 그 PC만 수신 →
+    지정 시 송장 잡 owner_device_id 가 그 PC로 박혀 그 PC만 수신 →
     여러 PC가 같은 SSG 계정 동시 로그인하는 멀티PC 보안잠금 차단.
+    [#518] 데몬 device_id(samba-daemon-) 거부 — 데몬은 tracking 잡 dequeue 불가 → 데드존.
     """
     from backend.api.v1.routers.samba.proxy._helpers import _set_setting
     from backend.db.orm import get_write_session
 
     dev = (device or "").strip()
-    if dev and not dev.startswith("samba-daemon-"):
-        raise HTTPException(400, "데몬 device_id(samba-daemon-...)만 지정 가능합니다")
+    if dev.startswith("samba-daemon-"):
+        raise HTTPException(
+            400, "데몬 device_id는 송장 owner로 지정 불가 (확장앱 전담)"
+        )
     async with get_write_session() as s:
         await _set_setting(s, "tracking_owner_device", dev)
     return {"success": True, "tracking_owner_device": dev}
