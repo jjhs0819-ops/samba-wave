@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import os
 from collections import deque
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -43,6 +45,41 @@ SITE_CONCURRENCY: dict[str, int] = {
 SITE_AUTOTUNE_CONCURRENCY: dict[str, int] = {
     "MUSINSA": 4,  # 일반 갱신은 SITE_CONCURRENCY=20, 오토튠만 4
 }
+# 오토튠 전역 동시성 캡 [2026-06-30] — 모든 소싱처 합산 동시 refresh 를 제한해
+# api 단일 워커(-w1) 이벤트루프 포화(loop-lag 10~16초 → HTTP 끊김) 방지.
+# 사이트별 sem 위에 추가로 전역 sem 을 씌운다. source="autotune" 에만 적용 —
+# 수동/벌크 갱신(사용자 트리거)은 캡 없이 빠르게. 이벤트루프 재바인딩 안전
+# (api 재시작/루프 교체 시 새 sem 생성). 값은 AUTOTUNE_GLOBAL_CONCURRENCY 로 튜닝.
+_GLOBAL_AUTOTUNE_CONCURRENCY = int(os.getenv("AUTOTUNE_GLOBAL_CONCURRENCY", "12"))
+_global_autotune_sem: Optional[asyncio.Semaphore] = None
+_global_autotune_sem_loop: object = None
+
+
+def _get_global_autotune_sem() -> asyncio.Semaphore:
+    """오토튠 전역 동시성 세마포어 — 실행 중인 이벤트루프에 lazy 바인딩."""
+    global _global_autotune_sem, _global_autotune_sem_loop
+    _loop = asyncio.get_running_loop()
+    if _global_autotune_sem is None or _global_autotune_sem_loop is not _loop:
+        _global_autotune_sem = asyncio.Semaphore(_GLOBAL_AUTOTUNE_CONCURRENCY)
+        _global_autotune_sem_loop = _loop
+    return _global_autotune_sem
+
+
+@asynccontextmanager
+async def _autotune_concurrency_guard(site_sem: asyncio.Semaphore, source: str):
+    """사이트별 sem 획득 후, 오토튠이면 전역 sem 도 획득.
+
+    per-site 먼저 → 전역 나중 순서로 교차 사이트 starvation 방지(전역 대기 중에도
+    per-site 슬롯만 점유, 다른 사이트 전역 슬롯 진입 가능). 수동/벌크는 전역 캡 면제.
+    """
+    async with site_sem:
+        if source == "autotune":
+            async with _get_global_autotune_sem():
+                yield
+        else:
+            yield
+
+
 # 소싱처별 기본 인터벌 (초) — 전 사이트 0 하드코딩 (2026-05-26 사용자 요구).
 # 차단 시 _site_intervals[site] 자동 증가 로직은 유지 (refresher 안 2배 backoff).
 SITE_BASE_INTERVAL: dict[str, float] = {
@@ -1717,7 +1754,7 @@ async def refresh_products_bulk(
         results = []
 
         async def _limited(p: Any) -> RefreshResult:
-            async with sem:
+            async with _autotune_concurrency_guard(sem, source):
                 # 취소 요청 시 즉시 중단 (자기 source만 체크)
                 if _cancel_flags.get(source, False):
                     return RefreshResult(
