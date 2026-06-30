@@ -270,7 +270,7 @@ export default function SambaLayout({
           }
         }}
         style={{
-          background: "rgba(255,255,255,0.85)",
+          background: "rgba(15,15,15,0.9)",
           borderBottom: `1px solid ${c.border}`,
           backdropFilter: "blur(4px)",
         }}
