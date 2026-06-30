@@ -1,21 +1,22 @@
 import type { CSSProperties } from 'react'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
+import { light as c } from '@/lib/samba/colors'
 
 export const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
-  requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: '#FFD93D' },
-  approved:  { label: '승인됨', bg: 'rgba(76,154,255,0.15)', text: '#4C9AFF' },
-  rejected:  { label: '거절됨', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
-  completed: { label: '완료됨', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
-  cancelled: { label: '취소됨', bg: 'rgba(100,100,100,0.2)', text: '#888' },
-  collecting:    { label: '수거중', bg: 'rgba(255,165,0,0.15)', text: '#FFA500' },
-  collected:     { label: '수거완료', bg: 'rgba(81,207,102,0.15)', text: '#51CF66' },
-  not_collected: { label: '미수거', bg: 'rgba(255,107,107,0.15)', text: '#FF6B6B' },
+  requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: c.warn },
+  approved:  { label: '승인됨', bg: 'rgba(76,154,255,0.15)', text: c.link },
+  rejected:  { label: '거절됨', bg: 'rgba(255,107,107,0.15)', text: c.danger },
+  completed: { label: '완료됨', bg: 'rgba(81,207,102,0.15)', text: c.success },
+  cancelled: { label: '취소됨', bg: 'rgba(100,100,100,0.2)', text: c.textMuted },
+  collecting:    { label: '수거중', bg: 'rgba(255,165,0,0.15)', text: c.warn },
+  collected:     { label: '수거완료', bg: 'rgba(81,207,102,0.15)', text: c.success },
+  not_collected: { label: '미수거', bg: 'rgba(255,107,107,0.15)', text: c.danger },
 }
 
 export const TYPE_LABELS: Record<string, { label: string; color: string }> = {
-  return:   { label: '반품', color: '#FF6B6B' },
-  exchange: { label: '교환', color: '#4C9AFF' },
-  cancel:   { label: '취소', color: '#888' },
+  return:   { label: '반품', color: c.danger },
+  exchange: { label: '교환', color: c.link },
+  cancel:   { label: '취소', color: c.textMuted },
 }
 
 // 구버전 반품사유 목록

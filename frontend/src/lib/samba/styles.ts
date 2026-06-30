@@ -3,22 +3,24 @@
  * policies, settings 등 여러 페이지에서 공유
  */
 
+import { light as c } from '@/lib/samba/colors'
+
 export const LOG_FONT_FAMILY = 'Consolas, "Malgun Gothic", "Noto Sans KR", monospace'
 
 export const card = {
-  background: 'rgba(30,30,30,0.5)',
+  background: c.surface,
   backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
+  border: `1px solid ${c.border}`,
   borderRadius: '12px',
 }
 
 export const inputStyle = {
   width: '100%',
   padding: '0.5rem 0.75rem',
-  background: '#1A1A1A',
-  border: '1px solid #2D2D2D',
+  background: c.inputBg,
+  border: `1px solid ${c.border}`,
   borderRadius: '6px',
-  color: '#E5E5E5',
+  color: c.text,
   fontSize: '0.875rem',
   outline: 'none',
   boxSizing: 'border-box' as const,

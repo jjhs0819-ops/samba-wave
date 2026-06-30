@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { userApi } from '@/lib/samba/api/operations'
+import { light as c } from '@/lib/samba/colors'
 
 export default function SambaSignUpPage() {
   const router = useRouter()
@@ -46,10 +47,10 @@ export default function SambaSignUpPage() {
     width: '100%',
     padding: '0.625rem 0.75rem',
     fontSize: '0.875rem',
-    background: '#111520',
-    border: '1px solid #2A3040',
+    background: c.inputBg,
+    border: `1px solid ${c.border}`,
     borderRadius: '8px',
-    color: '#E5E5E5',
+    color: c.text,
     outline: 'none',
     boxSizing: 'border-box' as const,
   }
@@ -57,16 +58,16 @@ export default function SambaSignUpPage() {
   return (
     <div
       className="flex items-center justify-center min-h-screen"
-      style={{ background: 'linear-gradient(135deg, #0F0F0F 0%, #1A1A1A 100%)' }}
+      style={{ background: `linear-gradient(135deg, ${c.pageBg} 0%, ${c.surfaceAlt} 100%)` }}
     >
       <div
         style={{
           width: '100%',
           maxWidth: '400px',
           padding: '2.5rem',
-          background: 'rgba(30,30,30,0.6)',
+          background: c.surface,
           backdropFilter: 'blur(20px)',
-          border: '1px solid #2D2D2D',
+          border: `1px solid ${c.border}`,
           borderRadius: '16px',
         }}
       >
@@ -79,10 +80,10 @@ export default function SambaSignUpPage() {
             height={56}
             style={{ borderRadius: '12px', margin: '0 auto 0.75rem' }}
           />
-          <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#E5E5E5', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 800, color: c.text, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
             회원가입
           </h1>
-          <p style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
+          <p style={{ fontSize: '0.75rem', color: c.textMuted, marginTop: '0.25rem' }}>
             SAMBA WAVE 계정 만들기
           </p>
         </div>
@@ -90,7 +91,7 @@ export default function SambaSignUpPage() {
         {/* 폼 */}
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.375rem' }}>
               초대 코드
             </label>
             <input
@@ -100,13 +101,13 @@ export default function SambaSignUpPage() {
               autoFocus
               placeholder="팀장에게 받은 초대 코드"
               style={inputStyle}
-              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = c.primary }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = c.border }}
             />
           </div>
 
           <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.375rem' }}>
               이름
             </label>
             <input
@@ -116,13 +117,13 @@ export default function SambaSignUpPage() {
               autoComplete="name"
               placeholder="홍길동"
               style={inputStyle}
-              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = c.primary }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = c.border }}
             />
           </div>
 
           <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.375rem' }}>
               이메일
             </label>
             <input
@@ -132,13 +133,13 @@ export default function SambaSignUpPage() {
               autoComplete="email"
               placeholder="example@email.com"
               style={inputStyle}
-              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = c.primary }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = c.border }}
             />
           </div>
 
           <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.375rem' }}>
               비밀번호
             </label>
             <input
@@ -148,13 +149,13 @@ export default function SambaSignUpPage() {
               autoComplete="new-password"
               placeholder="6자 이상"
               style={inputStyle}
-              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = c.primary }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = c.border }}
             />
           </div>
 
           <div style={{ marginBottom: '1.5rem' }}>
-            <label style={{ display: 'block', fontSize: '0.8125rem', color: '#888', marginBottom: '0.375rem' }}>
+            <label style={{ display: 'block', fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.375rem' }}>
               비밀번호 확인
             </label>
             <input
@@ -164,13 +165,13 @@ export default function SambaSignUpPage() {
               autoComplete="new-password"
               placeholder="비밀번호 재입력"
               style={inputStyle}
-              onFocus={(e) => { e.currentTarget.style.borderColor = '#FF8C00' }}
-              onBlur={(e) => { e.currentTarget.style.borderColor = '#2A3040' }}
+              onFocus={(e) => { e.currentTarget.style.borderColor = c.primary }}
+              onBlur={(e) => { e.currentTarget.style.borderColor = c.border }}
             />
           </div>
 
           {error && (
-            <p style={{ fontSize: '0.8125rem', color: '#FF6B6B', marginBottom: '1rem', textAlign: 'center' }}>
+            <p style={{ fontSize: '0.8125rem', color: c.danger, marginBottom: '1rem', textAlign: 'center' }}>
               {error}
             </p>
           )}
@@ -183,26 +184,26 @@ export default function SambaSignUpPage() {
               padding: '0.75rem',
               fontSize: '0.9375rem',
               fontWeight: 600,
-              color: '#0F0F0F',
-              background: submitting ? '#997733' : '#FF8C00',
+              color: '#fff',
+              background: submitting ? '#9db8f0' : c.primary,
               border: 'none',
               borderRadius: '8px',
               cursor: submitting ? 'not-allowed' : 'pointer',
               transition: 'background 0.2s',
             }}
-            onMouseEnter={(e) => { if (!submitting) e.currentTarget.style.background = '#FFB84D' }}
-            onMouseLeave={(e) => { if (!submitting) e.currentTarget.style.background = '#FF8C00' }}
+            onMouseEnter={(e) => { if (!submitting) e.currentTarget.style.background = '#1d4ed8' }}
+            onMouseLeave={(e) => { if (!submitting) e.currentTarget.style.background = c.primary }}
           >
             {submitting ? '가입 중...' : '회원가입'}
           </button>
         </form>
 
         {/* 로그인 링크 */}
-        <p style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.8125rem', color: '#666' }}>
+        <p style={{ textAlign: 'center', marginTop: '1.25rem', fontSize: '0.8125rem', color: c.textMuted }}>
           이미 계정이 있으신가요?{' '}
           <a
             href="/samba/login"
-            style={{ color: '#FF8C00', fontWeight: 600, textDecoration: 'none' }}
+            style={{ color: c.primary, fontWeight: 600, textDecoration: 'none' }}
             onMouseEnter={(e) => { e.currentTarget.style.textDecoration = 'underline' }}
             onMouseLeave={(e) => { e.currentTarget.style.textDecoration = 'none' }}
           >

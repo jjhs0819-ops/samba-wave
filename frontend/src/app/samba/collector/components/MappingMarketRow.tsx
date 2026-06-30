@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { categoryApi } from '@/lib/samba/api/commerce'
+import { light as c } from '@/lib/samba/colors'
+import { btn } from '@/lib/samba/buttons'
 
 interface MappingMarketRowProps {
   marketType: string
@@ -17,7 +19,7 @@ export default function MappingMarketRow({ marketType, marketName, value, onChan
   const [showSugg, setShowSugg] = useState(false)
   return (
     <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px', position: 'relative' }}>
-      <span style={{ fontSize: '0.8rem', color: '#888', minWidth: '100px' }}>{marketName}</span>
+      <span style={{ fontSize: '0.8rem', color: c.textSub, minWidth: '100px' }}>{marketName}</span>
       <div style={{ flex: 1, position: 'relative' }}>
         <input
           type='text'
@@ -36,15 +38,15 @@ export default function MappingMarketRow({ marketType, marketName, value, onChan
           onFocus={() => { if (suggestions.length > 0) setShowSugg(true) }}
           onBlur={() => setTimeout(() => setShowSugg(false), 200)}
           placeholder='카테고리 검색 (2자 이상 입력)'
-          style={{ width: '100%', fontSize: '0.78rem', padding: '5px 10px', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', outline: 'none' }}
+          style={{ width: '100%', fontSize: '0.78rem', padding: '5px 10px', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, outline: 'none' }}
         />
         {showSugg && suggestions.length > 0 && (
-          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '6px', maxHeight: '200px', overflowY: 'auto', marginTop: '2px' }}>
+          <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: c.surface, border: `1px solid ${c.border}`, borderRadius: '6px', maxHeight: '200px', overflowY: 'auto', marginTop: '2px' }}>
             {suggestions.map((s, i) => (
               <div key={i}
                 onMouseDown={() => { onChange(s); setShowSugg(false) }}
-                style={{ padding: '6px 10px', fontSize: '0.72rem', color: '#C5C5C5', cursor: 'pointer', borderBottom: i < suggestions.length - 1 ? '1px solid #2D2D2D' : 'none' }}
-                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,140,0,0.1)' }}
+                style={{ padding: '6px 10px', fontSize: '0.72rem', color: c.text, cursor: 'pointer', borderBottom: i < suggestions.length - 1 ? `1px solid ${c.border}` : 'none' }}
+                onMouseEnter={e => { e.currentTarget.style.background = c.surfaceAlt }}
                 onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
               >{s}</div>
             ))}
@@ -53,7 +55,7 @@ export default function MappingMarketRow({ marketType, marketName, value, onChan
       </div>
       {value && (
         <button onClick={onClear}
-          style={{ color: '#666', cursor: 'pointer', background: 'none', border: 'none', fontSize: '1rem' }}>&times;</button>
+          style={{ ...btn('ghost'), fontSize: '1rem' }}>&times;</button>
       )}
     </div>
   )

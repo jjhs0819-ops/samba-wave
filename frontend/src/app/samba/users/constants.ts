@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { fmtDateTime } from '@/lib/samba/utils'
+import { light as c } from '@/lib/samba/colors'
 
 export interface License {
   id: string
@@ -21,10 +22,10 @@ export interface LoginHistory {
 }
 
 export const STATUS_MAP: Record<string, { label: string; color: string }> = {
-  active: { label: '활성', color: '#51CF66' },
-  draft: { label: '대기', color: '#FFD93D' },
-  inactive: { label: '비활성', color: '#888' },
-  suspended: { label: '정지', color: '#FF6B6B' },
+  active: { label: '활성', color: c.success },
+  draft: { label: '대기', color: c.warn },
+  inactive: { label: '비활성', color: c.textMuted },
+  suspended: { label: '정지', color: c.danger },
 }
 
 // IP 마스킹 (222.109.12.34 → 222.109.**)
@@ -45,14 +46,14 @@ export const daysInMonth = (y: number, m: number) => new Date(y, m, 0).getDate()
 export const pad = (n: number) => String(n).padStart(2, '0')
 
 export const selectStyle: CSSProperties = {
-  padding: '0.35rem 0.5rem', fontSize: '0.8rem', background: '#1A1A1A',
-  border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', cursor: 'pointer',
+  padding: '0.35rem 0.5rem', fontSize: '0.8rem', background: c.inputBg,
+  border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', cursor: 'pointer',
 }
 export const thStyle: CSSProperties = {
-  padding: '0.6rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#888',
+  padding: '0.6rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c.textMuted,
 }
 export const tdStyle: CSSProperties = {
-  padding: '0.5rem 1rem', textAlign: 'center', fontSize: '0.8rem', color: '#C5C5C5',
+  padding: '0.5rem 1rem', textAlign: 'center', fontSize: '0.8rem', color: c.text,
 }
 
 // 로그인 일시 포맷: 2026-04-07 [08:44:50] — KST 명시적 변환

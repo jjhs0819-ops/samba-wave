@@ -3,6 +3,8 @@
 import { Dispatch, SetStateAction } from 'react'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { STORE_MARKETS } from '../config'
+import { light as c } from '@/lib/samba/colors'
+import { btn } from '@/lib/samba/buttons'
 
 type OutboundPlace = { code: string; name: string; address: string; deliveryCode?: string }
 type InboundPlace = { code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }
@@ -35,16 +37,16 @@ export function ConnectedAccountsList(props: Props) {
 
   return (
     <div style={{ width: '260px', flexShrink: 0 }}>
-      <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#888', marginBottom: '0.5rem' }}>연결 계정</div>
+      <div style={{ fontSize: '0.82rem', fontWeight: 600, color: c.textSub, marginBottom: '0.5rem' }}>연결 계정</div>
       {marketAccounts.length === 0 ? (
-        <div style={{ fontSize: '0.78rem', color: '#555', padding: '0.5rem 0' }}>등록된 계정 없음</div>
+        <div style={{ fontSize: '0.78rem', color: c.textMuted, padding: '0.5rem 0' }}>등록된 계정 없음</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
           {marketAccounts.map(a => (
             <div key={a.id} style={{
               display: 'flex', alignItems: 'center', gap: '0.5rem',
-              padding: '0.4rem 0.625rem', background: 'rgba(255,255,255,0.02)',
-              borderRadius: '6px', border: '1px solid rgba(45,45,45,0.5)',
+              padding: '0.4rem 0.625rem', background: c.surfaceAlt,
+              borderRadius: '6px', border: `1px solid ${c.border}`,
             }}>
               {handleAccountSetDefault && (
                 <label
@@ -56,14 +58,14 @@ export function ConnectedAccountsList(props: Props) {
                     name={`default-${marketKey}`}
                     checked={!!a.is_default}
                     onChange={() => { void handleAccountSetDefault(a.id) }}
-                    style={{ cursor: 'pointer', accentColor: '#FF8C00' }}
+                    style={{ cursor: 'pointer', accentColor: c.primary }}
                   />
                 </label>
               )}
-              <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: '#E5E5E5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{ flex: 1, minWidth: 0, fontSize: '0.8rem', color: c.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {a.account_label}
                 {a.is_default && (
-                  <span style={{ marginLeft: '0.35rem', fontSize: '0.65rem', color: '#FF8C00' }}>★기본</span>
+                  <span style={{ marginLeft: '0.35rem', fontSize: '0.65rem', color: c.textSub }}>★기본</span>
                 )}
               </div>
               <button
@@ -104,19 +106,16 @@ export function ConnectedAccountsList(props: Props) {
                   }
                 }}
                 style={{
-                  padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
-                  background: editingAccountId === a.id ? 'rgba(255,140,0,0.15)' : 'rgba(60,60,60,0.8)',
-                  color: editingAccountId === a.id ? '#FF8C00' : '#C5C5C5',
-                  border: editingAccountId === a.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
-                  cursor: 'pointer', whiteSpace: 'nowrap',
+                  ...btn('secondary'),
+                  padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', whiteSpace: 'nowrap',
+                  ...(editingAccountId === a.id ? { background: '#e3f4f0', color: '#0f6a5b', border: '1px solid #a9ddd2' } : null),
                 }}
               >{editingAccountId === a.id ? '수정중' : '수정'}</button>
               <button
                 onClick={() => handleAccountDelete(a.id)}
                 style={{
-                  padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem',
-                  background: 'rgba(255,80,80,0.15)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.3)',
-                  cursor: 'pointer', whiteSpace: 'nowrap',
+                  ...btn('danger'),
+                  padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', whiteSpace: 'nowrap',
                 }}
               >삭제</button>
             </div>

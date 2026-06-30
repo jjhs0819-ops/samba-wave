@@ -1,4 +1,5 @@
 import { MARKET_KEYS } from './constants'
+import { light as c } from '@/lib/samba/colors'
 
 const marketColWidth = (mk: string) =>
   mk === 'coupang' || mk === 'ssg' || mk === 'ssg_std' || mk === 'gsshop' ? '360px' : '300px'
@@ -12,19 +13,19 @@ export const stickyHeadA = {
   position: 'sticky' as const,
   left: 0,
   zIndex: 3,
-  background: '#1F1F1F',
+  background: c.surface,
 }
 export const stickyHeadB = {
   position: 'sticky' as const,
   left: 80,
   zIndex: 3,
-  background: '#1F1F1F',
+  background: c.surface,
 }
 
 export const colStyle = {
   flex: 1,
   minWidth: '140px',
-  borderRight: '1px solid #2D2D2D',
+  borderRight: `1px solid ${c.border}`,
   maxHeight: '280px',
   overflowY: 'auto' as const,
 }
@@ -32,8 +33,8 @@ export const colStyle = {
 export const itemStyle = (isSelected: boolean) => ({
   padding: '0.5rem 0.75rem',
   fontSize: '0.8125rem',
-  color: isSelected ? '#FF8C00' : '#C5C5C5',
+  color: isSelected ? c.primary : c.text,
   cursor: 'pointer',
-  background: isSelected ? 'rgba(255,140,0,0.08)' : 'transparent',
+  background: isSelected ? 'rgba(37,99,235,0.08)' : 'transparent',
   transition: 'background 0.15s',
 })

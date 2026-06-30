@@ -4,6 +4,8 @@ import { useState } from 'react'
 import { manualProductApi } from '@/lib/samba/legacy'
 import ImageManagerModal from './ImageManagerModal'
 import CategorySelector from './CategorySelector'
+import { light as c } from '@/lib/samba/colors'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 interface Account {
   id: string
@@ -29,8 +31,8 @@ interface OptionRow {
   stock: number
 }
 
-const INPUT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]'
-const LABEL = 'text-xs text-[#666] mb-1 block'
+const INPUT = `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
+const LABEL = `text-xs text-[${c.textSub}] mb-1 block`
 
 function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Account[] {
   if (!policy?.market_policies) return []
@@ -141,22 +143,22 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
 
   return (
     <>
-      <div className='bg-[#111] border border-[#1A1A1A] rounded-lg p-4 mb-6 space-y-4'>
-        <p className='text-sm font-semibold text-[#FF8C00]'>새 상품 등록</p>
+      <div className={`bg-[${c.surface}] border border-[${c.border}] rounded-lg p-4 mb-6 space-y-4`}>
+        <p className={`text-sm font-semibold text-[${c.text}]`}>새 상품 등록</p>
 
         {/* 이미지 + 기본정보 */}
         <div className='flex gap-4'>
           <div
             onClick={() => setShowImageModal(true)}
-            className='w-20 h-20 rounded border border-[#2D2D2D] shrink-0 cursor-pointer overflow-hidden bg-[#0A0A0A] flex flex-col items-center justify-center hover:border-[#FF8C00] transition-colors'
+            className={`w-20 h-20 rounded border border-[${c.border}] shrink-0 cursor-pointer overflow-hidden bg-[${c.surfaceAlt}] flex flex-col items-center justify-center hover:border-[#a9ddd2] transition-colors`}
             title='이미지 추가/관리'
           >
             {thumb ? (
               <img src={thumb} alt='' className='w-full h-full object-cover' />
             ) : (
               <>
-                <span className='text-[#444] text-lg'>+</span>
-                <span className='text-[#444] text-xs'>이미지</span>
+                <span className={`text-[${c.textMuted}] text-lg`}>+</span>
+                <span className={`text-[${c.textMuted}] text-xs`}>이미지</span>
               </>
             )}
           </div>
@@ -201,7 +203,7 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
             <select className={INPUT} value={season} onChange={e => setSeason(e.target.value)}>
               <option>사계절</option><option>봄/여름</option><option>가을/겨울</option><option>봄</option><option>여름</option><option>가을</option><option>겨울</option>
             </select>
-            <input className='col-span-2 px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]' value={material} onChange={e => setMaterial(e.target.value)} placeholder='재질 (예: 면 100%)' />
+            <input className={`col-span-2 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`} value={material} onChange={e => setMaterial(e.target.value)} placeholder='재질 (예: 면 100%)' />
           </div>
         </div>
 
@@ -230,7 +232,7 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
               <CategorySelector accounts={linked} savedCategories={pendingCategories} onSave={setPendingCategories} />
             </div>
           ) : (
-            <p className='text-xs text-[#666]'>이 정책에 연결된 판매처 계정이 없습니다.</p>
+            <p className={`text-xs text-[${c.textMuted}]`}>이 정책에 연결된 판매처 계정이 없습니다.</p>
           )
         })()}
 
@@ -245,14 +247,14 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
               placeholder='태그 입력 후 Enter'
             />
-            <button onClick={addTag} className='px-3 py-1.5 bg-[#1A1A1A] text-[#999] text-sm rounded hover:text-[#E5E5E5]'>추가</button>
+            <button onClick={addTag} style={btn('secondary')} className='px-3 py-1.5 text-sm'>추가</button>
           </div>
           {tags.length > 0 && (
             <div className='flex flex-wrap gap-1'>
               {tags.map(t => (
-                <span key={t} className='inline-flex items-center gap-1 bg-[#1A1A1A] text-[#999] text-xs px-2 py-0.5 rounded'>
+                <span key={t} className={`inline-flex items-center gap-1 bg-[${c.surfaceAlt}] text-[${c.textMuted}] text-xs px-2 py-0.5 rounded`}>
                   {t}
-                  <button onClick={() => removeTag(t)} className='text-[#666] hover:text-[#FF6B6B]'>×</button>
+                  <button onClick={() => removeTag(t)} className={`text-[${c.textMuted}] hover:text-[${c.danger}]`}>×</button>
                 </span>
               ))}
             </div>
@@ -263,9 +265,9 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
         <div>
           <div className='flex justify-between items-center mb-1'>
             <label className={LABEL}>옵션</label>
-            <button onClick={addOption} className='text-xs text-[#FF8C00] hover:text-[#E07B00]'>+ 추가</button>
+            <button onClick={addOption} className={`text-xs text-[${c.textSub}] hover:text-[${c.text}]`}>+ 추가</button>
           </div>
-          <div className='grid grid-cols-[1fr_100px_24px] gap-2 text-xs text-[#666] px-0.5 mb-1'>
+          <div className={`grid grid-cols-[1fr_100px_24px] gap-2 text-xs text-[${c.textSub}] px-0.5 mb-1`}>
             <span>옵션명</span><span>재고</span><span />
           </div>
           <div className='space-y-1.5'>
@@ -274,20 +276,21 @@ export default function NewProductCard({ accounts, policies, onCreated }: Props)
                 <input className={INPUT} value={opt.name} onChange={e => updateOption(opt.id, 'name', e.target.value)} placeholder='옵션명 (예: 블랙/L)' />
                 <input type='number' className={INPUT} value={opt.stock} onChange={e => updateOption(opt.id, 'stock', Number(e.target.value))} placeholder='0' />
                 {options.length > 1 ? (
-                  <button onClick={() => removeOption(opt.id)} className='text-[#FF6B6B] text-sm'>×</button>
+                  <button onClick={() => removeOption(opt.id)} className={`text-[${c.danger}] text-sm`}>×</button>
                 ) : <span />}
               </div>
             ))}
           </div>
         </div>
 
-        {error && <p className='text-[#FF6B6B] text-xs'>{error}</p>}
+        {error && <p className={`text-[${c.danger}] text-xs`}>{error}</p>}
 
         <div className='flex justify-end'>
           <button
             onClick={handleSubmit}
             disabled={saving}
-            className='px-5 py-2 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00] disabled:opacity-50'
+            style={{ ...btn('primary'), ...(saving ? btnDisabled : null) }}
+            className='px-5 py-2 text-sm'
           >
             {saving ? '등록 중...' : '등록'}
           </button>

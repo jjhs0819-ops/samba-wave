@@ -5,6 +5,8 @@ import { collectorApi, proxyApi, type SambaSearchFilter } from '@/lib/samba/api/
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtTime } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
+import { light as c } from '@/lib/samba/colors'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 // AI 비용 사용 내역 타입
 type AiUsage = { calls: number; tokens: number; cost: number; date: string }
@@ -85,30 +87,30 @@ export default function AiToolsPanel(props: Props) {
     <div style={{ display: 'grid', gridTemplateColumns: '0.7fr 1.3fr 1fr', gap: '8px', marginTop: '1.25rem' }}>
       {/* AI 비용 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(81,207,102,0.08)', border: '1px solid rgba(81,207,102,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#51CF66', fontWeight: 600 }}>AI 비용</span>
+        <span style={{ fontSize: '0.8125rem', color: c.success, fontWeight: 600 }}>AI 비용</span>
         {lastAiUsage ? (
           <>
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{fmtNum(lastAiUsage.calls)}건</span>
-            <span style={{ fontSize: '0.78rem', color: '#888' }}>·</span>
-            <span style={{ fontSize: '0.78rem', color: '#FFB84D' }}>₩{fmtNum(lastAiUsage.cost)}</span>
-            <span style={{ fontSize: '0.7rem', color: '#555' }}>{lastAiUsage.date}</span>
+            <span style={{ fontSize: '0.78rem', color: c.text }}>{fmtNum(lastAiUsage.calls)}건</span>
+            <span style={{ fontSize: '0.78rem', color: c.textMuted }}>·</span>
+            <span style={{ fontSize: '0.78rem', color: c.text }}>₩{fmtNum(lastAiUsage.cost)}</span>
+            <span style={{ fontSize: '0.7rem', color: c.textMuted }}>{lastAiUsage.date}</span>
           </>
         ) : (
-          <span style={{ fontSize: '0.78rem', color: '#555' }}>사용 내역 없음</span>
+          <span style={{ fontSize: '0.78rem', color: c.textMuted }}>사용 내역 없음</span>
         )}
       </div>
       {/* AI 이미지 변환 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#FF8C00', fontWeight: 600 }}>AI 이미지 변환</span>
+        <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>AI 이미지 변환</span>
         {([['thumbnail', '대표'], ['additional', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
           <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={aiImgScope[key]}
               onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
-              style={{ accentColor: '#FF8C00', width: '13px', height: '13px' }} />
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
+              style={{ accentColor: c.primary, width: '13px', height: '13px' }} />
+            <span style={{ fontSize: '0.78rem', color: c.text }}>{label}</span>
           </label>
         ))}
-        <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+        <select value={aiImgMode} onChange={e => setAiImgMode(e.target.value)} style={{ background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
           <option value="background">배경 제거</option>
           <option value="model_to_product">모델→상품</option>
           <option value="scene">연출컷</option>
@@ -118,7 +120,7 @@ export default function AiToolsPanel(props: Props) {
           <select
             value={aiModelPreset}
             onChange={e => setAiModelPreset(e.target.value)}
-            style={{ background: '#1A1A1A', border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
+            style={{ background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}
           >
             <option value="auto">자동 (성별·연령 판별)</option>
             {['여성', '남성', '키즈 여아', '키즈 남아'].map(group => {
@@ -139,7 +141,7 @@ export default function AiToolsPanel(props: Props) {
             })}
           </select>
         )}
-        <span style={{ fontSize: '0.78rem', color: '#888' }}>({fmtNum(selectedIds.size)}개 그룹)</span>
+        <span style={{ fontSize: '0.78rem', color: c.textMuted }}>({fmtNum(selectedIds.size)}개 그룹)</span>
         <button
           onClick={async () => {
             if (selectedIds.size === 0) { showAlert('검색그룹을 선택해주세요'); return }
@@ -287,13 +289,13 @@ export default function AiToolsPanel(props: Props) {
             setSelectedIds(new Set()); setSelectAll(false)
           }}
           disabled={aiImgTransforming}
-          style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+          style={{ ...btn('secondary'), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
 
       {/* 이미지 필터링 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '8px', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: '0.8125rem', color: '#818CF8', fontWeight: 600 }}>이미지 필터링</span>
+        <span style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>이미지 필터링</span>
         {([['images', '대표'], ['detail_images', '추가'], ['detail', '상세']] as const).map(([key, label]) => (
           <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={imgFilterScopes.has(key)}
@@ -302,8 +304,8 @@ export default function AiToolsPanel(props: Props) {
                 if (next.has(key)) next.delete(key); else next.add(key)
                 return next
               })}
-              style={{ accentColor: '#818CF8', width: '13px', height: '13px' }} />
-            <span style={{ fontSize: '0.78rem', color: '#E5E5E5' }}>{label}</span>
+              style={{ accentColor: c.primary, width: '13px', height: '13px' }} />
+            <span style={{ fontSize: '0.78rem', color: c.text }}>{label}</span>
           </label>
         ))}
         <button
@@ -415,7 +417,7 @@ export default function AiToolsPanel(props: Props) {
             }
           }}
           disabled={imgFiltering}
-          style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+          style={{ ...btn('secondary'), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : `필터링 실행 (${fmtNum(selectedIds.size)}개)`}</button>
       </div>
     </div>

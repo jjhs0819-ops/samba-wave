@@ -2,6 +2,8 @@
 
 import { useState } from 'react'
 import { categoryApi } from '@/lib/samba/legacy'
+import { light as c } from '@/lib/samba/colors'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 interface Account {
   id: string
@@ -88,7 +90,7 @@ export default function CategorySelector({
   }
 
   if (accounts.length === 0) {
-    return <p style={{ fontSize: 12, color: '#444', padding: '8px 0' }}>등록된 판매처 계정이 없습니다.</p>
+    return <p style={{ fontSize: 12, color: c.textMuted, padding: '8px 0' }}>등록된 판매처 계정이 없습니다.</p>
   }
 
   return (
@@ -97,10 +99,10 @@ export default function CategorySelector({
         return (
           <div
             key={marketType}
-            style={{ background: '#0A0A0A', border: '1px solid #1A1A1A', borderRadius: 6, padding: 8 }}
+            style={{ background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: 6, padding: 8 }}
           >
             {/* 헤더: 판매처명 */}
-            <p style={{ fontSize: 11, color: '#666', margin: '0 0 6px 0' }}>{marketType}</p>
+            <p style={{ fontSize: 11, color: c.textSub, margin: '0 0 6px 0' }}>{marketType}</p>
 
             {/* 카테고리 검색 (판매처 단위) */}
             <div style={{ position: 'relative' }}>
@@ -111,17 +113,17 @@ export default function CategorySelector({
                 style={{
                   width: '100%',
                   padding: '6px 10px',
-                  background: '#0A0A0A',
-                  border: '1px solid #2D2D2D',
+                  background: c.inputBg,
+                  border: `1px solid ${c.border}`,
                   borderRadius: 4,
                   fontSize: 13,
-                  color: '#E5E5E5',
+                  color: c.text,
                   outline: 'none',
                   boxSizing: 'border-box',
                 }}
               />
               {loading[marketType] && (
-                <span style={{ position: 'absolute', right: 8, top: 8, fontSize: 11, color: '#666' }}>
+                <span style={{ position: 'absolute', right: 8, top: 8, fontSize: 11, color: c.textSub }}>
                   검색 중
                 </span>
               )}
@@ -131,8 +133,8 @@ export default function CategorySelector({
                     position: 'absolute',
                     zIndex: 50,
                     width: '100%',
-                    background: '#111',
-                    border: '1px solid #2D2D2D',
+                    background: c.surface,
+                    border: `1px solid ${c.border}`,
                     borderRadius: 4,
                     maxHeight: 160,
                     overflowY: 'auto',
@@ -141,15 +143,15 @@ export default function CategorySelector({
                     padding: 0,
                     margin: 0,
                     marginTop: 4,
-                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
                   }}
                 >
                   {suggestions[marketType].map((cat, i) => (
                     <li
                       key={i}
                       onClick={() => select(marketType, cat)}
-                      style={{ padding: '7px 12px', color: '#E5E5E5', cursor: 'pointer' }}
-                      onMouseEnter={e => { (e.currentTarget as HTMLLIElement).style.background = '#1A1A1A' }}
+                      style={{ padding: '7px 12px', color: c.text, cursor: 'pointer' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLLIElement).style.background = c.surfaceAlt }}
                       onMouseLeave={e => { (e.currentTarget as HTMLLIElement).style.background = 'transparent' }}
                     >
                       {cat}
@@ -159,7 +161,7 @@ export default function CategorySelector({
               )}
             </div>
             {cats[marketType] && (
-              <p style={{ fontSize: 11, color: '#FF8C00', marginTop: 4 }}>선택됨: {cats[marketType]}</p>
+              <p style={{ fontSize: 11, color: c.textSub, marginTop: 4 }}>선택됨: {cats[marketType]}</p>
             )}
 
             {/* 계정별 등록상품 버튼 */}
@@ -175,20 +177,11 @@ export default function CategorySelector({
                   const isDeleting = deletingAccountId === acc.id
                   return (
                     <div key={acc.id} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <span style={{ fontSize: 11, color: '#555', flex: 1 }}>{acc.account_name}</span>
+                      <span style={{ fontSize: 11, color: c.textSub, flex: 1 }}>{acc.account_name}</span>
                       {marketUrl && (
                         <button
                           onClick={() => window.open(marketUrl, '_blank')}
-                          style={{
-                            padding: '2px 8px',
-                            fontSize: 11,
-                            background: '#0F1C2E',
-                            border: '1px solid #1A3A5C',
-                            borderRadius: 4,
-                            color: '#4A9EFF',
-                            cursor: 'pointer',
-                            whiteSpace: 'nowrap',
-                          }}
+                          style={{ ...btn('secondary'), padding: '2px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
                         >
                           구매페이지
                         </button>
@@ -197,16 +190,7 @@ export default function CategorySelector({
                         <button
                           onClick={() => !isDeleting && onDeleteFromMarket(acc.id)}
                           disabled={isDeleting}
-                          style={{
-                            padding: '2px 8px',
-                            fontSize: 11,
-                            background: '#1A0A0A',
-                            border: '1px solid #3A1A1A',
-                            borderRadius: 4,
-                            color: isDeleting ? '#666' : '#FF6B6B',
-                            cursor: isDeleting ? 'not-allowed' : 'pointer',
-                            whiteSpace: 'nowrap',
-                          }}
+                          style={{ ...btn('danger'), padding: '2px 8px', fontSize: 11, whiteSpace: 'nowrap', ...(isDeleting ? btnDisabled : null) }}
                         >
                           {isDeleting ? '삭제 중...' : '마켓삭제'}
                         </button>
