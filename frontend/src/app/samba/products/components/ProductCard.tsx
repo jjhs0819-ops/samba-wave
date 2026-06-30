@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import React, { useState, useMemo, useCallback, useEffect } from 'react'
 import {
@@ -15,6 +15,8 @@ import { fmtNum } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'
 import OptionPanel from './OptionPanel'
+import { dark as c } from '@/lib/samba/colors'
+import { btn } from '@/lib/samba/buttons'
 
 // 마켓별 상품 검색 URL (구매페이지 바로가기용)
 export const MARKETS = [
@@ -381,7 +383,7 @@ function renderRegisteredName(name: string, deletionWords: string[]): React.Reac
   return parts.map((part, i) => {
     const isMatch = deletionWords.some(w => w.toLowerCase() === part.toLowerCase())
     if (isMatch) {
-      return <span key={i} style={{ textDecoration: 'line-through', textDecorationColor: '#FF6B6B', color: '#666' }}>{part}</span>
+      return <span key={i} style={{ textDecoration: 'line-through', textDecorationColor: c.danger, color: c.textMuted }}>{part}</span>
     }
     return <span key={i}>{part}</span>
   })
@@ -536,7 +538,7 @@ const ProductCard = React.memo(function ProductCard({
   )
 
   const isActive = p.status === 'registered' || p.status === 'saved'
-  const statusColor = isActive ? '#51CF66' : '#888'
+  const statusColor = isActive ? c.success : c.textMuted
   const statusBg = isActive ? 'rgba(81,207,102,0.12)' : 'rgba(100,100,100,0.15)'
   const statusText = p.status === 'registered' ? '등록됨' : p.status === 'saved' ? '저장됨' : ''
 
@@ -684,13 +686,13 @@ const ProductCard = React.memo(function ProductCard({
     })
   }, [p.resell_matches, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
 
-  const tdLabel: React.CSSProperties = { padding: '6px 8px', color: '#555', fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
+  const tdLabel: React.CSSProperties = { padding: '6px 8px', color: c.textSub, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
   const tdVal: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' }
   const marketNameInputBaseStyle: React.CSSProperties = {
     width: '100%',
     padding: '2px 6px',
     fontSize: '0.72rem',
-    background: '#1A1A1A',
+    background: c.surface,
     borderRadius: '3px',
     outline: 'none',
     userSelect: 'text',
@@ -699,13 +701,13 @@ const ProductCard = React.memo(function ProductCard({
 
   return (
     <div style={{
-      background: 'rgba(22,22,22,0.9)', border: '1px solid #2A2A2A', borderRadius: '10px',
+      background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px',
       overflow: 'hidden',
     }}>
       {/* 업데이트 로그 바 */}
       {logMessage && (
         <div style={{
-          padding: '6px 14px', fontSize: '0.75rem', color: '#FFB84D',
+          padding: '6px 14px', fontSize: '0.75rem', color: c.text,
           background: 'rgba(255,140,0,0.08)', borderBottom: '1px solid rgba(255,140,0,0.15)',
           display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden',
         }}>
@@ -719,7 +721,7 @@ const ProductCard = React.memo(function ProductCard({
           return (
             <div style={{ position: 'fixed', inset: 0, zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
               onClick={() => setShowPriceHistoryModal(false)}>
-              <div style={{ background: '#1A1A1A', borderRadius: '10px', padding: '2rem', color: '#888', fontSize: '0.85rem' }}>이력 로딩 중...</div>
+              <div style={{ background: c.surface, borderRadius: '10px', padding: '2rem', color: c.textMuted, fontSize: '0.85rem' }}>이력 로딩 중...</div>
             </div>
           )
         }
@@ -762,7 +764,7 @@ const ProductCard = React.memo(function ProductCard({
           >
             <div
               style={{
-                background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px',
+                background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px',
                 width: 'min(700px, 95vw)', maxHeight: '85vh', overflow: 'hidden',
                 display: 'flex', flexDirection: 'column',
               }}
@@ -771,58 +773,58 @@ const ProductCard = React.memo(function ProductCard({
               {/* 헤더 */}
               <div style={{
                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '14px 20px', borderBottom: '1px solid #2D2D2D',
+                padding: '14px 20px', borderBottom: `1px solid ${c.border}`,
               }}>
-                <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>
+                <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: c.text }}>
                   가격 / 재고 이력
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#666' }}>{fmtNum(history.length)}건 기록</span>
+                  <span style={{ fontSize: '0.75rem', color: c.textMuted }}>{fmtNum(history.length)}건 기록</span>
                   <button
                     onClick={() => setShowPriceHistoryModal(false)}
-                    style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}
+                    style={{ background: 'transparent', border: 'none', color: c.textMuted, fontSize: '1.2rem', cursor: 'pointer' }}
                   >✕</button>
                 </div>
               </div>
 
               {/* 상품 정보 + 요약 */}
-              <div style={{ padding: '12px 20px', borderBottom: '1px solid #2D2D2D' }}>
+              <div style={{ padding: '12px 20px', borderBottom: `1px solid ${c.border}` }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                   <span style={{
                     fontSize: '0.65rem', padding: '2px 6px', borderRadius: '3px',
-                    background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600,
+                    background: 'rgba(255,140,0,0.15)', color: c.text, fontWeight: 600,
                   }}>{p.source_site}</span>
-                  <span style={{ fontSize: '0.75rem', color: '#999' }}>{p.name}</span>
+                  <span style={{ fontSize: '0.75rem', color: c.textMuted }}>{p.name}</span>
                 </div>
                 {costPrices.length > 0 && (
                   <div style={{ display: 'flex', gap: '20px', fontSize: '0.78rem', flexWrap: 'wrap' }}>
                     {isKream && kreamFastMin > 0 && (
                       <div>
-                        <span style={{ color: '#666' }}>빠른배송 </span>
-                        <span style={{ color: '#FF8C00', fontWeight: 600 }}>₩ {fmtPrice(kreamFastMin)}</span>
+                        <span style={{ color: c.textMuted }}>빠른배송 </span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>₩ {fmtPrice(kreamFastMin)}</span>
                       </div>
                     )}
                     {isKream && kreamGeneralMin > 0 && (
                       <div>
-                        <span style={{ color: '#666' }}>일반배송 </span>
-                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {fmtPrice(kreamGeneralMin)}</span>
+                        <span style={{ color: c.textMuted }}>일반배송 </span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>₩ {fmtPrice(kreamGeneralMin)}</span>
                       </div>
                     )}
                     {!isKream && (
                       <div>
-                        <span style={{ color: '#666' }}>현재가 </span>
-                        <span style={{ color: '#E5E5E5', fontWeight: 600 }}>₩ {fmtPrice(currentPrice)}</span>
+                        <span style={{ color: c.textMuted }}>현재가 </span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>₩ {fmtPrice(currentPrice)}</span>
                       </div>
                     )}
                     <div>
-                      <span style={{ color: '#666' }}>최저가 </span>
-                      <span style={{ color: '#51CF66', fontWeight: 600 }}>₩ {fmtPrice(minPrice)}</span>
-                      {minEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(minEntry.date)})</span>}
+                      <span style={{ color: c.textMuted }}>최저가 </span>
+                      <span style={{ color: c.success, fontWeight: 600 }}>₩ {fmtPrice(minPrice)}</span>
+                      {minEntry && <span style={{ color: c.textMuted, fontSize: '0.68rem' }}> ({fmtShortDate(minEntry.date)})</span>}
                     </div>
                     <div>
-                      <span style={{ color: '#666' }}>최고가 </span>
-                      <span style={{ color: '#FF6B6B', fontWeight: 600 }}>₩ {fmtPrice(maxPrice)}</span>
-                      {maxEntry && <span style={{ color: '#555', fontSize: '0.68rem' }}> ({fmtShortDate(maxEntry.date)})</span>}
+                      <span style={{ color: c.textMuted }}>최고가 </span>
+                      <span style={{ color: c.danger, fontWeight: 600 }}>₩ {fmtPrice(maxPrice)}</span>
+                      {maxEntry && <span style={{ color: c.textMuted, fontSize: '0.68rem' }}> ({fmtShortDate(maxEntry.date)})</span>}
                     </div>
                   </div>
                 )}
@@ -831,24 +833,24 @@ const ProductCard = React.memo(function ProductCard({
               {/* 이력 테이블 */}
               <div style={{ overflowY: 'auto', padding: '0' }}>
                 {history.length === 0 ? (
-                  <div style={{ padding: '2rem', textAlign: 'center', color: '#555', fontSize: '0.85rem' }}>
+                  <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted, fontSize: '0.85rem' }}>
                     가격 변동 이력 없음<br />
-                    <span style={{ fontSize: '0.75rem', color: '#444' }}>업데이트 시 이력이 기록됩니다</span>
+                    <span style={{ fontSize: '0.75rem', color: c.textMuted }}>업데이트 시 이력이 기록됩니다</span>
                   </div>
                 ) : (
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
                     <thead>
-                      <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                        <th style={{ padding: '8px 16px', textAlign: 'left', color: '#888', fontWeight: 500 }}>날짜</th>
+                      <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                        <th style={{ padding: '8px 16px', textAlign: 'left', color: c.textMuted, fontWeight: 500 }}>날짜</th>
                         {isKream ? (
                           <>
-                            <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>빠른배송(₩)</th>
-                            <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>일반배송(₩)</th>
+                            <th style={{ padding: '8px 16px', textAlign: 'right', color: c.textMuted, fontWeight: 500 }}>빠른배송(₩)</th>
+                            <th style={{ padding: '8px 16px', textAlign: 'right', color: c.textMuted, fontWeight: 500 }}>일반배송(₩)</th>
                           </>
                         ) : (
-                          <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>원가(₩)</th>
+                          <th style={{ padding: '8px 16px', textAlign: 'right', color: c.textMuted, fontWeight: 500 }}>원가(₩)</th>
                         )}
-                        <th style={{ padding: '8px 16px', textAlign: 'right', color: '#888', fontWeight: 500 }}>재고(수량/O/X)</th>
+                        <th style={{ padding: '8px 16px', textAlign: 'right', color: c.textMuted, fontWeight: 500 }}>재고(수량/O/X)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -860,25 +862,25 @@ const ProductCard = React.memo(function ProductCard({
                         return (
                           <React.Fragment key={i}>
                             {/* 메인 행: 날짜 + 가격 + 옵션 요약 */}
-                            <tr style={{ borderTop: i > 0 ? '1px solid #2D2D2D' : 'none', background: 'rgba(255,255,255,0.02)' }}>
-                              <td style={{ padding: '8px 16px', color: '#C5C5C5', fontWeight: 600, fontSize: '0.78rem' }}>
+                            <tr style={{ borderTop: i > 0 ? `1px solid ${c.border}` : 'none', background: c.surfaceAlt }}>
+                              <td style={{ padding: '8px 16px', color: c.text, fontWeight: 600, fontSize: '0.78rem' }}>
                                 {fmtHistDate(h.date)}
                               </td>
                               {isKream ? (
                                 <>
-                                  <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FF8C00', fontWeight: 600 }}>
+                                  <td style={{ padding: '8px 16px', textAlign: 'right', color: c.text, fontWeight: 600 }}>
                                     {Number(h.kream_fast_min) > 0 ? `₩ ${fmtPrice(h.kream_fast_min)}` : '-'}
                                   </td>
-                                  <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
+                                  <td style={{ padding: '8px 16px', textAlign: 'right', color: c.text, fontWeight: 600 }}>
                                     {Number(h.kream_general_min) > 0 ? `₩ ${fmtPrice(h.kream_general_min)}` : '-'}
                                   </td>
                                 </>
                               ) : (
-                                <td style={{ padding: '8px 16px', textAlign: 'right', color: '#FFB84D', fontWeight: 600 }}>
+                                <td style={{ padding: '8px 16px', textAlign: 'right', color: c.text, fontWeight: 600 }}>
                                   ₩ {fmtPrice(h.cost || h.sale_price)}
                                 </td>
                               )}
-                              <td style={{ padding: '8px 16px', textAlign: 'right', color: '#888' }}>
+                              <td style={{ padding: '8px 16px', textAlign: 'right', color: c.textMuted }}>
                                 {opts.length > 0 ? `${fmtNum(opts.length)}개 옵션` : '-'}
                               </td>
                             </tr>
@@ -893,27 +895,27 @@ const ProductCard = React.memo(function ProductCard({
                                   ? `${fmtNum(stk)}개`
                                   : 'O'
                               return (
-                                <tr key={oi} style={{ borderTop: '1px solid #1A1A1A' }}>
-                                  <td style={{ padding: '4px 16px 4px 32px', color: '#666', fontSize: '0.73rem' }}>
+                                <tr key={oi} style={{ borderTop: `1px solid ${c.border}` }}>
+                                  <td style={{ padding: '4px 16px 4px 32px', color: c.textMuted, fontSize: '0.73rem' }}>
                                     ㄴ {opt.name || `옵션${oi + 1}`}
                                   </td>
                                   {isKream ? (
                                     <>
-                                      <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
+                                      <td style={{ padding: '4px 16px', textAlign: 'right', color: c.textMuted, fontSize: '0.73rem' }}>
                                         {Number(kOpt.kreamFastPrice) > 0 ? `₩ ${fmtPrice(kOpt.kreamFastPrice)}` : '-'}
                                       </td>
-                                      <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
+                                      <td style={{ padding: '4px 16px', textAlign: 'right', color: c.textMuted, fontSize: '0.73rem' }}>
                                         {Number(kOpt.kreamGeneralPrice) > 0 ? `₩ ${fmtPrice(kOpt.kreamGeneralPrice)}` : '-'}
                                       </td>
                                     </>
                                   ) : (
-                                    <td style={{ padding: '4px 16px', textAlign: 'right', color: '#888', fontSize: '0.73rem' }}>
+                                    <td style={{ padding: '4px 16px', textAlign: 'right', color: c.textMuted, fontSize: '0.73rem' }}>
                                       ₩ {fmtPrice(h.cost || h.sale_price)}
                                     </td>
                                   )}
                                   <td style={{
                                     padding: '4px 16px', textAlign: 'right', fontSize: '0.73rem', fontWeight: 600,
-                                    color: soldOut ? '#FF6B6B' : '#51CF66',
+                                    color: soldOut ? c.danger : c.success,
                                   }}>
                                     {stockLabel}
                                   </td>
@@ -937,9 +939,9 @@ const ProductCard = React.memo(function ProductCard({
           return (
             <div style={{ position: 'fixed', inset: 0, zIndex: 99998, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.6)' }}
               onClick={() => setShowPriceHistoryModal(false)}>
-              <div style={{ background: '#1A1A1A', borderRadius: '10px', padding: '2rem', maxWidth: '400px' }}>
-                <div style={{ color: '#FF6B6B', fontSize: '0.85rem', marginBottom: '8px' }}>이력 데이터 표시 실패</div>
-                <div style={{ color: '#666', fontSize: '0.72rem' }}>{errMsg}</div>
+              <div style={{ background: c.surface, borderRadius: '10px', padding: '2rem', maxWidth: '400px' }}>
+                <div style={{ color: c.danger, fontSize: '0.85rem', marginBottom: '8px' }}>이력 데이터 표시 실패</div>
+                <div style={{ color: c.textMuted, fontSize: '0.72rem' }}>{errMsg}</div>
               </div>
             </div>
           )
@@ -958,8 +960,8 @@ const ProductCard = React.memo(function ProductCard({
 
         const tabStyle = (active: boolean) => ({
           padding: '8px 16px', fontSize: '0.8rem', fontWeight: active ? 600 : 400,
-          color: active ? '#FF8C00' : '#888', cursor: 'pointer',
-          border: 'none', borderBottom: active ? '2px solid #FF8C00' : '2px solid transparent',
+          color: active ? c.primary : c.textMuted, cursor: 'pointer',
+          border: 'none', borderBottom: active ? `2px solid ${c.primary}` : '2px solid transparent',
           background: 'transparent',
         })
 
@@ -967,12 +969,12 @@ const ProductCard = React.memo(function ProductCard({
         const renderImageRow = (img: string, i: number, list: string[], setList: (imgs: string[]) => void, label?: string) => (
           <div key={i} style={{
             display: 'flex', alignItems: 'center', gap: '12px', padding: '8px', borderRadius: '8px',
-            background: label ? 'rgba(255,140,0,0.06)' : 'rgba(30,30,30,0.5)',
-            border: label ? '1px solid rgba(255,140,0,0.2)' : '1px solid #2D2D2D',
+            background: label ? 'rgba(255,140,0,0.06)' : c.surface,
+            border: label ? '1px solid rgba(255,140,0,0.2)' : `1px solid ${c.border}`,
           }}>
             <div
               onClick={() => openZoom(img, list)}
-              style={{ width: 64, height: 64, borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: '#1A1A1A', position: 'relative' }}
+              style={{ width: 64, height: 64, borderRadius: '6px', border: `1px solid ${c.border}`, flexShrink: 0, cursor: 'pointer', overflow: 'hidden', background: c.surface, position: 'relative' }}
             >
               <img src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
                 onError={e => {
@@ -986,17 +988,17 @@ const ProductCard = React.memo(function ProductCard({
                   }
                 }}
                 style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', position: 'relative', zIndex: 1 }} />
-              <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: '0.6rem', zIndex: 0 }}>IMG</span>
+              <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: c.textMuted, fontSize: '0.6rem', zIndex: 0 }}>IMG</span>
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              {label && <span style={{ fontSize: '0.7rem', color: '#FF8C00', fontWeight: 600 }}>{label}</span>}
-              <p style={{ margin: 0, fontSize: '0.68rem', color: '#555', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
+              {label && <span style={{ fontSize: '0.7rem', color: c.text, fontWeight: 600 }}>{label}</span>}
+              <p style={{ margin: 0, fontSize: '0.68rem', color: c.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
             </div>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
               {i > 0 && <button onClick={() => { const a = [...list]; [a[i-1], a[i]] = [a[i], a[i-1]]; setList(a) }}
-                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▲</button>}
+                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted }}>▲</button>}
               {i < list.length - 1 && <button onClick={() => { const a = [...list]; [a[i+1], a[i]] = [a[i], a[i+1]]; setList(a) }}
-                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888' }}>▼</button>}
+                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted }}>▼</button>}
               <button onClick={() => {
                 setCardConfirm({
                   msg: '이 이미지를 모든 상품에서 삭제하시겠습니까?',
@@ -1013,9 +1015,9 @@ const ProductCard = React.memo(function ProductCard({
                   },
                 })
               }}
-                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.08)', color: '#A855F7' }}>추적삭제</button>
+                style={{ ...btn('danger'), padding: '3px 8px', fontSize: '0.7rem' }}>추적삭제</button>
               <button onClick={() => setList(list.filter((_, j) => j !== i))}
-                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid rgba(255,107,107,0.3)', background: 'rgba(255,107,107,0.08)', color: '#FF6B6B' }}>삭제</button>
+                style={{ ...btn('danger'), padding: '3px 8px', fontSize: '0.7rem' }}>삭제</button>
             </div>
           </div>
         )
@@ -1023,16 +1025,16 @@ const ProductCard = React.memo(function ProductCard({
         return (
           <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             onClick={() => setShowImageModal(false)}>
-            <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', width: 'min(750px, 95vw)', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
+            <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', width: 'min(750px, 95vw)', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
               onClick={e => e.stopPropagation()}>
               {/* 헤더 + 탭 */}
-              <div style={{ padding: '14px 20px 0', borderBottom: '1px solid #2D2D2D' }}>
+              <div style={{ padding: '14px 20px 0', borderBottom: `1px solid ${c.border}` }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#E5E5E5' }}>이미지 변경</h3>
-                    <p style={{ margin: 0, fontSize: '0.72rem', color: '#666' }}>{p.name?.slice(0, 50)}</p>
+                    <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: c.text }}>이미지 변경</h3>
+                    <p style={{ margin: 0, fontSize: '0.72rem', color: c.textMuted }}>{p.name?.slice(0, 50)}</p>
                   </div>
-                  <button onClick={() => setShowImageModal(false)} style={{ background: 'transparent', border: 'none', color: '#888', fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
+                  <button onClick={() => setShowImageModal(false)} style={{ background: 'transparent', border: 'none', color: c.textMuted, fontSize: '1.2rem', cursor: 'pointer' }}>✕</button>
                 </div>
                 <div style={{ display: 'flex', gap: '0' }}>
                   <button onClick={() => setImageTab('main')} style={tabStyle(imageTab === 'main')}>대표 이미지변경</button>
@@ -1048,26 +1050,26 @@ const ProductCard = React.memo(function ProductCard({
                   <div>
                     {/* ── 공통 대표이미지 ── */}
                     <div style={{ marginBottom: '20px' }}>
-                      <p style={{ fontSize: '0.78rem', color: '#FF8C00', fontWeight: 600, marginBottom: '8px' }}>공통 대표이미지</p>
-                      <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                      <p style={{ fontSize: '0.78rem', color: c.text, fontWeight: 600, marginBottom: '8px' }}>공통 대표이미지</p>
+                      <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '12px' }}>
                         ※ 쿠팡을 제외한 모든 마켓에 적용됩니다. 쿠팡 대표이미지가 미설정이면 공통이 사용됩니다.
                       </p>
                       {mainImg ? (
                         <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
                           <div>
-                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 대표이미지]</p>
+                            <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '6px' }}>[현재 대표이미지]</p>
                             <img src={mainImg} alt="대표이미지" loading="lazy" referrerPolicy="no-referrer"
                               onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                               onClick={() => openZoom(mainImg)}
-                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #2D2D2D', cursor: 'pointer' }} />
-                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{mainImg}</p>
+                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: `1px solid ${c.border}`, cursor: 'pointer' }} />
+                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: c.textMuted, wordBreak: 'break-all' }}>{mainImg}</p>
                           </div>
                           <div style={{ flex: 1 }}>
-                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>이미지 URL 변경</p>
+                            <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '6px' }}>이미지 URL 변경</p>
                             <div style={{ display: 'flex', gap: '6px' }}>
                               <input type="text" placeholder="http:// 를 포함한 이미지 경로" defaultValue=""
                                 id="main-image-url-input"
-                                style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
+                                style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '6px' }} />
                               <button onClick={() => {
                                 const input = document.getElementById('main-image-url-input') as HTMLInputElement
                                 if (input?.value.trim()) {
@@ -1082,7 +1084,7 @@ const ProductCard = React.memo(function ProductCard({
                                   }).catch(() => {})
                                   input.value = ''
                                 }
-                              }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #FF8C00', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
+                              }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
                             </div>
                             <button onClick={() => {
                               const remaining = productImages.slice(1)
@@ -1095,11 +1097,7 @@ const ProductCard = React.memo(function ProductCard({
                               collectorApi.updateProduct(p.id, updateData).then(() => {
                                 onProductUpdate(p.id, updateData)
                               }).catch(() => {})
-                            }} style={{
-                              marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
-                              border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
-                              color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
-                            }}>대표이미지 삭제</button>
+                            }} style={{ ...btn('danger'), marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>대표이미지 삭제</button>
                             <button onClick={() => {
                               setCardConfirm({
                                 msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
@@ -1113,41 +1111,37 @@ const ProductCard = React.memo(function ProductCard({
                                   } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
                                 },
                               })
-                            }} style={{
-                              marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
-                              border: '1px solid rgba(168,85,247,0.4)', background: 'rgba(168,85,247,0.08)',
-                              color: '#A855F7', cursor: 'pointer', whiteSpace: 'nowrap',
-                            }}>추적삭제</button>
+                            }} style={{ ...btn('danger'), marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>추적삭제</button>
                           </div>
                         </div>
                       ) : (
-                        <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>대표이미지 없음</div>
+                        <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted }}>대표이미지 없음</div>
                       )}
                     </div>
 
                     {/* ── 쿠팡 대표이미지 ── */}
-                    <div style={{ borderTop: '1px solid #2D2D2D', paddingTop: '16px' }}>
-                      <p style={{ fontSize: '0.78rem', color: '#00B4D8', fontWeight: 600, marginBottom: '8px' }}>쿠팡 대표이미지</p>
-                      <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                    <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '16px' }}>
+                      <p style={{ fontSize: '0.78rem', color: c.text, fontWeight: 600, marginBottom: '8px' }}>쿠팡 대표이미지</p>
+                      <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '12px' }}>
                         ※ 쿠팡은 상품컷(누끼)이 필요합니다. 미설정 시 공통 대표이미지가 사용됩니다.
                       </p>
                       <div style={{ display: 'flex', gap: '20px', alignItems: 'flex-start' }}>
                         {coupangMainImg && (
                           <div>
-                            <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
+                            <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '6px' }}>[현재 쿠팡 대표이미지]</p>
                             <img src={coupangMainImg} alt="쿠팡 대표이미지" loading="lazy" referrerPolicy="no-referrer"
                               onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
                               onClick={() => openZoom(coupangMainImg)}
-                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: '1px solid #00B4D8', cursor: 'pointer' }} />
-                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: '#555', wordBreak: 'break-all' }}>{coupangMainImg}</p>
+                              style={{ width: 200, height: 200, objectFit: 'cover', borderRadius: '8px', border: `1px solid ${c.border}`, cursor: 'pointer' }} />
+                            <p style={{ margin: '6px 0 0', fontSize: '0.65rem', color: c.textMuted, wordBreak: 'break-all' }}>{coupangMainImg}</p>
                           </div>
                         )}
                         <div style={{ flex: 1 }}>
-                          <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '6px' }}>쿠팡 대표이미지 URL</p>
+                          <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '6px' }}>쿠팡 대표이미지 URL</p>
                           <div style={{ display: 'flex', gap: '6px' }}>
                             <input type="text" placeholder="http:// 를 포함한 상품컷 이미지 경로" defaultValue=""
                               id="coupang-main-image-url-input"
-                              style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
+                              style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '6px' }} />
                             <button onClick={() => {
                               const input = document.getElementById('coupang-main-image-url-input') as HTMLInputElement
                               const val = input?.value.trim() || ''
@@ -1156,7 +1150,7 @@ const ProductCard = React.memo(function ProductCard({
                                 onProductUpdate(p.id, ud)
                               }).catch(() => {})
                               if (input) input.value = ''
-                            }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #00B4D8', background: 'rgba(0,180,216,0.15)', color: '#00B4D8', cursor: 'pointer', whiteSpace: 'nowrap' }}>변경완료</button>
+                            }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
                           </div>
                           {coupangMainImg && (
                             <button onClick={() => {
@@ -1164,14 +1158,10 @@ const ProductCard = React.memo(function ProductCard({
                               collectorApi.updateProduct(p.id, ud).then(() => {
                                 onProductUpdate(p.id, ud)
                               }).catch(() => {})
-                            }} style={{
-                              marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', borderRadius: '6px',
-                              border: '1px solid rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.08)',
-                              color: '#FF6B6B', cursor: 'pointer', whiteSpace: 'nowrap',
-                            }}>쿠팡 대표이미지 삭제</button>
+                            }} style={{ ...btn('danger'), marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>쿠팡 대표이미지 삭제</button>
                           )}
                           {!coupangMainImg && (
-                            <p style={{ marginTop: '8px', fontSize: '0.72rem', color: '#666' }}>
+                            <p style={{ marginTop: '8px', fontSize: '0.72rem', color: c.textMuted }}>
                               미설정 → 공통 대표이미지 사용 중
                             </p>
                           )}
@@ -1183,11 +1173,11 @@ const ProductCard = React.memo(function ProductCard({
 
                 {imageTab === 'extra' && (
                   <div>
-                    <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                    <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '12px' }}>
                       ※ 추가이미지 순서를 변경하거나 삭제할 수 있습니다.
                     </p>
                     {extraImgs.length === 0 ? (
-                      <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>추가이미지 없음</div>
+                      <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted }}>추가이미지 없음</div>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {extraImgs.map((img, i) => renderImageRow(img, i, extraImgs, async (newList) => {
@@ -1210,7 +1200,7 @@ const ProductCard = React.memo(function ProductCard({
                     {/* URL로 추가 */}
                     <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
                       <input type="text" placeholder="추가할 이미지 URL" id="extra-image-url-input"
-                        style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: '#1E1E1E', border: '1px solid #3D3D3D', color: '#E5E5E5', borderRadius: '6px' }} />
+                        style={{ flex: 1, fontSize: '0.78rem', padding: '6px 10px', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '6px' }} />
                       <button onClick={() => {
                         const input = document.getElementById('extra-image-url-input') as HTMLInputElement
                         if (input?.value.trim()) {
@@ -1225,18 +1215,18 @@ const ProductCard = React.memo(function ProductCard({
                           }).catch(() => {})
                           input.value = ''
                         }
-                      }} style={{ padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid #3D3D3D', background: 'rgba(255,255,255,0.05)', color: '#C5C5C5', cursor: 'pointer', whiteSpace: 'nowrap' }}>추가</button>
+                      }} style={{ ...btn('secondary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>추가</button>
                     </div>
                   </div>
                 )}
 
                 {imageTab === 'detail' && (
                   <div>
-                    <p style={{ fontSize: '0.72rem', color: '#888', marginBottom: '12px' }}>
+                    <p style={{ fontSize: '0.72rem', color: c.textMuted, marginBottom: '12px' }}>
                       ※ 상세페이지에 포함된 이미지입니다. ({fmtNum(detailImgs.length)}개) — 클릭하여 삭제
                     </p>
                     {detailImgs.length === 0 ? (
-                      <div style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>상세페이지 이미지 없음</div>
+                      <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted }}>상세페이지 이미지 없음</div>
                     ) : (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {detailImgs.map((img, i) => renderImageRow(img, i, detailImgs, async (newList) => {
@@ -1265,7 +1255,7 @@ const ProductCard = React.memo(function ProductCard({
                         <video
                           src={p.video_url}
                           controls
-                          style={{ width: '100%', maxWidth: '480px', borderRadius: '8px', border: '1px solid #2D2D2D' }}
+                          style={{ width: '100%', maxWidth: '480px', borderRadius: '8px', border: `1px solid ${c.border}` }}
                         />
                         <div style={{ display: 'flex', gap: '8px' }}>
                           <a
@@ -1273,13 +1263,13 @@ const ProductCard = React.memo(function ProductCard({
                             download={`${p.site_product_id || p.id}_video.mp4`}
                             style={{
                               fontSize: '0.78rem', padding: '6px 16px', borderRadius: '6px',
-                              color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.4)',
+                              color: c.link, border: '1px solid rgba(76,154,255,0.4)',
                               background: 'rgba(76,154,255,0.08)', textDecoration: 'none', cursor: 'pointer',
                             }}>다운로드</a>
                         </div>
                       </>
                     ) : (
-                      <p style={{ fontSize: '0.8rem', color: '#666' }}>생성된 영상이 없습니다. 상단 영상생성 버튼으로 생성해주세요.</p>
+                      <p style={{ fontSize: '0.8rem', color: c.textMuted }}>생성된 영상이 없습니다. 상단 영상생성 버튼으로 생성해주세요.</p>
                     )}
                   </div>
                 )}
@@ -1335,14 +1325,14 @@ const ProductCard = React.memo(function ProductCard({
       {/* Card header */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '7px 14px', background: 'rgba(15,15,15,0.8)', borderBottom: '1px solid #222',
+        padding: '7px 14px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.75rem', color: '#666' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.75rem', color: c.textMuted }}>
           {compact && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleExpand?.() }}
               style={{
-                background: 'none', border: 'none', color: expanded ? '#FF8C00' : '#666',
+                background: 'none', border: 'none', color: expanded ? c.text : c.textMuted,
                 fontSize: '0.85rem', cursor: 'pointer', padding: '0 2px', lineHeight: 1,
               }}
             >{expanded ? '−' : '+'}</button>
@@ -1351,18 +1341,18 @@ const ProductCard = React.memo(function ProductCard({
             type="checkbox"
             checked={selectedIds.has(p.id)}
             onChange={(e) => onCheckboxToggle(p.id, e.target.checked)}
-            style={{ accentColor: '#FF8C00', width: '13px', height: '13px', cursor: 'pointer' }}
+            style={{ accentColor: c.primary, width: '13px', height: '13px', cursor: 'pointer' }}
           />
-          <span style={{ color: '#FFFFFF', fontWeight: 600 }}>{p.site_product_id || no}</span>
+          <span style={{ color: c.text, fontWeight: 600 }}>{p.site_product_id || no}</span>
           {p.source_site && (
             <span style={{
-              fontSize: '0.7rem', color: '#FF8C00', background: 'rgba(255,140,0,0.1)',
+              fontSize: '0.7rem', color: c.text, background: 'rgba(255,140,0,0.1)',
               border: '1px solid rgba(255,140,0,0.25)', borderRadius: '4px',
               padding: '2px 8px', whiteSpace: 'nowrap',
             }}>{p.source_site}</span>
           )}
-          <span>수집 <span style={{ color: '#888' }}>{regDate}</span></span>
-          {p.updated_at && <span>최신화 <span style={{ color: '#888' }}>{updatedDate}</span></span>}
+          <span>수집 <span style={{ color: c.textMuted }}>{regDate}</span></span>
+          {p.updated_at && <span>최신화 <span style={{ color: c.textMuted }}>{updatedDate}</span></span>}
           {isActive && (
             <span style={{
               padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
@@ -1374,8 +1364,8 @@ const ProductCard = React.memo(function ProductCard({
           {p.sale_status === 'preorder' && (
             <span style={{
               padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(100,130,255,0.12)', color: '#6B8AFF',
-              border: '1px solid rgba(100,130,255,0.25)',
+              background: c.surfaceAlt, color: c.textSub,
+              border: `1px solid ${c.border}`,
             }}>판매예정</span>
           )}
           {(p.sale_status === 'sold_out' || p.is_sold_out ||
@@ -1384,7 +1374,7 @@ const ProductCard = React.memo(function ProductCard({
           ) && (
             <span style={{
               padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 500,
-              background: 'rgba(255,107,107,0.12)', color: '#FF6B6B',
+              background: 'rgba(255,107,107,0.12)', color: c.danger,
               border: '1px solid rgba(255,107,107,0.25)',
             }}>품절</span>
           )}
@@ -1404,40 +1394,32 @@ const ProductCard = React.memo(function ProductCard({
                   setCollectBlocking(false)
                 }
               }}
-              style={{ accentColor: '#FF6B6B', width: '12px', height: '12px', cursor: collectBlocking ? 'wait' : 'pointer' }}
+              style={{ accentColor: c.danger, width: '12px', height: '12px', cursor: collectBlocking ? 'wait' : 'pointer' }}
             />
-            <span style={{ fontSize: '0.7rem', color: collectBlocking ? '#FF6B6B' : '#888' }}>수집차단</span>
+            <span style={{ fontSize: '0.7rem', color: collectBlocking ? c.danger : c.textMuted }}>수집차단</span>
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input
               type="checkbox"
               checked={p.lock_stock || false}
               onChange={(e) => onLockToggle(p.id, 'lock_stock', e.target.checked)}
-              style={{ accentColor: '#51CF66', width: '12px', height: '12px', cursor: 'pointer' }}
+              style={{ accentColor: c.success, width: '12px', height: '12px', cursor: 'pointer' }}
             />
-            <span style={{ fontSize: '0.7rem', color: '#888' }}>재고잠금</span>
+            <span style={{ fontSize: '0.7rem', color: c.textMuted }}>재고잠금</span>
           </label>
           <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input
               type="checkbox"
               checked={p.lock_delete || false}
               onChange={(e) => onLockToggle(p.id, 'lock_delete', e.target.checked)}
-              style={{ accentColor: '#FF8C00', width: '12px', height: '12px', cursor: 'pointer' }}
+              style={{ accentColor: c.primary, width: '12px', height: '12px', cursor: 'pointer' }}
             />
-            <span style={{ fontSize: '0.7rem', color: '#888' }}>삭제잠금</span>
+            <span style={{ fontSize: '0.7rem', color: c.textMuted }}>삭제잠금</span>
           </label>
-          <button style={{
-            fontSize: '0.7rem', padding: '3px 10px',
-            border: '1px solid rgba(255,140,0,0.3)', borderRadius: '5px',
-            color: '#FF8C00', background: 'rgba(255,140,0,0.08)', cursor: 'pointer',
-          }}>수정</button>
+          <button style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '3px 10px' }}>수정</button>
           <button
             onClick={() => onDelete(p.id)}
-            style={{
-              fontSize: '0.7rem', padding: '3px 10px',
-              border: '1px solid rgba(255,107,107,0.3)', borderRadius: '5px',
-              color: '#FF6B6B', background: 'rgba(255,107,107,0.08)', cursor: 'pointer',
-            }}
+            style={{ ...btn('danger'), fontSize: '0.7rem', padding: '3px 10px' }}
           >삭제</button>
         </div>
       </div>
@@ -1451,23 +1433,23 @@ const ProductCard = React.memo(function ProductCard({
               <ProductImage src={p.images?.[0]} name={p.name} size={50} />
             </div>
             {(p.tags || []).includes('__ai_image__') && (
-              <span style={{ fontSize: '0.55rem', padding: '1px 4px', borderRadius: '3px', color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', background: 'rgba(255,140,0,0.08)' }}>AI</span>
+              <span style={{ fontSize: '0.55rem', padding: '1px 4px', borderRadius: '3px', color: c.text, border: '1px solid rgba(255,140,0,0.3)', background: 'rgba(255,140,0,0.08)' }}>AI</span>
             )}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ color: '#FFFFFF', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.name}</span>
+              <span style={{ color: c.text, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{p.name}</span>
               <button onClick={(e) => { e.stopPropagation(); openPriceHistory() }}
-                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>이력</button>
+                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted, whiteSpace: 'nowrap' }}>이력</button>
               <button onClick={(e) => { e.stopPropagation(); const url = getSourceUrl(p); if (url) window.open(url, '_blank') }}
-                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>원문</button>
+                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted, whiteSpace: 'nowrap' }}>원문</button>
               <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
-                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid #2D2D2D', background: 'transparent', color: '#888', whiteSpace: 'nowrap' }}>업데이트</button>
+                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted, whiteSpace: 'nowrap' }}>업데이트</button>
               <button onClick={(e) => { e.stopPropagation(); window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank') }}
-                style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.3)', background: 'transparent', color: '#FF8C00', whiteSpace: 'nowrap' }}>판매</button>
-              <span style={{ color: '#FFB84D', fontWeight: 600, flexShrink: 0 }}>{curSym}{fmt(cost)}</span>
+                style={{ ...btn('secondary'), fontSize: '0.6rem', padding: '2px 5px', whiteSpace: 'nowrap' }}>판매</button>
+              <span style={{ color: c.text, fontWeight: 600, flexShrink: 0 }}>{curSym}{fmt(cost)}</span>
             </div>
-            <div style={{ color: '#888', fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ color: c.textMuted, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {composeProductName(p, nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id), deletionWords)}
             </div>
           </div>
@@ -1477,7 +1459,7 @@ const ProductCard = React.memo(function ProductCard({
         {/* Left: Image section */}
         <div style={{
           width: '130px', flexShrink: 0, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', gap: '8px', paddingRight: '14px', borderRight: '1px solid #222',
+          alignItems: 'center', gap: '8px', paddingRight: '14px', borderRight: `1px solid ${c.border}`,
         }}>
           <div onClick={() => openImageModal()} style={{ cursor: 'pointer' }}>
             <ProductImage src={p.images?.[0]} name={p.name} size={110} />
@@ -1485,7 +1467,7 @@ const ProductCard = React.memo(function ProductCard({
           {(p.tags || []).includes('__ai_image__') && (
             <span style={{
               fontSize: '0.68rem', padding: '3px 10px', borderRadius: '4px', width: '100%', textAlign: 'center',
-              color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', background: 'rgba(255,140,0,0.08)',
+              color: c.text, border: '1px solid rgba(255,140,0,0.3)', background: 'rgba(255,140,0,0.08)',
             }}>AI이미지</span>
           )}
           {/* 무배당발 배지 — 제거됨 */}
@@ -1497,21 +1479,13 @@ const ProductCard = React.memo(function ProductCard({
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginBottom: '8px' }}>
             <button
               onClick={() => openPriceHistory()}
-              style={{
-                fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
-                color: '#999',
-                border: '1px solid #2D2D2D',
-                borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>가격변경이력</button>
+              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>가격변경이력</button>
             <button
               onClick={() => {
                 const url = getSourceUrl(p)
                 if (url) window.open(url, '_blank')
               }}
-              style={{
-                fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
-                color: '#999', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>원문링크</button>
+              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>원문링크</button>
             <button
               onClick={async () => {
                 // 상세페이지 미리보기 — 백엔드 _build_detail_html과 동일한 로직
@@ -1587,28 +1561,16 @@ const ProductCard = React.memo(function ProductCard({
                 const blob = new Blob([html], { type: 'text/html' })
                 window.open(URL.createObjectURL(blob), '_blank')
               }}
-              style={{
-                fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
-                color: '#4C9AFF', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>상세페이지</button>
+              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>상세페이지</button>
             <button
               onClick={() => onEnrich(p.id)}
-              style={{
-              fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
-              color: '#999', border: '1px solid #2D2D2D', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>업데이트</button>
+              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>업데이트</button>
             <button
               onClick={() => window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank')}
-              style={{
-              fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
-              color: '#FF8C00', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>판매이력</button>
+              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>판매이력</button>
             <button
               onClick={() => onMarketDelete(p.id)}
-              style={{
-              fontSize: '0.72rem', padding: '3px 9px', background: '#1E1E1E',
-              color: '#FF6B6B', border: '1px solid rgba(255,107,107,0.2)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>마켓삭제</button>
+              style={{ ...btn('danger'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>마켓삭제</button>
           </div>
 
           {/* Detail table */}
@@ -1619,14 +1581,14 @@ const ProductCard = React.memo(function ProductCard({
             </colgroup>
             <tbody>
               {/* 원 상품명 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>원 상품명</td>
                 <td style={tdVal}>
-                  <span style={{ color: '#FFFFFF', fontWeight: 500 }}>{p.name}</span>
+                  <span style={{ color: c.text, fontWeight: 500 }}>{p.name}</span>
                 </td>
               </tr>
               {/* 등록 상품명 (상품명 조합 + 삭제어 취소선 적용). 마켓별 조합이 있으면 마켓별로 함께 표시 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>등록 상품명</td>
                 <td style={tdVal}>
                   {(() => {
@@ -1636,16 +1598,16 @@ const ProductCard = React.memo(function ProductCard({
                       .filter(mkt => (nameRule?.market_name_compositions?.[mkt]?.length ?? 0) > 0)
                     return (
                       <>
-                        <span style={{ color: '#FFFFFF', fontSize: '0.8rem' }}>
-                          {marketComps.length > 0 && <span style={{ color: '#666', marginRight: '4px' }}>기본</span>}
+                        <span style={{ color: c.text, fontSize: '0.8rem' }}>
+                          {marketComps.length > 0 && <span style={{ color: c.textMuted, marginRight: '4px' }}>기본</span>}
                           {renderRegisteredName(
                             composeProductName(p, nameRule, undefined, undefined),
                             deletionWords ?? []
                           )}
                         </span>
                         {marketComps.map(mkt => (
-                          <div key={mkt} style={{ marginTop: '3px', fontSize: '0.78rem', color: '#FFFFFF' }}>
-                            <span style={{ color: '#FF8C00', marginRight: '4px' }}>
+                          <div key={mkt} style={{ marginTop: '3px', fontSize: '0.78rem', color: c.text }}>
+                            <span style={{ color: c.text, marginRight: '4px' }}>
                               {MARKETS.find(m => m.id === mkt)?.name || mkt}
                             </span>
                             {renderRegisteredName(
@@ -1660,83 +1622,83 @@ const ProductCard = React.memo(function ProductCard({
                 </td>
               </tr>
               {/* SEO 검색키워드 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>SEO</td>
                 <td style={tdVal}>
-                  <span style={{ color: (p.seo_keywords || []).length > 0 ? '#4C9AFF' : '#444', fontSize: '0.78rem' }}>
+                  <span style={{ color: (p.seo_keywords || []).length > 0 ? c.text : c.textMuted, fontSize: '0.78rem' }}>
                     {(p.seo_keywords || []).join(', ') || '미설정 (AI태그 생성 필요)'}
                   </span>
                 </td>
               </tr>
               {/* 영문 상품명 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>영문 상품명</td>
                 <td style={tdVal}>
                   <input type="text" placeholder="영문 상품명 (English)" defaultValue={p.name_en || ''}
-                    style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', color: '#C5C5C5', borderRadius: '4px', outline: 'none' }} />
+                    style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', outline: 'none' }} />
                 </td>
               </tr>
               {/* 일문 상품명 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>일문 상품명</td>
                 <td style={tdVal}>
                   <input type="text" placeholder="일문 상품명 (日本語)" defaultValue={p.name_ja || ''}
-                    style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: '#1A1A1A', border: '1px solid #2D2D2D', color: '#C5C5C5', borderRadius: '4px', outline: 'none' }} />
+                    style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', outline: 'none' }} />
                 </td>
               </tr>
               {/* 브랜드 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>브랜드</td>
                 <td style={tdVal}>
-                  <span style={{ color: '#888', fontSize: '0.8rem' }}>{p.brand || '-'}</span>
+                  <span style={{ color: c.textMuted, fontSize: '0.8rem' }}>{p.brand || '-'}</span>
                   {p.brand_en && (
-                    <span style={{ color: '#5C7CFA', fontSize: '0.72rem', marginLeft: '0.4rem' }}>{p.brand_en}</span>
+                    <span style={{ color: c.textSub, fontSize: '0.72rem', marginLeft: '0.4rem' }}>{p.brand_en}</span>
                   )}
                 </td>
               </tr>
               {/* 정상가 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>정상가</td>
                 <td style={tdVal}>
-                  <span style={{ color: '#C5C5C5', fontWeight: 600 }}>
+                  <span style={{ color: c.text, fontWeight: 600 }}>
                     {p.original_price > 0 ? `${curSym}${fmt(p.original_price)}` : '-'}
                   </span>
                 </td>
               </tr>
               {/* 할인가 (sale_price) */}
               {p.sale_price > 0 && p.sale_price < p.original_price && (
-                <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+                <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>할인가</td>
                   <td style={tdVal}>
-                    <span style={{ color: '#51CF66', fontWeight: 600 }}>{curSym}{fmt(p.sale_price)}</span>
-                    <span style={{ color: '#FF6B6B', fontSize: '0.72rem', marginLeft: '6px' }}>
+                    <span style={{ color: c.success, fontWeight: 600 }}>{curSym}{fmt(p.sale_price)}</span>
+                    <span style={{ color: c.danger, fontSize: '0.72rem', marginLeft: '6px' }}>
                       {Math.round((1 - p.sale_price / p.original_price) * 100)}% 할인
                     </span>
                   </td>
                 </tr>
               )}
               {/* 원가 (최대혜택가) */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>원가</td>
                 <td style={tdVal}>
-                  <span style={{ color: '#FFB84D', fontWeight: 600 }}>{curSym}{fmt(cost)}</span>
+                  <span style={{ color: c.text, fontWeight: 600 }}>{curSym}{fmt(cost)}</span>
                   {(p.sourcing_shipping_fee ?? 0) > 0 && (
-                    <span style={{ color: '#888', fontSize: '0.7rem', marginLeft: '0.25rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.7rem', marginLeft: '0.25rem' }}>
                       (상품가 {fmt(cost - (p.sourcing_shipping_fee ?? 0))}+배송비 {fmt(p.sourcing_shipping_fee ?? 0)})
                     </span>
                   )}
                   {p.source_site === 'MUSINSA' && p.is_point_restricted === false && !_useExcl && (
-                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(81,207,102,0.12)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.3)' }}>
+                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(81,207,102,0.12)', color: c.success, border: '1px solid rgba(81,207,102,0.3)' }}>
                       적립금 사용
                     </span>
                   )}
                   {p.source_site === 'MUSINSA' && p.is_point_restricted === false && _useExcl && (
-                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(255,184,77,0.12)', color: '#FFB84D', border: '1px solid rgba(255,184,77,0.3)' }}>
+                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(255,184,77,0.12)', color: c.text, border: '1px solid rgba(255,184,77,0.3)' }}>
                       적립금 제외
                     </span>
                   )}
                   {p.source_site === 'MUSINSA' && p.is_point_restricted === true && (
-                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(150,150,150,0.12)', color: '#888', border: '1px solid rgba(150,150,150,0.3)' }}>
+                    <span style={{ marginLeft: '0.4rem', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(150,150,150,0.12)', color: c.textMuted, border: '1px solid rgba(150,150,150,0.3)' }}>
                       적립금 사용불가
                     </span>
                   )}
@@ -1761,12 +1723,12 @@ const ProductCard = React.memo(function ProductCard({
                   : `${fmtNum(displayName.length)}/${fmtNum(nameLimit)}`
                 const placeholder = byteLimit ? truncateToBytes(composedName, byteLimit) : composedName.slice(0, nameLimit)
                 return (
-                <tr key={m.rowKey || m.marketName} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                <tr key={m.rowKey || m.marketName} style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>{m.marketName === '신세계몰(전시)' ? '신세계몰' : (m.label || m.marketName)}</td>
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#FFB84D', fontWeight: 600 }}>{curSym}{fmt(m.price)}</span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>{curSym}{fmt(m.price)}</span>
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
                             || m.marketName.toLowerCase().replace(/\s/g, '')
@@ -1778,14 +1740,14 @@ const ProductCard = React.memo(function ProductCard({
                               {rm.url ? (
                                 <button
                                   onClick={() => window.open(rm.url, '_blank')}
-                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                   onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                                   title={`${rm.label} 판매페이지`}
                                 >{rm.accountName}</button>
                               ) : (
                                 <span
-                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
+                                  style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
                                   title={`${rm.label} 등록됨`}
                                 >{rm.accountName}</span>
                               )}
@@ -1797,19 +1759,19 @@ const ProductCard = React.memo(function ProductCard({
                                 const dd = String(d.getDate()).padStart(2, '0')
                                 const hh = String(d.getHours()).padStart(2, '0')
                                 const mi = String(d.getMinutes()).padStart(2, '0')
-                                return <span style={{ fontSize: '0.6rem', color: '#666', whiteSpace: 'nowrap' }}>{mm}-{dd} {hh}:{mi}</span>
+                                return <span style={{ fontSize: '0.6rem', color: c.textMuted, whiteSpace: 'nowrap' }}>{mm}-{dd} {hh}:{mi}</span>
                               })()}
                               </React.Fragment>
                             ))}
                             {mappedCat ? (
-                              <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{mappedCat}</span>
+                              <span style={{ fontSize: '0.68rem', color: c.textMuted, background: c.surfaceAlt, padding: '1px 6px', borderRadius: '3px', border: `1px solid ${c.border}` }}>{mappedCat}</span>
                             ) : (
-                              <span style={{ fontSize: '0.68rem', color: '#555' }}>미매핑</span>
+                              <span style={{ fontSize: '0.68rem', color: c.textMuted }}>미매핑</span>
                             )}
                           </>)
                         })()}
                       </div>
-                      <span style={{ fontSize: '0.72rem', color: '#666' }}>{m.calcStr}</span>
+                      <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{m.calcStr}</span>
                       {/* 마켓별 등록 상품명 */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
                         <input
@@ -1818,8 +1780,8 @@ const ProductCard = React.memo(function ProductCard({
                           placeholder={placeholder}
                           style={{
                             ...marketNameInputBaseStyle,
-                            border: `1px solid ${isOverLimit ? '#FF6B6B' : '#2D2D2D'}`,
-                            color: isOverLimit ? '#FF6B6B' : '#C5C5C5',
+                            border: `1px solid ${isOverLimit ? c.danger : c.border}`,
+                            color: isOverLimit ? c.danger : c.text,
                           }}
                           onMouseDown={(e) => e.stopPropagation()}
                           onClick={(e) => e.stopPropagation()}
@@ -1832,16 +1794,16 @@ const ProductCard = React.memo(function ProductCard({
                             const clean = Object.fromEntries(Object.entries(updated).filter(([, v]) => v))
                             collectorApi.updateProduct(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>).then(() => {
                               onProductUpdate(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>)
-                              e.target.style.borderColor = '#51CF66'
-                              setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                              e.target.style.borderColor = c.success
+                              setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
                             }).catch(() => {
-                              e.target.style.borderColor = '#FF6B6B'
-                              setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                              e.target.style.borderColor = c.danger
+                              setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
                             })
                           }}
                           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                         />
-                        <span style={{ fontSize: '0.65rem', color: isOverLimit ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: '0.65rem', color: isOverLimit ? c.danger : c.textMuted, whiteSpace: 'nowrap' }}>
                           {countLabel}
                         </span>
                       </div>
@@ -1850,41 +1812,41 @@ const ProductCard = React.memo(function ProductCard({
                 </tr>
                 )
               }) : (
-                <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+                <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>마켓가격</td>
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                      <span style={{ color: '#FFB84D', fontWeight: 600 }}>{curSym}{fmt(marketPrice)}</span>
-                      <span style={{ fontSize: '0.72rem', color: '#666' }}>{calcStr}</span>
+                      <span style={{ color: c.text, fontWeight: 600 }}>{curSym}{fmt(marketPrice)}</span>
+                      <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{calcStr}</span>
                     </div>
                   </td>
                 </tr>
               )}
               {/* 리셀 판매처 (KREAM/POIZON/StockX) — 판매가 계산 + 매칭 상품번호 */}
               {resellRows.map(rr => (
-                <tr key={`resell-${rr.key}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                <tr key={`resell-${rr.key}`} style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>{rr.name}</td>
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#FFB84D', fontWeight: 600 }}>{curSym}{fmt(rr.price)}</span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>{curSym}{fmt(rr.price)}</span>
                         {rr.id ? (
                           rr.url ? (
                             <button
                               onClick={() => window.open(rr.url, '_blank')}
-                              style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                              style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                               title={`${rr.name} 판매페이지`}
                             >{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
                           ) : (
-                            <span style={{ fontSize: '0.6rem', color: '#51CF66', whiteSpace: 'nowrap' }}>{rr.id}</span>
+                            <span style={{ fontSize: '0.6rem', color: c.success, whiteSpace: 'nowrap' }}>{rr.id}</span>
                           )
                         ) : (
-                          <span style={{ fontSize: '0.68rem', color: '#555' }}>미매칭</span>
+                          <span style={{ fontSize: '0.68rem', color: c.textMuted }}>미매칭</span>
                         )}
                       </div>
-                      <span style={{ fontSize: '0.72rem', color: '#666' }}>{rr.calcStr}</span>
+                      <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{rr.calcStr}</span>
                     </div>
                   </td>
                 </tr>
@@ -1932,7 +1894,7 @@ const ProductCard = React.memo(function ProductCard({
                   }
                   const _mappedCat = productCatMapping[rm.marketId] || ''
                   return (
-                    <tr key={`store-name-${rm.accId}`} style={{ borderBottom: '1px solid #1E1E1E' }}>
+                    <tr key={`store-name-${rm.accId}`} style={{ borderBottom: `1px solid ${c.border}` }}>
                       <td style={tdLabel}>{mktName}</td>
                       <td style={tdVal}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -1941,22 +1903,22 @@ const ProductCard = React.memo(function ProductCard({
                             {rm.url ? (
                               <button
                                 onClick={() => window.open(rm.url, '_blank')}
-                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                                 title={`${rm.label} 판매페이지`}
                               >{rm.accountName}</button>
                             ) : (
                               <span
-                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: '#51CF66', border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
+                                style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', whiteSpace: 'nowrap' }}
                                 title={`${rm.label} 등록됨`}
                               >{rm.accountName}</span>
                             )}
-                            {_sentLabel && <span style={{ fontSize: '0.6rem', color: '#666', whiteSpace: 'nowrap' }}>{_sentLabel}</span>}
+                            {_sentLabel && <span style={{ fontSize: '0.6rem', color: c.textMuted, whiteSpace: 'nowrap' }}>{_sentLabel}</span>}
                             {_mappedCat ? (
-                              <span style={{ fontSize: '0.68rem', color: '#888', background: 'rgba(255,255,255,0.04)', padding: '1px 6px', borderRadius: '3px', border: '1px solid #2D2D2D' }}>{_mappedCat}</span>
+                              <span style={{ fontSize: '0.68rem', color: c.textMuted, background: c.surfaceAlt, padding: '1px 6px', borderRadius: '3px', border: `1px solid ${c.border}` }}>{_mappedCat}</span>
                             ) : (
-                              <span style={{ fontSize: '0.68rem', color: '#555' }}>미매핑</span>
+                              <span style={{ fontSize: '0.68rem', color: c.textMuted }}>미매핑</span>
                             )}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -1966,8 +1928,8 @@ const ProductCard = React.memo(function ProductCard({
                               placeholder={ph}
                               style={{
                                 ...marketNameInputBaseStyle,
-                                border: `1px solid ${isOver ? '#FF6B6B' : '#2D2D2D'}`,
-                                color: isOver ? '#FF6B6B' : '#C5C5C5',
+                                border: `1px solid ${isOver ? c.danger : c.border}`,
+                                color: isOver ? c.danger : c.text,
                               }}
                               onMouseDown={(e) => e.stopPropagation()}
                               onClick={(e) => e.stopPropagation()}
@@ -1979,16 +1941,16 @@ const ProductCard = React.memo(function ProductCard({
                                 const clean = Object.fromEntries(Object.entries(updated).filter(([, v]) => v))
                                 collectorApi.updateProduct(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>).then(() => {
                                   onProductUpdate(p.id, { market_names: Object.keys(clean).length > 0 ? clean : undefined } as Partial<SambaCollectedProduct>)
-                                  e.target.style.borderColor = '#51CF66'
-                                  setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                                  e.target.style.borderColor = c.success
+                                  setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
                                 }).catch(() => {
-                                  e.target.style.borderColor = '#FF6B6B'
-                                  setTimeout(() => { e.target.style.borderColor = '#2D2D2D' }, 1500)
+                                  e.target.style.borderColor = c.danger
+                                  setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
                                 })
                               }}
                               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                             />
-                            <span style={{ fontSize: '0.65rem', color: isOver ? '#FF6B6B' : '#555', whiteSpace: 'nowrap' }}>
+                            <span style={{ fontSize: '0.65rem', color: isOver ? c.danger : c.textMuted, whiteSpace: 'nowrap' }}>
                               {cntLabel}
                             </span>
                           </div>
@@ -1999,14 +1961,14 @@ const ProductCard = React.memo(function ProductCard({
                 })
               })()}
               {/* 카테고리 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>카테고리</td>
                 <td style={tdVal}>
-                  <span style={{ fontSize: '0.8rem', color: '#C5C5C5' }}>{p.category || '-'}</span>
+                  <span style={{ fontSize: '0.8rem', color: c.text }}>{p.category || '-'}</span>
                 </td>
               </tr>
               {/* 상품정보 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={{ ...tdLabel, verticalAlign: 'top', paddingTop: '10px' }}>상품정보</td>
                 <td style={tdVal}>
                   {(() => {
@@ -2024,11 +1986,11 @@ const ProductCard = React.memo(function ProductCard({
                       p.quality_guarantee && ['품질보증', p.quality_guarantee],
                       p.care_instructions && ['취급주의', p.care_instructions],
                     ].filter(Boolean) as [string, string][]
-                    const inputStyle = { background: '#1A1A1A', border: '1px solid #333', color: '#C5C5C5', fontSize: '0.75rem', padding: '2px 6px', borderRadius: '3px', width: '140px', outline: 'none' }
+                    const inputStyle = { background: c.surface, border: `1px solid ${c.border}`, color: c.text, fontSize: '0.75rem', padding: '2px 6px', borderRadius: '3px', width: '140px', outline: 'none' }
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', fontSize: '0.78rem' }}>
                         {editableFields.map(({ key, label }) => (
-                          <span key={key} style={{ color: '#888', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <span key={key} style={{ color: c.textMuted, display: 'flex', alignItems: 'center', gap: '4px' }}>
                             {label}
                             <input
                               defaultValue={(p[key] as string) || ''}
@@ -2038,11 +2000,11 @@ const ProductCard = React.memo(function ProductCard({
                                 if (val !== ((p[key] as string) || '')) {
                                   collectorApi.updateProduct(p.id, { [key]: val } as Partial<SambaCollectedProduct>).then(() => {
                                     onProductUpdate(p.id, { [key]: val } as Partial<SambaCollectedProduct>)
-                                    e.target.style.borderColor = '#51CF66'
-                                    setTimeout(() => { e.target.style.borderColor = '#333' }, 1500)
+                                    e.target.style.borderColor = c.success
+                                    setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
                                   }).catch(() => {
-                                    e.target.style.borderColor = '#FF6B6B'
-                                    setTimeout(() => { e.target.style.borderColor = '#333' }, 1500)
+                                    e.target.style.borderColor = c.danger
+                                    setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
                                   })
                                 }
                               }}
@@ -2051,7 +2013,7 @@ const ProductCard = React.memo(function ProductCard({
                           </span>
                         ))}
                         {readonlyFields.map(([label, val], i) => (
-                          <span key={i} style={{ color: '#888' }}>{label} <span style={{ color: '#555', fontSize: '0.72rem' }}>{String(val).slice(0, 40)}{String(val).length > 40 ? '...' : ''}</span></span>
+                          <span key={i} style={{ color: c.textMuted }}>{label} <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>{String(val).slice(0, 40)}{String(val).length > 40 ? '...' : ''}</span></span>
                         ))}
                       </div>
                     )
@@ -2066,7 +2028,7 @@ const ProductCard = React.memo(function ProductCard({
                 const fmtVal = (v: number | undefined) =>
                   v === undefined || v === null ? '-' : (Number.isInteger(v) ? String(v) : String(v))
                 return (
-                  <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+                  <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                     <td style={{ ...tdLabel, verticalAlign: 'top', paddingTop: '10px' }}>
                       실측표{actualSize.typeName ? ` (${actualSize.typeName})` : ''}
                     </td>
@@ -2074,9 +2036,9 @@ const ProductCard = React.memo(function ProductCard({
                       <table style={{ borderCollapse: 'collapse', fontSize: '0.72rem' }}>
                         <thead>
                           <tr>
-                            <th style={{ border: '1px solid #333', padding: '3px 8px', background: '#1A1A1A', color: '#999' }}>사이즈</th>
-                            {cols.map(c => (
-                              <th key={c} style={{ border: '1px solid #333', padding: '3px 8px', background: '#1A1A1A', color: '#999' }}>{c}</th>
+                            <th style={{ border: `1px solid ${c.border}`, padding: '3px 8px', background: c.surface, color: c.textMuted }}>사이즈</th>
+                            {cols.map(col => (
+                              <th key={col} style={{ border: `1px solid ${c.border}`, padding: '3px 8px', background: c.surface, color: c.textMuted }}>{col}</th>
                             ))}
                           </tr>
                         </thead>
@@ -2085,45 +2047,45 @@ const ProductCard = React.memo(function ProductCard({
                             const m = new Map((sz.items || []).map(it => [(it.name || '').trim(), it.value]))
                             return (
                               <tr key={si}>
-                                <td style={{ border: '1px solid #333', padding: '3px 8px', color: '#C5C5C5', textAlign: 'center' }}>{sz.name || '-'}</td>
-                                {cols.map(c => (
-                                  <td key={c} style={{ border: '1px solid #333', padding: '3px 8px', color: '#999', textAlign: 'center' }}>{fmtVal(m.get(c))}</td>
+                                <td style={{ border: `1px solid ${c.border}`, padding: '3px 8px', color: c.text, textAlign: 'center' }}>{sz.name || '-'}</td>
+                                {cols.map(col => (
+                                  <td key={col} style={{ border: `1px solid ${c.border}`, padding: '3px 8px', color: c.textMuted, textAlign: 'center' }}>{fmtVal(m.get(col))}</td>
                                 ))}
                               </tr>
                             )
                           })}
                         </tbody>
                       </table>
-                      <span style={{ color: '#555', fontSize: '0.68rem', display: 'block', marginTop: '3px' }}>단위: cm</span>
+                      <span style={{ color: c.textMuted, fontSize: '0.68rem', display: 'block', marginTop: '3px' }}>단위: cm</span>
                     </td>
                   </tr>
                 )
               })()}
               {/* 검색그룹 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>검색그룹</td>
                 <td style={tdVal}>
                   {p.search_filter_id ? (
                     <span style={{ background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.25)', color: 'rgba(255,180,100,0.85)', fontSize: '0.72rem', padding: '1px 8px', borderRadius: '10px' }}>
                       {filterNameMap[p.search_filter_id] || p.source_site || '삭제된 그룹'}
                     </span>
-                  ) : <span style={{ color: '#444', fontSize: '0.75rem' }}>-</span>}
+                  ) : <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>-</span>}
                 </td>
               </tr>
               {/* 태그 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>태그</td>
                 <td style={tdVal}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
                     {(p.tags || []).filter(t => !t.startsWith('__')).map((tag, ti) => (
                       <span key={ti} style={{
                         fontSize: '0.7rem', padding: '1px 8px', borderRadius: '10px',
-                        background: 'rgba(100,100,255,0.1)', border: '1px solid rgba(100,100,255,0.25)', color: '#8B8FD4',
+                        background: c.surfaceAlt, border: `1px solid ${c.border}`, color: c.textSub,
                         display: 'inline-flex', alignItems: 'center', gap: '4px',
                       }}>
                         {tag}
                         <span
-                          style={{ cursor: 'pointer', color: '#666', fontSize: '0.8rem', lineHeight: 1 }}
+                          style={{ cursor: 'pointer', color: c.textMuted, fontSize: '0.8rem', lineHeight: 1 }}
                           onClick={() => {
                             const newTags = (p.tags || []).filter(t => t !== tag)
                             onTagUpdate(p.id, newTags)
@@ -2134,7 +2096,7 @@ const ProductCard = React.memo(function ProductCard({
                     <input
                       type="text"
                       placeholder="태그는 ','로 구분입력"
-                      style={{ fontSize: '0.7rem', padding: '2px 7px', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#C5C5C5', background: '#1A1A1A', outline: 'none', width: '160px' }}
+                      style={{ fontSize: '0.7rem', padding: '2px 7px', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, background: c.surface, outline: 'none', width: '160px' }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           const input = e.currentTarget
@@ -2148,7 +2110,7 @@ const ProductCard = React.memo(function ProductCard({
                       }}
                     />
                     <button
-                      style={{ fontSize: '0.68rem', padding: '2px 7px', border: '1px solid rgba(100,100,255,0.3)', borderRadius: '4px', color: '#8B8FD4', background: 'rgba(100,100,255,0.08)', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      style={{ ...btn('secondary'), fontSize: '0.68rem', padding: '2px 7px', whiteSpace: 'nowrap' }}
                       onClick={() => {
                         const input = document.querySelector<HTMLInputElement>(`input[placeholder="태그는 ','로 구분입력"]`)
                         if (!input || !input.value.trim()) return
@@ -2159,25 +2121,25 @@ const ProductCard = React.memo(function ProductCard({
                       }}
                     >추가</button>
                     {(p.tags || []).includes('__ai_tagged__') && (
-                      <span style={{ fontSize: '0.62rem', padding: '1px 6px', background: 'rgba(255,140,0,0.12)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '3px', color: '#FF8C00', fontWeight: 600, whiteSpace: 'nowrap' }}>AI</span>
+                      <span style={{ fontSize: '0.62rem', padding: '1px 6px', background: 'rgba(255,140,0,0.12)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '3px', color: c.text, fontWeight: 600, whiteSpace: 'nowrap' }}>AI</span>
                     )}
                   </div>
                 </td>
               </tr>
               {/* 쿠팡 전용 검색어 (연관/자동완성/롱테일) */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>쿠팡 전용</td>
                 <td style={tdVal}>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
                     {(p.coupang_search_tags || []).map((tag, ti) => (
                       <span key={`cp-${ti}`} style={{
                         fontSize: '0.7rem', padding: '1px 8px', borderRadius: '10px',
-                        background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', color: '#FFB84D',
+                        background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.3)', color: c.text,
                         display: 'inline-flex', alignItems: 'center', gap: '4px',
                       }}>
                         {tag}
                         <span
-                          style={{ cursor: 'pointer', color: '#666', fontSize: '0.8rem', lineHeight: 1 }}
+                          style={{ cursor: 'pointer', color: c.textMuted, fontSize: '0.8rem', lineHeight: 1 }}
                           onClick={() => {
                             const newArr = (p.coupang_search_tags || []).filter(t => t !== tag)
                             onProductUpdate(p.id, { coupang_search_tags: newArr })
@@ -2188,7 +2150,7 @@ const ProductCard = React.memo(function ProductCard({
                     <input
                       type="text"
                       placeholder="쿠팡 검색어 (최대 10개)"
-                      style={{ fontSize: '0.7rem', padding: '2px 7px', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#FFB84D', background: '#1A1A1A', outline: 'none', width: '180px' }}
+                      style={{ fontSize: '0.7rem', padding: '2px 7px', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, background: c.surface, outline: 'none', width: '180px' }}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') {
                           const input = e.currentTarget
@@ -2202,14 +2164,14 @@ const ProductCard = React.memo(function ProductCard({
                         }
                       }}
                     />
-                    <span style={{ fontSize: '0.62rem', color: '#666', whiteSpace: 'nowrap' }}>
+                    <span style={{ fontSize: '0.62rem', color: c.textMuted, whiteSpace: 'nowrap' }}>
                       {(p.coupang_search_tags || []).length}/10
                     </span>
                   </div>
                 </td>
               </tr>
               {/* 적용정책 */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>적용정책</td>
                 <td style={tdVal}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
@@ -2217,8 +2179,8 @@ const ProductCard = React.memo(function ProductCard({
                       value={p.applied_policy_id || ''}
                       onChange={(e) => onPolicyChange(p.id, e.target.value)}
                       style={{
-                        background: 'rgba(22,22,22,0.9)', border: '1px solid #2D2D2D',
-                        color: '#C5C5C5', borderRadius: '4px', padding: '2px 6px',
+                        background: c.surface, border: `1px solid ${c.border}`,
+                        color: c.text, borderRadius: '4px', padding: '2px 6px',
                         fontSize: '0.75rem', outline: 'none',
                       }}
                     >
@@ -2231,12 +2193,12 @@ const ProductCard = React.memo(function ProductCard({
                       <button
                         onClick={() => window.location.href = `/samba/policies?highlight=${p.applied_policy_id}`}
                         style={{
-                          background: 'none', border: '1px solid #2D2D2D', borderRadius: '4px',
-                          color: '#888', fontSize: '0.625rem', padding: '2px 6px',
+                          background: 'none', border: `1px solid ${c.border}`, borderRadius: '4px',
+                          color: c.textMuted, fontSize: '0.625rem', padding: '2px 6px',
                           cursor: 'pointer', whiteSpace: 'nowrap',
                         }}
-                        onMouseEnter={e => { e.currentTarget.style.color = '#FF8C00'; e.currentTarget.style.borderColor = 'rgba(255,140,0,0.4)' }}
-                        onMouseLeave={e => { e.currentTarget.style.color = '#888'; e.currentTarget.style.borderColor = '#2D2D2D' }}
+                        onMouseEnter={e => { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = 'rgba(255,140,0,0.4)' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = c.textMuted; e.currentTarget.style.borderColor = c.border }}
                         title="정책 페이지로 이동"
                       >이동</button>
                     )}
@@ -2244,11 +2206,11 @@ const ProductCard = React.memo(function ProductCard({
                 </td>
               </tr>
               {/* Options (메인) */}
-              <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>
                   옵션
                   {p.option_group_names && p.option_group_names.length > 0 && (
-                    <div style={{ color: '#666', fontSize: '0.65rem', marginTop: '2px' }}>
+                    <div style={{ color: c.textMuted, fontSize: '0.65rem', marginTop: '2px' }}>
                       {p.option_group_names.join(' / ')}
                     </div>
                   )}
@@ -2264,23 +2226,23 @@ const ProductCard = React.memo(function ProductCard({
                       nameRule={nameRules.find(r => r.id === (policy?.extras as Record<string, string> | undefined)?.name_rule_id)}
                     />
                   ) : (
-                    <span style={{ color: '#444', fontSize: '0.75rem' }}>※ 옵션 미설정 -- 단일상품</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>※ 옵션 미설정 -- 단일상품</span>
                   )}
                 </td>
               </tr>
               {/* Addon Options (추가구성상품) */}
               {p.addon_options && p.addon_options.length > 0 && (
-                <tr style={{ borderBottom: '1px solid #1E1E1E' }}>
+                <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>
                     추가옵션
-                    <div style={{ color: '#666', fontSize: '0.65rem', marginTop: '2px' }}>
+                    <div style={{ color: c.textMuted, fontSize: '0.65rem', marginTop: '2px' }}>
                       {p.addon_options[0]?.group || ''}
                     </div>
                   </td>
                   <td style={tdVal}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.72rem' }}>
                       <thead>
-                        <tr style={{ color: '#666', textAlign: 'left' }}>
+                        <tr style={{ color: c.textMuted, textAlign: 'left' }}>
                           <th style={{ padding: '4px 6px', fontWeight: 'normal' }}>이름</th>
                           <th style={{ padding: '4px 6px', fontWeight: 'normal', textAlign: 'right' }}>추가금액</th>
                           <th style={{ padding: '4px 6px', fontWeight: 'normal', textAlign: 'right' }}>재고</th>
@@ -2290,9 +2252,9 @@ const ProductCard = React.memo(function ProductCard({
                       <tbody>
                         {p.addon_options.map((ao, idx) => {
                           const noneChoice = ao.is_none_choice || ao.name.includes('선택안함') || ao.name.includes('선택없음')
-                          const rowColor = noneChoice ? '#666' : undefined
+                          const rowColor = noneChoice ? c.textMuted : undefined
                           return (
-                            <tr key={`${ao.no ?? idx}-${ao.name}`} style={{ borderTop: '1px solid #1E1E1E', color: rowColor }}>
+                            <tr key={`${ao.no ?? idx}-${ao.name}`} style={{ borderTop: `1px solid ${c.border}`, color: rowColor }}>
                               <td style={{ padding: '4px 6px' }}>{ao.name}</td>
                               <td style={{ padding: '4px 6px', textAlign: 'right' }}>{noneChoice ? '-' : `+${(ao.add_price ?? 0).toLocaleString()}원`}</td>
                               <td style={{ padding: '4px 6px', textAlign: 'right' }}>{noneChoice ? '-' : (ao.stock ?? 0).toLocaleString()}</td>
@@ -2314,7 +2276,7 @@ const ProductCard = React.memo(function ProductCard({
                       // 등록된 마켓 타입만 ON-OFF 토글 표시
                       const regMarketTypes = new Set(registeredMarkets.map(rm => rm.marketId))
                       const visibleMarkets = MARKETS.filter(m => regMarketTypes.has(m.id))
-                      if (visibleMarkets.length === 0) return <span style={{ color: '#555', fontSize: '0.72rem' }}>등록된 마켓이 없습니다</span>
+                      if (visibleMarkets.length === 0) return <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>등록된 마켓이 없습니다</span>
                       return visibleMarkets.map((m) => {
                         const on = marketEnabled[m.id] !== false
                         return (
@@ -2324,7 +2286,7 @@ const ProductCard = React.memo(function ProductCard({
                               style={{
                                 width: '32px', height: '18px', borderRadius: '9px',
                                 border: 'none', cursor: 'pointer', position: 'relative',
-                                background: on ? '#FF8C00' : '#333', transition: 'background 0.2s',
+                                background: on ? c.btnSolidBg : c.border, transition: 'background 0.2s',
                                 padding: 0,
                               }}
                             >
@@ -2335,7 +2297,7 @@ const ProductCard = React.memo(function ProductCard({
                                 background: '#fff', transition: 'left 0.2s',
                               }} />
                             </button>
-                            <span style={{ fontSize: '0.7rem', color: on ? '#C5C5C5' : '#555' }}>{m.name}</span>
+                            <span style={{ fontSize: '0.7rem', color: on ? c.text : c.textMuted }}>{m.name}</span>
                           </span>
                         )
                       })
@@ -2353,11 +2315,11 @@ const ProductCard = React.memo(function ProductCard({
       {cardAlert && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 999999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setCardAlert(null)}>
-          <div style={{ background: '#1A1A1A', border: `1px solid ${cardAlert.type === 'error' ? 'rgba(255,107,107,0.4)' : 'rgba(34,197,94,0.4)'}`, borderRadius: '12px', padding: '24px 32px', minWidth: '320px', textAlign: 'center' }}
+          <div style={{ background: c.surface, border: `1px solid ${cardAlert.type === 'error' ? 'rgba(255,107,107,0.4)' : 'rgba(34,197,94,0.4)'}`, borderRadius: '12px', padding: '24px 32px', minWidth: '320px', textAlign: 'center' }}
             onClick={e => e.stopPropagation()}>
-            <p style={{ margin: '0 0 16px', color: '#E5E5E5', fontSize: '0.9rem' }}>{cardAlert.msg}</p>
+            <p style={{ margin: '0 0 16px', color: c.text, fontSize: '0.9rem' }}>{cardAlert.msg}</p>
             <button onClick={() => setCardAlert(null)}
-              style={{ padding: '6px 24px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'rgba(50,50,50,0.6)', color: '#E5E5E5' }}>확인</button>
+              style={{ ...btn('secondary'), padding: '6px 24px', fontSize: '0.85rem' }}>확인</button>
           </div>
         </div>
       )}
@@ -2365,14 +2327,14 @@ const ProductCard = React.memo(function ProductCard({
       {cardConfirm && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 999999, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setCardConfirm(null)}>
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '24px 32px', minWidth: '320px', textAlign: 'center' }}
+          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '24px 32px', minWidth: '320px', textAlign: 'center' }}
             onClick={e => e.stopPropagation()}>
-            <p style={{ margin: '0 0 20px', color: '#E5E5E5', fontSize: '0.9rem' }}>{cardConfirm.msg}</p>
+            <p style={{ margin: '0 0 20px', color: c.text, fontSize: '0.9rem' }}>{cardConfirm.msg}</p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
               <button onClick={() => setCardConfirm(null)}
-                style={{ padding: '6px 24px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}>취소</button>
+                style={{ ...btn('ghost'), padding: '6px 24px', fontSize: '0.85rem' }}>취소</button>
               <button onClick={cardConfirm.onOk}
-                style={{ padding: '6px 24px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(168,85,247,0.5)', background: 'rgba(168,85,247,0.15)', color: '#A855F7', fontWeight: 600 }}>확인</button>
+                style={{ ...btn('dangerSolid'), padding: '6px 24px', fontSize: '0.85rem' }}>확인</button>
             </div>
           </div>
         </div>

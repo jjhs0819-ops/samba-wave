@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import { card, inputStyle } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import { showAlert } from '@/components/samba/Modal'
 
@@ -20,6 +22,7 @@ function splitPhone(phone: string): [string, string, string] {
 }
 
 export function OfficeShippingPanel() {
+  const c = useTheme()
   const [form, setForm] = useState<OfficeShipping>({ name: '', phone: '', address: '', address_detail: '' })
   const [ph, setPh] = useState<[string, string, string]>(['', '', ''])
   const [saving, setSaving] = useState(false)
@@ -81,14 +84,14 @@ export function OfficeShippingPanel() {
 
   return (
     <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
-      <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>사무실 배송정보 (주문처리용)</div>
-      <div style={{ fontSize: '0.8rem', color: '#666', marginBottom: '1rem' }}>
+      <div style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>사무실 배송정보 (주문처리용)</div>
+      <div style={{ fontSize: '0.8rem', color: c.textMuted, marginBottom: '1rem' }}>
         전화번호: 직배·까대기 모두 이 번호 사용 (판매자 기본 번호)<br />
         이름/주소: 까대기 주문 시 사용
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
         <div>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#999', marginBottom: '0.25rem' }}>이름</label>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: c.textSub, marginBottom: '0.25rem' }}>이름</label>
           <input
             style={inputStyle}
             value={form.name}
@@ -97,17 +100,17 @@ export function OfficeShippingPanel() {
           />
         </div>
         <div>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#999', marginBottom: '0.25rem' }}>전화번호</label>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: c.textSub, marginBottom: '0.25rem' }}>전화번호</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
             <div style={{ flex: '0 0 3rem' }}>{phInput(0, 3, '010')}</div>
-            <span style={{ color: '#555' }}>-</span>
+            <span style={{ color: c.textMuted }}>-</span>
             <div style={{ flex: '0 0 4rem' }}>{phInput(1, 4, '0000')}</div>
-            <span style={{ color: '#555' }}>-</span>
+            <span style={{ color: c.textMuted }}>-</span>
             <div style={{ flex: '0 0 4rem' }}>{phInput(2, 4, '0000')}</div>
           </div>
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#999', marginBottom: '0.25rem' }}>주소</label>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: c.textSub, marginBottom: '0.25rem' }}>주소</label>
           <input
             style={inputStyle}
             value={form.address}
@@ -116,7 +119,7 @@ export function OfficeShippingPanel() {
           />
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={{ display: 'block', fontSize: '0.8rem', color: '#999', marginBottom: '0.25rem' }}>상세주소</label>
+          <label style={{ display: 'block', fontSize: '0.8rem', color: c.textSub, marginBottom: '0.25rem' }}>상세주소</label>
           <input
             style={inputStyle}
             value={form.address_detail}
@@ -129,7 +132,7 @@ export function OfficeShippingPanel() {
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ padding: '0.5rem 1.25rem', background: '#1D4ED8', color: '#fff', border: 'none', borderRadius: '6px', fontSize: '0.875rem', cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.6 : 1 }}
+          style={{ ...btn('primary'), ...(saving ? btnDisabled : null), padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}
         >
           {saving ? '저장 중...' : '저장'}
         </button>

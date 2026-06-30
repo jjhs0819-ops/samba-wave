@@ -6,6 +6,8 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 import {
   type License, type LoginHistory,
   STATUS_MAP, maskIp, years, months, daysInMonth, pad,
@@ -13,6 +15,7 @@ import {
 } from './constants'
 
 export default function UsersPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-사용자' }, [])
   const [users, setUsers] = useState<SambaUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -186,9 +189,9 @@ export default function UsersPage() {
   }
 
   return (
-    <div style={{ color: '#E5E5E5' }}>
+    <div style={{ color: c.text }}>
       {/* 라이선스 발급 */}
-      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', padding: '1.5rem', marginBottom: '2rem' }}>
+      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', padding: '1.5rem', marginBottom: '2rem' }}>
         <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '1.25rem' }}>라이선스 발급</h2>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
           <input placeholder="구매자 이름" value={licForm.buyer_name}
@@ -206,7 +209,7 @@ export default function UsersPage() {
             style={{ ...inputStyle, fontSize: '0.85rem' }} />
         </div>
         <button onClick={createLicense} disabled={licCreating || !licForm.buyer_name || !licForm.buyer_email}
-          style={{ padding: '0.5rem 1.25rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer', opacity: licCreating || !licForm.buyer_name || !licForm.buyer_email ? 0.5 : 1 }}>
+          style={{ ...btn('primary'), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', ...(licCreating || !licForm.buyer_name || !licForm.buyer_email ? btnDisabled : null) }}>
           {licCreating ? '발급 중...' : '발급'}
         </button>
 
@@ -215,7 +218,7 @@ export default function UsersPage() {
           <div style={{ marginTop: '1.25rem', overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid #2A2A2A' }}>
+                <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                   {['키', '구매자', '만료일', '마지막 검증', '상태', ''].map(h => (
                     <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>
                   ))}
@@ -223,46 +226,46 @@ export default function UsersPage() {
               </thead>
               <tbody>
                 {licenses.map(lic => (
-                  <tr key={lic.id} style={{ borderBottom: '1px solid #1A1A1A' }}>
-                    <td style={{ ...tdStyle, textAlign: 'left', fontFamily: 'monospace', fontSize: '0.75rem', color: '#AAA' }}>{lic.license_key}</td>
+                  <tr key={lic.id} style={{ borderBottom: `1px solid ${c.border}` }}>
+                    <td style={{ ...tdStyle, textAlign: 'left', fontFamily: 'monospace', fontSize: '0.75rem', color: c.textSub }}>{lic.license_key}</td>
                     <td style={{ ...tdStyle, textAlign: 'left' }}>
                       <div>{lic.buyer_name}</div>
-                      <div style={{ color: '#666', fontSize: '0.72rem' }}>{lic.buyer_email}</div>
+                      <div style={{ color: c.textMuted, fontSize: '0.72rem' }}>{lic.buyer_email}</div>
                     </td>
                     <td style={{ ...tdStyle, textAlign: 'left' }}>
                       {editingExpires === lic.id ? (
                         <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                           <input type="date" value={editExpiresValue}
                             onChange={e => setEditExpiresValue(e.target.value)}
-                            style={{ background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem' }} />
+                            style={{ background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem' }} />
                           <button onClick={() => saveExpires(lic.id)}
-                            style={{ padding: '2px 8px', fontSize: '0.72rem', background: 'rgba(74,222,128,0.15)', color: '#4ADE80', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>저장</button>
+                            style={{ ...btn('secondary'), padding: '2px 8px', fontSize: '0.72rem', borderRadius: '4px' }}>저장</button>
                           <button onClick={() => setEditingExpires(null)}
-                            style={{ padding: '2px 8px', fontSize: '0.72rem', background: '#2A2A2A', color: '#888', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>취소</button>
+                            style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.72rem', borderRadius: '4px' }}>취소</button>
                         </div>
                       ) : (
                         <span onClick={() => { setEditingExpires(lic.id); setEditExpiresValue(lic.expires_at ? lic.expires_at.slice(0, 10) : '') }}
-                          style={{ cursor: 'pointer', borderBottom: '1px dashed #444' }} title="클릭하여 수정">
+                          style={{ cursor: 'pointer', borderBottom: `1px dashed ${c.border}` }} title="클릭하여 수정">
                           {lic.expires_at ? lic.expires_at.slice(0, 10) : '영구'}
                         </span>
                       )}
                     </td>
-                    <td style={{ ...tdStyle, textAlign: 'left', color: '#666', fontSize: '0.75rem' }}>
+                    <td style={{ ...tdStyle, textAlign: 'left', color: c.textMuted, fontSize: '0.75rem' }}>
                       {lic.last_verified_at ? lic.last_verified_at.slice(0, 16).replace('T', ' ') : '-'}
                     </td>
                     <td style={tdStyle}>
-                      <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', background: lic.is_active ? 'rgba(74,222,128,0.15)' : 'rgba(255,107,107,0.15)', color: lic.is_active ? '#4ADE80' : '#FF6B6B' }}>
+                      <span style={{ padding: '2px 8px', borderRadius: '4px', fontSize: '0.72rem', background: lic.is_active ? 'rgba(74,222,128,0.15)' : 'rgba(255,107,107,0.15)', color: lic.is_active ? c.success : c.danger }}>
                         {lic.is_active ? '활성' : '비활성'}
                       </span>
                     </td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
                         <button onClick={() => toggleLicense(lic.id, !lic.is_active)}
-                          style={{ padding: '3px 10px', fontSize: '0.72rem', background: '#2A2A2A', color: '#AAA', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                          style={{ ...btn('secondary'), padding: '3px 10px', fontSize: '0.72rem', borderRadius: '4px' }}>
                           {lic.is_active ? '비활성화' : '활성화'}
                         </button>
                         <button onClick={() => deleteLicense(lic.id, lic.license_key)}
-                          style={{ padding: '3px 10px', fontSize: '0.72rem', background: 'rgba(255,107,107,0.15)', color: '#FF6B6B', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+                          style={{ ...btn('danger'), padding: '3px 10px', fontSize: '0.72rem', borderRadius: '4px' }}>
                           삭제
                         </button>
                       </div>
@@ -279,50 +282,50 @@ export default function UsersPage() {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
         <div>
           <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>계정 관리</h2>
-          <p style={{ fontSize: '0.875rem', color: '#888' }}>로그인 가능한 사용자 계정을 관리합니다</p>
+          <p style={{ fontSize: '0.875rem', color: c.textMuted }}>로그인 가능한 사용자 계정을 관리합니다</p>
         </div>
         <button
           onClick={openCreate}
-          style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+          style={{ ...btn('primary'), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
         >
           + 계정 추가
         </button>
       </div>
 
       {/* 테이블 */}
-      <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', overflow: 'hidden' }}>
+      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ borderBottom: '2px solid #1C2030' }}>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', color: '#888', width: '50px' }}>No</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', color: '#888' }}>이름</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', color: '#888' }}>이메일</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#888', width: '80px' }}>권한</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#888', width: '80px' }}>상태</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#888', width: '150px' }}>생성일</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#888', width: '180px' }}>관리</th>
+            <tr style={{ borderBottom: `2px solid ${c.borderStrong}` }}>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', color: c.textMuted, width: '50px' }}>No</th>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', color: c.textMuted }}>이름</th>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontSize: '0.75rem', color: c.textMuted }}>이메일</th>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c.textMuted, width: '80px' }}>권한</th>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c.textMuted, width: '80px' }}>상태</th>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c.textMuted, width: '150px' }}>생성일</th>
+              <th style={{ padding: '0.75rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c.textMuted, width: '180px' }}>관리</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>로딩 중...</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: '#555' }}>등록된 계정이 없습니다</td></tr>
+              <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>등록된 계정이 없습니다</td></tr>
             ) : users.map((u, idx) => {
-              const st = STATUS_MAP[u.status] || { label: u.status, color: '#888' }
+              const st = STATUS_MAP[u.status] || { label: u.status, color: c.textMuted }
               return (
-                <tr key={u.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,255,255,0.02)')}
+                <tr key={u.id} style={{ borderBottom: `1px solid ${c.border}` }}
+                  onMouseEnter={e => (e.currentTarget.style.background = c.surfaceAlt)}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', color: '#666' }}>{idx + 1}</td>
+                  <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', color: c.textMuted }}>{idx + 1}</td>
                   <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem' }}>{u.name || '-'}</td>
-                  <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', color: '#B0B0B0' }}>{u.email || '-'}</td>
+                  <td style={{ padding: '0.625rem 1rem', fontSize: '0.8rem', color: c.textSub }}>{u.email || '-'}</td>
                   <td style={{ padding: '0.625rem 1rem', textAlign: 'center' }}>
                     <span style={{
                       fontSize: '0.72rem', padding: '2px 8px', borderRadius: '4px',
                       background: u.is_admin ? 'rgba(255,140,0,0.15)' : 'rgba(100,100,100,0.15)',
-                      color: u.is_admin ? '#FF8C00' : '#888',
+                      color: u.is_admin ? c.text : c.textMuted,
                     }}>{u.is_admin ? '관리자' : '일반'}</span>
                   </td>
                   <td style={{ padding: '0.625rem 1rem', textAlign: 'center' }}>
@@ -334,14 +337,14 @@ export default function UsersPage() {
                       }}
                     >{st.label}</button>
                   </td>
-                  <td style={{ padding: '0.625rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#666' }}>{fmtDate(u.created_at)}</td>
+                  <td style={{ padding: '0.625rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c.textMuted }}>{fmtDate(u.created_at)}</td>
                   <td style={{ padding: '0.625rem 1rem', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                       <button onClick={() => openEdit(u)}
-                        style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '4px', cursor: 'pointer' }}
+                        style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}
                       >수정</button>
                       <button onClick={() => handleDelete(u)}
-                        style={{ fontSize: '0.72rem', padding: '3px 10px', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}
+                        style={{ ...btn('danger'), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}
                       >삭제</button>
                     </div>
                   </td>
@@ -361,21 +364,21 @@ export default function UsersPage() {
           <select value={startY} onChange={e => setStartY(Number(e.target.value))} style={selectStyle}>{years().map(y => <option key={y} value={y}>{y}년</option>)}</select>
           <select value={startM} onChange={e => setStartM(Number(e.target.value))} style={selectStyle}>{months().map(m => <option key={m} value={m}>{m}월</option>)}</select>
           <select value={startD} onChange={e => setStartD(Number(e.target.value))} style={selectStyle}>{Array.from({ length: daysInMonth(startY, startM) }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}일</option>)}</select>
-          <span style={{ color: '#666' }}>~</span>
+          <span style={{ color: c.textMuted }}>~</span>
           <select value={endY} onChange={e => setEndY(Number(e.target.value))} style={selectStyle}>{years().map(y => <option key={y} value={y}>{y}년</option>)}</select>
           <select value={endM} onChange={e => setEndM(Number(e.target.value))} style={selectStyle}>{months().map(m => <option key={m} value={m}>{m}월</option>)}</select>
           <select value={endD} onChange={e => setEndD(Number(e.target.value))} style={selectStyle}>{Array.from({ length: daysInMonth(endY, endM) }, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}일</option>)}</select>
           <button onClick={searchLogs}
-            style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', background: '#333', border: '1px solid #444', color: '#E5E5E5', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+            style={{ padding: '0.4rem 1rem', fontSize: '0.8rem', background: c.btnBg, border: `1px solid ${c.btnBorder}`, color: c.btnText, borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
             검색
           </button>
         </div>
 
         {/* 로그인 기록 테이블 */}
-        <div style={{ background: 'rgba(18,18,18,0.98)', border: '1px solid #232323', borderRadius: '10px', overflow: 'hidden' }}>
+        <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '2px solid #1C2030' }}>
+              <tr style={{ borderBottom: `2px solid ${c.borderStrong}` }}>
                 <th style={thStyle}>접속일시</th>
                 <th style={thStyle}>아이디</th>
                 <th style={thStyle}>접속 IP</th>
@@ -384,13 +387,13 @@ export default function UsersPage() {
             </thead>
             <tbody>
               {logLoading ? (
-                <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>조회 중...</td></tr>
+                <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: c.textMuted }}>조회 중...</td></tr>
               ) : loginLogs.length === 0 ? (
-                <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: '#555' }}>검색 버튼을 눌러주세요</td></tr>
+                <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: c.textMuted }}>검색 버튼을 눌러주세요</td></tr>
               ) : loginLogs.map(log => (
-                <tr key={log.id} style={{ borderBottom: '1px solid rgba(45,45,45,0.5)' }}>
+                <tr key={log.id} style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdStyle}>{fmtLoginDate(log.created_at)}</td>
-                  <td style={{ ...tdStyle, color: '#4C9AFF' }}>{log.email}</td>
+                  <td style={{ ...tdStyle, color: c.text }}>{log.email}</td>
                   <td style={tdStyle}>{maskIp(log.ip_address)}</td>
                   <td style={tdStyle}>{log.region || '-'}</td>
                 </tr>
@@ -405,7 +408,7 @@ export default function UsersPage() {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={() => setShowModal(false)}
         >
-          <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '1.5rem', width: '420px', maxWidth: '90vw' }}
+          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '1.5rem', width: '420px', maxWidth: '90vw' }}
             onClick={e => e.stopPropagation()}
           >
             <h3 style={{ fontSize: '1.1rem', fontWeight: 600, marginBottom: '1rem' }}>
@@ -414,29 +417,29 @@ export default function UsersPage() {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               <div>
-                <label style={{ fontSize: '0.78rem', color: '#888', marginBottom: '4px', display: 'block' }}>이름</label>
+                <label style={{ fontSize: '0.78rem', color: c.textSub, marginBottom: '4px', display: 'block' }}>이름</label>
                 <input style={inputStyle} value={form.name} onChange={e => setForm(prev => ({ ...prev, name: e.target.value }))} placeholder="사용자 이름" />
               </div>
               <div>
-                <label style={{ fontSize: '0.78rem', color: '#888', marginBottom: '4px', display: 'block' }}>이메일</label>
+                <label style={{ fontSize: '0.78rem', color: c.textSub, marginBottom: '4px', display: 'block' }}>이메일</label>
                 <input style={inputStyle} type="email" value={form.email} onChange={e => setForm(prev => ({ ...prev, email: e.target.value }))} placeholder="login@example.com" />
               </div>
               <div>
-                <label style={{ fontSize: '0.78rem', color: '#888', marginBottom: '4px', display: 'block' }}>
-                  비밀번호 {editingId && <span style={{ color: '#555' }}>(빈칸이면 변경 안 함)</span>}
+                <label style={{ fontSize: '0.78rem', color: c.textSub, marginBottom: '4px', display: 'block' }}>
+                  비밀번호 {editingId && <span style={{ color: c.textMuted }}>(빈칸이면 변경 안 함)</span>}
                 </label>
                 <div style={{ position: 'relative' }}>
                   <input style={{ ...inputStyle, paddingRight: '2.5rem' }} type={showPassword ? 'text' : 'password'} value={form.password} onChange={e => setForm(prev => ({ ...prev, password: e.target.value }))} placeholder="6자 이상" />
                   <button type="button" onClick={() => setShowPassword(v => !v)}
-                    style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#888', cursor: 'pointer', padding: '4px', fontSize: '0.85rem' }}>
+                    style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: c.textMuted, cursor: 'pointer', padding: '4px', fontSize: '0.85rem' }}>
                     {showPassword ? '🙈' : '👁'}
                   </button>
                 </div>
               </div>
               <div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: '#C5C5C5', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: c.text, cursor: 'pointer' }}>
                   <input type="checkbox" checked={form.is_admin} onChange={e => setForm(prev => ({ ...prev, is_admin: e.target.checked }))}
-                    style={{ accentColor: '#FF8C00', width: '16px', height: '16px' }} />
+                    style={{ accentColor: c.primary, width: '16px', height: '16px' }} />
                   관리자 권한
                 </label>
               </div>
@@ -444,10 +447,10 @@ export default function UsersPage() {
 
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
               <button onClick={() => setShowModal(false)}
-                style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem', background: 'transparent', border: '1px solid #3D3D3D', color: '#C5C5C5', borderRadius: '6px', cursor: 'pointer' }}
+                style={{ ...btn('ghost'), padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
               >취소</button>
               <button onClick={handleSave}
-                style={{ padding: '0.5rem 1.25rem', fontSize: '0.85rem', background: '#FF8C00', border: 'none', color: '#fff', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                style={{ ...btn('primary'), padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
               >{editingId ? '수정' : '생성'}</button>
             </div>
           </div>

@@ -5,6 +5,8 @@ import { type AnalyticsAggregateRow } from '@/lib/samba/api/commerce'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { card, fmtNum } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn } from '@/lib/samba/buttons'
 import { RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
 import {
   SOURCE_SITES, SITE_FILTER_OPTIONS, UNREGISTERED_SITE,
@@ -16,6 +18,7 @@ import { useAnalyticsData } from './hooks/useAnalyticsData'
 const fmt = fmtNum
 
 export default function AnalyticsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-분석' }, [])
   // 검색 조건 (localStorage 자동 복원/저장)
   const now = new Date()
@@ -171,30 +174,30 @@ export default function AnalyticsPage() {
     padding: '8px 12px',
     fontSize: '0.75rem',
     fontWeight: 600,
-    color: '#B0B0B0',
-    borderBottom: '2px solid #3D3D3D',
-    borderRight: '1px solid #2D2D2D',
+    color: c.textSub,
+    borderBottom: `2px solid ${c.border}`,
+    borderRight: `1px solid ${c.border}`,
     textAlign: 'center',
     whiteSpace: 'nowrap',
     position: 'sticky',
     // 앱 헤더(69px) + 섹션 제목 높이(41px) 밑에 컬럼 제목행 고정 — 페이지 스크롤 시에도 유지
     top: 'calc(var(--header-h, 69px) + 41px)',
-    background: '#1A1A1A',
+    background: c.surface,
     zIndex: 2,
   }
   const tdStyle: React.CSSProperties = {
     padding: '6px 10px',
     fontSize: '0.75rem',
-    color: '#D0D0D0',
-    borderBottom: '1px solid #2D2D2D',
-    borderRight: '1px solid #2D2D2D',
+    color: c.text,
+    borderBottom: `1px solid ${c.border}`,
+    borderRight: `1px solid ${c.border}`,
     textAlign: 'right',
     whiteSpace: 'nowrap',
   }
   const tdEmptyStyle: React.CSSProperties = {
     ...tdStyle,
     textAlign: 'center',
-    color: '#555',
+    color: c.textMuted,
   }
 
   // 월별 테이블 렌더러
@@ -237,11 +240,11 @@ export default function AnalyticsPage() {
     return (
       <div style={{ marginBottom: '1.5rem' }}>
         <div style={{
-          fontSize: '0.9375rem', fontWeight: 600, color: '#FF8C00',
+          fontSize: '0.9375rem', fontWeight: 600, color: c.text,
           position: 'sticky', top: 'var(--header-h, 68px)', zIndex: 10,
-          background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
+          background: c.pageBg, backdropFilter: 'blur(4px)',
           padding: '0.5rem 1.25rem',
-          borderBottom: '1px solid #2D2D2D',
+          borderBottom: `1px solid ${c.border}`,
         }}>{title}</div>
         <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
         <div style={{ overflow: 'visible' }}>
@@ -252,15 +255,15 @@ export default function AnalyticsPage() {
                 {columns.map(col => (
                   <th key={col} style={thStyle}>{col}</th>
                 ))}
-                <th style={{ ...thStyle, color: '#FF8C00', fontWeight: 700 }}>합계</th>
+                <th style={{ ...thStyle, color: c.text, fontWeight: 700 }}>합계</th>
               </tr>
             </thead>
             <tbody>
               {Array.from({ length: rowCount }, (_, i) => i + 1).map(row => {
                 const hasData = rowTotals[row].orders > 0
                 return (
-                  <tr key={row} style={{ background: hasData ? 'transparent' : 'rgba(40,50,40,0.15)' }}>
-                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, position: 'sticky', left: 0, background: hasData ? '#1E1E1E' : 'rgba(30,40,30,0.6)', zIndex: 1 }}>
+                  <tr key={row} style={{ background: hasData ? 'transparent' : c.surfaceAlt }}>
+                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 600, position: 'sticky', left: 0, background: hasData ? c.surface : c.surfaceAlt, zIndex: 1 }}>
                       {isDaily ? `${row}일` : `${row}월`}
                     </td>
                     {columns.map(col => {
@@ -271,15 +274,15 @@ export default function AnalyticsPage() {
                       return (
                         <td key={col} style={tdStyle}>
                           <div>{fmt(cell.sales)}</div>
-                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(cell.orders)}건)</div>
+                          <div style={{ fontSize: '0.625rem', color: c.textSub }}>({fmt(cell.orders)}건)</div>
                         </td>
                       )
                     })}
-                    <td style={{ ...tdStyle, fontWeight: 700, color: '#FF8C00' }}>
+                    <td style={{ ...tdStyle, fontWeight: 700, color: c.text }}>
                       {hasData ? (
                         <>
                           <div>{fmt(rowTotals[row].sales)}</div>
-                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(rowTotals[row].orders)}건)</div>
+                          <div style={{ fontSize: '0.625rem', color: c.textSub }}>({fmt(rowTotals[row].orders)}건)</div>
                         </>
                       ) : '-'}
                     </td>
@@ -287,27 +290,27 @@ export default function AnalyticsPage() {
                 )
               })}
               {/* 합계 행 */}
-              <tr style={{ background: 'rgba(30,30,30,0.8)', borderTop: '2px solid #3D3D3D' }}>
-                <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, position: 'sticky', left: 0, background: '#1A1A1A', zIndex: 1, borderTop: '2px solid #3D3D3D' }}>
+              <tr style={{ background: c.surface, borderTop: `2px solid ${c.border}` }}>
+                <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, position: 'sticky', left: 0, background: c.surface, zIndex: 1, borderTop: `2px solid ${c.border}` }}>
                   합계
                 </td>
                 {columns.map(col => {
                   const total = colTotals[col]
                   const pct = grandTotal.sales > 0 ? ((total.sales / grandTotal.sales) * 100).toFixed(1) : '0.0'
                   return (
-                    <td key={col} style={{ ...tdStyle, fontWeight: 600, borderTop: '2px solid #3D3D3D' }}>
+                    <td key={col} style={{ ...tdStyle, fontWeight: 600, borderTop: `2px solid ${c.border}` }}>
                       {total.orders > 0 ? (
                         <>
                           <div>{fmt(total.sales)}</div>
-                          <div style={{ fontSize: '0.625rem', color: '#888' }}>({pct}%)</div>
+                          <div style={{ fontSize: '0.625rem', color: c.textSub }}>({pct}%)</div>
                         </>
                       ) : '-'}
                     </td>
                   )
                 })}
-                <td style={{ ...tdStyle, fontWeight: 700, color: '#FF8C00', borderTop: '2px solid #3D3D3D' }}>
+                <td style={{ ...tdStyle, fontWeight: 700, color: c.text, borderTop: `2px solid ${c.border}` }}>
                   <div>{fmt(grandTotal.sales)}</div>
-                  <div style={{ fontSize: '0.625rem', color: '#888' }}>({fmt(grandTotal.orders)}건)</div>
+                  <div style={{ fontSize: '0.625rem', color: c.textSub }}>({fmt(grandTotal.orders)}건)</div>
                 </td>
               </tr>
             </tbody>
@@ -319,11 +322,11 @@ export default function AnalyticsPage() {
   }
 
   if (loading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh', color: '#555' }}>로딩 중...</div>
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh', color: c.textMuted }}>로딩 중...</div>
   }
 
   return (
-    <div style={{ color: '#E5E5E5' }}>
+    <div style={{ color: c.text }}>
       {/* 헤더 */}
       <div style={{ marginBottom: '1.5rem' }}>
         <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.25rem' }}>매출통계</h2>
@@ -333,8 +336,8 @@ export default function AnalyticsPage() {
       {error && (
         <div style={{
           padding: '0.75rem 1rem', marginBottom: '1rem',
-          background: 'rgba(220,38,38,0.12)', border: '1px solid #DC2626',
-          borderRadius: '4px', color: '#FCA5A5', fontSize: '0.8125rem',
+          background: 'rgba(220,38,38,0.12)', border: `1px solid ${c.danger}`,
+          borderRadius: '4px', color: c.danger, fontSize: '0.8125rem',
         }}>
           매출 데이터 조회 실패: {error} — 잠시 후 [매출검색] 다시 눌러주세요.
         </div>
@@ -344,31 +347,31 @@ export default function AnalyticsPage() {
       <div style={{ ...card, padding: '1.25rem', marginBottom: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
           <select value={searchYear} onChange={e => setSearchYear(Number(e.target.value))}
-            style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none', cursor: 'pointer' }}>
+            style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none', cursor: 'pointer' }}>
             {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}년</option>)}
           </select>
           <select value={searchMonth} onChange={e => setSearchMonth(Number(e.target.value))}
-            style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#E5E5E5', outline: 'none', cursor: 'pointer' }}>
+            style={{ padding: '0.375rem 0.5rem', fontSize: '0.8125rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none', cursor: 'pointer' }}>
             <option value={0}>전체</option>
             {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}월</option>)}
           </select>
           <button onClick={load}
-            style={{ padding: '0.375rem 0.875rem', fontSize: '0.8125rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer' }}>매출검색</button>
-          <span style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: '#888' }}>
-            총 <span style={{ color: '#FF8C00', fontWeight: 700 }}>{fmtNum(totalOrders)}</span>건 · 매출 <span style={{ color: '#FF8C00', fontWeight: 700 }}>₩{fmtNum(totalSales)}</span>
+            style={{ ...btn('primary'), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', borderRadius: '4px' }}>매출검색</button>
+          <span style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: c.textSub }}>
+            총 <span style={{ color: c.text, fontWeight: 700 }}>{fmtNum(totalOrders)}</span>건 · 매출 <span style={{ color: c.text, fontWeight: 700 }}>₩{fmtNum(totalSales)}</span>
           </span>
         </div>
 
         {/* 마켓 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: '1px solid #2D2D2D', flexWrap: 'wrap' }}>
-          <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>마켓</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: `1px solid ${c.border}`, flexWrap: 'wrap' }}>
+          <span style={{ color: c.textSub, fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>마켓</span>
           {(() => {
             const marketNames = [...new Set([...marketAccounts.map(a => a.market_name)])]
             const allMarkets = marketNames.length > 0 ? marketNames : ['스마트스토어', '11번가']
             const isAll = allMarkets.length > 0 && selectedMarkets.length === allMarkets.length
             return (
               <>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: c.textSub, cursor: 'pointer' }}>
                   <input type="checkbox" checked={isAll} onChange={() => setSelectedMarkets(isAll ? [] : [...allMarkets])} /> 전체
                 </label>
                 {allMarkets.map(name => (
@@ -376,8 +379,8 @@ export default function AnalyticsPage() {
                     <input type="checkbox" checked={isAll || selectedMarkets.includes(name)} onChange={() => {
                       if (isAll) setSelectedMarkets(allMarkets.filter(m => m !== name))
                       else toggleItem(selectedMarkets, setSelectedMarkets, name)
-                    }} style={{ accentColor: '#FF8C00' }} />
-                    <span style={{ color: '#FF8C00' }}>{name}</span>
+                    }} style={{ accentColor: c.primary }} />
+                    <span style={{ color: c.text }}>{name}</span>
                   </label>
                 ))}
               </>
@@ -386,13 +389,13 @@ export default function AnalyticsPage() {
         </div>
 
         {/* 소싱사이트 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: '1px solid #2D2D2D', flexWrap: 'wrap' }}>
-          <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>소싱사이트</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: `1px solid ${c.border}`, flexWrap: 'wrap' }}>
+          <span style={{ color: c.textSub, fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>소싱사이트</span>
           {(() => {
             const isAll = selectedSites.length === SITE_FILTER_OPTIONS.length
             return (
               <>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: c.textSub, cursor: 'pointer' }}>
                   <input type="checkbox" checked={isAll} onChange={() => setSelectedSites(isAll ? [] : [...SITE_FILTER_OPTIONS])} /> 전체
                 </label>
                 {SITE_FILTER_OPTIONS.map(site => (
@@ -400,8 +403,8 @@ export default function AnalyticsPage() {
                     <input type="checkbox" checked={isAll || selectedSites.includes(site)} onChange={() => {
                       if (isAll) setSelectedSites(SITE_FILTER_OPTIONS.filter(s => s !== site))
                       else toggleItem(selectedSites, setSelectedSites, site)
-                    }} style={{ accentColor: '#FF8C00' }} />
-                    <span style={{ color: '#FF8C00' }}>{site}</span>
+                    }} style={{ accentColor: c.primary }} />
+                    <span style={{ color: c.text }}>{site}</span>
                   </label>
                 ))}
               </>
@@ -410,14 +413,14 @@ export default function AnalyticsPage() {
         </div>
 
         {/* 주문상태 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: '1px solid #2D2D2D', flexWrap: 'wrap' }}>
-          <span style={{ color: '#888', fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>주문상태</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.625rem 0', borderTop: `1px solid ${c.border}`, flexWrap: 'wrap' }}>
+          <span style={{ color: c.textSub, fontSize: '0.8125rem', minWidth: '65px', flexShrink: 0 }}>주문상태</span>
           {(() => {
             const allKeys = ORDER_STATUSES.map(s => s.key)
             const isAll = selectedStatuses.length === allKeys.length
             return (
               <>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: '#888', cursor: 'pointer' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: c.textSub, cursor: 'pointer' }}>
                   <input type="checkbox" checked={isAll} onChange={() => setSelectedStatuses(isAll ? [] : [...allKeys])} /> 전체
                 </label>
                 {ORDER_STATUSES.map(st => (
@@ -425,8 +428,8 @@ export default function AnalyticsPage() {
                     <input type="checkbox" checked={isAll || selectedStatuses.includes(st.key)} onChange={() => {
                       if (isAll) setSelectedStatuses(allKeys.filter(k => k !== st.key))
                       else toggleItem(selectedStatuses, setSelectedStatuses, st.key)
-                    }} style={{ accentColor: '#FF8C00' }} />
-                    <span style={{ color: '#FF8C00' }}>{st.label}</span>
+                    }} style={{ accentColor: c.primary }} />
+                    <span style={{ color: c.text }}>{st.label}</span>
                   </label>
                 ))}
               </>
@@ -451,11 +454,11 @@ export default function AnalyticsPage() {
           <div style={{
             fontSize: '0.9375rem', fontWeight: 700,
             position: 'sticky', top: 'var(--header-h, 68px)', zIndex: 10,
-            background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
+            background: c.pageBg, backdropFilter: 'blur(4px)',
             padding: '0.5rem 1.25rem',
-            borderBottom: '1px solid #2D2D2D',
+            borderBottom: `1px solid ${c.border}`,
             borderRadius: '12px 12px 0 0',
-            border: '1px solid #2D2D2D',
+            border: `1px solid ${c.border}`,
           }}>최근 30일 매출 추이</div>
           <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
             <RevenueTrendLine data={filteredChartData} />
@@ -470,9 +473,9 @@ export default function AnalyticsPage() {
             <div style={{
               fontSize: '0.9375rem', fontWeight: 700,
               position: 'sticky', top: 'var(--header-h, 68px)', zIndex: 10,
-              background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
+              background: c.pageBg, backdropFilter: 'blur(4px)',
               padding: '0.5rem 1.25rem',
-              borderRadius: '12px 12px 0 0', border: '1px solid #2D2D2D',
+              borderRadius: '12px 12px 0 0', border: `1px solid ${c.border}`,
             }}>브랜드별 매출 TOP 10</div>
             <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
               <SalesBarChart data={brandData} nameKey="brand" valueKey="sales" />
@@ -482,28 +485,28 @@ export default function AnalyticsPage() {
             <div style={{
               fontSize: '0.9375rem', fontWeight: 700,
               position: 'sticky', top: 'var(--header-h, 68px)', zIndex: 10,
-              background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
+              background: c.pageBg, backdropFilter: 'blur(4px)',
               padding: '0.5rem 1.25rem',
-              borderRadius: '12px 12px 0 0', border: '1px solid #2D2D2D',
+              borderRadius: '12px 12px 0 0', border: `1px solid ${c.border}`,
             }}>브랜드별 상세</div>
             <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
               <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 220px)' }}>
                 <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
                   <thead>
-                    <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
-                      <th style={{ padding: '0.5rem', textAlign: 'left', color: '#999', position: 'sticky', top: 0, background: '#1A1A1A', zIndex: 2 }}>브랜드</th>
-                      <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999', position: 'sticky', top: 0, background: '#1A1A1A', zIndex: 2 }}>매출</th>
-                      <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999', position: 'sticky', top: 0, background: '#1A1A1A', zIndex: 2 }}>이익</th>
-                      <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999', position: 'sticky', top: 0, background: '#1A1A1A', zIndex: 2 }}>건수</th>
-                      <th style={{ padding: '0.5rem', textAlign: 'right', color: '#999', position: 'sticky', top: 0, background: '#1A1A1A', zIndex: 2 }}>이윤율</th>
+                    <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                      <th style={{ padding: '0.5rem', textAlign: 'left', color: c.textSub, position: 'sticky', top: 0, background: c.surface, zIndex: 2 }}>브랜드</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right', color: c.textSub, position: 'sticky', top: 0, background: c.surface, zIndex: 2 }}>매출</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right', color: c.textSub, position: 'sticky', top: 0, background: c.surface, zIndex: 2 }}>이익</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right', color: c.textSub, position: 'sticky', top: 0, background: c.surface, zIndex: 2 }}>건수</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'right', color: c.textSub, position: 'sticky', top: 0, background: c.surface, zIndex: 2 }}>이윤율</th>
                     </tr>
                   </thead>
                   <tbody>
                     {brandData.slice(0, 15).map(b => (
-                      <tr key={b.brand} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                      <tr key={b.brand} style={{ borderBottom: `1px solid ${c.border}` }}>
                         <td style={{ padding: '0.4rem 0.5rem' }}>{b.brand}</td>
-                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#FF8C00' }}>₩{fmt(b.sales)}</td>
-                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#22C55E' }}>₩{fmt(b.profit)}</td>
+                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: c.text }}>₩{fmt(b.sales)}</td>
+                        <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: c.success }}>₩{fmt(b.profit)}</td>
                         <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{fmt(b.orders)}</td>
                         <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{b.avg_margin_rate}%</td>
                       </tr>
@@ -522,31 +525,31 @@ export default function AnalyticsPage() {
           <div style={{
             fontSize: '0.9375rem', fontWeight: 700,
             position: 'sticky', top: 'var(--header-h, 68px)', zIndex: 10,
-            background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
+            background: c.pageBg, backdropFilter: 'blur(4px)',
             padding: '0.5rem 1.25rem',
-            borderRadius: '12px 12px 0 0', border: '1px solid #2D2D2D',
+            borderRadius: '12px 12px 0 0', border: `1px solid ${c.border}`,
           }}>소싱처별 ROI 분석</div>
           <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
             <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 220px)' }}>
               <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
                 <thead>
-                  <tr style={{ borderBottom: '1px solid #2D2D2D' }}>
+                  <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                     {['소싱처', '매출', '원가', '이익', '건수', '건당이익', '이윤율', 'ROI'].map((h, i) => (
-                      <th key={h} style={{ padding: '0.5rem', textAlign: i === 0 ? 'left' : 'right', color: '#999', position: 'sticky', top: 0, background: '#1A1A1A', zIndex: 2, whiteSpace: 'nowrap' }}>{h}</th>
+                      <th key={h} style={{ padding: '0.5rem', textAlign: i === 0 ? 'left' : 'right', color: c.textSub, position: 'sticky', top: 0, background: c.surface, zIndex: 2, whiteSpace: 'nowrap' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredSourcingRoi.map(r => (
-                    <tr key={r.source_site} style={{ borderBottom: '1px solid #1A1A1A' }}>
+                    <tr key={r.source_site} style={{ borderBottom: `1px solid ${c.border}` }}>
                       <td style={{ padding: '0.4rem 0.5rem', fontWeight: 600 }}>{r.source_site}</td>
-                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#FF8C00' }}>₩{fmt(r.total_revenue)}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: c.text }}>₩{fmt(r.total_revenue)}</td>
                       <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>₩{fmt(r.total_cost)}</td>
-                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: '#22C55E' }}>₩{fmt(r.total_profit)}</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: c.success }}>₩{fmt(r.total_profit)}</td>
                       <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{fmt(r.order_count)}</td>
                       <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>₩{fmt(r.avg_profit_per_order)}</td>
                       <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right' }}>{r.avg_margin_rate}%</td>
-                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: r.roi >= 0 ? '#22C55E' : '#EF4444', fontWeight: 600 }}>{r.roi}%</td>
+                      <td style={{ padding: '0.4rem 0.5rem', textAlign: 'right', color: r.roi >= 0 ? c.success : c.danger, fontWeight: 600 }}>{r.roi}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -560,29 +563,29 @@ export default function AnalyticsPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
         <div>
           <div style={{
-            fontSize: '0.9375rem', fontWeight: 700, color: '#FF8C00',
+            fontSize: '0.9375rem', fontWeight: 700, color: c.text,
             position: 'sticky', top: 'var(--header-h, 68px)', zIndex: 10,
-            background: 'rgba(15,15,15,0.97)', backdropFilter: 'blur(4px)',
+            background: c.pageBg, backdropFilter: 'blur(4px)',
             padding: '0.5rem 1.25rem',
-            borderRadius: '12px 12px 0 0', border: '1px solid #2D2D2D',
+            borderRadius: '12px 12px 0 0', border: `1px solid ${c.border}`,
           }}>베스트셀러 TOP 10 (30일, 이행건수순)</div>
           <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 'none' }}>
             {bestSellers.length > 0 ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                 {bestSellers.map((p, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: '1px solid #1A1A1A', fontSize: '0.8125rem' }}>
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: `1px solid ${c.border}`, fontSize: '0.8125rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flex: 1, minWidth: 0 }}>
-                      <span style={{ color: '#FF8C00', fontWeight: 700, width: '1.5rem' }}>{i + 1}</span>
+                      <span style={{ color: c.text, fontWeight: 700, width: '1.5rem' }}>{i + 1}</span>
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.product_name}</span>
                     </div>
                     <span style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', whiteSpace: 'nowrap', marginLeft: '0.5rem' }}>
-                      <span style={{ color: '#888', fontSize: '0.75rem' }}>{fmt(p.orders)}건</span>
-                      <span style={{ color: '#FF8C00', fontWeight: 600 }}>₩{fmt(p.sales)}</span>
+                      <span style={{ color: c.textSub, fontSize: '0.75rem' }}>{fmt(p.orders)}건</span>
+                      <span style={{ color: c.text, fontWeight: 600 }}>₩{fmt(p.sales)}</span>
                     </span>
                   </div>
                 ))}
               </div>
-            ) : <p style={{ color: '#666', fontSize: '0.8rem' }}>데이터 없음</p>}
+            ) : <p style={{ color: c.textMuted, fontSize: '0.8rem' }}>데이터 없음</p>}
           </div>
         </div>
       </div>

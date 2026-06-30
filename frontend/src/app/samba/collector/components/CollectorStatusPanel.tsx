@@ -3,6 +3,9 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { dark as c } from '@/lib/samba/colors'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 import type { MusinsaAccount, PoolInfo } from '../hooks/useProxyAuth'
 
 // 인증/프록시 상태 타입
@@ -39,13 +42,13 @@ function formatCookieFreshness(iso: string | null | undefined): { text: string; 
   const ts = Date.parse(iso)
   if (Number.isNaN(ts)) return null
   const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000))
-  if (diffSec < 300) return { text: '방금 갱신', color: '#8A95B0' }
+  if (diffSec < 300) return { text: '방금 갱신', color: c.textMuted }
   const diffMin = Math.floor(diffSec / 60)
-  if (diffMin < 60) return { text: `${diffMin}분 전 갱신`, color: '#8A95B0' }
+  if (diffMin < 60) return { text: `${diffMin}분 전 갱신`, color: c.textMuted }
   const diffHour = Math.floor(diffMin / 60)
-  if (diffHour < 24) return { text: `${diffHour}시간 전 갱신`, color: '#8A95B0' }
+  if (diffHour < 24) return { text: `${diffHour}시간 전 갱신`, color: c.textMuted }
   const diffDay = Math.floor(diffHour / 24)
-  return { text: `${diffDay}일 전 갱신`, color: '#FAB005' }
+  return { text: `${diffDay}일 전 갱신`, color: c.warn }
 }
 
 // 로그 섹션 전용 props (section='log')
@@ -66,6 +69,7 @@ type LogProps = {
 type Props = StatusProps | LogProps
 
 export default function CollectorStatusPanel(props: Props) {
+  const c = useTheme()
   // 프록시 + 무신사 인증 상태 섹션
   if (props.section === 'status') {
     const {
@@ -83,7 +87,7 @@ export default function CollectorStatusPanel(props: Props) {
 
     // 쿠키 주인 식별 정보 — slot vs cookie hashId 매칭 결과
     let accountText: string | null = null
-    let accountColor: string = '#51CF66'
+    let accountColor: string = c.success
     if (musinsaAccount) {
       const slot = musinsaAccount.slot_label
         ? `${musinsaAccount.slot_label}${musinsaAccount.slot_username ? `(${musinsaAccount.slot_username})` : ''}`
@@ -97,17 +101,17 @@ export default function CollectorStatusPanel(props: Props) {
         // 오염 — slot 과 쿠키 주인 다름
         const shortCookieHash = (musinsaAccount.cookie_hash_id || '').slice(0, 8)
         accountText = `⚠ 자리:${slot} / 쿠키:외부 ${cookieDesc} (${shortCookieHash}..)`
-        accountColor = '#FF6B6B'
+        accountColor = c.danger
       } else if (musinsaAccount.match === true) {
         accountText = `${slot} · ${cookieDesc} ✓`
-        accountColor = '#51CF66'
+        accountColor = c.success
       } else if (musinsaAccount.slot_hash_id == null && musinsaAccount.cookie_hash_id) {
         // bootstrap 미완료 — hashId 캡처 대기
         accountText = `${slot} · ${cookieDesc} · (식별자 미설정)`
-        accountColor = '#FAB005'
+        accountColor = c.warn
       } else {
         accountText = `${slot} · ${cookieDesc}`
-        accountColor = '#9AA5C0'
+        accountColor = c.textMuted
       }
     }
 
@@ -132,32 +136,32 @@ export default function CollectorStatusPanel(props: Props) {
     const wPoolRatio = wPoolMax > 0 ? wCheckedOut / wPoolMax : 0
     const rPoolRatio = rPoolMax > 0 ? rCheckedOut / rPoolMax : 0
     const poolStatusColor = (wPoolRatio >= 1 || rPoolRatio >= 1 || maxZombie >= 5)
-      ? '#FF6B6B'
+      ? c.danger
       : (wPoolRatio >= 0.85 || rPoolRatio >= 0.85 || maxZombie >= 2)
-        ? '#FAB005'
-        : '#51CF66'
+        ? c.warn
+        : c.success
     const poolCellColor = (ratio: number) =>
-      ratio >= 1 ? '#FF6B6B' : ratio >= 0.85 ? '#FAB005' : '#C4CAD8'
+      ratio >= 1 ? c.danger : ratio >= 0.85 ? c.warn : c.text
     const iitCellColor = (zombie: number) =>
-      zombie >= 5 ? '#FF6B6B' : zombie >= 2 ? '#FAB005' : '#C4CAD8'
+      zombie >= 5 ? c.danger : zombie >= 2 ? c.warn : c.text
 
     return (
       <div style={{ marginBottom: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {/* 프록시 + 무신사 인증 상태 */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: '16px', padding: '6px 14px',
-          borderRadius: '8px', background: 'rgba(255,140,0,0.07)', border: '1px solid rgba(255,140,0,0.2)',
+          borderRadius: '8px', background: c.accentBg, border: `1px solid ${c.border}`,
           fontSize: '0.78rem',
         }}>
           <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-            background: proxyStatus === 'ok' ? '#51CF66' : proxyStatus === 'error' ? '#FF6B6B' : '#555',
+            background: proxyStatus === 'ok' ? c.success : proxyStatus === 'error' ? c.danger : c.textMuted,
           }} />
-          <span style={{ color: proxyStatus === 'ok' ? '#51CF66' : '#888' }}>{proxyText}</span>
-          <span style={{ color: '#2D2D2D' }}>|</span>
+          <span style={{ color: proxyStatus === 'ok' ? c.success : c.textMuted }}>{proxyText}</span>
+          <span style={{ color: c.border }}>|</span>
           <span style={{ width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
-            background: musinsaAuth === 'ok' ? '#51CF66' : musinsaAuth === 'error' ? '#FF6B6B' : '#555',
+            background: musinsaAuth === 'ok' ? c.success : musinsaAuth === 'error' ? c.danger : c.textMuted,
           }} />
-          <span style={{ color: musinsaAuth === 'ok' ? '#51CF66' : '#888' }}>{musinsaAuthText}</span>
+          <span style={{ color: musinsaAuth === 'ok' ? c.success : c.textMuted }}>{musinsaAuthText}</span>
           {accountText && (
             <span style={{ color: accountColor, fontSize: '0.72rem', fontWeight: musinsaAccount?.match === false ? 700 : 400 }}>
               · {accountText}
@@ -179,8 +183,8 @@ export default function CollectorStatusPanel(props: Props) {
                 .catch(() => { setProxyStatus('error'); setProxyText('백엔드 서버 연결 실패') })
             }}
             style={{
-              marginLeft: 'auto', background: 'transparent', border: '1px solid #3D3D3D',
-              color: '#888', padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem', cursor: 'pointer',
+              ...btn('secondary'), marginLeft: 'auto',
+              padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem',
             }}
           >재확인</button>
         </div>
@@ -189,23 +193,23 @@ export default function CollectorStatusPanel(props: Props) {
         {poolInfo && dbPg && (
           <div style={{
             borderRadius: '8px', overflow: 'hidden',
-            border: `1px solid ${poolStatusColor === '#FF6B6B' ? 'rgba(255,107,107,0.4)' : poolStatusColor === '#FAB005' ? 'rgba(250,176,5,0.3)' : 'rgba(81,207,102,0.2)'}`,
-            background: 'rgba(8,10,16,0.6)', fontSize: '0.78rem',
+            border: `1px solid ${poolStatusColor === c.danger ? c.danger : poolStatusColor === c.warn ? c.warn : c.success}`,
+            background: c.surface, fontSize: '0.78rem',
           }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
-                <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
-                  <th style={{ padding: '6px 14px', textAlign: 'left', color: '#9AA5C0', fontWeight: 600, borderBottom: '1px solid #1C1E2A' }}>상태</th>
-                  <th style={{ padding: '6px 14px', textAlign: 'center', color: '#9AA5C0', fontWeight: 600, borderBottom: '1px solid #1C1E2A' }}>Write DB</th>
-                  <th style={{ padding: '6px 14px', textAlign: 'center', color: '#9AA5C0', fontWeight: 600, borderBottom: '1px solid #1C1E2A' }}>Read DB</th>
+                <tr style={{ background: c.surfaceAlt }}>
+                  <th style={{ padding: '6px 14px', textAlign: 'left', color: c.textSub, fontWeight: 600, borderBottom: `1px solid ${c.border}` }}>상태</th>
+                  <th style={{ padding: '6px 14px', textAlign: 'center', color: c.textSub, fontWeight: 600, borderBottom: `1px solid ${c.border}` }}>Write DB</th>
+                  <th style={{ padding: '6px 14px', textAlign: 'center', color: c.textSub, fontWeight: 600, borderBottom: `1px solid ${c.border}` }}>Read DB</th>
                 </tr>
               </thead>
               <tbody>
                 {/* 백엔드 SQLAlchemy 풀 실제 점유 — 이게 진짜 "풀 꽉참" 지표 */}
-                <tr style={{ background: 'rgba(81,207,102,0.04)', borderBottom: '1px solid rgba(28,30,42,0.8)' }}>
-                  <td style={{ padding: '6px 14px', color: '#C4CAD8', fontWeight: 700 }}>
+                <tr style={{ background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
+                  <td style={{ padding: '6px 14px', color: c.text, fontWeight: 700 }}>
                     백엔드 풀 점유
-                    <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#6A7388', fontWeight: 400 }}>
+                    <span style={{ marginLeft: 8, fontSize: '0.7rem', color: c.textMuted, fontWeight: 400 }}>
                       (이 값이 풀 최대 넘으면 진짜 꽉참)
                     </span>
                   </td>
@@ -218,7 +222,7 @@ export default function CollectorStatusPanel(props: Props) {
                 </tr>
                 {/* 아래 4줄은 DB 서버 전역 통계 — write/read로 나뉘지 않으므로 단일 값(2칸 병합) 표시 */}
                 <tr>
-                  <td colSpan={3} style={{ padding: '4px 14px', color: '#6A7388', fontSize: '0.68rem', background: 'rgba(255,255,255,0.015)' }}>
+                  <td colSpan={3} style={{ padding: '4px 14px', color: c.textMuted, fontSize: '0.68rem', background: c.surfaceAlt }}>
                     ─ DB 서버 전역 (write/read 공통 · 풀과 무관)
                   </td>
                 </tr>
@@ -227,26 +231,26 @@ export default function CollectorStatusPanel(props: Props) {
                   { label: 'idle in transaction', val: gIit, type: 'iit' as const },
                   { label: 'idle', val: gIdle, type: 'normal' as const },
                 ]).map((row) => (
-                  <tr key={row.label} style={{ borderBottom: '1px solid rgba(28,30,42,0.8)' }}>
-                    <td style={{ padding: '5px 14px', color: '#8A95B0' }}>
+                  <tr key={row.label} style={{ borderBottom: `1px solid ${c.border}` }}>
+                    <td style={{ padding: '5px 14px', color: c.textMuted }}>
                       {row.label}
                       {row.type === 'iit' && (
-                        <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#6A7388' }}>
+                        <span style={{ marginLeft: 8, fontSize: '0.7rem', color: c.textMuted }}>
                           (좀비 ≥30s: {fmtNum(gZombie)})
                         </span>
                       )}
                     </td>
-                    <td colSpan={2} style={{ padding: '5px 14px', textAlign: 'center', color: row.type === 'iit' ? iitCellColor(gZombie) : '#C4CAD8', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(row.val)}개</td>
+                    <td colSpan={2} style={{ padding: '5px 14px', textAlign: 'center', color: row.type === 'iit' ? iitCellColor(gZombie) : c.text, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(row.val)}개</td>
                   </tr>
                 ))}
-                <tr style={{ borderTop: '1px solid #2D3040', background: 'rgba(255,255,255,0.02)' }}>
-                  <td style={{ padding: '6px 14px', color: '#8A95B0' }}>
+                <tr style={{ borderTop: `1px solid ${c.border}`, background: c.surfaceAlt }}>
+                  <td style={{ padding: '6px 14px', color: c.textMuted }}>
                     DB 전체 세션
-                    <span style={{ marginLeft: 8, fontSize: '0.7rem', color: '#6A7388' }}>
+                    <span style={{ marginLeft: 8, fontSize: '0.7rem', color: c.textMuted }}>
                       (백엔드 + cron + admin + 다른 컨테이너 합산 — 풀 최대와 비교 X)
                     </span>
                   </td>
-                  <td colSpan={2} style={{ padding: '6px 14px', textAlign: 'center', color: '#8A95B0', fontVariantNumeric: 'tabular-nums' }}>{fmtNum(gTotal)}개</td>
+                  <td colSpan={2} style={{ padding: '6px 14px', textAlign: 'center', color: c.textMuted, fontVariantNumeric: 'tabular-nums' }}>{fmtNum(gTotal)}개</td>
                 </tr>
               </tbody>
             </table>
@@ -274,11 +278,11 @@ export default function CollectorStatusPanel(props: Props) {
     <>
       {/* 수집 잡 진행상황 섹션 */}
       {hasJobs && (
-        <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
+        <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 14px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
             <span style={{ width: '6px', height: '6px', borderRadius: '50%',
-              background: running.length > 0 ? '#51CF66' : '#FAB005' }} />
-            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>
+              background: running.length > 0 ? c.success : c.warn }} />
+            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: c.textSub }}>
               수집 잡 진행상황
               {running.length > 0 && ` — 수집 중 ${fmtNum(running.length)}건`}
               {pending.length > 0 && `${running.length > 0 ? ' · ' : ' — '}대기 ${fmtNum(pending.length)}건`}
@@ -293,18 +297,18 @@ export default function CollectorStatusPanel(props: Props) {
               const pct = j.total > 0 ? Math.floor((j.current / j.total) * 100) : 0
               const busy = cancellingJobIds.includes(j.id)
               return (
-                <div key={`rc-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#C4CAD8' }}>
-                  <span style={{ color: '#51CF66', fontWeight: 600, minWidth: '40px' }}>수집중</span>
-                  <span style={{ color: '#8A95B0', minWidth: '72px' }}>시작 {startedStr}</span>
-                  <span style={{ color: '#7BB0FF', minWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.source_site}</span>
+                <div key={`rc-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: c.text }}>
+                  <span style={{ color: c.success, fontWeight: 600, minWidth: '40px' }}>수집중</span>
+                  <span style={{ color: c.textMuted, minWidth: '72px' }}>시작 {startedStr}</span>
+                  <span style={{ color: c.textSub, minWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.source_site}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.filter_name || '—'}</span>
-                  <span style={{ color: '#9AA5C0', minWidth: '110px', textAlign: 'right' }}>
+                  <span style={{ color: c.textSub, minWidth: '110px', textAlign: 'right' }}>
                     {j.total > 0 ? `${fmtNum(j.current)} / ${fmtNum(j.total)} (${pct}%)` : '—'}
                   </span>
                   <button
                     onClick={() => handleCancelCollectJob(j.id)}
                     disabled={busy}
-                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '44px' }}
+                    style={{ ...btn('danger'), ...(busy ? btnDisabled : null), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', minWidth: '44px' }}
                   >{busy ? '취소중' : '취소'}</button>
                 </div>
               )
@@ -312,16 +316,16 @@ export default function CollectorStatusPanel(props: Props) {
             {pending.map((j, idx) => {
               const busy = cancellingJobIds.includes(j.id)
               return (
-                <div key={`pc-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: '#8A95B0' }}>
-                  <span style={{ color: '#FAB005', fontWeight: 600, minWidth: '40px' }}>대기</span>
+                <div key={`pc-${j.id || idx}`} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.75rem', color: c.textMuted }}>
+                  <span style={{ color: c.warn, fontWeight: 600, minWidth: '40px' }}>대기</span>
                   <span style={{ minWidth: '72px' }}>—</span>
-                  <span style={{ color: '#7BB0FF', minWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.source_site}</span>
+                  <span style={{ color: c.textSub, minWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.source_site}</span>
                   <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{j.filter_name || '—'}</span>
                   <span style={{ minWidth: '110px', textAlign: 'right' }}>—</span>
                   <button
                     onClick={() => handleCancelCollectJob(j.id)}
                     disabled={busy}
-                    style={{ padding: '2px 8px', fontSize: '0.7rem', background: busy ? 'rgba(255,80,80,0.3)' : 'rgba(255,80,80,0.12)', color: '#FF6B6B', border: '1px solid rgba(255,80,80,0.4)', borderRadius: '3px', cursor: busy ? 'not-allowed' : 'pointer', fontWeight: 600, minWidth: '44px' }}
+                    style={{ ...btn('danger'), ...(busy ? btnDisabled : null), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', minWidth: '44px' }}
                   >{busy ? '취소중' : '취소'}</button>
                 </div>
               )
@@ -332,28 +336,25 @@ export default function CollectorStatusPanel(props: Props) {
 
       {/* 로그현황 */}
       <div style={{
-        background: "rgba(30,30,30,0.5)", border: "1px solid #2D2D2D", borderRadius: "8px",
+        background: c.surface, border: `1px solid ${c.border}`, borderRadius: "8px",
         overflow: "hidden", marginBottom: "1rem",
       }}>
         <div style={{
-          padding: "8px 16px", borderBottom: "1px solid #2D2D2D",
+          padding: "8px 16px", borderBottom: `1px solid ${c.border}`,
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "#C5C5C5" }}>로그현황</span>
+          <span style={{ fontSize: "0.85rem", fontWeight: 600, color: c.text }}>로그현황</span>
           <div style={{ display: "flex", gap: "4px" }}>
             {collecting && (
               <button onClick={handleStopCollect} style={{
-                fontSize: "0.75rem", color: "#FF6B6B", background: "rgba(255,100,100,0.1)",
-                border: "1px solid rgba(255,100,100,0.4)", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
+                ...btn('danger'), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
               }}>수집 중단</button>
             )}
             <button onClick={handleCopyLog} style={{
-              fontSize: "0.75rem", color: "#888", background: "transparent",
-              border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
+              ...btn('ghost'), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
             }}>복사</button>
             <button onClick={handleClearLog} style={{
-              fontSize: "0.75rem", color: "#888", background: "transparent",
-              border: "1px solid #3D3D3D", padding: "2px 10px", borderRadius: "4px", cursor: "pointer",
+              ...btn('ghost'), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
             }}>초기화</button>
           </div>
         </div>
@@ -361,16 +362,16 @@ export default function CollectorStatusPanel(props: Props) {
           ref={logRef}
           style={{
             height: "160px", overflowY: "auto", padding: "10px 16px",
-            fontFamily: "monospace", fontSize: "0.78rem", color: "#8A95B0", zoom: "0.7",
-            background: "#080A10", lineHeight: 1.6,
+            fontFamily: "monospace", fontSize: "0.78rem", color: c.textMuted, zoom: "0.7",
+            background: c.surfaceAlt, lineHeight: 1.6,
           }}
         >
           {collectLog.map((line, i) => (
             <p key={i} style={{
-              color: line.includes("완료") ? "#51CF66"
-                : line.includes("실패") || line.includes("오류") ? "#FF6B6B"
-                : line.includes("대기") || line.includes("초기화") ? "#555"
-                : "#8A95B0",
+              color: line.includes("완료") ? c.success
+                : line.includes("실패") || line.includes("오류") ? c.danger
+                : line.includes("대기") || line.includes("초기화") ? c.textMuted
+                : c.textMuted,
               margin: 0,
             }}>
               {fmtTextNumbers(line)}

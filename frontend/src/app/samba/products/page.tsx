@@ -21,9 +21,8 @@ import { fmtTime } from '@/lib/samba/utils'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
 import { MARKETS } from './components/ProductCard'
-
-import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { useTheme } from '@/lib/samba/useTheme'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 type MarketDeleteModalState = {
   mode: 'single' | 'bulk'
@@ -272,6 +271,7 @@ export default function ProductsPage() {
       if (res.success) setAiPresetList(res.presets)
     }).catch(() => {})
   }, [])
+
 
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);
@@ -2207,7 +2207,7 @@ export default function ProductsPage() {
           <label key={key} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
             <input type="checkbox" checked={aiImgScope[key]}
               onChange={() => setAiImgScope(prev => ({ ...prev, [key]: !prev[key] }))}
-              style={{ accentColor: "#FF8C00", width: '13px', height: '13px' }} />
+              style={{ accentColor: c.primary, width: '13px', height: '13px' }} />
             <span style={{ fontSize: '0.78rem', color: c.text }}>{label}</span>
           </label>
         ))}
@@ -2434,7 +2434,7 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={aiImgTransforming}
-          style={{ marginLeft: 'auto', background: aiImgTransforming ? '#333' : 'rgba(255,140,0,0.15)', border: '1px solid rgba(255,140,0,0.35)', color: aiImgTransforming ? '#888' : '#FF8C00', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: aiImgTransforming ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+          style={{ ...btn('accent'), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
 
@@ -2571,7 +2571,7 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={imgFiltering}
-          style={{ marginLeft: 'auto', background: imgFiltering ? '#333' : 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.35)', color: imgFiltering ? '#888' : '#818CF8', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', cursor: imgFiltering ? 'not-allowed' : 'pointer', fontWeight: 600, whiteSpace: 'nowrap' }}
+          style={{ ...btn('accent'), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : '필터링 실행'}</button>
       </div>
       </div>
@@ -2588,7 +2588,7 @@ export default function ProductsPage() {
               type="checkbox"
               checked={selectAll && selectScope === 'search'}
               onChange={(e) => handleSelectAll(e.target.checked)}
-              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
+              style={{ accentColor: c.primary, width: "13px", height: "13px", cursor: "pointer" }}
             />
             <span style={{ fontSize: "0.72rem", color: c.textMuted, userSelect: "none" }}>검색</span>
           </label>
@@ -2597,7 +2597,7 @@ export default function ProductsPage() {
               type="checkbox"
               checked={selectAll && selectScope === 'page'}
               onChange={(e) => handleSelectPage(e.target.checked)}
-              style={{ accentColor: "#FF8C00", width: "13px", height: "13px", cursor: "pointer" }}
+              style={{ accentColor: c.primary, width: "13px", height: "13px", cursor: "pointer" }}
             />
             <span style={{ fontSize: "0.72rem", color: c.textMuted, userSelect: "none" }}>1PG</span>
           </label>
@@ -2849,18 +2849,18 @@ export default function ProductsPage() {
             onClick={() => setViewMode("card")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "card" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
-              color: viewMode === "card" ? "#FF8C00" : "#C5C5C5",
-              background: viewMode === "card" ? "rgba(255,140,0,0.15)" : "transparent",
+              border: viewMode === "card" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
+              color: viewMode === "card" ? '#0f6a5b' : c.text,
+              background: viewMode === "card" ? "#e3f4f0" : "transparent",
             }}
           >자세히</button>
           <button
             onClick={() => setViewMode("image")}
             style={{
               fontSize: "0.75rem", padding: "0.25rem 0.75rem", borderRadius: "6px", cursor: "pointer",
-              border: viewMode === "image" ? "1px solid #FF8C00" : "1px solid #3D3D3D",
-              color: viewMode === "image" ? "#FF8C00" : "#C5C5C5",
-              background: viewMode === "image" ? "rgba(255,140,0,0.15)" : "transparent",
+              border: viewMode === "image" ? `1px solid #a9ddd2` : `1px solid ${c.border}`,
+              color: viewMode === "image" ? '#0f6a5b' : c.text,
+              background: viewMode === "image" ? "#e3f4f0" : "transparent",
             }}
           >사진</button>
           <select
@@ -2958,7 +2958,7 @@ export default function ProductsPage() {
                 onClick={e => e.stopPropagation()}
                 style={{
                   position: "absolute", top: "6px", left: "6px", zIndex: 1,
-                  accentColor: "#FF8C00", width: "14px", height: "14px", cursor: "pointer",
+                  accentColor: c.primary, width: "14px", height: "14px", cursor: "pointer",
                 }}
               />
               <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>

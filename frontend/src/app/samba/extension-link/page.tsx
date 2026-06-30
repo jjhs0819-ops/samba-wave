@@ -3,8 +3,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SAMBA_PREFIX, fetchWithAuth } from '@/lib/samba/legacy'
 import { getDeviceId } from '@/lib/samba/deviceId'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn } from '@/lib/samba/buttons'
 
 export default function ExtensionLinkPage() {
+  const c = useTheme()
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [message, setMessage] = useState('')
 
@@ -64,21 +67,22 @@ export default function ExtensionLinkPage() {
   }, [issueKey])
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#0F0F0F]">
-      <div className="w-80 rounded-xl border border-[#2D2D2D] bg-[#1A1A1A] p-6 text-[#E5E5E5]">
-        <h1 className="mb-1 text-lg font-bold text-[#FFB84D]">SAMBA-WAVE 확장앱 연결</h1>
-        <p className="mb-5 text-xs text-[#888]">
+    <div className={`flex min-h-screen items-center justify-center bg-[${c.pageBg}]`}>
+      <div className={`w-80 rounded-xl border border-[${c.border}] bg-[${c.surface}] p-6 text-[${c.text}]`}>
+        <h1 className="mb-1 text-lg font-bold" style={{ color: c.text }}>SAMBA-WAVE 확장앱 연결</h1>
+        <p className={`mb-5 text-xs text-[${c.textMuted}]`}>
           이 계정 전용 API 키를 발급해 확장앱에 자동 저장합니다.
         </p>
 
         {status === 'loading' && (
-          <p className="text-center text-sm text-[#FFB84D]">🔑 자동 연결 중...</p>
+          <p className={`text-center text-sm text-[${c.text}]`}>🔑 자동 연결 중...</p>
         )}
 
         {status === 'error' && (
           <button
             onClick={() => void issueKey()}
-            className="w-full rounded-md bg-[#FFB84D] py-2.5 text-sm font-bold text-black hover:bg-[#FFC870]"
+            className="w-full rounded-md py-2.5 text-sm font-bold"
+            style={{ ...btn('primary'), width: '100%' }}
           >
             🔄 다시 시도
           </button>
@@ -91,9 +95,9 @@ export default function ExtensionLinkPage() {
         )}
 
         {status === 'error' && (
-          <p className="mt-4 text-center text-xs text-[#666]">
+          <p className={`mt-4 text-center text-xs text-[${c.textMuted}]`}>
             미로그인 시{' '}
-            <a href="/samba/login" className="text-[#FFB84D] underline">로그인</a>
+            <a href="/samba/login" className={`text-[${c.primary}] underline`}>로그인</a>
             하세요.
           </p>
         )}

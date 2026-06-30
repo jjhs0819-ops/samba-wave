@@ -5,6 +5,8 @@ import { collectorApi } from '@/lib/samba/api/commerce'
 import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { monitorApi, type DashboardStats, type RefreshLogEntry } from '@/lib/samba/api/operations'
 import { fmtNum, fmtTextNumbers, LOG_FONT_FAMILY } from '@/lib/samba/styles'
+import { light as clr } from '@/lib/samba/colors'
+import { btn } from '@/lib/samba/buttons'
 
 const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
@@ -175,11 +177,11 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
   }, [isRunning, onStatusChange])
 
   return (
-    <div style={{ background: 'rgba(8,10,16,0.98)', border: '1px solid #1C1E2A', borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: '#0A0D14', borderBottom: '1px solid #1C1E2A' }}>
+    <div style={{ background: clr.surface, border: `1px solid ${clr.border}`, borderRadius: '8px', marginBottom: '12px', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', background: clr.surfaceAlt, borderBottom: `1px solid ${clr.border}` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#9AA5C0' }}>오토튠 실시간 로그</span>
-          <span style={{ fontSize: '0.65rem', color: '#666' }}>실시간</span>
+          <span style={{ fontSize: '0.82rem', fontWeight: 600, color: clr.text }}>오토튠 실시간 로그</span>
+          <span style={{ fontSize: '0.65rem', color: clr.textMuted }}>실시간</span>
         </div>
         <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
           <button onClick={() => {
@@ -187,33 +189,33 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
               .filter(l => shouldShowLog(l.msg, filterSources ?? null))
               .map(l => l.msg).join('\n')
             navigator.clipboard.writeText(text)
-          }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', color: '#4C9AFF', borderRadius: '4px', cursor: 'pointer' }}>복사</button>
+          }} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.65rem', borderRadius: '4px' }}>복사</button>
           <button onClick={async () => {
             setLogs([]); sinceIdxRef.current = 0
             try {
               const { API_BASE_URL: apiBase } = await import('@/config/api')
               await fetchWithAuth(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
             } catch { /* ignore */ }
-          }} style={{ padding: '2px 8px', fontSize: '0.65rem', background: 'rgba(255,107,107,0.1)', border: '1px solid rgba(255,107,107,0.3)', color: '#FF6B6B', borderRadius: '4px', cursor: 'pointer' }}>초기화</button>
+          }} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.65rem', borderRadius: '4px' }}>초기화</button>
         </div>
       </div>
       <div
         ref={containerRef}
-        style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: LOG_FONT_FAMILY, fontSize: '0.73rem', lineHeight: 1.8, color: '#4A5568' }}
+        style={{ height: '250px', overflowY: 'auto', padding: '10px 14px', fontFamily: LOG_FONT_FAMILY, fontSize: '0.73rem', lineHeight: 1.8, color: clr.textMuted }}
       >
         {(() => {
           const visibleLogs = logs.filter(l => shouldShowLog(l.msg, filterSources ?? null))
           if (visibleLogs.length === 0) {
             return (
-              <div style={{ color: '#555', textAlign: 'center', padding: '1.5rem 0' }}>
+              <div style={{ color: clr.textMuted, textAlign: 'center', padding: '1.5rem 0' }}>
                 {logs.length > 0 ? '이 PC가 담당한 소싱처 로그 없음' : '갱신 로그 대기 중...'}
               </div>
             )
           }
           return visibleLogs.map(log => {
-            let color = '#DCE0E8'
+            let color = clr.text
             let fontWeight: number | string = 400
-            if (log.msg.includes('쿠키 로테이션')) { color = '#FFFFFF'; fontWeight = 700 }
+            if (log.msg.includes('쿠키 로테이션')) { color = clr.text; fontWeight = 700 }
             else if (
               log.msg.includes('실패')
               || log.msg.includes('오류')
@@ -224,19 +226,19 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
               || log.msg.includes('건너뜀')
               || log.msg.includes('갱신 차단')
               || log.msg.includes('미응답')
-            ) { color = '#FF6B6B'; fontWeight = 600 }
+            ) { color = clr.danger; fontWeight = 600 }
             else if (log.msg.includes('품절')) color = '#A78BFA'
-            else if (log.msg.includes('사이클 완료')) { color = '#4C9AFF'; fontWeight = 700 }
+            else if (log.msg.includes('사이클 완료')) { color = clr.link; fontWeight = 700 }
             else if (log.msg.includes('전송')) {
               // dispatch 로그가 '전송완료'→'전송'으로 바뀜(전송 시작 시점 표시).
               // '전송실패'는 위 실패 분기에서 먼저 잡히므로 여기엔 정상 전송만 도달.
-              if (log.msg.includes('가격변동') && log.msg.includes('재고전송')) color = '#4C9AFF'  // 가격+재고 동시 전송
-              else if (log.msg.includes('재고전송')) color = '#FFD93D'  // 재고만
+              if (log.msg.includes('가격변동') && log.msg.includes('재고전송')) color = clr.link  // 가격+재고 동시 전송
+              else if (log.msg.includes('재고전송')) color = clr.warn  // 재고만
               // 가격변동만 → 기본색(흰색) 유지
             }
-            else if (log.msg.includes('스킵')) color = '#888'
-            else if (log.msg.includes('재고변동')) color = '#FFD93D'
-            else if (log.msg.includes('성공')) color = '#7BAF7E'
+            else if (log.msg.includes('스킵')) color = clr.textMuted
+            else if (log.msg.includes('재고변동')) color = clr.warn
+            else if (log.msg.includes('성공')) color = clr.success
             return <div key={log.__seq} style={{ color, fontWeight }}>{fmtTextNumbers(log.msg)}</div>
           })
         })()}
@@ -246,9 +248,9 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
 })
 
 const card: React.CSSProperties = {
-  background: 'rgba(30,30,30,0.5)',
+  background: clr.surface,
   backdropFilter: 'blur(20px)',
-  border: '1px solid #2D2D2D',
+  border: `1px solid ${clr.border}`,
   borderRadius: '12px',
   padding: '1.25rem',
 }
@@ -405,7 +407,7 @@ function ActiveCyclesPanel(): React.ReactElement {
   }, [])
 
   const card: React.CSSProperties = {
-    background: '#1F1F1F', border: '1px solid #3D3D3D', borderRadius: '8px',
+    background: clr.surface, border: `1px solid ${clr.border}`, borderRadius: '8px',
     padding: '1rem', marginTop: '1rem',
   }
   const fetchCycles = useCallback(async () => {
@@ -469,17 +471,17 @@ function ActiveCyclesPanel(): React.ReactElement {
   return (
     <div style={card}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-        <div style={{ fontSize: '0.96rem', fontWeight: 600, color: '#E5E5E5' }}>
+        <div style={{ fontSize: '0.96rem', fontWeight: 600, color: clr.text }}>
           활성 사이클 ({fmtNum(cycles.length)}개)
         </div>
-        <button onClick={fetchCycles} style={{ padding: '0.25rem 0.6rem', background: 'rgba(76,154,255,0.12)', border: '1px solid rgba(76,154,255,0.35)', borderRadius: '6px', color: '#4C9AFF', fontSize: '0.75rem', cursor: 'pointer' }}>새로고침</button>
+        <button onClick={fetchCycles} style={{ ...btn('secondary'), padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem' }}>새로고침</button>
       </div>
       {cycles.length === 0 ? (
-        <div style={{ fontSize: '0.85rem', color: '#666', padding: '0.5rem 0' }}>활성 사이클 없음</div>
+        <div style={{ fontSize: '0.85rem', color: clr.textMuted, padding: '0.5rem 0' }}>활성 사이클 없음</div>
       ) : (
-        <table style={{ width: '100%', fontSize: '0.85rem', color: '#E5E5E5', borderCollapse: 'collapse' }}>
+        <table style={{ width: '100%', fontSize: '0.85rem', color: clr.text, borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={{ color: '#888', borderBottom: '1px solid #3D3D3D' }}>
+            <tr style={{ color: clr.textMuted, borderBottom: `1px solid ${clr.border}` }}>
               <th style={{ textAlign: 'left', padding: '0.4rem' }}>PC (device)</th>
               <th style={{ textAlign: 'left', padding: '0.4rem' }}>사이트</th>
               <th style={{ textAlign: 'center', padding: '0.4rem' }}>상태</th>
@@ -507,10 +509,10 @@ function ActiveCyclesPanel(): React.ReactElement {
               const batchAgo = c.batch_started_ago_sec ?? null
               const avgSec = c.avg_sec_per_item ?? 2
               const expectedBatchSec = avgSec * 200
-              const batchColor = batchAgo === null ? '#888'
-                : batchAgo > expectedBatchSec * 3 ? '#EF4444'   // 빨강: stuck 의심
-                : batchAgo > expectedBatchSec * 1.5 ? '#FFB84D' // 주황: 지연
-                : '#4CD964'                                       // 초록: 정상
+              const batchColor = batchAgo === null ? clr.textMuted
+                : batchAgo > expectedBatchSec * 3 ? clr.danger   // 빨강: stuck 의심
+                : batchAgo > expectedBatchSec * 1.5 ? clr.warn // 주황: 지연
+                : clr.success                                       // 초록: 정상
               // 시작 시각 → KST HH:MM:SS
               let startedStr = '-'
               if (c.started_at) {
@@ -540,12 +542,12 @@ function ActiveCyclesPanel(): React.ReactElement {
                 : (isDaemonDead
                     ? (c.daemon_last_seen_ago_sec != null ? `데몬끊김 (${fmtNum(c.daemon_last_seen_ago_sec)}초 전)` : '데몬끊김')
                     : '활성')
-              const statusColor = isInactive ? '#888' : (isDaemonDead ? '#EF4444' : '#4CD964')
+              const statusColor = isInactive ? clr.textMuted : (isDaemonDead ? clr.danger : clr.success)
               return (
-                <tr key={k} style={{ borderBottom: '1px solid #2A2A2A', opacity: rowOpacity }}>
+                <tr key={k} style={{ borderBottom: `1px solid ${clr.border}`, opacity: rowOpacity }}>
                   <td style={{ padding: '0.4rem', fontFamily: 'monospace', fontSize: '0.75rem' }}>
                     {c.device_id.slice(0, 28)}
-                    <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', color: c.device_id.startsWith('samba-daemon-') ? '#4C9AFF' : '#FFB84D' }}>
+                    <span style={{ marginLeft: '0.3rem', fontSize: '0.7rem', color: c.device_id.startsWith('samba-daemon-') ? clr.textSub : clr.text }}>
                       ({c.device_id.startsWith('samba-daemon-') ? '데몬' : '확장앱'})
                     </span>
                   </td>
@@ -563,25 +565,23 @@ function ActiveCyclesPanel(): React.ReactElement {
                       </div>
                     )}
                   </td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#FFB84D' }}>{isInactive ? '-' : avgStr}</td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#4CD964' }}>{isInactive ? '-' : fmtNum(c.price_count)}</td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#4C9AFF' }}>{isInactive ? '-' : fmtNum(c.stock_count)}</td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#EF4444' }}>{isInactive ? '-' : fmtNum(c.soldout_count)}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: clr.text }}>{isInactive ? '-' : avgStr}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: clr.success }}>{isInactive ? '-' : fmtNum(c.price_count)}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: clr.text }}>{isInactive ? '-' : fmtNum(c.stock_count)}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: clr.danger }}>{isInactive ? '-' : fmtNum(c.soldout_count)}</td>
                   <td style={{ padding: '0.4rem', textAlign: 'right' }}>{isInactive ? '-' : fmtNum(c.cycle_count)}</td>
-                  <td style={{ padding: '0.4rem', fontFamily: 'monospace', fontSize: '0.75rem', color: '#9AA5C0' }}>{isInactive ? '-' : startedStr}</td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#9AA5C0' }}>{isInactive ? '-' : elapsedStr}</td>
-                  <td style={{ padding: '0.4rem', textAlign: 'right', color: '#888' }}>{isInactive ? '-' : hbStr}</td>
+                  <td style={{ padding: '0.4rem', fontFamily: 'monospace', fontSize: '0.75rem', color: clr.textMuted }}>{isInactive ? '-' : startedStr}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: clr.textMuted }}>{isInactive ? '-' : elapsedStr}</td>
+                  <td style={{ padding: '0.4rem', textAlign: 'right', color: clr.textMuted }}>{isInactive ? '-' : hbStr}</td>
                   <td style={{ padding: '0.4rem', textAlign: 'center' }}>
                     {isInactive ? (
                       <button
                         disabled={busy === k}
                         onClick={() => removeAllowedSite(c.device_id, c.site)}
                         style={{
+                          ...btn('secondary'),
                           padding: '0.2rem 0.6rem',
-                          background: busy === k ? '#444' : 'rgba(180,180,180,0.15)',
-                          border: '1px solid rgba(180,180,180,0.4)',
                           borderRadius: '4px',
-                          color: '#CCCCCC',
                           fontSize: '0.75rem',
                           cursor: busy === k ? 'wait' : 'pointer',
                         }}
@@ -591,11 +591,9 @@ function ActiveCyclesPanel(): React.ReactElement {
                         disabled={busy === k}
                         onClick={() => cancelCycle(c.device_id, c.site)}
                         style={{
+                          ...btn('danger'),
                           padding: '0.2rem 0.6rem',
-                          background: busy === k ? '#444' : 'rgba(239,68,68,0.15)',
-                          border: '1px solid rgba(239,68,68,0.4)',
                           borderRadius: '4px',
-                          color: '#EF4444',
                           fontSize: '0.75rem',
                           cursor: busy === k ? 'wait' : 'pointer',
                         }}
@@ -1081,7 +1079,7 @@ export default function WarroomPage() {
 
   if (loading || !stats) {
     return (
-      <div style={{ color: '#888', textAlign: 'center', padding: '4rem' }}>
+      <div style={{ color: clr.textMuted, textAlign: 'center', padding: '4rem' }}>
         대시보드 로딩 중...
       </div>
     )
@@ -1097,38 +1095,38 @@ export default function WarroomPage() {
       {/* 무신사 자동로그인계정 미설정/만료 경고 모달 */}
       {musinsaAuthMissing && !musinsaAuthDismissed && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)', zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#1A1A1A', border: '2px solid #FF4444', borderRadius: '16px', padding: '2rem', maxWidth: '480px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
+          <div style={{ background: clr.surface, border: `2px solid ${clr.danger}`, borderRadius: '16px', padding: '2rem', maxWidth: '480px', width: '90%', boxShadow: '0 8px 32px rgba(255,68,68,0.3)', position: 'relative' }}>
             <button
               aria-label='알람 닫기'
               title='닫기'
               onClick={() => setMusinsaAuthDismissed(true)}
-              style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'transparent', border: 'none', borderRadius: '6px', color: '#AAA', fontSize: '1.25rem', fontWeight: 700, cursor: 'pointer', lineHeight: 1 }}
+              style={{ ...btn('ghost'), position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', fontSize: '1.25rem', fontWeight: 700, lineHeight: 1 }}
             >
               &#10005;
             </button>
             <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
               <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>&#9888;</div>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#FF6B6B', marginBottom: '0.5rem' }}>무신사 원가 갱신 중단</h3>
-              <p style={{ fontSize: '0.875rem', color: '#AAA', lineHeight: 1.5 }}>
+              <h3 style={{ fontSize: '1.25rem', fontWeight: 700, color: clr.danger, marginBottom: '0.5rem' }}>무신사 원가 갱신 중단</h3>
+              <p style={{ fontSize: '0.875rem', color: clr.textSub, lineHeight: 1.5 }}>
                 {musinsaAuthMissing.reason === 'cookie_expired'
-                  ? <>자동로그인계정 <b style={{ color: '#FFD' }}>{musinsaAuthMissing.account_label}</b>의 쿠키가 만료됨. 무신사 재로그인 필요.</>
+                  ? <>자동로그인계정 <b style={{ color: clr.text }}>{musinsaAuthMissing.account_label}</b>의 쿠키가 만료됨. 무신사 재로그인 필요.</>
                   : musinsaAuthMissing.reason === 'no_cookie'
-                  ? <>자동로그인계정 <b style={{ color: '#FFD' }}>{musinsaAuthMissing.account_label}</b>에 쿠키 없음. 무신사 로그인 필요.</>
-                  : <>무신사 자동로그인계정 미설정. <b style={{ color: '#FFD' }}>설정 → 소싱처계정</b>에서 자동로그인 계정을 지정하세요.</>}
+                  ? <>자동로그인계정 <b style={{ color: clr.text }}>{musinsaAuthMissing.account_label}</b>에 쿠키 없음. 무신사 로그인 필요.</>
+                  : <>무신사 자동로그인계정 미설정. <b style={{ color: clr.text }}>설정 → 소싱처계정</b>에서 자동로그인 계정을 지정하세요.</>}
                 <br/>
-                <span style={{ color: '#FF8888' }}>cost 계산이 일관되지 않아 자동 갱신을 차단했습니다.</span>
+                <span style={{ color: clr.danger }}>cost 계산이 일관되지 않아 자동 갱신을 차단했습니다.</span>
               </p>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => setMusinsaAuthDismissed(true)}
-                style={{ flex: 1, padding: '0.75rem', background: 'transparent', border: '1px solid #444', borderRadius: '8px', color: '#AAA', fontSize: '0.9375rem', fontWeight: 600, cursor: 'pointer' }}
+                style={{ ...btn('ghost'), flex: 1, padding: '0.75rem', borderRadius: '8px', fontSize: '0.9375rem' }}
               >
                 나중에
               </button>
               <button
                 onClick={() => { window.location.href = '/samba/settings#sourcing-accounts-MUSINSA' }}
-                style={{ flex: 2, padding: '0.75rem', background: '#FF4444', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.9375rem', fontWeight: 700, cursor: 'pointer' }}
+                style={{ ...btn('dangerSolid'), flex: 2, padding: '0.75rem', borderRadius: '8px', fontSize: '0.9375rem' }}
               >
                 지금 설정하기
               </button>
@@ -1145,38 +1143,38 @@ export default function WarroomPage() {
           display: 'flex',
           flexDirection: 'column',
           gap: '0.5rem',
-          borderColor: '#FF8C00',
+          borderColor: clr.border,
           borderWidth: '1px',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? '#51CF66' : '#FF6B6B', display: 'inline-block' }} />
-            <span style={{ fontWeight: 700, color: '#FF8C00', fontSize: '0.875rem' }}>오토튠 모니터링</span>
-            {!pcDeviceId && <span style={{ fontSize: '0.75rem', color: '#FFB020' }}>확장앱 미감지 (시크릿창/포크 — 본인 PC만 제어 가능)</span>}
-            {pcDeviceId && autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#51CF66' }}>실행 중</span>}
-            {pcDeviceId && autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>재시작 {fmtNum(autotuneRestarts)}회</span>}
-            {pcDeviceId && !autotuneRunning && <span style={{ fontSize: '0.75rem', color: '#FF6B6B' }}>정지</span>}
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: autotuneRunning ? clr.success : clr.danger, display: 'inline-block' }} />
+            <span style={{ fontWeight: 700, color: clr.text, fontSize: '0.875rem' }}>오토튠 모니터링</span>
+            {!pcDeviceId && <span style={{ fontSize: '0.75rem', color: clr.warn }}>확장앱 미감지 (시크릿창/포크 — 본인 PC만 제어 가능)</span>}
+            {pcDeviceId && autotuneRunning && <span style={{ fontSize: '0.75rem', color: clr.success }}>실행 중</span>}
+            {pcDeviceId && autotuneRunning && autotuneRestarts > 0 && <span style={{ fontSize: '0.75rem', color: clr.danger }}>재시작 {fmtNum(autotuneRestarts)}회</span>}
+            {pcDeviceId && !autotuneRunning && <span style={{ fontSize: '0.75rem', color: clr.danger }}>정지</span>}
             {pcDeviceId && (
               <span
                 title="이 PC device_id — 아래 '활성 사이클'의 PC 열과 매칭. 클릭 시 복사."
                 onClick={() => { try { navigator.clipboard?.writeText(pcDeviceId) } catch { /* ignore */ } }}
                 style={{
-                  fontSize: '0.7rem', color: '#9AA', fontFamily: 'monospace',
-                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
+                  fontSize: '0.7rem', color: clr.textMuted, fontFamily: 'monospace',
+                  background: clr.surfaceAlt, border: `1px solid ${clr.border}`,
                   padding: '1px 6px', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap',
                 }}
               >이 PC: {pcDeviceId}</span>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: '#888', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: clr.textMuted, alignItems: 'center' }}>
             <button
               onClick={() => { downloadDaemonInstaller(getOrCreateAutotuneDaemonDeviceId()) }}
               title="데몬 설치/재설치 — 미감지 배너 없어도 항상 다운로드 가능"
               style={{
+                ...btn('secondary'),
                 padding: '0.25rem 0.6rem',
-                background: 'rgba(76,154,255,0.12)', border: '1px solid rgba(76,154,255,0.35)',
-                borderRadius: '6px', color: '#4C9AFF', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+                borderRadius: '6px', fontSize: '0.75rem',
               }}
             >데몬 다운로드</button>
             <input
@@ -1186,8 +1184,8 @@ export default function WarroomPage() {
               onChange={e => setSingleProductNo(e.target.value)}
               style={{
                 width: '110px', padding: '0.25rem 0.5rem',
-                background: '#1A1A1A', border: '1px solid #3D3D3D', borderRadius: '6px',
-                color: '#E5E5E5', fontSize: '0.75rem', outline: 'none',
+                background: clr.inputBg, border: `1px solid ${clr.border}`, borderRadius: '6px',
+                color: clr.text, fontSize: '0.75rem', outline: 'none',
               }}
               onKeyDown={e => { if (e.key === 'Enter' && singleProductNo.trim()) document.getElementById('btn-autotune-start')?.click() }}
             />
@@ -1254,7 +1252,7 @@ export default function WarroomPage() {
               background: pcDeviceId ? 'rgba(34,197,94,0.12)' : 'rgba(100,100,100,0.12)',
               border: `1px solid ${pcDeviceId ? 'rgba(34,197,94,0.35)' : 'rgba(100,100,100,0.35)'}`,
               borderRadius: '6px',
-              color: pcDeviceId ? '#22C55E' : '#666',
+              color: pcDeviceId ? clr.success : clr.textMuted,
               fontSize: '0.8125rem',
               fontWeight: 600,
               cursor: pcDeviceId ? 'pointer' : 'not-allowed',
@@ -1313,7 +1311,7 @@ export default function WarroomPage() {
               background: pcDeviceId ? 'rgba(239,68,68,0.12)' : 'rgba(100,100,100,0.12)',
               border: `1px solid ${pcDeviceId ? 'rgba(239,68,68,0.35)' : 'rgba(100,100,100,0.35)'}`,
               borderRadius: '6px',
-              color: pcDeviceId ? '#EF4444' : '#666',
+              color: pcDeviceId ? clr.danger : clr.textMuted,
               fontSize: '0.8125rem',
               fontWeight: 600,
               cursor: pcDeviceId ? 'pointer' : 'not-allowed',
@@ -1326,7 +1324,7 @@ export default function WarroomPage() {
             null=전체체크 렌더가 다른 PC 분담을 침범하는 사고 차단(2026-05-25). */}
         {availSources.length > 0 && pcDeviceId && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>소싱처</span>
+            <span style={{ fontSize: '0.75rem', color: clr.textSub, fontWeight: 600, whiteSpace: 'nowrap' }}>소싱처</span>
             {availSources.filter(src => src !== 'manual').map(src => {
               const checked = filterSources === null || filterSources.includes(src)
               const labelMap: Record<string, string> = { MUSINSA: '무신사', KREAM: 'KREAM', DANAWA: '다나와', FashionPlus: '패션플러스', Nike: 'Nike', Adidas: 'Adidas', ABCmart: 'ABC마트', REXMONDE: '렉스몬드', SSG: 'SSG', LOTTEON: '롯데ON', GSShop: 'GSShop', ElandMall: '이랜드몰', SSF: 'SSF샵' }
@@ -1336,9 +1334,9 @@ export default function WarroomPage() {
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggleSource(src)}
-                    style={{ accentColor: '#FF8C00', width: 13, height: 13, cursor: 'pointer' }}
+                    style={{ accentColor: clr.primary, width: 13, height: 13, cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{labelMap[src] || src}</span>
+                  <span style={{ fontSize: '0.7rem', color: checked ? clr.text : clr.textMuted, whiteSpace: 'nowrap' }}>{labelMap[src] || src}</span>
                 </label>
               )
             })}
@@ -1347,7 +1345,7 @@ export default function WarroomPage() {
         {/* 판매처 체크박스 (마켓 단위) — device_id 없으면 숨김 */}
         {availMarkets.length > 0 && pcDeviceId && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>판매처</span>
+            <span style={{ fontSize: '0.75rem', color: clr.textSub, fontWeight: 600, whiteSpace: 'nowrap' }}>판매처</span>
             {availMarkets.map(mt => {
               const checked = filterMarkets === null || filterMarkets.includes(mt)
               const marketLabel: Record<string, string> = { smartstore: '스마트스토어', coupang: '쿠팡', '11st': '11번가', auction: '옥션', gmarket: 'G마켓', lotteon: '롯데ON', lottehome: '롯데홈쇼핑', ssg: 'SSG', tmon: '티몬', wemakeprice: '위메프', kream: 'KREAM', playauto: '플레이오토', gsshop: 'GS샵', elandmall: '이랜드몰', ssf: 'SSF샵' }
@@ -1357,9 +1355,9 @@ export default function WarroomPage() {
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggleMarket(mt)}
-                    style={{ accentColor: '#4C9AFF', width: 13, height: 13, cursor: 'pointer' }}
+                    style={{ accentColor: clr.link, width: 13, height: 13, cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.7rem', color: checked ? '#ddd' : '#666', whiteSpace: 'nowrap' }}>{marketLabel[mt] || mt}</span>
+                  <span style={{ fontSize: '0.7rem', color: checked ? clr.text : clr.textMuted, whiteSpace: 'nowrap' }}>{marketLabel[mt] || mt}</span>
                 </label>
               )
             })}
@@ -1368,10 +1366,10 @@ export default function WarroomPage() {
         {/* 수집인터벌 영역 제거 (2026-05-26 사용자 요구) — backend SITE_BASE_INTERVAL=0 하드코딩.
             차단 시 자동 backoff 로직은 refresher.py 안에 유지. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.4rem' }}>
-          <span style={{ fontSize: '0.75rem', color: '#9AA5C0', fontWeight: 600, whiteSpace: 'nowrap' }}>동시실행</span>
+          <span style={{ fontSize: '0.75rem', color: clr.textSub, fontWeight: 600, whiteSpace: 'nowrap' }}>동시실행</span>
           {INTERVAL_SITES.map(({ key, label }) => (
             <span key={key} style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-              <span style={{ fontSize: '0.7rem', color: '#aaa', whiteSpace: 'nowrap' }}>{label}</span>
+              <span style={{ fontSize: '0.7rem', color: clr.textSub, whiteSpace: 'nowrap' }}>{label}</span>
               <input
                 type="text"
                 inputMode="numeric"
@@ -1380,20 +1378,20 @@ export default function WarroomPage() {
                 style={{
                   width: '2.5rem',
                   padding: '0.1rem 0.25rem',
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.15)',
+                  background: clr.inputBg,
+                  border: `1px solid ${clr.border}`,
                   borderRadius: '4px',
-                  color: '#4C9AFF',
+                  color: clr.text,
                   fontSize: '0.75rem',
                   textAlign: 'center',
                   outline: 'none',
                 }}
-                onFocus={e => { e.target.style.borderColor = '#4C9AFF' }}
-                onBlur={e => { e.target.style.borderColor = 'rgba(255,255,255,0.15)' }}
+                onFocus={e => { e.target.style.borderColor = clr.link }}
+                onBlur={e => { e.target.style.borderColor = clr.border }}
               />
             </span>
           ))}
-          <span style={{ fontSize: '0.65rem', color: '#666' }}>병렬</span>
+          <span style={{ fontSize: '0.65rem', color: clr.textMuted }}>병렬</span>
         </div>
       </div>
 

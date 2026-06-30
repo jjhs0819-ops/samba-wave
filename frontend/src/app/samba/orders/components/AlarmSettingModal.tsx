@@ -3,6 +3,8 @@
 import React, { Dispatch, SetStateAction, useEffect, useState } from 'react'
 import { orderApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn } from '@/lib/samba/buttons'
 
 interface Props {
   open: boolean
@@ -18,6 +20,7 @@ interface Props {
 }
 
 export default function AlarmSettingModal(props: Props) {
+  const c = useTheme()
   const { open, onClose, alarmHour, setAlarmHour, alarmMin, setAlarmMin, sleepStart, setSleepStart, sleepEnd, setSleepEnd } = props
 
   // 쿠팡 자동 발주확인 토글 (#246 PR-6)
@@ -52,68 +55,68 @@ export default function AlarmSettingModal(props: Props) {
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-      <div style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '16px', padding: '2rem', width: '400px', maxWidth: '90vw' }}>
+      <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '16px', padding: '2rem', width: '400px', maxWidth: '90vw' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: '#E5E5E5' }}>취소 알림 설정</h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#888', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
+          <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: c.text }}>취소 알림 설정</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: c.textMuted, fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
         </div>
 
         {/* 수집 주기 */}
         <div style={{ marginBottom: '1.25rem' }}>
-          <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.5rem' }}>취소주문 수집 주기</label>
+          <label style={{ fontSize: '0.8125rem', color: c.textSub, display: 'block', marginBottom: '0.5rem' }}>취소주문 수집 주기</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <input
               type="number" min="0" max="23"
               value={alarmHour}
               onChange={e => setAlarmHour(e.target.value)}
-              style={{ width: '60px', padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', textAlign: 'center', outline: 'none' }}
+              style={{ width: '60px', padding: '0.4rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, fontSize: '0.875rem', textAlign: 'center', outline: 'none' }}
             />
-            <span style={{ color: '#888', fontSize: '0.8125rem' }}>시간</span>
+            <span style={{ color: c.textSub, fontSize: '0.8125rem' }}>시간</span>
             <input
               type="number" min="0" max="59"
               value={alarmMin}
               onChange={e => setAlarmMin(e.target.value)}
-              style={{ width: '60px', padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', textAlign: 'center', outline: 'none' }}
+              style={{ width: '60px', padding: '0.4rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, fontSize: '0.875rem', textAlign: 'center', outline: 'none' }}
             />
-            <span style={{ color: '#888', fontSize: '0.8125rem' }}>분</span>
+            <span style={{ color: c.textSub, fontSize: '0.8125rem' }}>분</span>
           </div>
         </div>
 
         {/* 영업시간 */}
         <div style={{ marginBottom: '1.5rem' }}>
-          <label style={{ fontSize: '0.8125rem', color: '#888', display: 'block', marginBottom: '0.5rem' }}>영업시간 (이 시간대에만 수집)</label>
+          <label style={{ fontSize: '0.8125rem', color: c.textSub, display: 'block', marginBottom: '0.5rem' }}>영업시간 (이 시간대에만 수집)</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ color: '#666', fontSize: '0.8125rem' }}>시작</span>
+            <span style={{ color: c.textSub, fontSize: '0.8125rem' }}>시작</span>
             <input
               type="time"
               value={sleepEnd}
               onChange={e => setSleepEnd(e.target.value)}
-              style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
+              style={{ padding: '0.4rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, fontSize: '0.875rem', outline: 'none' }}
             />
-            <span style={{ color: '#555', fontSize: '0.875rem' }}>~</span>
-            <span style={{ color: '#666', fontSize: '0.8125rem' }}>종료</span>
+            <span style={{ color: c.textMuted, fontSize: '0.875rem' }}>~</span>
+            <span style={{ color: c.textSub, fontSize: '0.8125rem' }}>종료</span>
             <input
               type="time"
               value={sleepStart}
               onChange={e => setSleepStart(e.target.value)}
-              style={{ padding: '0.4rem 0.5rem', background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px', color: '#E5E5E5', fontSize: '0.875rem', outline: 'none' }}
+              style={{ padding: '0.4rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, fontSize: '0.875rem', outline: 'none' }}
             />
           </div>
-          <p style={{ fontSize: '0.72rem', color: '#555', marginTop: '0.375rem' }}>영업시간 외에는 취소주문 수집을 하지 않습니다</p>
+          <p style={{ fontSize: '0.72rem', color: c.textMuted, marginTop: '0.375rem' }}>영업시간 외에는 취소주문 수집을 하지 않습니다</p>
         </div>
 
         {/* 쿠팡 자동 발주확인 토글 (#246 PR-6) */}
-        <div style={{ marginBottom: '1.5rem', padding: '0.75rem', background: '#0F0F0F', border: '1px solid #2D2D2D', borderRadius: '8px' }}>
+        <div style={{ marginBottom: '1.5rem', padding: '0.75rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div>
-              <label style={{ fontSize: '0.8125rem', color: '#E5E5E5', fontWeight: 600 }}>쿠팡 자동 발주확인</label>
-              <p style={{ fontSize: '0.7rem', color: '#666', marginTop: '0.25rem' }}>주문동기화 시 ACCEPT→INSTRUCT 자동 전이</p>
+              <label style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600 }}>쿠팡 자동 발주확인</label>
+              <p style={{ fontSize: '0.7rem', color: c.textMuted, marginTop: '0.25rem' }}>주문동기화 시 ACCEPT→INSTRUCT 자동 전이</p>
             </div>
             <button
               onClick={() => setCoupangAutoConfirm(!coupangAutoConfirm)}
               style={{
                 position: 'relative', width: '44px', height: '24px',
-                background: coupangAutoConfirm ? '#10B981' : '#444',
+                background: coupangAutoConfirm ? c.success : c.border,
                 border: 'none', borderRadius: '12px', cursor: 'pointer', transition: 'background 0.2s',
               }}
             >
@@ -124,7 +127,7 @@ export default function AlarmSettingModal(props: Props) {
               }} />
             </button>
           </div>
-          <p style={{ fontSize: '0.68rem', color: coupangAutoConfirm ? '#10B981' : '#F59E0B', marginTop: '0.4rem' }}>
+          <p style={{ fontSize: '0.68rem', color: coupangAutoConfirm ? c.success : c.warn, marginTop: '0.4rem' }}>
             {coupangAutoConfirm
               ? '✓ ON — 자동 처리 + 발주확인 후 단건 재조회로 배송지 변경 감지'
               : '⚠ OFF — 주문이 결제완료 상태로 머무릅니다. 운영자 수동 /confirm 필요'}
@@ -132,10 +135,10 @@ export default function AlarmSettingModal(props: Props) {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '8px', color: '#888', fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
+          <button onClick={onClose} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
           <button
             onClick={handleSave}
-            style={{ padding: '0.625rem 1.25rem', background: '#FF8C00', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+            style={{ ...btn('primary'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
           >저장</button>
         </div>
       </div>

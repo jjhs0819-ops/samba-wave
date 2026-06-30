@@ -35,6 +35,8 @@ import SmsTemplateEditModal from './components/SmsTemplateEditModal'
 import AlarmSettingModal from './components/AlarmSettingModal'
 import TrackingModal from './components/TrackingModal'
 import { showConfirm, showAlert } from '@/components/samba/Modal'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -49,6 +51,7 @@ const emptyForm: OrderForm = {
 }
 
 export default function OrdersPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-주문관리' }, [])
   const searchParams = useSearchParams()
   const cpId = searchParams.get('cpId')
@@ -662,7 +665,7 @@ export default function OrdersPage() {
 
   
   return (
-    <div style={{ color: '#E5E5E5' }}>
+    <div style={{ color: c.text }}>
       {/* 주문 자동실행 토글바 — 주문가져오기 + 송장수집 인터벌 자동 실행 */}
       <div style={{
         padding: '0.75rem 1rem', margin: '6px 0',
@@ -675,10 +678,10 @@ export default function OrdersPage() {
           gap: '1rem',
         }}>
           <div>
-            <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.2rem' }}>
+            <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '0.2rem' }}>
               🔄 주문 자동실행
             </div>
-            <div style={{ fontSize: '0.75rem', color: '#888' }}>
+            <div style={{ fontSize: '0.75rem', color: c.textMuted }}>
               ON이면 설정한 분 간격마다 서버에서 전체 주문가져오기 → 송장수집을 자동 실행합니다.
             </div>
           </div>
@@ -691,16 +694,16 @@ export default function OrdersPage() {
               max={1440}
               style={{
                 width: 56,
-                background: '#2A2A2A',
-                border: '1px solid #444',
-                color: '#ccc',
+                background: c.inputBg,
+                border: `1px solid ${c.border}`,
+                color: c.textSub,
                 borderRadius: 6,
                 padding: '4px 6px',
                 fontSize: '0.8125rem',
                 textAlign: 'center',
               }}
             />
-            <span style={{ color: '#888', fontSize: '0.8125rem' }}>분</span>
+            <span style={{ color: c.textMuted, fontSize: '0.8125rem' }}>분</span>
             <button
               onClick={handleToggleAutoSync}
               disabled={autoSyncSaving}
@@ -709,8 +712,8 @@ export default function OrdersPage() {
                 padding: '0.5rem 0.875rem',
                 borderRadius: '999px',
                 border: autoSyncEnabled ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,140,0,0.35)',
-                background: autoSyncEnabled ? '#22C55E' : '#2A2A2A',
-                color: autoSyncEnabled ? '#06130A' : '#FFB84D',
+                background: autoSyncEnabled ? c.success : c.surfaceAlt,
+                color: autoSyncEnabled ? c.btnSolidText : c.warn,
                 fontSize: '0.8125rem',
                 fontWeight: 700,
                 cursor: autoSyncSaving ? 'not-allowed' : 'pointer',
@@ -729,17 +732,17 @@ export default function OrdersPage() {
         {/* 최근 자동실행 이력 2건 요약 — 작동 여부 확인용 */}
         {autoSyncHistory.length > 0 && (
           <div style={{
-            marginTop: 10, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.06)',
+            marginTop: 10, paddingTop: 8, borderTop: `1px solid ${c.border}`,
             display: 'flex', flexDirection: 'column', gap: 6,
           }}>
-            <div style={{ fontSize: '0.7rem', color: '#888', fontWeight: 600 }}>최근 자동실행 이력</div>
+            <div style={{ fontSize: '0.7rem', color: c.textMuted, fontWeight: 600 }}>최근 자동실행 이력</div>
             {autoSyncHistory.map(item => {
               const ts = item.created_at ? new Date(item.created_at) : null
               const tsLabel = ts ? ts.toLocaleString('ko-KR', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '-'
-              const statusColor = item.status === 'completed' ? '#22C55E'
-                : item.status === 'running' ? '#FFB84D'
-                : item.status === 'pending' ? '#888'
-                : '#FF6B6B'
+              const statusColor = item.status === 'completed' ? c.success
+                : item.status === 'running' ? c.warn
+                : item.status === 'pending' ? c.textMuted
+                : c.danger
               const statusLabel = item.status === 'completed' ? '완료'
                 : item.status === 'running' ? '실행중'
                 : item.status === 'pending' ? '대기'
@@ -751,40 +754,40 @@ export default function OrdersPage() {
               return (
                 <div key={item.job_id} style={{
                   display: 'flex', flexDirection: 'column', gap: 4,
-                  padding: '6px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: 6,
+                  padding: '6px 8px', background: c.surfaceAlt, borderRadius: 6,
                 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: '0.75rem', color: '#CCC' }}>
-                    <span style={{ color: '#888', fontFamily: 'monospace' }}>{tsLabel}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: '0.75rem', color: c.textSub }}>
+                    <span style={{ color: c.textMuted, fontFamily: 'monospace' }}>{tsLabel}</span>
                     <span style={{
                       color: statusColor, fontWeight: 700,
                       padding: '1px 6px', borderRadius: 4,
                       background: `${statusColor}15`, border: `1px solid ${statusColor}30`,
                     }}>{statusLabel}</span>
-                    <span style={{ color: '#4C9AFF', fontWeight: 600 }}>① 주문가져오기</span>
-                    <span>신규 <span style={{ color: '#fff', fontWeight: 700 }}>{fmtNum(item.total_synced)}</span>건</span>
-                    <span style={{ color: '#888' }}>마켓 성공 {okMarkets} / 실패 {errMarkets}</span>
+                    <span style={{ color: c.textSub, fontWeight: 600 }}>① 주문가져오기</span>
+                    <span>신규 <span style={{ color: c.text, fontWeight: 700 }}>{fmtNum(item.total_synced)}</span>건</span>
+                    <span style={{ color: c.textMuted }}>마켓 성공 {okMarkets} / 실패 {errMarkets}</span>
                     {item.duration_sec !== null && (
-                      <span style={{ color: '#888' }}>소요 {item.duration_sec}s</span>
+                      <span style={{ color: c.textMuted }}>소요 {item.duration_sec}s</span>
                     )}
                     {item.error && (
-                      <span style={{ color: '#FF6B6B' }} title={item.error}>오류: {item.error.slice(0, 80)}</span>
+                      <span style={{ color: c.danger }} title={item.error}>오류: {item.error.slice(0, 80)}</span>
                     )}
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: '0.75rem', color: '#CCC', paddingLeft: 2 }}>
-                    <span style={{ color: tsync ? '#22C55E' : '#666', fontWeight: 600 }}>② 송장수집</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: '0.75rem', color: c.textSub, paddingLeft: 2 }}>
+                    <span style={{ color: tsync ? c.success : c.textMuted, fontWeight: 600 }}>② 송장수집</span>
                     {tsync ? (
                       <>
-                        <span>큐 <span style={{ color: '#fff', fontWeight: 700 }}>{fmtNum(tsync.queued)}</span>건</span>
-                        <span style={{ color: '#888' }}>스킵 {fmtNum(tsync.skipped)}</span>
-                        <span style={{ color: '#888' }}>잡 {fmtNum(tsync.jobs)}개</span>
+                        <span>큐 <span style={{ color: c.text, fontWeight: 700 }}>{fmtNum(tsync.queued)}</span>건</span>
+                        <span style={{ color: c.textMuted }}>스킵 {fmtNum(tsync.skipped)}</span>
+                        <span style={{ color: c.textMuted }}>잡 {fmtNum(tsync.jobs)}개</span>
                         {tsync.errors.length > 0 && (
-                          <span style={{ color: '#FF6B6B' }} title={tsync.errors.join(' / ')}>
+                          <span style={{ color: c.danger }} title={tsync.errors.join(' / ')}>
                             오류 {tsync.errors.length}건
                           </span>
                         )}
                       </>
                     ) : (
-                      <span style={{ color: '#666' }}>
+                      <span style={{ color: c.textMuted }}>
                         {item.status === 'running' || item.status === 'pending' ? '주문가져오기 종료 후 실행' : '결과 없음'}
                       </span>
                     )}
@@ -850,20 +853,20 @@ export default function OrdersPage() {
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12,
         padding: '8px 14px', margin: '6px 0',
-        background: '#1a1a1a', border: '1px solid #333', borderRadius: 6,
-        fontSize: 13, color: '#ccc',
+        background: c.surface, border: `1px solid ${c.border}`, borderRadius: 6,
+        fontSize: 13, color: c.textSub,
       }}>
-        <span style={{ fontWeight: 600, color: '#fff' }}>📦 송장 자동전송</span>
-        <span style={{ color: '#888' }}>
+        <span style={{ fontWeight: 600, color: c.text }}>📦 송장 자동전송</span>
+        <span style={{ color: c.textMuted }}>
           미발송 주문을 소싱처(무신사/롯데/SSG/ABC/GS/패션플러스/나이키/올리브영)에서 추출 → 마켓 전송
         </span>
         <button
           onClick={() => { setTrackingBatchIds([]); setTrackingStatusOpen(true) }}
           style={{
+            ...btn('secondary'),
             marginLeft: 'auto',
             padding: '6px 14px',
-            background: '#374151', color: '#fff', border: 'none', borderRadius: 4,
-            cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            fontSize: 13,
           }}
         >
           📊 진행 현황
@@ -872,11 +875,10 @@ export default function OrdersPage() {
           onClick={handleTrackingSyncBulk}
           disabled={trackingSyncing}
           style={{
+            ...btn('primary'),
+            ...(trackingSyncing ? btnDisabled : null),
             padding: '6px 14px',
-            background: trackingSyncing ? '#444' : '#2563eb',
-            color: '#fff', border: 'none', borderRadius: 4,
-            cursor: trackingSyncing ? 'not-allowed' : 'pointer',
-            fontSize: 13, fontWeight: 600,
+            fontSize: 13,
           }}
         >
           {trackingSyncing ? '큐 적재 중...' : '송장수집'}
@@ -892,9 +894,9 @@ export default function OrdersPage() {
               }
             }}
             style={{
+              ...btn('secondary'),
               padding: '6px 14px',
-              background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4,
-              cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              fontSize: 13,
             }}
           >
             선택 {fmtNum(selectedIds.size)}건 송장수집
@@ -1059,10 +1061,10 @@ export default function OrdersPage() {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#1f2937', color: '#e5e7eb',
+              background: c.surface, color: c.text,
               width: 1612, maxWidth: '98vw', maxHeight: '85vh',
               borderRadius: 8, padding: 20, overflow: 'auto',
-              border: '1px solid #374151',
+              border: `1px solid ${c.border}`,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
@@ -1085,7 +1087,7 @@ export default function OrdersPage() {
                       setLogMessages(prev => [...prev, `[송장] 중단 실패: ${(err as Error).message}`])
                     }
                   }}
-                  style={{ padding: '4px 10px', background: '#ef4444', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+                  style={{ ...btn('danger'), padding: '4px 10px', fontSize: 12 }}
                   title="진행 중인 송장수집 즉시 중단 (확인 다이얼로그 후)"
                 >⏹ 중단</button>
                 <button
@@ -1103,16 +1105,16 @@ export default function OrdersPage() {
                       setLogMessages(prev => [...prev, `[마켓 재전송] 오류: ${(err as Error).message}`])
                     }
                   }}
-                  style={{ padding: '4px 10px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                  style={{ ...btn('secondary'), padding: '4px 10px', fontSize: 12 }}
                   title="자동 dispatch가 실패한 SCRAPED/송장전송실패 잡 일괄 재시도 (자동 dispatch는 SCRAPED 직후 1회 시도, 실패 시 이 버튼으로 수동 재시도)"
                 >마켓전송 재시도</button>
                 <button
                   onClick={refreshTrackingStatus}
-                  style={{ padding: '4px 10px', background: '#2563eb', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                  style={{ ...btn('secondary'), padding: '4px 10px', fontSize: 12 }}
                 >새로고침</button>
                 <button
                   onClick={() => setTrackingStatusOpen(false)}
-                  style={{ padding: '4px 10px', background: '#4b5563', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12 }}
+                  style={{ ...btn('ghost'), padding: '4px 10px', fontSize: 12 }}
                   title="모달만 닫기 (백그라운드 처리는 계속)"
                 >닫기</button>
               </div>
@@ -1121,19 +1123,19 @@ export default function OrdersPage() {
             {/* 상태 카운트 카드 */}
             <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
               {[
-                { key: 'PENDING', label: '대기', color: '#6b7280' },
-                { key: 'SENT_TO_MARKET', label: '마켓전송', color: '#22c55e' },
-                { key: 'DISPATCH_FAILED', label: '송장전송실패', color: '#dc2626' },
-                { key: 'NO_TRACKING', label: '미발송', color: '#f59e0b' },
+                { key: 'PENDING', label: '대기', color: c.textMuted },
+                { key: 'SENT_TO_MARKET', label: '마켓전송', color: c.success },
+                { key: 'DISPATCH_FAILED', label: '송장전송실패', color: c.danger },
+                { key: 'NO_TRACKING', label: '미발송', color: c.warn },
                 { key: 'WRONG_ACCOUNT', label: '계정불일치', color: '#fb923c' },
                 { key: 'CANCELLED', label: '원주문취소', color: '#a855f7' },
-                { key: 'FAILED', label: '실패', color: '#ef4444' },
+                { key: 'FAILED', label: '실패', color: c.danger },
               ].map(({ key, label, color }) => {
                 const cnt = trackingStatusData?.counts[key] || 0
                 return (
                   <div key={key} style={{
                     flex: 1, minWidth: 110, padding: '10px 12px',
-                    background: '#111827', border: `1px solid ${color}`, borderRadius: 6,
+                    background: c.surfaceAlt, border: `1px solid ${color}`, borderRadius: 6,
                   }}>
                     <div style={{ color, fontSize: 11, fontWeight: 600 }}>{label}</div>
                     <div style={{ fontSize: 22, fontWeight: 700, marginTop: 2 }}>{fmtNum(cnt)}</div>
@@ -1143,10 +1145,10 @@ export default function OrdersPage() {
             </div>
 
             {/* 최근 잡 목록 */}
-            <div style={{ background: '#111827', borderRadius: 6, overflow: 'hidden', border: '1px solid #374151' }}>
+            <div style={{ background: c.surfaceAlt, borderRadius: 6, overflow: 'hidden', border: `1px solid ${c.border}` }}>
               <div style={{
                 display: 'grid', gridTemplateColumns: '36px 88px 110px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
-                padding: '8px 10px', background: '#0f172a', fontSize: 11, fontWeight: 700, color: '#9ca3af',
+                padding: '8px 10px', background: c.headerBg, fontSize: 11, fontWeight: 700, color: c.headerText,
               }}>
                 <div>#</div>
                 <div>상태</div>
@@ -1163,9 +1165,9 @@ export default function OrdersPage() {
               </div>
               {(trackingStatusData?.recent || []).map((j, idx) => {
                 const statusColor: Record<string, string> = {
-                  PENDING: '#6b7280', DISPATCHED: '#0ea5e9', SCRAPED: '#16a34a',
-                  SENT_TO_MARKET: '#22c55e', DISPATCH_FAILED: '#dc2626',
-                  NO_TRACKING: '#f59e0b', WRONG_ACCOUNT: '#fb923c', CANCELLED: '#a855f7', FAILED: '#ef4444',
+                  PENDING: c.textMuted, DISPATCHED: c.link, SCRAPED: c.success,
+                  SENT_TO_MARKET: c.success, DISPATCH_FAILED: c.danger,
+                  NO_TRACKING: c.warn, WRONG_ACCOUNT: '#fb923c', CANCELLED: '#a855f7', FAILED: c.danger,
                 }
                 // 소싱처 원주문링크 URL 매핑 (대소문자/한글 변형 모두 대응)
                 // 롯데ON 선물주문은 일반 orderDetail 페이지에서 조회 안 됨 → giftBoxDetail 사용
@@ -1211,16 +1213,16 @@ export default function OrdersPage() {
                 return (
                   <div key={j.id} style={{
                     display: 'grid', gridTemplateColumns: '36px 88px 110px 150px 160px 200px 80px 140px 90px 90px 120px 266px',
-                    padding: '6px 10px', borderTop: '1px solid #1f2937', fontSize: 12,
+                    padding: '6px 10px', borderTop: `1px solid ${c.border}`, fontSize: 12,
                   }}>
-                    <div style={{ color: '#6b7280', fontSize: 11 }}>{fmtNum(idx + 1)}</div>
+                    <div style={{ color: c.textMuted, fontSize: 11 }}>{fmtNum(idx + 1)}</div>
                     <div>
                       <span style={{
                         padding: '2px 6px', borderRadius: 3, fontSize: 10, fontWeight: 700,
-                        background: statusColor[j.status] || '#374151', color: '#fff',
+                        background: statusColor[j.status] || c.btnSolidBg, color: '#fff',
                       }}>{j.status}</span>
                     </div>
-                    <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                    <div style={{ fontSize: 11, color: c.textMuted }}>
                       {j.paidAt ? new Date(j.paidAt).toLocaleString('ko-KR', { year: '2-digit', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '-'}
                     </div>
                     <div style={{ fontFamily: 'monospace', fontSize: 11 }}>{j.orderNumber || j.orderId}</div>
@@ -1232,7 +1234,7 @@ export default function OrdersPage() {
                     <div>{j.courier || '-'}</div>
                     <div style={{ fontFamily: 'monospace' }}>{j.tracking || '-'}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                      <span style={{ color: '#9ca3af', fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.lastError || ''}>{j.lastError || ''}</span>
+                      <span style={{ color: c.textMuted, fontSize: 11, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={j.lastError || ''}>{j.lastError || ''}</span>
                       <button
                         onClick={() => {
                           if (!sourcingUrl) {
@@ -1243,11 +1245,9 @@ export default function OrdersPage() {
                         }}
                         disabled={!sourcingUrl}
                         style={{
-                          padding: '2px 6px', fontSize: 10, borderRadius: 3,
-                          background: sourcingUrl ? '#374151' : '#1f2937',
-                          color: sourcingUrl ? '#e5e7eb' : '#4b5563',
-                          border: '1px solid #4b5563',
-                          cursor: sourcingUrl ? 'pointer' : 'not-allowed',
+                          ...btn('secondary'),
+                          ...(!sourcingUrl ? btnDisabled : null),
+                          padding: '2px 6px', fontSize: 10,
                           whiteSpace: 'nowrap', flexShrink: 0,
                         }}
                       >원주문링크</button>
@@ -1256,16 +1256,16 @@ export default function OrdersPage() {
                 )
               })}
               {(!trackingStatusData?.recent || trackingStatusData.recent.length === 0) && (
-                <div style={{ padding: 20, textAlign: 'center', color: '#6b7280', fontSize: 12 }}>
+                <div style={{ padding: 20, textAlign: 'center', color: c.textMuted, fontSize: 12 }}>
                   아직 적재된 송장 잡이 없습니다.
                 </div>
               )}
             </div>
 
-            <div style={{ marginTop: 12, fontSize: 11, color: '#6b7280' }}>
+            <div style={{ marginTop: 12, fontSize: 11, color: c.textMuted }}>
               💡 송장수집 클릭 시점의 미입력건 큐잉 상태입니다. 자동 갱신 안 함 — 결과는 주문 테이블에서 확인하세요.
               <div style={{ marginTop: 4 }}>
-                <span style={{ color: '#f59e0b' }}>미발송</span> = 소싱처에 송장 아직 미도착(시간 지나면 자동 재시도) ·{' '}
+                <span style={{ color: c.warn }}>미발송</span> = 소싱처에 송장 아직 미도착(시간 지나면 자동 재시도) ·{' '}
                 <span style={{ color: '#fb923c' }}>계정불일치</span> = 현재 로그인된 소싱처 계정과 주문 계정이 다름(해당 계정 PC에서 재시도 필요)
               </div>
             </div>

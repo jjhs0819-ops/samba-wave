@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import AccountBlock from './AccountBlock'
 import type { TetrisAccountBlock, TetrisMarketGroup, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { DragState } from './useTetris'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy {
   id: string
@@ -39,11 +40,12 @@ function AccountSlot({
   onLeave: () => void
   onDrop: () => void
 }) {
+  const c = useTheme()
   return (
     <div
       style={{
         height: active ? 10 : 4,
-        background: active ? '#FF8C00' : 'rgba(255,140,0,0.15)',
+        background: active ? c.primary : c.accentBg,
         borderRadius: 3,
         margin: '2px 0',
         transition: 'height 0.1s, background 0.1s',
@@ -73,6 +75,7 @@ export default function MarketColumn({
   onToggleExcluded,
   onToggleAccountExcluded,
 }: Props) {
+  const c = useTheme()
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
 
@@ -110,8 +113,8 @@ export default function MarketColumn({
   return (
     <div style={{ minWidth: 211, width: 227, flexShrink: 0 }}>
       <div style={{
-        background: 'rgba(20,20,20,0.5)',
-        border: '1px solid #333',
+        background: c.surface,
+        border: `1px solid ${c.border}`,
         borderRadius: 6,
         padding: '0 6px',
       }}>
@@ -187,7 +190,7 @@ export default function MarketColumn({
             )
           })}
           {orderedAccounts.length === 0 && (
-            <div style={{ color: '#444', fontSize: 11, padding: '12px 0', textAlign: 'center' }}>No accounts</div>
+            <div style={{ color: c.textMuted, fontSize: 11, padding: '12px 0', textAlign: 'center' }}>No accounts</div>
           )}
         </div>
       </div>

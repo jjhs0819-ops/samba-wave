@@ -9,6 +9,8 @@ import {
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/api/shared'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn } from '@/lib/samba/buttons'
 import { fmtDate, fmtTime } from '@/lib/samba/utils'
 import { formatSourceSiteLabel } from '../utils/siteAlias'
 import { hasActionTag } from '../utils/actionTag'
@@ -44,6 +46,7 @@ interface Props {
 }
 
 export default function OrderInfoCell(props: Props) {
+  const c = useTheme()
   const {
     o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, actualSourceSite, activeActions,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
@@ -142,19 +145,19 @@ export default function OrderInfoCell(props: Props) {
   }
 
   return (
-    <td style={{ padding: '0.75rem', borderRight: '1px solid #1C2333', fontSize: '0.8125rem', position: 'relative' }}>
+    <td style={{ padding: '0.75rem', borderRight: `1px solid ${c.borderStrong}`, fontSize: '0.8125rem', position: 'relative' }}>
       {/* 우측 상단: 주문일 + 수량 + 삭제 */}
       <div style={{ position: 'absolute', top: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.25rem' }}>
         {o.paid_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <span style={{ fontSize: '0.72rem', color: '#fff', fontWeight: 700 }}>{fmtDate(o.paid_at, '.')}</span>
+            <span style={{ fontSize: '0.72rem', color: c.text, fontWeight: 700 }}>{fmtDate(o.paid_at, '.')}</span>
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <span style={{ fontSize: '0.72rem', color: '#555' }}>{fmtDate(o.created_at, '.')}</span>
-          <button onClick={() => handleDelete(o.id)} style={{ padding: '0.125rem 0.5rem', fontSize: '0.7rem', background: '#8B1A1A', border: '1px solid #C0392B', color: '#fff', borderRadius: '4px', cursor: 'pointer' }}>삭제</button>
+          <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{fmtDate(o.created_at, '.')}</span>
+          <button onClick={() => handleDelete(o.id)} style={{ ...btn('danger'), padding: '0.125rem 0.5rem', fontSize: '0.7rem' }}>삭제</button>
         </div>
-        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: o.quantity > 1 ? '#F5A623' : '#888' }}>수량: <span style={{ color: o.quantity > 1 ? '#F5A623' : '#888' }}>{fmtNum(o.quantity)}</span></span>
+        <span style={{ fontSize: '0.95rem', fontWeight: 700, color: o.quantity > 1 ? c.warn : c.textMuted }}>수량: <span style={{ color: o.quantity > 1 ? c.warn : c.textMuted }}>{fmtNum(o.quantity)}</span></span>
       </div>
 
       {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
@@ -164,41 +167,41 @@ export default function OrderInfoCell(props: Props) {
             src={o.product_image}
             alt=""
             onClick={() => handleImageClick(o)}
-            style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: '1px solid #2D2D2D', flexShrink: 0, cursor: 'pointer' }}
+            style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${c.border}`, flexShrink: 0, cursor: 'pointer' }}
           />
         ) : (
           <div
             onClick={() => handleImageClick(o)}
-            style={{ width: '100px', height: '100px', background: '#1A1A1A', borderRadius: '6px', border: '1px solid #2D2D2D', display: 'flex', alignItems: 'center', justifyContent: 'center', color: o.product_id?.startsWith('http') ? '#4C9AFF' : '#444', fontSize: '0.75rem', flexShrink: 0, cursor: o.product_id?.startsWith('http') ? 'pointer' : 'default', textDecoration: o.product_id?.startsWith('http') ? 'underline' : 'none' }}
+            style={{ width: '100px', height: '100px', background: c.surfaceAlt, borderRadius: '6px', border: `1px solid ${c.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: o.product_id?.startsWith('http') ? c.link : c.textMuted, fontSize: '0.75rem', flexShrink: 0, cursor: o.product_id?.startsWith('http') ? 'pointer' : 'default', textDecoration: o.product_id?.startsWith('http') ? 'underline' : 'none' }}
           >{o.product_id?.startsWith('http') ? '링크이동' : 'No IMG'}</div>
         )}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-            {sourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D', flexShrink: 0, whiteSpace: 'nowrap' }}>{sourceBadgeLabel}</span>}
-            {extraSourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', border: '1px solid #2D2D2D', flexShrink: 0, whiteSpace: 'nowrap' }}>{extraSourceBadgeLabel}</span>}
-            <span style={{ fontSize: '0.75rem', color: '#B0B0B0', background: '#1A1A1A', padding: '0.125rem 0.5rem', borderRadius: '4px', minWidth: 0, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1 }}>{o.channel_name || '마켓'}</span>
-            <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? '#1F3A24' : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? '#51CF66' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? '#51CF66' : '#B0B0B0', cursor: 'pointer' }}>SMS</button>
-            <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? '#3A320F' : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? '#FFD93D' : '#2D2D2D'}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? '#FFD93D' : '#B0B0B0', cursor: 'pointer' }}>KAKAO</button>
+            {sourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', border: `1px solid ${c.border}`, flexShrink: 0, whiteSpace: 'nowrap' }}>{sourceBadgeLabel}</span>}
+            {extraSourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', border: `1px solid ${c.border}`, flexShrink: 0, whiteSpace: 'nowrap' }}>{extraSourceBadgeLabel}</span>}
+            <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', minWidth: 0, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1 }}>{o.channel_name || '마켓'}</span>
+            <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? c.surfaceAlt : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? c.success : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? c.success : c.textSub, cursor: 'pointer' }}>SMS</button>
+            <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? c.accentBg : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? c.warn : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? c.warn : c.textSub, cursor: 'pointer' }}>KAKAO</button>
           </div>
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-            <div><span style={{ color: '#666' }}>상품주문번호 </span>{renderCopyableText(o.order_number, '상품주문번호', { fontFamily: 'monospace' })}</div>
+            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText(o.order_number, '상품주문번호', { fontFamily: 'monospace' })}</div>
             {o.shipment_id && (
-              <div><span style={{ color: '#666' }}>주문번호 </span>{renderCopyableText(o.shipment_id, '주문번호', { fontFamily: 'monospace', color: '#B0B0B0' })}</div>
+              <div><span style={{ color: c.textSub }}>주문번호 </span>{renderCopyableText(o.shipment_id, '주문번호', { fontFamily: 'monospace', color: c.textSub })}</div>
             )}
           </div>
           <div style={{ minWidth: 0 }}>
-            <span style={{ color: '#C5C5C5', fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
+            <span style={{ color: c.text, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
             {(o.product_option || showOrderBtns) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginTop: '0.125rem', flexWrap: 'wrap' }}>
                 {o.product_option && (
-                  <span style={{ color: '#FACC15', fontSize: '0.75rem', fontWeight: 700 }}>[옵션] {o.product_option}</span>
+                  <span style={{ color: c.warn, fontSize: '0.75rem', fontWeight: 700 }}>[옵션] {o.product_option}</span>
                 )}
                 {showOrderBtns && (
                   <>
                     <button onClick={() => triggerPlaceOrder('direct')}
-                      style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2563EB', borderRadius: '4px', color: '#60A5FA', cursor: 'pointer' }}>직배주문</button>
+                      style={{ ...btn('accent'), fontSize: '0.7rem', padding: '0.125rem 0.375rem' }}>직배주문</button>
                     <button onClick={() => triggerPlaceOrder('kkadaegi')}
-                      style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #D97706', borderRadius: '4px', color: '#FBBF24', cursor: 'pointer' }}>까대기주문</button>
+                      style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.warn}`, borderRadius: '4px', color: c.warn, cursor: 'pointer' }}>까대기주문</button>
                     {showGiftBtn && (
                       <button onClick={() => triggerPlaceOrder('gift')}
                         style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #7C3AED', borderRadius: '4px', color: '#A78BFA', cursor: 'pointer' }}>선물주문</button>
@@ -213,7 +216,7 @@ export default function OrderInfoCell(props: Props) {
 
       {/* 쿠팡노출 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.375rem' }}>
-        <span style={{ color: '#666', fontSize: '0.7rem', whiteSpace: 'nowrap' }}>쿠팡노출</span>
+        <span style={{ color: c.textSub, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>쿠팡노출</span>
         <input
           type="text"
           placeholder="쿠팡노출상품명"
@@ -227,22 +230,22 @@ export default function OrderInfoCell(props: Props) {
             } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', minWidth: 0 }}
+          style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', minWidth: 0 }}
         />
       </div>
 
       {/* 업데이트 로그 */}
       {refreshLog[o.id] && (
-        <div style={{ fontSize: '0.72rem', color: '#8A95B0', padding: '0.25rem 0', marginBottom: '0.25rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <div style={{ fontSize: '0.72rem', color: c.textMuted, padding: '0.25rem 0', marginBottom: '0.25rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {refreshLog[o.id]}
         </div>
       )}
       {/* 버튼 */}
       <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
-        <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>다나와</button>
-        <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>네이버</button>
+        <button onClick={() => handleDanawa(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>다나와</button>
+        <button onClick={() => handleNaver(o.product_name || '')} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>네이버</button>
         {o.collected_product_id === 'DELETED' ? (
-          <span style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: '#1A1A1A', border: '1px solid #444', borderRadius: '4px', color: '#555' }}>삭제완료</span>
+          <span style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textMuted }}>삭제완료</span>
         ) : (
           <button onClick={async () => {
           if (o.collected_product_id) {
@@ -282,7 +285,7 @@ export default function OrderInfoCell(props: Props) {
           } else {
             showAlert('상품 정보가 없습니다', 'info')
           }
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>상품정보</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>상품정보</button>
         )}
         <button onClick={async () => {
           try {
@@ -298,11 +301,11 @@ export default function OrderInfoCell(props: Props) {
             const history = await collectorApi.getPriceHistory(cpId)
             setPriceHistoryData(history || [])
           } catch { showAlert('가격이력 조회 실패', 'error') }
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>가격변경이력</button>
-        <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원문링크</button>
-        <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>판매링크</button>
-        <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>미등록 입력</button>
-        <button onClick={() => handleTracking(o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>배송조회</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>가격변경이력</button>
+        <button onClick={() => handleSourceLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>원문링크</button>
+        <button onClick={() => handleMarketLink(o)} style={{ fontSize: '0.6875rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>판매링크</button>
+        <button onClick={() => openUrlModal(o.id)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>미등록 입력</button>
+        <button onClick={() => handleTracking(o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>배송조회</button>
         <button onClick={async () => {
           const ts = fmtTime()
           setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 가격재고 갱신 중...` }))
@@ -346,7 +349,7 @@ export default function OrderInfoCell(props: Props) {
           } catch (e) {
             setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts}] 갱신 실패: ${e instanceof Error ? e.message : ''}` }))
           }
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>업데이트</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>업데이트</button>
         <button onClick={async () => {
           if (!await showConfirm('롯데ON 마켓에서 상품을 삭제(판매종료)하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return
           try {
@@ -359,7 +362,7 @@ export default function OrderInfoCell(props: Props) {
           } catch (e) {
             showAlert(e instanceof Error ? e.message : '마켓 상품 삭제 실패', 'error')
           }
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>마켓상품삭제</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>마켓상품삭제</button>
         <button onClick={() => {
           // issue #215 — ext_order_number는 URL/단순번호 polymorphic. URL일 때만 직접 오픈
           if (o.ext_order_number && /^https?:\/\//i.test(o.ext_order_number)) { window.open(o.ext_order_number, '_blank'); return }
@@ -382,50 +385,50 @@ export default function OrderInfoCell(props: Props) {
           const url = orderUrlMap[sourceSiteCode]
           if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }
           window.open(url, '_blank')
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>원주문링크</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>원주문링크</button>
         <button onClick={() => {
           if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
           window.open(`/samba/returns?order_number=${encodeURIComponent(o.order_number)}`, '_blank')
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>반품/교환</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>반품/교환</button>
         <button onClick={() => {
           if (!o.order_number) { showAlert('주문번호가 없습니다', 'info'); return }
           window.open(`/samba/cs?search=${encodeURIComponent(o.order_number)}`, '_blank')
-        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#B0B0B0', cursor: 'pointer' }}>CS</button>
+        }} style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}>CS</button>
       </div>
 
       {/* 주문자/수령인/연락처/주소 한 줄 */}
       <div style={{ display: 'flex', gap: '0.75rem', fontSize: '0.8rem', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-          <span style={{ color: '#666' }}>주문자</span>
+          <span style={{ color: c.textSub }}>주문자</span>
           {renderCopyableText(o.orderer_name || o.customer_name, '주문자')}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-          <span style={{ color: '#666' }}>수령인</span>
+          <span style={{ color: c.textSub }}>수령인</span>
           {renderCopyableText(o.customer_name, '수령인')}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-          <span style={{ color: '#666' }}>연락처</span>
+          <span style={{ color: c.textSub }}>연락처</span>
           {renderCopyableText(o.customer_phone, '연락처')}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-          <span style={{ color: '#666' }}>주소</span>
+          <span style={{ color: c.textSub }}>주소</span>
           {renderCopyableText(customerAddress.base, '기본주소')}
           {customerAddress.detail && (
             <>
-              <span style={{ color: '#555' }}>/</span>
+              <span style={{ color: c.textMuted }}>/</span>
               {renderCopyableText(customerAddress.detail, '상세주소')}
             </>
           )}
           {o.customer_postal_code && (
             // 우편번호 — 확인용만 표시. 복사 버튼 의도적 제외 (주소 복사 시 우편번호 제외)
-            <span style={{ color: '#888', fontSize: '0.75rem', marginLeft: '0.25rem' }}>
+            <span style={{ color: c.textMuted, fontSize: '0.75rem', marginLeft: '0.25rem' }}>
               [{o.customer_postal_code}]
             </span>
           )}
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.25rem', fontSize: '0.8rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>
-          <span style={{ color: '#666', whiteSpace: 'nowrap' }}>고객메모</span>
+          <span style={{ color: c.textSub, whiteSpace: 'nowrap' }}>고객메모</span>
           <span
             role={o.customer_note?.trim() ? 'button' : undefined}
             tabIndex={o.customer_note?.trim() ? 0 : undefined}
@@ -439,10 +442,10 @@ export default function OrderInfoCell(props: Props) {
               }
             }}
             style={{
-              color: o.customer_note?.trim() ? '#E5E5E5' : '#666',
+              color: o.customer_note?.trim() ? c.text : c.textMuted,
               cursor: o.customer_note?.trim() ? 'copy' : 'default',
               textDecoration: o.customer_note?.trim() ? 'underline' : 'none',
-              textDecorationColor: 'rgba(229, 229, 229, 0.35)',
+              textDecorationColor: 'rgba(20, 24, 31, 0.35)',
               textUnderlineOffset: '2px',
               wordBreak: 'break-word',
             }}
@@ -451,7 +454,7 @@ export default function OrderInfoCell(props: Props) {
           </span>
         </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8rem' }}>
-        <span style={{ color: '#666', whiteSpace: 'nowrap' }}>타마켓주문링크</span>
+        <span style={{ color: c.textSub, whiteSpace: 'nowrap' }}>타마켓주문링크</span>
         <input
           type="text"
           placeholder="타마켓 주문링크 URL"
@@ -468,7 +471,7 @@ export default function OrderInfoCell(props: Props) {
             } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-          style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: '#1A1A1A', border: '1px solid #444', color: '#E5E5E5', borderRadius: '4px', fontFamily: 'monospace', minWidth: 0 }}
+          style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', fontFamily: 'monospace', minWidth: 0 }}
         />
       </div>
     </td>

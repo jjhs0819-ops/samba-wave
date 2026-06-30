@@ -2,6 +2,8 @@
 
 import type { Dispatch, SetStateAction } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { collectorApi, proxyApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
 import { SITES, SITE_OPTIONS } from '../constants'
@@ -76,6 +78,7 @@ interface SourcingUrlPanelProps {
 }
 
 export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
+  const c = useTheme()
   const {
     selectedSite, setSelectedSite,
     collectUrl, setCollectUrl,
@@ -102,7 +105,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
     <>
       {/* 소싱처 선택 + URL 입력 영역 */}
       <div style={{
-        background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D', borderRadius: '8px',
+        background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px',
         padding: '1.25rem', marginBottom: '1rem',
       }}>
         {/* 소싱처 선택 버튼 */}
@@ -125,9 +128,9 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                   padding: '0.35rem 0.875rem', borderRadius: '20px', fontSize: '0.8rem',
                   fontWeight: selectedSite === site.id ? 700 : 400,
                   cursor: site.disabled ? 'not-allowed' : 'pointer',
-                  border: site.disabled ? '1px solid #2A2A2A' : selectedSite === site.id ? '1px solid #FF8C00' : '1px solid #3D3D3D',
-                  background: site.disabled ? 'transparent' : selectedSite === site.id ? 'rgba(255,140,0,0.15)' : 'transparent',
-                  color: site.disabled ? '#555' : selectedSite === site.id ? '#FF8C00' : '#C5C5C5',
+                  border: site.disabled ? `1px solid ${c.border}` : selectedSite === site.id ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+                  background: site.disabled ? 'transparent' : selectedSite === site.id ? '#e3f4f0' : 'transparent',
+                  color: site.disabled ? c.textMuted : selectedSite === site.id ? '#0f6a5b' : c.text,
                   opacity: site.disabled ? 0.6 : 1,
                   transition: 'all 0.15s',
                 }}
@@ -144,10 +147,8 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                 setAiExcludedKeywords(new Set())
               }}
               style={{
-                marginLeft: 'auto', padding: '0.6rem 1.2rem', borderRadius: '6px',
-                background: 'linear-gradient(135deg, #6C5CE7, #A29BFE)',
-                color: '#fff', fontWeight: 600, fontSize: '0.82rem',
-                border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+                ...btn('accent'), marginLeft: 'auto', padding: '0.6rem 1.2rem',
+                borderRadius: '6px', fontSize: '0.82rem', whiteSpace: 'nowrap',
               }}
             >
               AI 소싱기
@@ -162,11 +163,11 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                     type='checkbox'
                     checked={!!checkedOptions[opt.id]}
                     onChange={(e) => setCheckedOptions((prev) => ({ ...prev, [opt.id]: e.target.checked }))}
-                    style={{ accentColor: '#FF8C00', width: '13px', height: '13px', cursor: 'pointer' }}
+                    style={{ accentColor: c.primary, width: '13px', height: '13px', cursor: 'pointer' }}
                   />
-                  <span style={{ fontSize: '0.78rem', color: '#999' }}>{opt.label}</span>
+                  <span style={{ fontSize: '0.78rem', color: c.textSub }}>{opt.label}</span>
                   {opt.warn && checkedOptions[opt.id] && (
-                    <span style={{ fontSize: '0.7rem', color: '#FF6B35' }}>{opt.warn}</span>
+                    <span style={{ fontSize: '0.7rem', color: c.warn }}>{opt.warn}</span>
                   )}
                 </label>
               ))}
@@ -199,8 +200,8 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
             }
             style={{
               flex: 1, padding: '0.6rem 0.8rem', fontSize: '0.82rem',
-              background: 'rgba(30,30,30,0.5)', border: '1px solid #2D2D2D', borderRadius: '6px',
-              color: '#E5E5E5', outline: 'none',
+              background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px',
+              color: c.text, outline: 'none',
             }}
           />
           {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM') && (
@@ -334,7 +335,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               } catch (e) { addLog(`[카테고리스캔] ${selectedSite} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
               setBrandScanning(false)
             }} disabled={brandScanning}
-              style={{ padding: '0.6rem 1rem', background: brandScanning ? '#333' : 'transparent', border: '1px solid #FF8C00', borderRadius: '6px', color: '#FF8C00', fontSize: '0.82rem', fontWeight: 600, cursor: brandScanning ? 'not-allowed' : 'pointer', whiteSpace: 'nowrap' }}>
+              style={{ ...btn('accent'), ...(brandScanning ? btnDisabled : null), padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
               {brandScanning ? '탐색 중...' : '카테고리 스캔'}
             </button>
           )}
@@ -376,10 +377,9 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
             }}
             disabled={collecting}
             style={{
-              background: 'linear-gradient(135deg, #FF8C00, #FFB84D)', color: '#fff',
-              padding: '0.6rem 1.2rem', borderRadius: '6px', fontWeight: 600, fontSize: '0.82rem',
-              whiteSpace: 'nowrap', cursor: collecting ? 'not-allowed' : 'pointer',
-              border: 'none', opacity: collecting ? 0.6 : 1,
+              ...btn('primary'), ...(collecting ? btnDisabled : null),
+              padding: '0.6rem 1.2rem', borderRadius: '6px', fontSize: '0.82rem',
+              whiteSpace: 'nowrap',
             }}
           >
             {collecting ? '생성중...' : brandCategories.length > 0 ? `그룹 생성 (${fmtNum(brandSelectedCats.size)}개)` : '그룹 생성'}
@@ -406,11 +406,9 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               }}
               disabled={collecting}
               style={{
-                background: collecting ? '#333' : 'transparent',
-                border: '1px solid #51CF66',
-                color: '#51CF66',
-                padding: '0.6rem 1rem', borderRadius: '6px', fontWeight: 600, fontSize: '0.82rem',
-                whiteSpace: 'nowrap', cursor: collecting ? 'not-allowed' : 'pointer', opacity: collecting ? 0.6 : 1,
+                ...btn('secondary'), ...(collecting ? btnDisabled : null),
+                padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem',
+                whiteSpace: 'nowrap',
               }}
             >
               1상품수집
@@ -423,19 +421,19 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
         {/* 카테고리 스캔 결과 */}
         {brandCategories.length > 0 && (
           <div style={{ marginTop: '0.5rem' }}>
-              <div style={{ background: '#111', border: '1px solid #2D2D2D', borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
+              <div style={{ background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '0.75rem', maxHeight: '350px', overflowY: 'auto' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                  <span style={{ fontSize: '0.78rem', color: c.textSub }}>
                     {fmtNum(brandCategories.length)}개 카테고리 / {fmtNum(brandTotal)}건
                     (선택 {fmtNum(brandSelectedCats.size)}개)
                   </span>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
                     <button onClick={() => setBrandSelectedCats(new Set(brandCategories.map(c => c.categoryCode)))}
-                      style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>전체선택</button>
+                      style={{ ...btn('ghost'), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>전체선택</button>
                     <button onClick={() => setBrandSelectedCats(new Set())}
-                      style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>전체해제</button>
+                      style={{ ...btn('ghost'), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>전체해제</button>
                     <button onClick={() => { setBrandCategories([]); setBrandSelectedCats(new Set()) }}
-                      style={{ fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px', border: '1px solid #3D3D3D', background: 'transparent', color: '#888', cursor: 'pointer' }}>초기화</button>
+                      style={{ ...btn('ghost'), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>초기화</button>
                   </div>
                 </div>
                 {brandCategories.map(cat => (
@@ -445,9 +443,9 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                         const next = new Set(brandSelectedCats)
                         if (e.target.checked) next.add(cat.categoryCode); else next.delete(cat.categoryCode)
                         setBrandSelectedCats(next)
-                      }} style={{ accentColor: '#FF8C00' }} />
-                    <span style={{ color: '#E5E5E5', flex: 1 }}>{cat.path}</span>
-                    <span style={{ color: '#FF8C00', fontWeight: 600, fontSize: '0.72rem' }}>{fmtNum(cat.count)}건</span>
+                      }} style={{ accentColor: c.primary }} />
+                    <span style={{ color: c.text, flex: 1 }}>{cat.path}</span>
+                    <span style={{ color: c.text, fontWeight: 600, fontSize: '0.72rem' }}>{fmtNum(cat.count)}건</span>
                   </label>
                 ))}
               </div>

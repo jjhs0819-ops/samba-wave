@@ -2,12 +2,13 @@
 
 import React from 'react'
 import { showAlert } from '@/components/samba/Modal'
+import { dark as c } from '@/lib/samba/colors'
 
 const copyableTextStyle: React.CSSProperties = {
-  color: '#E5E5E5',
+  color: c.text,
   cursor: 'copy',
   textDecoration: 'underline',
-  textDecorationColor: 'rgba(229, 229, 229, 0.35)',
+  textDecorationColor: c.textMuted,
   textUnderlineOffset: '2px',
 }
 

@@ -7,6 +7,9 @@ import ImageManagerModal from './ImageManagerModal'
 import type { SambaCollectedProduct } from '@/lib/samba/legacy'
 import { fmtNum } from '@/lib/samba/styles'
 import { buildMarketPriceList } from '@/lib/samba/marketPrice'
+import { useTheme } from '@/lib/samba/useTheme'
+import { dark as c } from '@/lib/samba/colors'
+import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 interface Policy { id: string; name: string; market_policies?: Record<string, unknown>; pricing?: Record<string, unknown> }
 
@@ -39,9 +42,9 @@ interface Props {
   onRefresh: () => void
 }
 
-const SELECT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] focus:outline-none focus:border-[#FF8C00]'
-const INPUT = 'w-full px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]'
-const LABEL = 'text-xs text-[#666] mb-1 block'
+const SELECT = `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] focus:outline-none focus:border-[${c.primary}]`
+const INPUT = `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
+const LABEL = `text-xs text-[${c.textSub}] mb-1 block`
 
 // 수정 폼 옵션 행 (UI 전용 id 포함) — 옵션별 가격 미사용(판매가는 정책 기반)
 interface EditOption { id: string; name: string; stock: number }
@@ -59,7 +62,9 @@ function toEditOptions(raw: unknown[] | undefined): EditOption[] {
   })
 }
 
-export default function ManualProductCard({ product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
+export default function ManualProductCard({
+  product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
+  const c = useTheme()
   const [showCategories, setShowCategories] = useState(false)
   const [showPrices, setShowPrices] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
@@ -248,39 +253,39 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
   }, [appliedPolicy, accounts, priceCost, product])
 
   return (
-    <div className='bg-[#111] border border-[#1A1A1A] rounded-lg p-4 space-y-3'>
+    <div className={`bg-[${c.surface}] border border-[${c.border}] rounded-lg p-4 space-y-3`}>
       {/* 상품 기본 정보 */}
       <div className='flex gap-3'>
         <div
           onClick={() => setShowImageModal(true)}
-          className='w-16 h-16 rounded border border-[#2D2D2D] shrink-0 cursor-pointer overflow-hidden bg-[#0A0A0A] flex items-center justify-center hover:border-[#FF8C00] transition-colors'
+          className={`w-16 h-16 rounded border border-[${c.border}] shrink-0 cursor-pointer overflow-hidden bg-[${c.surfaceAlt}] flex items-center justify-center hover:border-[#a9ddd2] transition-colors`}
           title='이미지 관리'
         >
           {thumb ? (
             <img src={thumb} alt='' className='w-full h-full object-cover' />
           ) : (
-            <span className='text-[#444] text-xs'>이미지</span>
+            <span className={`text-[${c.textMuted}] text-xs`}>이미지</span>
           )}
         </div>
         <div className='flex-1 min-w-0'>
-          <p className='font-medium text-sm text-[#E5E5E5] truncate'>{product.name}</p>
-          {product.brand && <p className='text-xs text-[#666] mt-0.5'>{product.brand}</p>}
-          <div className='flex gap-3 mt-1 text-xs text-[#888]'>
+          <p className={`font-medium text-sm text-[${c.text}] truncate`}>{product.name}</p>
+          {product.brand && <p className={`text-xs text-[${c.textMuted}] mt-0.5`}>{product.brand}</p>}
+          <div className={`flex gap-3 mt-1 text-xs text-[${c.textMuted}]`}>
             <span>원가 {fmtNum(product.cost ?? 0)}원</span>
             <span>판매가 {fmtNum(product.sale_price ?? 0)}원</span>
           </div>
         </div>
         <div className='flex flex-col gap-1.5 self-start shrink-0 items-end'>
           {!editing && (
-            <button onClick={startEdit} className='text-[#FF8C00] text-xs hover:underline'>수정</button>
+            <button onClick={startEdit} className={`text-[${c.textSub}] text-xs hover:underline`}>수정</button>
           )}
-          <button onClick={deleteProduct} className='text-[#FF6B6B] text-xs hover:underline'>삭제</button>
+          <button onClick={deleteProduct} className={`text-[${c.danger}] text-xs hover:underline`}>삭제</button>
         </div>
       </div>
 
       {/* 기본정보 수정 폼 */}
       {editing && (
-        <div className='space-y-2 border border-[#FF8C00]/30 rounded-lg p-3 bg-[#0A0A0A]'>
+        <div className={`space-y-2 border border-[${c.border}] rounded-lg p-3 bg-[${c.surfaceAlt}]`}>
           <input className={INPUT} value={edit.name} onChange={e => setEditField('name', e.target.value)} placeholder='상품명 *' />
           <input className={INPUT} value={edit.brand} onChange={e => setEditField('brand', e.target.value)} placeholder='브랜드' />
           <div className='grid grid-cols-3 gap-2'>
@@ -308,7 +313,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
             <select className={SELECT} value={edit.season} onChange={e => setEditField('season', e.target.value)}>
               <option>사계절</option><option>봄/여름</option><option>가을/겨울</option><option>봄</option><option>여름</option><option>가을</option><option>겨울</option>
             </select>
-            <input className='col-span-2 px-2.5 py-1.5 bg-[#0A0A0A] border border-[#1A1A1A] rounded text-sm text-[#E5E5E5] placeholder-[#444] focus:outline-none focus:border-[#FF8C00]' value={edit.material} onChange={e => setEditField('material', e.target.value)} placeholder='재질 (예: 면 100%)' />
+            <input className={`col-span-2 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`} value={edit.material} onChange={e => setEditField('material', e.target.value)} placeholder='재질 (예: 면 100%)' />
           </div>
 
           {/* 태그 (쉼표 구분) */}
@@ -321,9 +326,9 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
           <div>
             <div className='flex justify-between items-center mb-1'>
               <label className={LABEL}>옵션</label>
-              <button onClick={addEditOption} className='text-xs text-[#FF8C00] hover:text-[#E07B00]'>+ 추가</button>
+              <button onClick={addEditOption} className={`text-xs text-[${c.textSub}] hover:text-[${c.text}]`}>+ 추가</button>
             </div>
-            <div className='grid grid-cols-[1fr_90px_24px] gap-2 text-xs text-[#666] px-0.5 mb-1'>
+            <div className={`grid grid-cols-[1fr_90px_24px] gap-2 text-xs text-[${c.textSub}] px-0.5 mb-1`}>
               <span>옵션명</span><span>재고</span><span />
             </div>
             <div className='space-y-1.5'>
@@ -331,27 +336,27 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
                 <div key={opt.id} className='grid grid-cols-[1fr_90px_24px] gap-2'>
                   <input className={INPUT} value={opt.name} onChange={e => updateEditOption(opt.id, 'name', e.target.value)} placeholder='옵션명 (예: 블랙/L)' />
                   <input type='number' className={INPUT} value={opt.stock} onChange={e => updateEditOption(opt.id, 'stock', Number(e.target.value))} placeholder='0' />
-                  <button onClick={() => removeEditOption(opt.id)} className='text-[#FF6B6B] text-sm'>×</button>
+                  <button onClick={() => removeEditOption(opt.id)} className={`text-[${c.danger}] text-sm`}>×</button>
                 </div>
               ))}
               {editOptions.length === 0 && (
-                <p className='text-xs text-[#555]'>옵션 없음 (추가하면 단일/다중 옵션 등록)</p>
+                <p className={`text-xs text-[${c.textMuted}]`}>옵션 없음 (추가하면 단일/다중 옵션 등록)</p>
               )}
             </div>
           </div>
 
-          {editErr && <p className='text-[#FF6B6B] text-xs'>{editErr}</p>}
+          {editErr && <p className={`text-[${c.danger}] text-xs`}>{editErr}</p>}
 
           <div className='flex gap-2 justify-end pt-1'>
-            <button onClick={() => setEditing(false)} disabled={savingEdit} className='px-3 py-1.5 bg-[#1A1A1A] text-[#999] text-sm rounded hover:text-[#E5E5E5] disabled:opacity-50'>취소</button>
-            <button onClick={saveEdit} disabled={savingEdit} className='px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00] disabled:opacity-50'>{savingEdit ? '저장 중...' : '저장'}</button>
+            <button onClick={() => setEditing(false)} disabled={savingEdit} style={{ ...btn('ghost'), ...(savingEdit ? btnDisabled : null) }} className='px-3 py-1.5 text-sm rounded'>취소</button>
+            <button onClick={saveEdit} disabled={savingEdit} style={{ ...btn('primary'), ...(savingEdit ? btnDisabled : null) }} className='px-4 py-1.5 text-sm'>{savingEdit ? '저장 중...' : '저장'}</button>
           </div>
         </div>
       )}
 
       {/* 정책 */}
       <div>
-        <label className='text-xs text-[#666] block mb-1'>정책</label>
+        <label className={`text-xs text-[${c.textSub}] block mb-1`}>정책</label>
         <select className={SELECT} value={product.applied_policy_id ?? ''} onChange={e => applyPolicy(e.target.value)}>
           <option value=''>정책 없음</option>
           {policies.map(p => (
@@ -365,19 +370,19 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
         <div>
           <button
             onClick={() => setShowPrices(v => !v)}
-            className='text-xs text-[#FF8C00] hover:text-[#E07B00]'
+            className={`text-xs text-[${c.textSub}] hover:text-[${c.text}]`}
           >
             {showPrices ? '판매처별 판매가 접기 ▲' : `판매처별 판매가 보기 ▼ (${fmtNum(marketPriceList.length)}개)`}
           </button>
           {showPrices && (
             <div className='flex flex-col gap-1.5 mt-1'>
               {marketPriceList.map(m => (
-                <div key={m.marketName} className='bg-[#0A0A0A] border border-[#1A1A1A] rounded px-2.5 py-1.5'>
+                <div key={m.marketName} className={`bg-[${c.surfaceAlt}] border border-[${c.border}] rounded px-2.5 py-1.5`}>
                   <div className='flex items-center justify-between'>
-                    <span className='text-xs text-[#999]'>{m.marketName === '신세계몰(전시)' ? '신세계몰' : m.marketName}</span>
-                    <span className='text-sm font-semibold text-[#FFB84D]'>{m.calcStr.split(' = ')[0]}</span>
+                    <span className={`text-xs text-[${c.textSub}]`}>{m.marketName === '신세계몰(전시)' ? '신세계몰' : m.marketName}</span>
+                    <span className={`text-sm font-semibold text-[${c.text}]`}>{m.calcStr.split(' = ')[0]}</span>
                   </div>
-                  <div className='text-[0.68rem] text-[#666] mt-0.5'>{m.calcStr.split(' = ')[1]}</div>
+                  <div className={`text-[0.68rem] text-[${c.textMuted}] mt-0.5`}>{m.calcStr.split(' = ')[1]}</div>
                 </div>
               ))}
             </div>
@@ -394,7 +399,7 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
           <div>
             <button
               onClick={() => setShowCategories(v => !v)}
-              className='text-xs text-[#FF8C00] hover:text-[#E07B00]'
+              className={`text-xs text-[${c.textSub}] hover:text-[${c.text}]`}
             >
               {showCategories ? '카테고리 접기 ▲' : `마켓별 카테고리 ▼${catCount > 0 ? ` (${fmtNum(catCount)}개 설정됨)` : ''}`}
             </button>
@@ -420,12 +425,13 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
           <button
             onClick={transmit}
             disabled={transmitting}
-            className='px-4 py-1.5 bg-[#FF8C00] text-white text-sm rounded-lg font-medium hover:bg-[#E07B00] disabled:opacity-50'
+            style={{ ...btn('primary'), ...(transmitting ? btnDisabled : null) }}
+            className='px-4 py-1.5 text-sm'
           >
             {transmitting ? '전송 중...' : '마켓 전송'}
           </button>
           {result && (
-            <span className={`text-xs ${result.includes('실패') || result.includes('선택') ? 'text-[#FF6B6B]' : 'text-green-400'}`}>
+            <span className={`text-xs ${result.includes('실패') || result.includes('선택') ? `text-[${c.danger}]` : `text-[${c.success}]`}`}>
               {result}
             </span>
           )}
@@ -437,8 +443,8 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
             style={{
               maxHeight: 120,
               overflowY: 'auto',
-              background: '#0A0A0A',
-              border: '1px solid #1A1A1A',
+              background: c.surfaceAlt,
+              border: `1px solid ${c.border}`,
               borderRadius: 6,
               padding: '6px 8px',
             }}
@@ -451,11 +457,11 @@ export default function ManualProductCard({ product, policies, accounts, onDelet
                   gap: 6,
                   fontSize: 11,
                   lineHeight: '18px',
-                  color: log.ok ? '#4ADE80' : '#FF6B6B',
+                  color: log.ok ? c.success : c.danger,
                 }}
               >
-                <span style={{ color: '#444', flexShrink: 0 }}>{log.time}</span>
-                <span style={{ color: '#666', flexShrink: 0 }}>{log.type === 'transmit' ? '전송' : '삭제'}</span>
+                <span style={{ color: c.textMuted, flexShrink: 0 }}>{log.time}</span>
+                <span style={{ color: c.textMuted, flexShrink: 0 }}>{log.type === 'transmit' ? '전송' : '삭제'}</span>
                 <span style={{ wordBreak: 'break-all' }}>{log.message}</span>
               </div>
             ))}

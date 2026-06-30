@@ -3,6 +3,8 @@
 import { proxyApi } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn } from '@/lib/samba/buttons'
 
 export interface TagPreview {
   group_id: string
@@ -49,6 +51,7 @@ export default function TagPreviewModal({
   onClose,
   onApplied,
 }: TagPreviewModalProps) {
+  const c = useTheme()
   if (!open) return null
 
   const handleClose = () => {
@@ -63,26 +66,26 @@ export default function TagPreviewModal({
       onClick={handleClose}
     >
       <div
-        style={{ background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
+        style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '12px', padding: '28px 32px', minWidth: '500px', maxWidth: '700px', maxHeight: '80vh', overflowY: 'auto' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: '#E5E5E5' }}>AI 태그 미리보기</h3>
-        <p style={{ margin: '0 0 20px', fontSize: '0.75rem', color: '#888' }}>
+        <h3 style={{ margin: '0 0 4px', fontSize: '1rem', fontWeight: 600, color: c.text }}>AI 태그 미리보기</h3>
+        <p style={{ margin: '0 0 20px', fontSize: '0.75rem', color: c.textMuted }}>
           태그사전에 미등록된 태그를 X로 제거한 후 적용하세요
         </p>
         {tagPreviews.map((preview) => (
-          <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: '#0F0F0F', borderRadius: '8px', border: '1px solid #2D2D2D' }}>
+          <div key={preview.group_id} style={{ marginBottom: '20px', padding: '16px', background: c.surfaceAlt, borderRadius: '8px', border: `1px solid ${c.border}` }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
               <div>
-                <span style={{ fontSize: '0.82rem', color: '#FFB84D', fontWeight: 600 }}>{preview.group_name}</span>
+                <span style={{ fontSize: '0.82rem', color: c.text, fontWeight: 600 }}>{preview.group_name}</span>
                 {preview.rep_name && preview.rep_name !== preview.group_name && (
-                  <span style={{ fontSize: '0.7rem', color: '#888', marginLeft: '6px' }}>({preview.rep_name})</span>
+                  <span style={{ fontSize: '0.7rem', color: c.textMuted, marginLeft: '6px' }}>({preview.rep_name})</span>
                 )}
               </div>
-              <span style={{ fontSize: '0.7rem', color: '#666' }}>{fmtNum(preview.product_count)}개 상품 | {fmtNum(preview.tags.length)}개 태그</span>
+              <span style={{ fontSize: '0.7rem', color: c.textMuted }}>{fmtNum(preview.product_count)}개 상품 | {fmtNum(preview.tags.length)}개 태그</span>
             </div>
             <div style={{ marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ fontSize: '0.72rem', color: '#4C9AFF', fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
+              <span style={{ fontSize: '0.72rem', color: c.textSub, fontWeight: 600, whiteSpace: 'nowrap' }}>SEO:</span>
               <input
                 type='text'
                 defaultValue={preview.seo_keywords.join(', ')}
@@ -94,19 +97,19 @@ export default function TagPreviewModal({
                   ))
                 }}
                 onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
-                style={{ flex: 1, fontSize: '0.72rem', padding: '3px 8px', background: '#1A1A1A', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#4C9AFF', outline: 'none' }}
+                style={{ flex: 1, fontSize: '0.72rem', padding: '3px 8px', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, outline: 'none' }}
               />
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
               {preview.tags.map((tag, ti) => (
                 <span key={ti} style={{
                   fontSize: '0.78rem', padding: '4px 10px', borderRadius: '14px',
-                  background: 'rgba(100,100,255,0.1)', border: '1px solid rgba(100,100,255,0.25)', color: '#8B8FD4',
+                  background: c.surface, border: `1px solid ${c.border}`, color: c.text,
                   display: 'inline-flex', alignItems: 'center', gap: '6px',
                 }}>
                   {tag}
                   <span
-                    style={{ cursor: 'pointer', color: '#666', fontSize: '0.85rem', lineHeight: 1 }}
+                    style={{ cursor: 'pointer', color: c.textMuted, fontSize: '0.85rem', lineHeight: 1 }}
                     onClick={async () => {
                       setTagPreviews(prev => prev.map(p => ({
                         ...p, tags: p.tags.filter(t => t !== tag)
@@ -138,25 +141,25 @@ export default function TagPreviewModal({
               }}
               style={{
                 width: '100%', padding: '5px 10px', fontSize: '0.75rem',
-                background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px',
-                color: '#E5E5E5', outline: 'none',
+                background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px',
+                color: c.text, outline: 'none',
               }}
             />
             {/* 쿠팡 전용 검색어 (연관/자동완성/롱테일) — 최대 10개 */}
-            <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed #2D2D2D' }}>
-              <div style={{ fontSize: '0.72rem', color: '#FFB84D', fontWeight: 600, marginBottom: '6px' }}>
+            <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: `1px dashed ${c.border}` }}>
+              <div style={{ fontSize: '0.72rem', color: c.text, fontWeight: 600, marginBottom: '6px' }}>
                 쿠팡 전용 검색어 (연관·자동완성·롱테일) — {fmtNum((preview.coupang_search_tags || []).length)}개
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '6px' }}>
                 {(preview.coupang_search_tags || []).map((tag, ti) => (
                   <span key={`c-${ti}`} style={{
                     fontSize: '0.78rem', padding: '4px 10px', borderRadius: '14px',
-                    background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.25)', color: '#FFB84D',
+                    background: 'rgba(255,140,0,0.1)', border: '1px solid rgba(255,140,0,0.25)', color: c.text,
                     display: 'inline-flex', alignItems: 'center', gap: '6px',
                   }}>
                     {tag}
                     <span
-                      style={{ cursor: 'pointer', color: '#666', fontSize: '0.85rem', lineHeight: 1 }}
+                      style={{ cursor: 'pointer', color: c.textMuted, fontSize: '0.85rem', lineHeight: 1 }}
                       onClick={() => {
                         setTagPreviews(prev => prev.map(p =>
                           p.group_id === preview.group_id
@@ -187,8 +190,8 @@ export default function TagPreviewModal({
                 }}
                 style={{
                   width: '100%', padding: '5px 10px', fontSize: '0.75rem',
-                  background: '#111', border: '1px solid #2D2D2D', borderRadius: '6px',
-                  color: '#E5E5E5', outline: 'none',
+                  background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px',
+                  color: c.text, outline: 'none',
                 }}
               />
             </div>
@@ -196,19 +199,19 @@ export default function TagPreviewModal({
         ))}
         {removedTags.length > 0 && (
           <div style={{ marginBottom: '12px', padding: '10px 14px', background: 'rgba(255,107,107,0.06)', borderRadius: '6px', border: '1px solid rgba(255,107,107,0.15)' }}>
-            <span style={{ fontSize: '0.72rem', color: '#FF6B6B', fontWeight: 600 }}>금지태그 등록 예정 ({fmtNum(removedTags.length)}개): </span>
-            <span style={{ fontSize: '0.72rem', color: '#888' }}>{removedTags.join(', ')}</span>
+            <span style={{ fontSize: '0.72rem', color: c.danger, fontWeight: 600 }}>금지태그 등록 예정 ({fmtNum(removedTags.length)}개): </span>
+            <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{removedTags.join(', ')}</span>
           </div>
         )}
         {tagPreviewCost && (
-          <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: '#666', textAlign: 'right' }}>
+          <p style={{ margin: '0 0 16px', fontSize: '0.72rem', color: c.textMuted, textAlign: 'right' }}>
             API {fmtNum(tagPreviewCost.api_calls)}회 | {fmtNum(tagPreviewCost.input_tokens + tagPreviewCost.output_tokens)} 토큰 | ~{fmtNum(tagPreviewCost.cost_krw)}원
           </p>
         )}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
           <button
             onClick={handleClose}
-            style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid #3D3D3D', background: 'transparent', color: '#888' }}
+            style={{ ...btn('ghost'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
           >취소</button>
           <button
             onClick={async () => {
@@ -235,7 +238,7 @@ export default function TagPreviewModal({
                 showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
               }
             }}
-            style={{ padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px', cursor: 'pointer', border: '1px solid rgba(255,140,0,0.5)', background: 'rgba(255,140,0,0.15)', color: '#FF8C00', fontWeight: 600 }}
+            style={{ ...btn('primary'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
           >
             전체 그룹에 적용 ({fmtNum(tagPreviews.reduce((s, p) => s + p.tags.length, 0))}개 태그)
           </button>

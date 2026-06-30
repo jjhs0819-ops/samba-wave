@@ -17,6 +17,7 @@ import { type AISourcingResult } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtTime } from '@/lib/samba/utils'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
 import AiJobModal from './components/AiJobModal'
 import DeleteJobModal from './components/DeleteJobModal'
 import MappingModal from './components/MappingModal'
@@ -42,6 +43,7 @@ import { useCollectQueuePolling } from './hooks/useCollectQueuePolling'
 import RefreshResultModal from './components/RefreshResultModal'
 
 export default function CollectorPage() {
+  const c = useTheme()
   useEffect(() => {
     document.title = 'SAMBA-상품수집'
   }, [])
@@ -514,7 +516,7 @@ export default function CollectorPage() {
     })
 
   return (
-    <div style={{ color: '#E5E5E5' }}>
+    <div style={{ color: c.text }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0', padding: '0.5rem 1rem' }}>
         <CollectorStatusPanel
           section="status"

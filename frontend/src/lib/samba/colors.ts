@@ -75,7 +75,7 @@ export const dark: Palette = {
   textMuted: '#666666',
   headerBg: '#0D1117',
   headerText: '#94A3B8',
-  primary: '#3b82f6',
+  primary: '#FF8C00',
   link: '#4C9AFF',
   danger: '#FF6B6B',
   warn: '#F59E0B',

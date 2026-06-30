@@ -1,6 +1,8 @@
 'use client'
 
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
+import { btn } from '@/lib/samba/buttons'
 import {
   accountApi,
   forbiddenApi,
@@ -26,6 +28,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
 >
 
 export function StoreSettingsPanel(props: Props) {
+  const c = useTheme()
   const {
     accounts, storeTab, visiblePasswords, storeData, savedStoreData,
     storeStatus, editingAccountId,
@@ -50,30 +53,30 @@ export function StoreSettingsPanel(props: Props) {
 
   return (
     <div style={{ ...card, padding: '1.5rem', marginBottom: '1.5rem' }}>
-      <div style={{ fontSize: '1rem', fontWeight: 700, color: '#E5E5E5', marginBottom: '0.25rem' }}>스토어 연결</div>
-      <p style={{ fontSize: '0.8125rem', color: '#666', marginBottom: '1.25rem' }}>API 연결 및 계정 설정을 관리합니다</p>
+      <div style={{ fontSize: '1rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>스토어 연결</div>
+      <p style={{ fontSize: '0.8125rem', color: c.textMuted, marginBottom: '1.25rem' }}>API 연결 및 계정 설정을 관리합니다</p>
 
       {/* 웹 / 로컬 IP */}
-      <div style={{ marginBottom: '1.5rem', padding: '1rem', border: '1px solid #2D2D2D', borderRadius: '8px', background: 'rgba(255,255,255,0.02)' }}>
-        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: '#E5E5E5', marginBottom: '0.75rem' }}>웹 / 로컬 IP</div>
+      <div style={{ marginBottom: '1.5rem', padding: '1rem', border: `1px solid ${c.border}`, borderRadius: '8px', background: c.surfaceAlt }}>
+        <div style={{ fontSize: '0.875rem', fontWeight: 600, color: c.text, marginBottom: '0.75rem' }}>웹 / 로컬 IP</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>웹 IP</label>
+            <label style={{ color: c.textSub, fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>웹 IP</label>
             <input type="text" style={{ ...inputStyle, flex: 1 }} value={networkIps.web}
               onChange={(e) => setNetworkIps(prev => ({ ...prev, web: e.target.value }))}
               placeholder="예: 123.123.123.123" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>로컬 IP</label>
+            <label style={{ color: c.textSub, fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>로컬 IP</label>
             <input type="text" style={{ ...inputStyle, flex: 1 }} value={networkIps.local}
               onChange={(e) => setNetworkIps(prev => ({ ...prev, local: e.target.value }))}
               placeholder="예: 192.168.0.10" />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <button type="button" onClick={saveNetworkIps}
-              style={{ padding: '0.5rem 1rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer' }}>IP 저장</button>
+              style={{ ...btn('primary'), padding: '0.5rem 1rem', fontSize: '0.8125rem' }}>IP 저장</button>
             {networkIpStatus && (
-              <span style={{ fontSize: '0.8125rem', color: networkIpStatus.includes('실패') ? '#FF6B6B' : '#51CF66' }}>{networkIpStatus}</span>
+              <span style={{ fontSize: '0.8125rem', color: networkIpStatus.includes('실패') ? c.danger : c.success }}>{networkIpStatus}</span>
             )}
           </div>
         </div>
@@ -100,8 +103,8 @@ export function StoreSettingsPanel(props: Props) {
             }}
             style={{
               padding: '0.5rem 0.75rem', background: 'none', border: 'none',
-              borderBottom: storeTab === m.key ? '2px solid #FF8C00' : '2px solid transparent',
-              color: storeTab === m.key ? '#FF8C00' : '#666',
+              borderBottom: storeTab === m.key ? `2px solid ${c.primary}` : '2px solid transparent',
+              color: storeTab === m.key ? c.primary : c.textMuted,
               fontSize: '0.8125rem', fontWeight: storeTab === m.key ? 600 : 400,
               cursor: 'pointer', marginBottom: '-1px', whiteSpace: 'nowrap',
             }}
@@ -110,13 +113,13 @@ export function StoreSettingsPanel(props: Props) {
           </button>
         )
         return (
-          <div style={{ borderBottom: '1px solid #2D2D2D', marginBottom: '1.5rem' }}>
+          <div style={{ borderBottom: `1px solid ${c.border}`, marginBottom: '1.5rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
-              <span style={{ fontSize: '0.68rem', color: '#FF8C00', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>국내</span>
+              <span style={{ fontSize: '0.68rem', color: c.text, fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>국내</span>
               {domesticMarkets.map(renderTab)}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0 }}>
-              <span style={{ fontSize: '0.68rem', color: '#4C9AFF', fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>해외</span>
+              <span style={{ fontSize: '0.68rem', color: c.textSub, fontWeight: 600, padding: '0.5rem 0.5rem 0.5rem 0', whiteSpace: 'nowrap' }}>해외</span>
               {overseasMarkets.map(renderTab)}
             </div>
           </div>
@@ -128,10 +131,10 @@ export function StoreSettingsPanel(props: Props) {
         <div key={market.key} style={{ display: 'flex', gap: '2rem', alignItems: 'flex-start' }}>
           <div style={{ flex: 1, maxWidth: '560px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-              <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#E5E5E5' }}>{market.label} 설정</span>
+              <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: c.text }}>{market.label} 설정</span>
               {editingAccountId && (
                 <>
-                  <span style={{ fontSize: '0.75rem', color: '#FF8C00', fontWeight: 600 }}>
+                  <span style={{ fontSize: '0.75rem', color: c.textSub, fontWeight: 600 }}>
                     ({accounts.find(a => a.id === editingAccountId)?.account_label} 수정중)
                   </span>
                   <button
@@ -139,15 +142,15 @@ export function StoreSettingsPanel(props: Props) {
                       setEditingAccountId(null)
                       setStoreData(prev => { const next = { ...prev }; delete next[market.key]; return next })
                     }}
-                    style={{ padding: '0.2rem 0.5rem', fontSize: '0.7rem', background: 'rgba(255,80,80,0.1)', border: '1px solid rgba(255,80,80,0.3)', borderRadius: '4px', color: '#FF6B6B', cursor: 'pointer' }}
+                    style={{ ...btn('ghost'), padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px' }}
                   >취소</button>
                 </>
               )}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {market.fields.map(field => field.type === 'divider' ? (
-                <div key={field.name} style={{ borderTop: '1px solid #2D2D2D', paddingTop: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#FFB84D' }}>{field.label}</span>
+                <div key={field.name} style={{ borderTop: `1px solid ${c.border}`, paddingTop: '0.75rem', marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: c.text }}>{field.label}</span>
                   {(market.key === 'gmarket' || market.key === 'auction') && field.name === '_divider_shipping' && (
                     <button
                       onClick={async () => {
@@ -178,7 +181,7 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert('배송정보 조회 실패', 'error')
                         }
                       }}
-                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정보 불러오기</button>
                   )}
                   {market.key === 'ssg' && field.name === '_divider_shipping_code' && (
@@ -216,7 +219,7 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert('배송비/주소 조회 실패', 'error')
                         }
                       }}
-                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송비/주소 불러오기</button>
                   )}
                   {market.key === 'lotteon' && field.name === '_divider_shipping_infra' && (
@@ -243,7 +246,7 @@ export function StoreSettingsPanel(props: Props) {
                           }
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
-                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정책/출고지 불러오기</button>
                   )}
                   {market.key === 'lottehome' && field.name === '_divider_lottehome_shipping' && (
@@ -285,23 +288,23 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert(`배송정책 ${fmtNum(polCount)}건, 추가배송비정책 ${fmtNum(extraCount)}건, 출고지 ${fmtNum(shpCount)}건, 반품지 ${fmtNum(retCount)}건을 불러왔습니다.`, 'success')
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
-                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정책/출고지 불러오기</button>
                   )}
                   {market.key === 'coupang' && field.name === '_divider_shipping_coupang' && (
                     <button
                       onClick={() => loadCoupangShippingPlaces(editingAccountId || undefined)}
-                      style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >출고지/반품지 조회</button>
                   )}
                 </div>
               ) : field.type === 'info' ? (
-                <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.2)', borderRadius: '4px' }}>
-                  <span style={{ fontSize: '0.75rem', color: '#FF8C00' }}>{field.label}</span>
+                <div key={field.name} style={{ padding: '0.4rem 0.6rem', background: c.accentBg, border: `1px solid ${c.warn}`, borderRadius: '4px' }}>
+                  <span style={{ fontSize: '0.75rem', color: c.text }}>{field.label}</span>
                 </div>
               ) : field.type === 'alias' ? (
                 <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
+                  <label style={{ color: c.textSub, fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
                   <input
                     type="text"
                     style={{ ...inputStyle, flex: 1 }}
@@ -315,7 +318,7 @@ export function StoreSettingsPanel(props: Props) {
                     }}
                     placeholder={field.placeholder || '마켓번호'}
                   />
-                  <span style={{ color: '#555', fontSize: '0.8rem', flexShrink: 0 }}>—</span>
+                  <span style={{ color: c.textMuted, fontSize: '0.8rem', flexShrink: 0 }}>—</span>
                   <input
                     type="text"
                     style={{ ...inputStyle, width: '120px', flexShrink: 0 }}
@@ -332,7 +335,7 @@ export function StoreSettingsPanel(props: Props) {
                 </div>
               ) : (
                 <div key={field.name} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <label style={{ color: '#888', fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
+                  <label style={{ color: c.textSub, fontSize: '0.875rem', minWidth: '180px', flexShrink: 0 }}>{field.label}</label>
                   {field.type === 'esm-place-select' ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
@@ -504,9 +507,9 @@ export function StoreSettingsPanel(props: Props) {
                             onClick={() => updateStoreField(market.key, field.name, o.value)}
                             style={{
                               padding: '0.4rem 1rem',
-                              background: selected ? '#FF8C00' : 'transparent',
-                              color: selected ? '#000' : '#888',
-                              border: `1px solid ${selected ? '#FF8C00' : '#2D2D2D'}`,
+                              background: selected ? '#e3f4f0' : 'transparent',
+                              color: selected ? '#0f6a5b' : c.textMuted,
+                              border: `1px solid ${selected ? '#a9ddd2' : c.border}`,
                               borderRadius: '6px',
                               fontSize: '0.8125rem',
                               fontWeight: selected ? 600 : 400,
@@ -523,9 +526,9 @@ export function StoreSettingsPanel(props: Props) {
                         type="checkbox"
                         checked={storeData[market.key]?.[field.name] === 'true' || storeData[market.key]?.[field.name] as unknown === true}
                         onChange={(e) => updateStoreField(market.key, field.name, e.target.checked ? 'true' : 'false')}
-                        style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }}
+                        style={{ accentColor: c.primary, width: '14px', height: '14px' }}
                       />
-                      {field.placeholder && <span style={{ fontSize: '0.72rem', color: '#888' }}>({field.placeholder})</span>}
+                      {field.placeholder && <span style={{ fontSize: '0.72rem', color: c.textSub }}>({field.placeholder})</span>}
                     </label>
                   ) : field.type === 'toggle' ? (
                     <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
@@ -533,9 +536,9 @@ export function StoreSettingsPanel(props: Props) {
                         type="checkbox"
                         checked={storeData[market.key]?.[field.name] === 'true' || storeData[market.key]?.[field.name] as unknown === true}
                         onChange={(e) => updateStoreField(market.key, field.name, e.target.checked ? 'true' : 'false')}
-                        style={{ accentColor: '#FF8C00', width: '14px', height: '14px' }}
+                        style={{ accentColor: c.primary, width: '14px', height: '14px' }}
                       />
-                      {(field as { description?: string }).description && <span style={{ fontSize: '0.72rem', color: '#888' }}>{(field as { description?: string }).description}</span>}
+                      {(field as { description?: string }).description && <span style={{ fontSize: '0.72rem', color: c.textSub }}>{(field as { description?: string }).description}</span>}
                     </label>
                   ) : field.type === 'number' ? (
                     <>
@@ -545,7 +548,7 @@ export function StoreSettingsPanel(props: Props) {
                         onChange={(v) => { if (!field.disabled) updateStoreField(market.key, field.name, v) }}
                         placeholder={field.placeholder || '0'}
                       />
-                      {field.description && <span style={{ fontSize: '0.7rem', color: '#888', flexShrink: 0 }}>{field.description}</span>}
+                      {field.description && <span style={{ fontSize: '0.7rem', color: c.textSub, flexShrink: 0 }}>{field.description}</span>}
                     </>
                   ) : field.type === 'password' ? (
                     <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
@@ -576,7 +579,7 @@ export function StoreSettingsPanel(props: Props) {
                           }
                           togglePasswordVisibility(visKey)
                         }}
-                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: '1px solid #2D2D2D', borderRadius: '4px', color: '#888', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer', whiteSpace: 'nowrap' }}
                       >{visiblePasswords.has(`${market.key}_${field.name}`) ? '숨김' : '보기'}</button>
                     </div>
                   ) : (
@@ -593,11 +596,11 @@ export function StoreSettingsPanel(props: Props) {
                     <>
                       <button
                         onClick={() => testStoreAuth(market.key)}
-                        style={{ padding: '0.375rem 0.875rem', background: '#FF8C00', color: '#000', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        style={{ ...btn('secondary'), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                       >인증 테스트</button>
                       {market.guideUrl && (
                         <a href={market.guideUrl} target="_blank" rel="noopener noreferrer"
-                          style={{ padding: '0.375rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
+                          style={{ padding: '0.375rem 0.75rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
                         >API 발급</a>
                       )}
                     </>
@@ -640,13 +643,13 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert('출고지 정보 조회 실패', 'error')
                         }
                       }}
-                      style={{ padding: '0.375rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: '#4C9AFF', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary'), padding: '0.375rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >출고지정보 가져오기</button>
                   )}
                 </div>
               ))}
               {storeStatus[market.key] && (
-                <div style={{ fontSize: '0.8125rem', color: storeStatus[market.key]?.includes('연결') || storeStatus[market.key]?.includes('저장') || storeStatus[market.key]?.includes('✓') ? '#51CF66' : storeStatus[market.key]?.includes('중...') ? '#FFD93D' : '#FF6B6B' }}>
+                <div style={{ fontSize: '0.8125rem', color: storeStatus[market.key]?.includes('연결') || storeStatus[market.key]?.includes('저장') || storeStatus[market.key]?.includes('✓') ? c.success : storeStatus[market.key]?.includes('중...') ? c.warn : c.danger }}>
                   {storeStatus[market.key]}
                 </div>
               )}
@@ -656,7 +659,7 @@ export function StoreSettingsPanel(props: Props) {
             <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               <button
                 onClick={() => saveStoreSettings(market.key)}
-                style={{ padding: '0.625rem 1.75rem', background: '#FF8C00', color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
+                style={{ ...btn('primary'), padding: '0.625rem 1.75rem', fontSize: '0.875rem' }}
               >설정 저장</button>
             </div>
           </div>
