@@ -1,6 +1,7 @@
+import { light as c } from '@/lib/samba/colors'
 import type { CSSProperties } from 'react'
 import { card, inputStyle } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
 
 export type TabType = 'overview' | 'auto-posting' | 'posts' | 'products' | 'revenue' | 'settings'

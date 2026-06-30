@@ -3,9 +3,10 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { userApi } from '@/lib/samba/api/operations'
-import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export default function SambaSignUpPage() {
+  const c = useTheme()
   const router = useRouter()
   const [inviteCode, setInviteCode] = useState('')
   const [name, setName] = useState('')

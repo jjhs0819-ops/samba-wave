@@ -35,8 +35,9 @@ import SmsTemplateEditModal from './components/SmsTemplateEditModal'
 import AlarmSettingModal from './components/AlarmSettingModal'
 import TrackingModal from './components/TrackingModal'
 import { showConfirm, showAlert } from '@/components/samba/Modal'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface OrderForm {
   channel_id: string; product_name: string; customer_name: string; customer_phone: string
@@ -51,6 +52,7 @@ const emptyForm: OrderForm = {
 }
 
 export default function OrdersPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-주문관리' }, [])
   const searchParams = useSearchParams()
   const cpId = searchParams.get('cpId')
@@ -109,14 +111,11 @@ export default function OrdersPage() {
     setNotifications(prev => [...prev, { id, message, type }])
   }
 
-
   const [refreshLog, setRefreshLog] = useState<Record<string, string>>({})
-
 
   const [priceHistoryModal, setPriceHistoryModal] = useState(false)
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[]>([])
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
-
 
   const sms = useSmsMessage(accounts)
   const {
@@ -132,13 +131,11 @@ export default function OrdersPage() {
     insertMsgTag, openMsgModal, handleSendMsg,
   } = sms
 
-
   const [showAlarmSetting, setShowAlarmSetting] = useState(searchParams.get('alarm') === '1')
   const [alarmHour, setAlarmHour] = useState('0')
   const [alarmMin, setAlarmMin] = useState('5')
   const [sleepStart, setSleepStart] = useState('00:00')
   const [sleepEnd, setSleepEnd] = useState('09:00')
-
 
   const initialSearchType = searchParams.get('search_type') || 'customer'
   const [searchCategory, setSearchCategory] = useState(initialSearchType)
@@ -224,7 +221,6 @@ export default function OrdersPage() {
     if (trimmed === appliedSearchText) loadOrders()
     else setAppliedSearchText(trimmed)
   }, [searchText, appliedSearchText, loadOrders])
-
 
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   const siteOptions = useMemo(() => {
@@ -415,7 +411,6 @@ export default function OrdersPage() {
   const { syncing, syncAccountId, setSyncAccountId, handleFetch } = useOrderSync({
     accounts, period, customStart, customEnd, setLogMessages, showNotification, loadOrders,
   })
-
 
   const {
     handleSubmit, handleStatusChange, handleDelete,
@@ -650,9 +645,7 @@ export default function OrdersPage() {
     if (o.product_image && o.product_image.startsWith('http')) window.open(o.product_image, '_blank')
   }
 
-
   const currentPageIds = useMemo(() => orders.map(o => o.id), [orders])
-
 
   const toggleSelectAll = () => {
     if (currentPageIds.every(id => selectedIds.has(id))) {
@@ -955,14 +948,12 @@ export default function OrdersPage() {
         toggleAction={toggleAction}
       />
 
-
       <OrdersPagination
         totalCount={totalCount}
         pageSize={pageSize}
         currentPage={currentPage}
         setCurrentPage={setCurrentPage}
       />
-
 
       <OrderEditModal
         open={showForm}
@@ -972,7 +963,6 @@ export default function OrdersPage() {
         onClose={() => { setShowForm(false); setEditingId(null) }}
         onSubmit={handleSubmit}
       />
-
 
       <UrlInputModal
         open={showUrlModal}
@@ -985,14 +975,12 @@ export default function OrdersPage() {
         onSubmit={handleUrlSubmit}
       />
 
-
       <PriceHistoryModal
         open={priceHistoryModal}
         product={priceHistoryProduct}
         history={priceHistoryData}
         onClose={() => setPriceHistoryModal(false)}
       />
-
 
       <MessageModal
         msgModal={msgModal}
@@ -1012,14 +1000,12 @@ export default function OrdersPage() {
         handleSendMsg={handleSendMsg}
       />
 
-
       <SmsTemplateEditModal
         template={templateEditModal}
         setTemplate={setTemplateEditModal}
         isNew={isNewTemplate}
         onSave={saveTemplate}
       />
-
 
       <AlarmSettingModal
         open={showAlarmSetting}

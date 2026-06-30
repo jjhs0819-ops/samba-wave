@@ -5,9 +5,10 @@ import { aiSourcingApi, type AISourcingResult } from '@/lib/samba/api/operations
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { SITES } from '../constants'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   aiResult: AISourcingResult
@@ -26,6 +27,7 @@ interface Props {
 }
 
 export default function AiSourcingConfirmStep(props: Props) {
+  const c = useTheme()
   const {
     aiResult, aiSelectedCombos, aiExcludedBrands, aiMinCount, aiCreating, aiSourceSite,
     setAiSelectedCombos, setAiExcludedBrands, setAiSourcingStep, setAiResult, setAiCreating,

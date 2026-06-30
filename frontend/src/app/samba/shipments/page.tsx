@@ -19,8 +19,9 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const JOB_POLL_INTERVAL_MS = 1000
 const DELETE_POLL_INTERVAL_MS = 1000
@@ -79,6 +80,7 @@ async function fetchProductsByIdsChunked(ids: string[]) {
 }
 
 export default function ShipmentsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
   const searchParams = useSearchParams()
   // 상품관리에서 selected/fromStorage로 넘어온 경우 즉시 로드, 그 외엔 검색버튼 클릭 후 로드

@@ -2,8 +2,9 @@
 
 import React, { Dispatch, SetStateAction, RefObject } from 'react'
 import { type SambaOrder, type MessageLog } from '@/lib/samba/api/commerce'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const MSG_VARIABLE_TAGS = [
   { tag: '{{sellerName}}', label: '판매자명' },
@@ -39,6 +40,7 @@ interface Props {
 }
 
 export default function MessageModal(props: Props) {
+  const c = useTheme()
   const {
     msgModal, setMsgModal,
     msgText, setMsgText,

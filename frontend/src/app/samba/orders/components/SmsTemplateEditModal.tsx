@@ -1,8 +1,9 @@
 'use client'
 
 import React, { Dispatch, SetStateAction } from 'react'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface SmsTemplate {
   id: string
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export default function SmsTemplateEditModal({ template, setTemplate, isNew, onSave }: Props) {
+  const c = useTheme()
   if (!template) return null
 
   return (

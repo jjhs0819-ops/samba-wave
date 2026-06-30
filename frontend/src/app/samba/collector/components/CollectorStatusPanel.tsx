@@ -3,9 +3,11 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import type { MusinsaAccount, PoolInfo } from '../hooks/useProxyAuth'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // 인증/프록시 상태 타입
 type StatusState = 'checking' | 'ok' | 'error'
@@ -68,6 +70,7 @@ type LogProps = {
 type Props = StatusProps | LogProps
 
 export default function CollectorStatusPanel(props: Props) {
+  const c = useTheme()
   // 프록시 + 무신사 인증 상태 섹션
   if (props.section === 'status') {
     const {

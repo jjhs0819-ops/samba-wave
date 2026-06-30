@@ -5,12 +5,13 @@ import { manualProductApi, policyApi, accountApi } from '@/lib/samba/legacy'
 import type { SambaCollectedProduct, SambaPolicy, SambaMarketAccount } from '@/lib/samba/legacy'
 import NewProductCard from './components/NewProductCard'
 import ManualProductCard from './components/ManualProductCard'
-import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy { id: string; name: string; market_policies?: Record<string, unknown>; pricing?: Record<string, unknown> }
 interface Account { id: string; market_type: string; account_name: string; additional_fields?: Record<string, unknown> }
 
 export default function ManualProductsPage() {
+  const c = useTheme()
   const [products, setProducts] = useState<SambaCollectedProduct[]>([])
   const [policies, setPolicies] = useState<Policy[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])

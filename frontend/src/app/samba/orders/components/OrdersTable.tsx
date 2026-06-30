@@ -12,8 +12,9 @@ import { fmtTime } from '@/lib/samba/utils'
 import { STATUS_MAP, SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
 import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // 같은 주문 송장 동시 전송 차단 — 송장번호 input blur + 마켓전송 버튼 click 이
 // 동시에 발동해 중복 전송되면, 첫 전송 성공 후 두 번째가 INVALID_STATUS 실패로 잡힘.
@@ -92,6 +93,7 @@ interface OrdersTableProps {
 }
 
 export default function OrdersTable(props: OrdersTableProps) {
+  const c = useTheme()
   const {
     loading, filteredOrders, currentPage, pageSize,
     currentPageIds, selectedIds, setSelectedIds, toggleSelectAll,

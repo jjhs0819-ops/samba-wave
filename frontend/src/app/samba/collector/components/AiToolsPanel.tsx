@@ -5,8 +5,9 @@ import { collectorApi, proxyApi, type SambaSearchFilter } from '@/lib/samba/api/
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtTime } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // AI 비용 사용 내역 타입
 type AiUsage = { calls: number; tokens: number; cost: number; date: string }
@@ -53,6 +54,7 @@ type Props = {
 }
 
 export default function AiToolsPanel(props: Props) {
+  const c = useTheme()
   const {
     lastAiUsage,
     aiImgScope,

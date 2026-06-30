@@ -3,8 +3,10 @@
 import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Notification {
   id: number
@@ -56,6 +58,7 @@ function renderLogMessage(message: string) {
 }
 
 export default function OrdersTopBar(props: Props) {
+  const c = useTheme()
   const {
     notifications, setNotifications, setStatusFilter, setMarketStatus,
     setCustomStart, setCustomEnd, setPeriod,

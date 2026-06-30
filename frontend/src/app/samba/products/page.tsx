@@ -21,8 +21,9 @@ import { fmtTime } from '@/lib/samba/utils'
 import ProductCard from './components/ProductCard'
 import ProductImage from './components/ProductImage'
 import { MARKETS } from './components/ProductCard'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type MarketDeleteModalState = {
   mode: 'single' | 'bulk'
@@ -34,6 +35,7 @@ type MarketDeleteModalState = {
 }
 
 export default function ProductsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-상품관리' }, [])
 
   // 무신사 자동로그인계정 상태 — 60s 폴링. 미설정/만료 시 모달 경고.
@@ -270,7 +272,6 @@ export default function ProductsPage() {
       if (res.success) setAiPresetList(res.presets)
     }).catch(() => {})
   }, [])
-
 
   // 삭제 확인 모달
   const [deleteConfirm, setDeleteConfirm] = useState<{ ids: string[]; label: string } | null>(null);

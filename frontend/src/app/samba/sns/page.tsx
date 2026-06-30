@@ -6,7 +6,8 @@ import { snsApi, wholesaleApi } from '@/lib/samba/api/operations'
 import { fmtNum } from '@/lib/samba/styles'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
-import { light as c } from '@/lib/samba/colors'
+
+import { useTheme } from '@/lib/samba/useTheme'
 import {
   type TabType, type DashboardData, type PostItem, type PostsResponse,
   type WpSite, type KeywordGroup, type SseLog,
@@ -20,6 +21,7 @@ const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 // ── 메인 컴포넌트 ──
 
 export default function SNSPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-SNS' }, [])
   const [tab, setTab] = useState<TabType>('overview')
 

@@ -6,8 +6,9 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 import {
   type License, type LoginHistory,
   STATUS_MAP, maskIp, years, months, daysInMonth, pad,
@@ -15,6 +16,7 @@ import {
 } from './constants'
 
 export default function UsersPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-사용자' }, [])
   const [users, setUsers] = useState<SambaUser[]>([])
   const [loading, setLoading] = useState(true)

@@ -3,8 +3,9 @@
 import React, { Dispatch, SetStateAction, useEffect, useState } from 'react'
 import { orderApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   open: boolean
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export default function AlarmSettingModal(props: Props) {
+  const c = useTheme()
   const { open, onClose, alarmHour, setAlarmHour, alarmMin, setAlarmMin, sleepStart, setSleepStart, sleepEnd, setSleepEnd } = props
 
   // 쿠팡 자동 발주확인 토글 (#246 PR-6)

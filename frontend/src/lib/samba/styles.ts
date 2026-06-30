@@ -1,9 +1,8 @@
+import { light as c } from '@/lib/samba/colors'
 /**
  * SambaWave 공용 스타일 상수
  * policies, settings 등 여러 페이지에서 공유
  */
-
-import { light as c } from '@/lib/samba/colors'
 
 export const LOG_FONT_FAMILY = 'Consolas, "Malgun Gothic", "Noto Sans KR", monospace'
 

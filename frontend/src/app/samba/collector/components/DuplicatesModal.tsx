@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from 'react'
 import { collectorApi, shipmentApi } from '@/lib/samba/api/commerce'
 import { showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type DuplicateItem = {
   id: string
@@ -42,6 +43,7 @@ interface DuplicatesModalProps {
 }
 
 export default function DuplicatesModal({ open, sourceSite, filterIds, onClose, onDeleted }: DuplicatesModalProps) {
+  const c = useTheme()
   const [groups, setGroups] = useState<DuplicateGroup[]>([])
   const [loading, setLoading] = useState(false)
   const [checked, setChecked] = useState<Set<string>>(new Set())

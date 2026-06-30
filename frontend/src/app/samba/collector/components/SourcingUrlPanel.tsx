@@ -2,13 +2,14 @@
 
 import type { Dispatch, SetStateAction } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { collectorApi, proxyApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
 import { SITES, SITE_OPTIONS } from '../constants'
 import MusinsaBrandModal from './MusinsaBrandModal'
 import LotteOnBrandModal from './LotteOnBrandModal'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type BrandCategory = { categoryCode: string; path: string; count: number; category1: string; category2: string; category3: string }
 type BrandModalEntry = { name: string; count: number; id?: string }
@@ -78,6 +79,7 @@ interface SourcingUrlPanelProps {
 }
 
 export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
+  const c = useTheme()
   const {
     selectedSite, setSelectedSite,
     collectUrl, setCollectUrl,

@@ -24,12 +24,12 @@ function htmlToText(html: string): string {
 }
 import { card, inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { btn } from '@/lib/samba/buttons'
-import { light as c } from '@/lib/samba/colors'
+
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtDate, fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 import { REPLY_STATUS_MAP, INQUIRY_TYPE_MAP } from './constants'
-
+import { useTheme } from '@/lib/samba/useTheme'
 
 function renderCsLogMessage(message: string) {
   const formatted = fmtTextNumbers(message)
@@ -46,9 +46,8 @@ function renderCsLogMessage(message: string) {
   })
 }
 
-
-
 export default function CSPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-CS관리' }, [])
   // 데이터
   const [inquiries, setInquiries] = useState<SambaCSInquiry[]>([])

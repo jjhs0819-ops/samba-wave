@@ -4,8 +4,10 @@ import { useState } from 'react'
 import { manualProductApi } from '@/lib/samba/legacy'
 import ImageManagerModal from './ImageManagerModal'
 import CategorySelector from './CategorySelector'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Account {
   id: string
@@ -46,6 +48,7 @@ function policyAccountIds(policy: Policy | undefined, accounts: Account[]): Acco
 }
 
 export default function NewProductCard({ accounts, policies, onCreated }: Props) {
+  const c = useTheme()
   const [name, setName] = useState('')
   const [nameEn, setNameEn] = useState('')
   const [nameJa, setNameJa] = useState('')

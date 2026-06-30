@@ -2,8 +2,9 @@
 
 import type { SambaReturn } from '@/lib/samba/api/support'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { STATUS_MAP, TYPE_LABELS } from '../constants'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   detailItem: SambaReturn | null
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function ReturnDetailModal({ detailItem, onClose }: Props) {
+  const c = useTheme()
   if (!detailItem) return null
 
   return (

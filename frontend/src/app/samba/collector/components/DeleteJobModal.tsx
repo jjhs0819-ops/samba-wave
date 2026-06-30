@@ -2,8 +2,9 @@
 
 import { useRef, useEffect } from 'react'
 import { fmtTextNumbers } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface DeleteJobModalProps {
   open: boolean
@@ -14,6 +15,7 @@ interface DeleteJobModalProps {
 
 // 그룹 삭제 작업 진행 모달
 export default function DeleteJobModal({ open, logs, done, onClose }: DeleteJobModalProps) {
+  const c = useTheme()
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

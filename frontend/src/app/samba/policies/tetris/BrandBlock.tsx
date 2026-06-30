@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
 import type { TetrisBrandBlock } from '@/lib/samba/api/tetris'
-import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy {
   id: string
@@ -35,6 +35,7 @@ export default function BrandBlock({
   onPolicyChange,
   onToggleExcluded,
 }: Props) {
+  const c = useTheme()
   const [showPolicies, setShowPolicies] = useState(false)
   const isExcluded = !!block.excluded
   const baseColor = block.policy_color || c.textMuted

@@ -8,7 +8,7 @@ import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
 
 import {
@@ -16,6 +16,8 @@ import {
   fmtMD, getAccountOptionLabel, tdCenter,
 } from './constants'
 import { ReturnDetailModal } from './components/ReturnDetailModal'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // 완료내역(completion_detail) 옵션 + 색상 (다크테마: 옅은 배경 + 글자색)
 // value = 백엔드 저장 어휘(진행중/취소/반품/교환/거부), label = 화면 표시(완료형)
@@ -37,6 +39,7 @@ const COMPLETION_COLORS: Record<string, { bg: string; fg: string }> = {
 }
 
 export default function ReturnsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
   const [returns, setReturns] = useState<SambaReturn[]>([])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -86,8 +89,6 @@ export default function ReturnsPage() {
 
   useEffect(() => { accountApi.listActiveCached(setAccounts) }, [])
   useEffect(() => { logRef.current && (logRef.current.scrollTop = logRef.current.scrollHeight) }, [logMessages])
-
-
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
@@ -265,7 +266,6 @@ export default function ReturnsPage() {
       load()
     } catch (e) { showAlert(e instanceof Error ? e.message : `${labels[action]} 실패`, 'error') }
   }
-
 
   // 주문번호 기준 중복 제거 — 같은 order_number 행은 하나만 남긴다.
   // 우선순위: ① 완료 상태(취소/반품/교환) 행을 우선 보존 — 완료 처리한 행이 사라지지 않도록.

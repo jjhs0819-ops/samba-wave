@@ -2,8 +2,9 @@
 
 import { useRef, useEffect } from 'react'
 import { fmtTextNumbers } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface AiJobModalProps {
   open: boolean
@@ -16,6 +17,7 @@ interface AiJobModalProps {
 
 // AI 작업 진행 모달
 export default function AiJobModal({ open, title, logs, done, abortRef, onClose }: AiJobModalProps) {
+  const c = useTheme()
   const logRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

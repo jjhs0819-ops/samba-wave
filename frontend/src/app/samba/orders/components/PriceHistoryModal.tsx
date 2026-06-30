@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   open: boolean
@@ -12,6 +12,7 @@ interface Props {
 }
 
 export default function PriceHistoryModal({ open, product, history, onClose }: Props) {
+  const c = useTheme()
   if (!open) return null
 
   const isKream = product.source_site === 'KREAM'

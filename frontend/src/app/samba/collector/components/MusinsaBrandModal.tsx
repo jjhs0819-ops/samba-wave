@@ -1,8 +1,9 @@
 'use client'
 
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface BrandSearchResult {
   brandCode: string
@@ -29,6 +30,7 @@ export default function MusinsaBrandModal({
   onClose,
   onConfirm,
 }: MusinsaBrandModalProps) {
+  const c = useTheme()
   if (!open || brandSearchResults.length === 0) return null
 
   return (

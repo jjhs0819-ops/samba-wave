@@ -2,7 +2,7 @@
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   totalCount: number
@@ -12,6 +12,7 @@ interface Props {
 }
 
 export default function OrdersPagination({ totalCount, pageSize, currentPage, setCurrentPage }: Props) {
+  const c = useTheme()
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize))
   const pages: (number | string)[] = []
   if (totalPages <= 7) {

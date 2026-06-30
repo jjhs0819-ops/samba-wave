@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react"
 import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api/commerce"
 import { card, fmtNum } from "@/lib/samba/styles"
-import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // 날짜 포맷: 3. 14. 형식
 function formatShortDate(d: Date) {
@@ -19,6 +19,7 @@ type MarketAcctStat = { account_id: string; account_label: string; registered: n
 type MarketStat = { market_name: string; registered: number; accounts: MarketAcctStat[] }
 
 export default function SambaDashboard() {
+  const c = useTheme()
   const [stats, setStats] = useState<OrderDashboardStats | null>(null)
   const [collectedCount, setCollectedCount] = useState(0)
   const [loading, setLoading] = useState(true)

@@ -5,7 +5,7 @@ import { type AnalyticsAggregateRow } from '@/lib/samba/api/commerce'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { card, fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
 import { RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
 import {
@@ -14,10 +14,12 @@ import {
   type AnalyticsSearch, type MonthlyCell,
 } from './constants'
 import { useAnalyticsData } from './hooks/useAnalyticsData'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const fmt = fmtNum
 
 export default function AnalyticsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-분석' }, [])
   // 검색 조건 (localStorage 자동 복원/저장)
   const now = new Date()

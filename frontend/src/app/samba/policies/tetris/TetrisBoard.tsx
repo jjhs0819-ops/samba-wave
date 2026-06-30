@@ -9,6 +9,7 @@ import UnassignedPool from './UnassignedPool'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { BrandAssignment } from './UnassignedPool'
 import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 function normTetrisKey(value: string | null | undefined): string {
   return (value ?? '').replace(/\s+/g, '').toLowerCase()
@@ -100,6 +101,7 @@ const COLUMN_WIDTH = 227
 const COLUMN_GAP = 12
 
 export default function TetrisBoard() {
+  const c = useTheme()
   const {
     board,
     loading,

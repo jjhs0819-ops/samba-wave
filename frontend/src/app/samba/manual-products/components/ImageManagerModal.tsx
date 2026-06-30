@@ -2,8 +2,10 @@
 
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   images: string[]
@@ -17,6 +19,7 @@ type Tab = 'main' | 'extra' | 'detail'
 const INPUT = `flex-1 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
 
 export default function ImageManagerModal({ images, detailImages, onSave, onClose }: Props) {
+  const c = useTheme()
   const [tab, setTab] = useState<Tab>('main')
   const [imgs, setImgs] = useState<string[]>(images)
   const [details, setDetails] = useState<string[]>(detailImages)

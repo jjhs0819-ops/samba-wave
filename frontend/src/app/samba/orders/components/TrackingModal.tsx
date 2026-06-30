@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { orderApi, type SambaOrder, type TrackingInfo } from '@/lib/samba/api/commerce'
 import { DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
 import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   open: boolean
@@ -37,6 +38,7 @@ const statusColor = (code: string | null): string => {
 }
 
 export default function TrackingModal({ open, order, onClose }: Props) {
+  const c = useTheme()
   const [data, setData] = useState<TrackingInfo | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)

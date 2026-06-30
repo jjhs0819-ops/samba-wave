@@ -7,6 +7,7 @@ import { monitorApi, type DashboardStats, type RefreshLogEntry } from '@/lib/sam
 import { fmtNum, fmtTextNumbers, LOG_FONT_FAMILY } from '@/lib/samba/styles'
 import { light as clr } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const POLL_INTERVAL = 10_000
 const LOG_POLL_INTERVAL = 500
@@ -261,7 +262,6 @@ const normalizeWarroomSourceSite = (value: string | null | undefined) => {
   if (site.toUpperCase() === 'GSSHOP') return 'GSShop'
   return site
 }
-
 
 // LOTTEON 데몬 device_id — 본 PC localStorage 영속. 첫 방문 시 자동 생성.
 // 설치 트리거 시 URL 파라미터 ?did=… 로 .exe 다운로드에 전달.
@@ -611,6 +611,7 @@ function ActiveCyclesPanel(): React.ReactElement {
 }
 
 export default function WarroomPage() {
+  const clr = useTheme()
   useEffect(() => { document.title = 'SAMBA-오토튠' }, [])
 
   // 무신사 자동로그인계정 상태 — 60s 폴링. 미설정/만료 시 모달 경고.
@@ -1406,9 +1407,6 @@ export default function WarroomPage() {
       {/* 활성 사이클 — backend in-memory 의 모든 (device, site) 진행 중 cycle.
           사용자 visibility 보완 (2026-05-26 요구) + 인지 못 한 사이클 개별 중단. */}
       <ActiveCyclesPanel />
-
-
-
 
     </div>
   )

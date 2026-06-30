@@ -2,10 +2,11 @@
 
 import { useState, useEffect } from 'react'
 import { card, inputStyle } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import { showAlert } from '@/components/samba/Modal'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface OfficeShipping {
   name: string
@@ -22,6 +23,7 @@ function splitPhone(phone: string): [string, string, string] {
 }
 
 export function OfficeShippingPanel() {
+  const c = useTheme()
   const [form, setForm] = useState<OfficeShipping>({ name: '', phone: '', address: '', address_detail: '' })
   const [ph, setPh] = useState<[string, string, string]>(['', '', ''])
   const [saving, setSaving] = useState(false)

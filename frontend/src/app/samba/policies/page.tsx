@@ -24,11 +24,12 @@ import { MARKETS, MARKET_ID_BY_LABEL, POLICY_MARKETS_DOMESTIC, POLICY_MARKETS_OV
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
 import { SITE_COLORS } from '@/lib/samba/constants'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
 import TetrisBoard from './tetris/TetrisBoard'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface RangeMargin {
   min: number
@@ -134,7 +135,6 @@ interface MarketPolicyForm {
   ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
 }
 
-
 // 마켓 목록은 @/lib/samba/markets에서 import
 const MARKET_KEY_MAP = MARKET_ID_BY_LABEL
 
@@ -236,8 +236,8 @@ function extractMdGroups(data: unknown): LotteMdGroup[] {
   return result
 }
 
-
 export default function PoliciesPage() {
+  const c = useTheme()
   const TETRIS_MATCHING_ENABLED_KEY = 'tetris_matching_enabled'
   useEffect(() => { document.title = 'SAMBA-정책관리' }, [])
   const searchParams = useSearchParams()
@@ -349,7 +349,6 @@ export default function PoliciesPage() {
   // 담당MD·출고지·반품지·브랜드를 불러올지 선택. '' 이면 accountIds[0] 폴백.
   const [gsQueryAccId, setGsQueryAccId] = useState('')
 
-
   // 현재 마켓 정책 가져오기 (부분 데이터에도 기본값 보장)
   const getCurrentMarketPolicy = useCallback((): MarketPolicyForm => {
     const defaults: MarketPolicyForm = { accountId: '', accountIds: [], shipType: 'domestic', feeRate: 21, shippingCost: 0, shippingDays: 3, marginRate: 0, brand: '', bulkDiscountQty: 2, bulkDiscountPrice: 0, smileCashRate: 0, gsMarginRate: 0, discountRate: 0, maxStock: 0, dayMaxQty: 5, onceMinQty: 1, onceMaxQty: 5, origin: '', streetPriceRate: 0, ssgBrandMappings: [], gsSettings: {} }
@@ -415,7 +414,6 @@ export default function PoliciesPage() {
       .then(res => { if (res.interval_hours > 0) setSyncIntervalInput(res.interval_hours) })
       .catch(() => {})
   }, [])
-
 
   // URL highlight 파라미터로 정책 자동 선택
   useEffect(() => {
@@ -524,7 +522,6 @@ export default function PoliciesPage() {
     }, 300)
     return () => clearTimeout(timer)
   }, [gsBrandKeyword, gsAccountId])
-
 
   // GS샵 출고지/반품지 목록 로드 (조회 기준 계정 gsAccountId 기준 — 계정 바뀌면 재조회)
   const loadGsDelivPlaces = useCallback(async () => {
@@ -1205,8 +1202,6 @@ export default function PoliciesPage() {
               )}
             </div>
           </div>
-
-
 
           {/* 마켓정책 설정 */}
           <div style={{ ...card, padding: '1.5rem', marginBottom: '1.25rem' }}>

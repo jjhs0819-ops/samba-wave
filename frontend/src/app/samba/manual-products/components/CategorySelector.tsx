@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { categoryApi } from '@/lib/samba/legacy'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Account {
   id: string
@@ -51,6 +52,7 @@ export default function CategorySelector({
   onDeleteFromMarket,
   deletingAccountId,
 }: Props) {
+  const c = useTheme()
   const [cats, setCats] = useState<Record<string, string>>(savedCategories)
   const [queries, setQueries] = useState<Record<string, string>>({})
   const [suggestions, setSuggestions] = useState<Record<string, string[]>>({})

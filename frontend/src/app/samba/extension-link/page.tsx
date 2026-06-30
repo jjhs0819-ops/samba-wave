@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useState } from 'react'
 import { SAMBA_PREFIX, fetchWithAuth } from '@/lib/samba/legacy'
 import { getDeviceId } from '@/lib/samba/deviceId'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export default function ExtensionLinkPage() {
+  const c = useTheme()
   const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('loading')
   const [message, setMessage] = useState('')
 

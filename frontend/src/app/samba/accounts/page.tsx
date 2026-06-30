@@ -3,10 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { accountApi, type SambaMarketAccount } from "@/lib/samba/api/commerce";
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export default function AccountsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-계정관리' }, [])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -110,6 +112,7 @@ export default function AccountsPage() {
 }
 
 function FI({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const c = useTheme()
   return (
     <div>
       <label className="text-xs mb-1 block" style={{ color: c.textSub }}>{label}</label>

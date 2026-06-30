@@ -1,6 +1,6 @@
+import { light as c } from '@/lib/samba/colors'
 import type { CSSProperties } from 'react'
 import { fmtDateTime } from '@/lib/samba/utils'
-import { light as c } from '@/lib/samba/colors'
 
 export interface License {
   id: string

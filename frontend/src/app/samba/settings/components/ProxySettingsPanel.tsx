@@ -1,13 +1,15 @@
 'use client'
 
 import { card, inputStyle } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import {
   type ProxyConfigItem,
   type ProxyPurpose,
 } from '@/lib/samba/api/commerce'
 import type { ProxySettingsState, ProxySettingsActions } from '../hooks/useProxySettings'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type Props = ProxySettingsState & Pick<ProxySettingsActions,
   'testProxy' | 'openProxyAdd' | 'openProxyEdit' | 'handleProxySave' |
@@ -22,6 +24,7 @@ const PURPOSE_STYLES: Record<ProxyPurpose, { bg: string; color: string; label: s
 }
 
 export function ProxySettingsPanel(props: Props) {
+  const c = useTheme()
   const {
     proxies,
     proxyModalOpen,

@@ -4,8 +4,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { accountApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { storeCareApi, sourcingAccountApi, type StoreCareSchedule, type StoreCarePurchase, type StoreCareMarketMetric, type MetricRecommendation, type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { card as baseCard, fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const card = { ...baseCard, padding: '20px' }
 
@@ -63,8 +65,8 @@ function targetLabel(target: { metric: string; op: string; value: number }): str
   return `${name} ${target.op} ${target.value}%`
 }
 
-
 export default function StoreCare() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-스토어케어' }, [])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [schedules, setSchedules] = useState<StoreCareSchedule[]>([])

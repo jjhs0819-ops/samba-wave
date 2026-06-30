@@ -2,8 +2,9 @@
 
 import { type RefreshResult } from '@/lib/samba/api/commerce'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   open: boolean
@@ -12,6 +13,7 @@ interface Props {
 }
 
 export default function RefreshResultModal({ open, result, onClose }: Props) {
+  const c = useTheme()
   if (!open || !result) return null
 
   return (

@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { rewardsApi, type RewardAccountRow, type RewardJob, type RewardsStatus } from '@/lib/samba/api'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
 import { getDeviceId } from '@/lib/samba/deviceId'
 import { fmtNum } from '@/lib/samba/styles'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 function formatRelative(iso: string | null): string {
   if (!iso) return '-'
@@ -83,6 +85,7 @@ function reviewAction(site: string): string {
 }
 
 export default function RewardsPage() {
+  const c = useTheme()
   const [data, setData] = useState<RewardsStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [intervalDraft, setIntervalDraft] = useState<number>(24)

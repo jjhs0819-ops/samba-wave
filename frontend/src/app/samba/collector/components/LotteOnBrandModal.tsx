@@ -3,8 +3,9 @@
 import { collectorApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface BrandModalItem {
   name: string
@@ -46,6 +47,7 @@ export default function LotteOnBrandModal({
   onScanDone,
   addLog,
 }: LotteOnBrandModalProps) {
+  const c = useTheme()
   if (!open || brandModalList.length === 0) return null
 
   return (

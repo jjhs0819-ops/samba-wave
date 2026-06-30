@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import {
   sourcingAccountApi,
   type SambaSourcingAccount,
@@ -11,6 +11,7 @@ import {
 import { showAlert } from '@/components/samba/Modal'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import type { SourcingAccountsState, SourcingAccountsActions } from '../hooks/useSourcingAccounts'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type Props = SourcingAccountsState & Pick<SourcingAccountsActions,
   'handleSyncChromeProfiles' | 'handleSourcingSave' | 'handleSourcingDelete' |
@@ -21,6 +22,7 @@ type Props = SourcingAccountsState & Pick<SourcingAccountsActions,
 }
 
 export function SourcingAccountsPanel(props: Props) {
+  const c = useTheme()
   const {
     sourcingAccounts,
     sourcingSites,

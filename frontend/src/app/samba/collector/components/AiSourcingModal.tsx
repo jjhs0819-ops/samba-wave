@@ -9,8 +9,9 @@ import { showAlert } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { SITES } from '../constants'
 import AiSourcingConfirmStep from './AiSourcingConfirmStep'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface AiSourcingModalProps {
   open: boolean
@@ -42,6 +43,7 @@ export default function AiSourcingModal({
   setAiMinCount, setAiCreating, setAiSourceSite,
   onClose, onCreated,
 }: AiSourcingModalProps) {
+  const c = useTheme()
   if (!open) return null
 
   return (

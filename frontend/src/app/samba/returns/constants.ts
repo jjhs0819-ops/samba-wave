@@ -1,6 +1,6 @@
+import { light as c } from '@/lib/samba/colors'
 import type { CSSProperties } from 'react'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
-import { light as c } from '@/lib/samba/colors'
 
 export const STATUS_MAP: Record<string, { label: string; bg: string; text: string }> = {
   requested: { label: '요청됨', bg: 'rgba(255,211,61,0.15)', text: c.warn },

@@ -4,6 +4,7 @@ import AccountBlock from './AccountBlock'
 import type { TetrisAccountBlock, TetrisMarketGroup, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { DragState } from './useTetris'
 import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy {
   id: string
@@ -74,6 +75,7 @@ export default function MarketColumn({
   onToggleExcluded,
   onToggleAccountExcluded,
 }: Props) {
+  const c = useTheme()
   const [draggedAccountId, setDraggedAccountId] = useState<string | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
 

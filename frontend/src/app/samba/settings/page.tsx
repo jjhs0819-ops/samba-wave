@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { light as c } from '@/lib/samba/colors'
+
 import { useProxySettings } from './hooks/useProxySettings'
 import { ProxySettingsPanel } from './components/ProxySettingsPanel'
 import { useExternalSettings } from './hooks/useExternalSettings'
@@ -12,8 +12,10 @@ import { useSourcingAccounts } from './hooks/useSourcingAccounts'
 import { SourcingAccountsPanel } from './components/SourcingAccountsPanel'
 import { LicensePanel } from './components/LicensePanel'
 import { OfficeShippingPanel } from './components/OfficeShippingPanel'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export default function SettingsPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-설정' }, [])
 
   // 훅

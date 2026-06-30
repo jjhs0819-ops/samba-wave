@@ -3,8 +3,9 @@
 import { proxyApi } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export interface TagPreview {
   group_id: string
@@ -51,6 +52,7 @@ export default function TagPreviewModal({
   onClose,
   onApplied,
 }: TagPreviewModalProps) {
+  const c = useTheme()
   if (!open) return null
 
   const handleClose = () => {

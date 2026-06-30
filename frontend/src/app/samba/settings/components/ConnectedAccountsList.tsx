@@ -3,8 +3,9 @@
 import { Dispatch, SetStateAction } from 'react'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { STORE_MARKETS } from '../config'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type OutboundPlace = { code: string; name: string; address: string; deliveryCode?: string }
 type InboundPlace = { code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function ConnectedAccountsList(props: Props) {
+  const c = useTheme()
   const {
     marketKey, accounts, editingAccountId, setEditingAccountId, setStoreData,
     setCoupangOutboundList, setCoupangInboundList, handleAccountDelete,

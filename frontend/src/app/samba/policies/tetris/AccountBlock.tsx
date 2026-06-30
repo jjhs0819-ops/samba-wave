@@ -1,10 +1,12 @@
 'use client'
 import { useMemo, useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import BrandBlock from './BrandBlock'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { DragState } from './useTetris'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy {
   id: string
@@ -83,6 +85,7 @@ export default function AccountBlock({
   onAccountDragStart,
   onAccountDragEnd,
 }: Props) {
+  const c = useTheme()
   const [isOver, setIsOver] = useState(false)
   const [dropSlot, setDropSlot] = useState<number | null>(null)
   const [isThisBeingDragged, setIsThisBeingDragged] = useState(false)
@@ -210,7 +213,6 @@ export default function AccountBlock({
           {account.tetris_excluded ? '배제중' : '배제'}
         </button>
       </div>
-
 
       <div
         style={{

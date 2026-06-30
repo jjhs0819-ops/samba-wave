@@ -4,12 +4,14 @@ import React, { useState } from 'react'
 
 import { API_BASE_URL } from '@/config/api'
 import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 /** 상품 이미지 컴포넌트 — 로드 실패 시 이름 첫 글자 표시. */
 const API_BASE = API_BASE_URL
 
 // /static/ 상대 경로를 백엔드 절대 URL로 변환
 function resolveImageUrl(url?: string): string | undefined {
+  const c = useTheme()
   if (!url) return undefined
   if (url.startsWith('/static/')) return `${API_BASE}${url}`
   return url

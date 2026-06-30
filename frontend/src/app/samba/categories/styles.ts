@@ -1,5 +1,5 @@
-import { MARKET_KEYS } from './constants'
 import { light as c } from '@/lib/samba/colors'
+import { MARKET_KEYS } from './constants'
 
 const marketColWidth = (mk: string) =>
   mk === 'coupang' || mk === 'ssg' || mk === 'ssg_std' || mk === 'gsshop' ? '360px' : '300px'

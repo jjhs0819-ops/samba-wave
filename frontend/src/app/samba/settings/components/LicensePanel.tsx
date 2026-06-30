@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react'
 
 import { verifyLicenseKey, type LicenseVerifyResult } from '@/lib/samba/api/license'
 import { getLicenseKey, setLicenseKey } from '@/hooks/useLicenseCheck'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export function LicensePanel() {
+  const c = useTheme()
   const [currentKey, setCurrentKey] = useState<string | null>(null)
   const [newKey, setNewKey] = useState('')
   const [status, setStatus] = useState<LicenseVerifyResult | null>(null)

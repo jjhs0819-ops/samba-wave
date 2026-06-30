@@ -2,8 +2,9 @@
 
 import { useState } from 'react'
 import { categoryApi } from '@/lib/samba/api/commerce'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface MappingMarketRowProps {
   marketType: string
@@ -15,6 +16,7 @@ interface MappingMarketRowProps {
 
 // 매핑 모달 — 마켓별 카테고리 입력 + 자동완성
 export default function MappingMarketRow({ marketType, marketName, value, onChange, onClear }: MappingMarketRowProps) {
+  const c = useTheme()
   const [suggestions, setSuggestions] = useState<string[]>([])
   const [showSugg, setShowSugg] = useState(false)
   return (

@@ -6,11 +6,12 @@ import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { orderApi } from '@/lib/samba/legacy'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { formatDateInput, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { showAlert } from '@/components/samba/Modal'
 import { STATUS_MAP } from '../constants'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   isProductMode: boolean
@@ -67,6 +68,7 @@ interface Props {
 }
 
 export default function OrdersFilterBar(props: Props) {
+  const c = useTheme()
   const {
     isProductMode,
     period, setPeriod, customStart, setCustomStart, customEnd, setCustomEnd,

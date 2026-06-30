@@ -2,9 +2,10 @@
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { inputStyle } from '@/lib/samba/styles'
-import { light as c, lightInput } from '@/lib/samba/colors'
+import { lightInput } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
 import { SHIPPING_COMPANIES } from '../constants'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface OrderForm {
   channel_id: string
@@ -30,6 +31,7 @@ interface Props {
 }
 
 export default function OrderEditModal({ open, editingId, form, setForm, onClose, onSubmit }: Props) {
+  const c = useTheme()
   if (!open) return null
 
   return (

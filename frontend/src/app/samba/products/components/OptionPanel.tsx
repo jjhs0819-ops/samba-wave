@@ -6,8 +6,9 @@ import {
   type SambaCollectedProduct,
 } from '@/lib/samba/api/commerce'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 /** 옵션 패널 — 옵션명/가격/재고 편집 + 일괄수정. */
 const OptionPanel = React.memo(function OptionPanel({
@@ -25,6 +26,7 @@ const OptionPanel = React.memo(function OptionPanel({
   nameRule?: import('@/lib/samba/api/support').SambaNameRule
   curSym?: string
 }) {
+  const c = useTheme()
   const [open, setOpen] = useState(false)
   const [selectAll, setSelectAll] = useState(true)
   const [editingName, setEditingName] = useState<number | null>(null)

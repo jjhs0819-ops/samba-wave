@@ -1,8 +1,10 @@
 'use client'
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import type { TetrisUnassigned, TetrisBrandBlock } from '@/lib/samba/api/tetris'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const FIXED_BLOCK_PX = 56
 
@@ -47,7 +49,6 @@ function normSiteKey(value: string | null | undefined): string {
 function brandScopeKey(sourceSite: string | null | undefined, brandName: string | null | undefined): string {
   return `${normSiteKey(sourceSite)}::${normTetrisKey(brandName)}`
 }
-
 
 export interface BrandAssignment {
   marketType: string
@@ -279,6 +280,7 @@ export default function UnassignedPool({
   onBrandPolicyChange,
   onDeleteBrandScope,
 }: Props) {
+  const c = useTheme()
   const grouped = unassigned.reduce<Record<string, TetrisUnassigned[]>>((acc, item) => {
     const key = item.source_site
     if (!acc[key]) acc[key] = []

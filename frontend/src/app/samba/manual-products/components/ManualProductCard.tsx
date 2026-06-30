@@ -7,8 +7,10 @@ import ImageManagerModal from './ImageManagerModal'
 import type { SambaCollectedProduct } from '@/lib/samba/legacy'
 import { fmtNum } from '@/lib/samba/styles'
 import { buildMarketPriceList } from '@/lib/samba/marketPrice'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Policy { id: string; name: string; market_policies?: Record<string, unknown>; pricing?: Record<string, unknown> }
 
@@ -62,6 +64,7 @@ function toEditOptions(raw: unknown[] | undefined): EditOption[] {
 }
 
 export default function ManualProductCard({ product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
+  const c = useTheme()
   const [showCategories, setShowCategories] = useState(false)
   const [showPrices, setShowPrices] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)

@@ -2,12 +2,13 @@
 
 import { useState } from 'react'
 
-import { light as c } from '@/lib/samba/colors'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { verifyLicenseKey } from '@/lib/samba/api/license'
 import { setLicenseKey } from '@/hooks/useLicenseCheck'
+import { useTheme } from '@/lib/samba/useTheme'
 
 export default function LicensePage() {
+  const c = useTheme()
   const [key, setKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)

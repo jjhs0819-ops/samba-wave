@@ -1,7 +1,7 @@
 'use client'
 
 import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
 import {
   accountApi,
@@ -14,6 +14,7 @@ import { formatPlayautoAliasEntry, parsePlayautoAliasEntry } from '@/lib/samba/p
 import { STORE_MARKETS } from '../config'
 import type { StoreSettingsState, StoreSettingsActions } from '../hooks/useStoreSettings'
 import { ConnectedAccountsList } from './ConnectedAccountsList'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'updateStoreField' | 'saveStoreSettings' | 'testStoreAuth' |
@@ -28,6 +29,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
 >
 
 export function StoreSettingsPanel(props: Props) {
+  const c = useTheme()
   const {
     accounts, storeTab, visiblePasswords, storeData, savedStoreData,
     storeStatus, editingAccountId,

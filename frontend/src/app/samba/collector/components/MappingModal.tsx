@@ -3,10 +3,11 @@
 import { collectorApi, categoryApi, type SambaSearchFilter } from '@/lib/samba/api/commerce'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { MAPPING_MARKETS } from '../constants'
 import MappingMarketRow from './MappingMarketRow'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface MappingModalProps {
   open: boolean
@@ -30,6 +31,7 @@ export default function MappingModal({
   onClose,
   onSaved,
 }: MappingModalProps) {
+  const c = useTheme()
   if (!open || !filter) return null
 
   return (

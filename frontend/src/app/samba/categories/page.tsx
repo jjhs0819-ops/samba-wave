@@ -9,7 +9,7 @@ import { showAlert } from '@/components/samba/Modal'
 import { card, fmtNum } from '@/lib/samba/styles'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
-import { light as c } from '@/lib/samba/colors'
+
 import type { CatLevel, MappingRow } from './types'
 import { COST_PER_CALL_KRW, COST_BASIS, MARKET_KEYS } from './constants'
 import {
@@ -22,11 +22,13 @@ import {
   itemStyle,
 } from './styles'
 import { buildCategoryTree, getCatList } from './categoryTree'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // 카테고리 동기화 제외 마켓 (롯데홈쇼핑·플레이오토는 동기화 대상에서 제외)
 const SYNC_EXCLUDED_MARKETS = new Set(['lottehome', 'playauto'])
 
 export default function CategoriesPage() {
+  const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-카테고리' }, [])
   const router = useRouter()
   const [loading, setLoading] = useState(true)

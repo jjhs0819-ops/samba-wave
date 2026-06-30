@@ -9,11 +9,12 @@ import {
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/api/shared'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
 import { fmtDate, fmtTime } from '@/lib/samba/utils'
 import { formatSourceSiteLabel } from '../utils/siteAlias'
 import { hasActionTag } from '../utils/actionTag'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   o: SambaOrder
@@ -46,6 +47,7 @@ interface Props {
 }
 
 export default function OrderInfoCell(props: Props) {
+  const c = useTheme()
   const {
     o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, actualSourceSite, activeActions,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,

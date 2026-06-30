@@ -2,8 +2,9 @@
 
 import React, { Dispatch, SetStateAction } from 'react'
 import { inputStyle } from '@/lib/samba/styles'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   open: boolean
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export default function UrlInputModal({ open, urlInput, setUrlInput, imageInput, setImageInput, saving, onClose, onSubmit }: Props) {
+  const c = useTheme()
   if (!open) return null
 
   return (

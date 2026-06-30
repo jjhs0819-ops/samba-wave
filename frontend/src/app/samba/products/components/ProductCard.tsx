@@ -15,8 +15,10 @@ import { fmtNum } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'
 import OptionPanel from './OptionPanel'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // 마켓별 상품 검색 URL (구매페이지 바로가기용)
 export const MARKETS = [
@@ -69,6 +71,7 @@ const MARKET_NAME_BYTE_LIMITS: Record<string, number> = {
 }
 
 function truncateToBytes(text: string, maxBytes: number): string {
+  const c = useTheme()
   const encoded = new TextEncoder().encode(text)
   if (encoded.length <= maxBytes) return text
   return new TextDecoder('utf-8', { fatal: false }).decode(encoded.slice(0, maxBytes))

@@ -11,8 +11,9 @@ import { SOURCING_SEARCH_URLS } from '@/lib/samba/constants'
 import { fmtDate as _fmtDate } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
 import { matchesPolicyRegFilter } from '../hooks/useDisplayedFilters'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const fmtDate = (iso: string | undefined | null) => _fmtDate(iso, '.')
 const FIXED_REQUESTED_COUNT = 1000
@@ -45,6 +46,7 @@ export interface DrilldownGroupTableProps {
 }
 
 export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
+  const c = useTheme()
   const {
     filters, tree, policies,
     drillSite, drillBrand, drillGroup, drillEntry,

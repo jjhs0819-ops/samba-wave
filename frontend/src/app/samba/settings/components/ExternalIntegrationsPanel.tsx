@@ -12,8 +12,9 @@ import {
 } from '../config'
 import type { ExternalSettingsState, ExternalSettingsActions } from '../hooks/useExternalSettings'
 import { ForbiddenWordsSection } from './ForbiddenWordsSection'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn, btnDisabled } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 type Props = ExternalSettingsState & ExternalSettingsActions & {
   visiblePasswords: Set<string>
@@ -21,6 +22,7 @@ type Props = ExternalSettingsState & ExternalSettingsActions & {
 }
 
 export function ExternalIntegrationsPanel(props: Props) {
+  const c = useTheme()
   const {
     // 환율
     exchangeRates, exchangeStatus, exchangeSaving,

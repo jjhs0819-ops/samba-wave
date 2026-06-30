@@ -5,8 +5,9 @@ import { card, fmtNum } from '@/lib/samba/styles'
 import { forbiddenApi, type SambaForbiddenWord } from '@/lib/samba/api/commerce'
 import { MARKETS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
-import { light as c } from '@/lib/samba/colors'
+
 import { btn } from '@/lib/samba/buttons'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface Props {
   // 아래 텍스트/세터 props 는 레거시 호환용 — 본 섹션은 마켓별 상태를 자체 관리한다.
@@ -35,6 +36,7 @@ const wordsToText = (words: SambaForbiddenWord[], type: string) =>
   [...new Set(words.filter(w => w.type === type).map(w => w.word.trim()).filter(Boolean))].join('; ')
 
 export function ForbiddenWordsSection({ tagBanned, setTagBanned }: Props) {
+  const c = useTheme()
   const [market, setMarket] = useState('common')
   const [forbiddenText, setForbiddenText] = useState('')
   const [deletionText, setDeletionText] = useState('')

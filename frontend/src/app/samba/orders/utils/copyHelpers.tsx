@@ -3,6 +3,7 @@
 import React from 'react'
 import { showAlert } from '@/components/samba/Modal'
 import { light as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 const copyableTextStyle: React.CSSProperties = {
   color: c.text,
@@ -13,6 +14,7 @@ const copyableTextStyle: React.CSSProperties = {
 }
 
 const handleCopyText = async (value: string | null | undefined) => {
+  const c = useTheme()
   let text = (value || '').trim()
   text = text.replace(/\([^)]*\)/g, '').trim()
   if (!text) {
