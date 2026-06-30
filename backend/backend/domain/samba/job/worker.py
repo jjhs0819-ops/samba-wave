@@ -4259,9 +4259,45 @@ class JobWorker:
                             _has_layered_detail = any(
                                 "/" in str(o.get("name", "")) for o in _detail_opts
                             )
-                            if _has_layered_uitem and (
-                                not _detail_opts
-                                or not _has_layered_detail
+                            if not _detail_opts:
+                                # 옵션 없음 — 깊이 무관하게 uitemOptions 전체 채택 (#527)
+                                # 1단 색상(블랙/블루 등) 상품은 "/" 없어 layered 검사 통과 못 함
+                                from backend.domain.samba.proxy.ssg_sourcing import (
+                                    filter_daepyo_options as _fdo,
+                                )
+
+                                _price_fallback = int(detail.get("salePrice", 0) or 0)
+                                _recovered = _fdo(
+                                    [
+                                        {
+                                            "name": _uo.get("name", ""),
+                                            "price": int(_uo.get("price", 0) or 0)
+                                            or _price_fallback,
+                                            "stock": (
+                                                0
+                                                if _uo.get("isSoldOut")
+                                                else (
+                                                    _uo.get("usablInvQty")
+                                                    if _uo.get("usablInvQty")
+                                                    is not None
+                                                    else 99
+                                                )
+                                            ),
+                                            "isSoldOut": _uo.get("isSoldOut", False),
+                                        }
+                                        for _uo in _uitem_opts
+                                        if _uo.get("name")
+                                    ],
+                                    detail.get("name"),
+                                )
+                                if _recovered:
+                                    detail["options"] = _recovered
+                                    _all_sold = all(o["isSoldOut"] for o in _recovered)
+                                    detail["soldOut"] = "Y" if _all_sold else "N"
+                                    detail["isSoldOut"] = _all_sold
+                                    detail["isOutOfStock"] = _all_sold
+                            elif _has_layered_uitem and (
+                                not _has_layered_detail
                                 or len(_detail_opts) < len(_uitem_opts)
                             ):
                                 from backend.domain.samba.proxy.ssg_sourcing import (
@@ -4286,7 +4322,7 @@ class JobWorker:
                                     ],
                                     detail.get("name"),
                                 )
-                            elif _detail_opts:
+                            else:
                                 # 단일 옵션: 품절 상태만 보정
                                 _soldout_names = {
                                     o["name"] for o in _uitem_opts if o.get("isSoldOut")

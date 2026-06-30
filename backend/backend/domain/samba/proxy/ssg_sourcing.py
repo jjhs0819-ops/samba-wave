@@ -1562,15 +1562,52 @@ class SSGSourcingClient:
         # [데몬 분기] html 미회신 — 파싱 완료값으로 직접 구성
         if not detail:
             detail = daemon_detail_fallback(ext)
-        # uitemOptions(AJAX 후 실재고)로 품절 보정
+        # uitemOptions(AJAX 후 실재고)로 옵션 복구 또는 품절 보정 (#527)
         _uitems = ext.get("uitemOptions", [])
-        if _uitems and detail.get("options"):
-            _soldout_names = {o["name"] for o in _uitems if o.get("isSoldOut")}
-            if _soldout_names:
-                for _opt in detail["options"]:
-                    if _opt.get("name") in _soldout_names:
-                        _opt["isSoldOut"] = True
-                        _opt["stock"] = 0
+        if _uitems:
+            _detail_opts = detail.get("options") or []
+            if not _detail_opts:
+                # 옵션 비어있음 — 1단·2단 무관하게 uitemOptions 전체 채택.
+                # 데몬이 ordOpt1 색상 select를 파싱 안 한 경우(수경 등 1단 색상 상품)
+                # uitemOptions(AJAX 실재고)가 유일한 옵션 소스 — 더미옵션 등록 방지.
+                _price_fb = int(detail.get("salePrice", 0) or 0)
+                _recovered = filter_daepyo_options(
+                    [
+                        {
+                            "name": (uo.get("name") or "").strip(),
+                            "price": int(uo.get("price", 0) or 0) or _price_fb,
+                            "stock": (
+                                0
+                                if uo.get("isSoldOut")
+                                else (
+                                    uo.get("usablInvQty")
+                                    if uo.get("usablInvQty") is not None
+                                    else uo.get("stock", 99)
+                                )
+                            ),
+                            "isSoldOut": bool(uo.get("isSoldOut")),
+                        }
+                        for uo in _uitems
+                        if (uo.get("name") or "").strip()
+                    ]
+                )
+                if _recovered:
+                    detail["options"] = _recovered
+                    _all_sold = all(o["isSoldOut"] for o in _recovered)
+                    detail["soldOut"] = "Y" if _all_sold else "N"
+                    detail["isSoldOut"] = _all_sold
+                    detail["isOutOfStock"] = _all_sold
+                    logger.info(
+                        f"[SSG] 옵션 복구(uitemOptions): {item_id} {len(_recovered)}개"
+                    )
+            else:
+                # 옵션 있음 — 품절 상태만 보정
+                _soldout_names = {o["name"] for o in _uitems if o.get("isSoldOut")}
+                if _soldout_names:
+                    for _opt in _detail_opts:
+                        if _opt.get("name") in _soldout_names:
+                            _opt["isSoldOut"] = True
+                            _opt["stock"] = 0
         # 이미지 정제+확장(#425) — sui UI에셋(장바구니/카드) 제거·_1200 고화질 승격·
         # 실존 추가이미지(i2~i9) 복원. collect 전용 경로라 오토튠 refresh 영향 없음.
         # name 유무 불문 항상 sanitize — name 없을 때 카드이미지 통과 버그 차단.

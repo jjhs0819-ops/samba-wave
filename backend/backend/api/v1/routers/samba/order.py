@@ -8893,6 +8893,14 @@ async def sync_orders_from_markets(
                             and new_ship_status in advanced
                         ):
                             update_fields["shipping_status"] = new_ship_status
+                        elif (
+                            existing.shipping_status == "국내배송중"
+                            and new_ship_status in ("배송완료", "구매확정")
+                        ):
+                            # #524 — 국내배송중→배송완료/구매확정 종결 전이
+                            # 쿠팡 DEPARTURE/DELIVERING 둘 다 국내배송중으로 매핑되어
+                            # FINAL_DELIVERY 도달 시 종결이 영구 차단되던 문제 해소.
+                            update_fields["shipping_status"] = new_ship_status
                         elif new_ship_status in (
                             "반품요청",
                             "반품완료",
