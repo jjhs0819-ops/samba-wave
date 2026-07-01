@@ -310,6 +310,10 @@ class ImageTransformService:
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+        # #543 쿠팡 strict-pixel 중복 다운로드 캐시(인스턴스 수명).
+        # 같은 상품의 4대상(images/detail_images/main/detail_html)이 동일 이미지를
+        # 매번 재다운로드+재인코딩하던 비용 제거. 키=정책+URL, 값=최종 결과 URL.
+        self._mirror_memo: dict[str, str] = {}
 
     async def _get_setting(self, key: str) -> dict[str, Any] | None:
         from backend.domain.samba.forbidden.repository import SambaSettingsRepository
@@ -1242,20 +1246,30 @@ class ImageTransformService:
         url_map: dict[str, str] = {}
         failed: set[str] = set()
 
-        # 빠른 사전 체크용 HTTP 클라이언트 (HEAD)
-        async with httpx.AsyncClient(
-            timeout=10.0, follow_redirects=True
-        ) as http_client:
-            for url in urls:
-                if not url:
-                    continue
+        # #543 정책키 — 같은 URL도 검증 파라미터가 다르면 다른 결과라 키에 포함.
+        _policy = f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:"
+
+        # #543 순차 → 병렬. 죽은/느린 소스 이미지 대기가 분산돼 상품당 300초 초과 해소.
+        # Semaphore 로 동시 다운로드+PIL 디코드 수 제한(메모리 가드).
+        _sem = asyncio.Semaphore(5)
+
+        # 각 URL 처리 결과: (result_url, orig→mirror 매핑 or None, failed 여부)
+        async def _process_one(
+            url: str, http_client: httpx.AsyncClient
+        ) -> tuple[str, tuple[str, str] | None, bool]:
+            memo_key = _policy + url
+            cached = self._mirror_memo.get(memo_key)
+            if cached is not None:
+                # 캐시 hit — 미러로 바뀐 경우 매핑도 반환(html 치환/재전송 반영)
+                return cached, ((url, cached) if cached != url else None), False
+            async with _sem:
                 try:
                     parsed = urlparse(url)
                     host = (parsed.netloc or "").lower()
                     # R2 본인 호스트면 그대로
                     if public_host and host == public_host:
-                        result.append(url)
-                        continue
+                        self._mirror_memo[memo_key] = url
+                        return url, None, False
                     # min_dim/enforce_max_dim 모드: HEAD 우회하고 무조건 다운로드
                     # — HEAD 로는 픽셀 크기를 알 수 없으므로 PIL 로 직접 확인 필요.
                     strict_pixel = bool(min_dim > 0 or enforce_max_dim)
@@ -1277,8 +1291,8 @@ class ImageTransformService:
                             over = True
 
                         if not over:
-                            result.append(url)
-                            continue
+                            self._mirror_memo[memo_key] = url
+                            return url, None, False
 
                     # 다운로드 후 PIL 로 리사이즈
                     # 1038 방어망용 — 5MB 기본 가드를 20MB까지 풀어줘야
@@ -1287,9 +1301,8 @@ class ImageTransformService:
                         url, max_size=20 * 1024 * 1024
                     )
                     if not image_bytes:
-                        failed.add(url)
-                        result.append(url)
-                        continue
+                        # 다운로드 실패는 캐시 안 함(일시 오류 재시도 여지)
+                        return url, None, True
 
                     from PIL import Image  # noqa: F811
 
@@ -1315,8 +1328,8 @@ class ImageTransformService:
                         and not over_bytes
                         and not is_hotlink
                     ):
-                        result.append(url)
-                        continue
+                        self._mirror_memo[memo_key] = url
+                        return url, None, False
 
                     # 쿠팡 최소사이즈 검증(500x500) 대응 — 비율 유지하며 LANCZOS 업스케일
                     if need_upscale:
@@ -1339,8 +1352,7 @@ class ImageTransformService:
                         if len(final_bytes) <= max_bytes:
                             break
                     if not final_bytes:
-                        result.append(url)
-                        continue
+                        return url, None, False
 
                     content_hash = hashlib.md5(final_bytes).hexdigest()[:16]
                     key = f"resized/{content_hash}.jpg"
@@ -1363,15 +1375,30 @@ class ImageTransformService:
                             ),
                         )
                     mirrored = f"{public_url}/{key}"
-                    result.append(mirrored)
-                    url_map[url] = mirrored
+                    self._mirror_memo[memo_key] = mirrored
                     logger.info(
                         f"[이미지리사이즈] {len(image_bytes)}B→{len(final_bytes)}B {url} → {mirrored}"
                     )
+                    return mirrored, (url, mirrored), False
                 except Exception as e:
                     logger.warning(f"[이미지리사이즈] 실패로 원본 유지: {url} — {e}")
-                    failed.add(url)
-                    result.append(url)
+                    return url, None, True
+
+        # 빠른 사전 체크용 HTTP 클라이언트 (HEAD) — 병렬 태스크가 공유(httpx 동시요청 안전)
+        _valid = [u for u in urls if u]
+        async with httpx.AsyncClient(
+            timeout=10.0, follow_redirects=True
+        ) as http_client:
+            _outs = await asyncio.gather(
+                *[_process_one(u, http_client) for u in _valid]
+            )
+        # 입력 순서 보존하며 result/url_map/failed 조립
+        for res_url, mapping, is_failed in _outs:
+            result.append(res_url)
+            if mapping is not None:
+                url_map[mapping[0]] = mapping[1]
+            if is_failed:
+                failed.add(res_url)
         return result, url_map, failed
 
     async def mirror_oversized_in_html(
