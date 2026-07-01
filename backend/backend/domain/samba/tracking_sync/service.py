@@ -1165,6 +1165,35 @@ async def dispatch_pending_sweep_loop(interval_seconds: int = 300) -> None:
         await asyncio.sleep(interval_seconds)
 
 
+# 송장전송 실패 메모 태그 (#529) — order.notes 에 실패사유 세그먼트로 기재.
+_SHIP_FAILED_TAG = "[송장전송실패]"
+# ship_failed 로 덮어쓰면 안 되는 취소/반품 계열 상태 (취소가드 우선)
+_SHIP_FAILED_SKIP_STATUSES = {
+    "cancelled",
+    "cancelling",
+    "cancel_requested",
+    "returned",
+    "return_requested",
+    "returning",
+    "exchanged",
+}
+
+
+def _set_ship_failed_note(existing: str | None, reason: str) -> str:
+    """notes 에 [송장전송실패] 세그먼트 설정 — 기존 실패 세그먼트는 최신 사유로 교체, 수동메모 보존."""
+    segs = [s.strip() for s in (existing or "").split(" / ") if s.strip()]
+    segs = [s for s in segs if not s.startswith(_SHIP_FAILED_TAG)]
+    tag = f"{_SHIP_FAILED_TAG} {(reason or '').strip()}".strip()
+    return " / ".join([tag, *segs])
+
+
+def _clear_ship_failed_note(existing: str | None) -> str:
+    """[송장전송실패] 세그먼트만 제거, 나머지(수동메모 등) 보존."""
+    segs = [s.strip() for s in (existing or "").split(" / ") if s.strip()]
+    segs = [s for s in segs if not s.startswith(_SHIP_FAILED_TAG)]
+    return " / ".join(segs)
+
+
 async def dispatch_to_market(
     tracking_sync_job_id: str, *, dry_run: bool = False
 ) -> dict[str, Any]:
@@ -1249,10 +1278,19 @@ async def dispatch_to_market(
 
             # 마켓 전송 성공 시 주문 status 드롭다운을 "국내배송중"으로 갱신
             # (STATUS_MAP의 'shipping' = '국내배송중')
+            _order_dirty = False
             if order.status != "shipping":
                 order.status = "shipping"
                 order.shipping_status = "국내배송중"
                 order.shipped_at = datetime.now(_UTC)
+                _order_dirty = True
+            # 재전송 성공 — 이전 [송장전송실패] 메모 자동 정리 (수동메모 보존)
+            _cleaned = _clear_ship_failed_note(order.notes)
+            if _cleaned != (order.notes or ""):
+                order.notes = _cleaned
+                _order_dirty = True
+            if _order_dirty:
+                order.updated_at = datetime.now(_UTC)
                 session.add(order)
 
             await session.commit()
@@ -1266,6 +1304,14 @@ async def dispatch_to_market(
             job.last_error = f"dispatch 실패: {exc}"[:500]
             job.dispatch_result = {"error": str(exc), **result}
             session.add(job)
+            # (#529) 주문에도 실패 반영 — 운영자가 목록에서 송장전송 실패건 식별 가능.
+            # 취소/반품 계열 상태는 취소가드 우선(덮어쓰지 않음).
+            if str(order.status or "").lower() not in _SHIP_FAILED_SKIP_STATUSES:
+                order.status = "ship_failed"
+                order.shipping_status = "송장전송실패"
+                order.notes = _set_ship_failed_note(order.notes, str(exc)[:200])
+                order.updated_at = datetime.now(_UTC)
+                session.add(order)
             await session.commit()
             logger.warning(
                 f"[송장동기화] 마켓 전송 실패: order={order.id} ch={channel_source} "
