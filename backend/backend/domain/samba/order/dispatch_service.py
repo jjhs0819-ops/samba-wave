@@ -140,6 +140,8 @@ async def send_invoice_to_market(
             return await _send_ssg(order, account, courier, tracking, session)
         if market_type == "gsshop":
             return await _send_gsshop(order, account, courier, tracking, session)
+        if market_type in ("gmarket", "auction"):
+            return await _send_esm(order, account, courier, tracking, session)
         return False, f"미지원 마켓: {market_type}"
     except Exception as e:
         logger.warning(
@@ -759,3 +761,113 @@ async def _send_gsshop(order, account, courier, tracking, session):
     if result_cd == "S" or result.get("success"):
         return True, "GS샵 배송처리 완료"
     return False, f"GS샵 배송처리 실패: {result.get('resultMsg', '')}"
+
+
+# ESM(지마켓/옥션) 택배사 코드 — get_delivery_companies() 공식 조회 실패 시 폴백표.
+# 실 주문 검증(#530): 한진택배 register_shipping ResultCode 0 Success.
+_ESM_COURIER_FALLBACK = {
+    "CJ대한통운": 10013,
+    "대한통운": 10013,
+    "CJ택배": 10013,
+    "씨제이대한통운": 10013,
+    "CJGLS": 10013,
+    "한진택배": 10007,
+    "한진": 10007,
+    "롯데택배": 10008,
+    "롯데글로벌로지스": 10008,
+    "롯데": 10008,
+    "로젠택배": 10003,
+    "로젠": 10003,
+    "우체국택배": 10005,
+    "우체국": 10005,
+    "우체국소포": 10005,
+    "등기": 10005,
+}
+
+# 프로세스 캐시 — {site: {deliveryCompName: deliveryCompCode}}
+_ESM_COURIER_CACHE: dict[str, dict[str, int]] = {}
+
+
+async def _esm_resolve_courier_code(client, site: str, courier: str):
+    """택배사명 → ESM deliveryCompCode.
+
+    공식 API 조회(프로세스 캐시) 우선, 실패/미매칭 시 폴백표 보조.
+    """
+    name = (courier or "").strip()
+    if not name:
+        return None
+    cache = _ESM_COURIER_CACHE.get(site)
+    if cache is None:
+        cache = {}
+        try:
+            resp = await client.get_delivery_companies()
+            rows = resp.get("Data") or resp.get("data") or []
+            if isinstance(rows, list):
+                for r in rows:
+                    if not isinstance(r, dict):
+                        continue
+                    nm = str(
+                        r.get("deliveryCompName") or r.get("DeliveryCompName") or ""
+                    ).strip()
+                    cd = r.get("deliveryCompCode") or r.get("DeliveryCompCode")
+                    if nm and cd is not None:
+                        try:
+                            cache[nm] = int(cd)
+                        except (TypeError, ValueError):
+                            pass
+        except Exception as e:
+            logger.warning(f"[송장전송][ESM] 택배사 조회 실패(폴백 사용): {e}")
+        _ESM_COURIER_CACHE[site] = cache
+    if name in cache:
+        return cache[name]
+    return _ESM_COURIER_FALLBACK.get(name)
+
+
+async def _send_esm(order, account, courier, tracking, session):
+    """ESM(지마켓/옥션) — register_shipping 송장 전송 (#530).
+
+    취소승인은 order.py 에 구현돼 있었으나 송장전송만 디스패처 배선 누락이던 비대칭 해소.
+    """
+    from datetime import datetime
+
+    from backend.domain.samba.proxy.esmplus import (
+        ESMPlusClient,
+        resolve_esm_credentials,
+    )
+
+    site = (account.market_type or "").lower()
+    hosting_id, secret_key = await resolve_esm_credentials(session, account)
+    seller_id = (account.seller_id or "").strip()
+    if not hosting_id or not secret_key:
+        return False, "ESM 인증정보(hostingId/secretKey) 누락"
+    if not seller_id:
+        return False, "ESM seller_id 누락"
+
+    order_no = (order.order_number or "").strip()
+    if not order_no:
+        return False, "ESM 주문번호(order_number) 누락"
+    if not tracking:
+        return False, "운송장 번호 누락"
+
+    client = ESMPlusClient(hosting_id, secret_key, seller_id, site=site)
+    try:
+        code = await _esm_resolve_courier_code(client, site, courier)
+        if not code:
+            return False, f"ESM 미등록 택배사: {courier!r} — deliveryCompCode 매핑 없음"
+        # 발송일시 — 프로덕션(집PC) 로컬 = KST
+        shipping_date = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            await client.register_shipping(
+                order_no=order_no,
+                delivery_company_code=code,
+                invoice_no=tracking,
+                shipping_date=shipping_date,
+            )
+        except Exception as e:
+            return False, f"ESM 송장 전송 실패: {e}"
+        return True, "ESM 송장 전송 완료"
+    finally:
+        try:
+            await client.aclose()
+        except Exception:
+            pass
