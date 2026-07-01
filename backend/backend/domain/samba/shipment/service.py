@@ -1304,6 +1304,29 @@ class SambaShipmentService:
             if _w.word and _w.market:
                 _market_forbidden_map.setdefault(_w.market, []).append(_w.word)
 
+        # 금지어/삭제어 미적용 설정 로드 — 판매처(마켓)/소싱처 단위.
+        # 설정값은 마켓 id 또는 source_site 문자열 배열. (SambaSettings key-value, 마이그레이션 불필요)
+        # 테넌트 네임스페이스: 라우터가 f"{tenant_id}:{key}" 로 저장하므로 동일 규칙 + bare 키 폴백.
+        from backend.domain.samba.forbidden.model import SambaSettings as _SambaSettings
+        from sqlmodel import select as _sel_setting
+
+        async def _load_exempt_set(_key: str) -> set[str]:
+            _tid = product_row.tenant_id
+            _candidates = [f"{_tid}:{_key}", _key] if _tid else [_key]
+            for _ek in _candidates:
+                _sr = await self.session.execute(
+                    _sel_setting(_SambaSettings).where(_SambaSettings.key == _ek)
+                )
+                _srow = _sr.scalars().first()
+                if _srow and isinstance(_srow.value, list):
+                    return {str(_x) for _x in _srow.value if _x}
+            return set()
+
+        _exempt_markets = await _load_exempt_set("forbidden_exempt_markets")
+        _exempt_sources = await _load_exempt_set("forbidden_exempt_sources")
+        # 소싱처 미적용이면 모든 마켓에서 금지어/삭제어 전부 스킵
+        _source_exempt = (product_row.source_site or "") in _exempt_sources
+
         def _strip_words_from_name(_name: str, _words: list[str]) -> str:
             """상품명에서 단어 목록 제거 (대소문자 무시 + 공백 정리). clean_product_name 미러."""
             _out = _name
@@ -1327,7 +1350,9 @@ class SambaShipmentService:
                     # .market_name_compositions 접근 시 expired reload 차단 (위 _apply_name_rule_effects 동일 사유)
                     self.session.expunge(name_rule)
                     product_dict["name"] = self._compose_product_name(
-                        product_dict, name_rule, deletion_words=deletion_words
+                        product_dict,
+                        name_rule,
+                        deletion_words=(None if _source_exempt else deletion_words),
                     )
                     # 마켓별 상품명 조합이 있으면 _dispatch_one에서 덮어쓸 수 있도록 name_rule 보관
                     product_dict["_name_rule"] = name_rule
@@ -1817,25 +1842,50 @@ class SambaShipmentService:
 
                 # 마켓별 상세페이지 템플릿 오버라이드
                 # 프론트엔드는 market_type(영문 ID: "playauto")을 키로 저장
+                # 금지어/삭제어 미적용 판단 — 소싱처 미적용이거나 이 판매처가 미적용 목록이면 스킵
+                _skip_filter = _source_exempt or (market_type in _exempt_markets)
+
                 # 마켓별 상품명 조합 덮어쓰기
                 _nr = product_dict.get("_name_rule")
-                if _nr and getattr(_nr, "market_name_compositions", None):
-                    _market_comp = _nr.market_name_compositions.get(market_type)
-                    if _market_comp:
-                        # 원본 상품 데이터로 마켓별 조합 실행
-                        _orig = dict(product_dict)
-                        _orig["name"] = product_dict.get(
-                            "_original_name", product_dict.get("name", "")
-                        )
-                        acct_product["name"] = self._compose_product_name(
-                            _orig,
-                            _nr,
-                            market_type=market_type,
-                            deletion_words=product_dict.get("_deletion_words"),
-                        )
+                # 미적용이면 삭제어 없이 조합
+                _del_for_market = (
+                    None if _skip_filter else product_dict.get("_deletion_words")
+                )
+                _has_market_comp = bool(
+                    _nr
+                    and getattr(_nr, "market_name_compositions", None)
+                    and _nr.market_name_compositions.get(market_type)
+                )
+                if _has_market_comp:
+                    # 원본 상품 데이터로 마켓별 조합 실행
+                    _orig = dict(product_dict)
+                    _orig["name"] = product_dict.get(
+                        "_original_name", product_dict.get("name", "")
+                    )
+                    acct_product["name"] = self._compose_product_name(
+                        _orig,
+                        _nr,
+                        market_type=market_type,
+                        deletion_words=_del_for_market,
+                    )
+                elif _skip_filter and _nr:
+                    # 미적용 마켓: 공통 삭제어가 base compose 단계에서 이미 박혔으므로
+                    # 삭제어 없이 재조합해 원복(원본 상품명 기준).
+                    _orig = dict(product_dict)
+                    _orig["name"] = product_dict.get(
+                        "_original_name", product_dict.get("name", "")
+                    )
+                    acct_product["name"] = self._compose_product_name(
+                        _orig,
+                        _nr,
+                        market_type=market_type,
+                        deletion_words=None,
+                    )
 
                 # 마켓별 추가 삭제어 제거 (공통은 _compose 단계서 이미 처리됨)
-                _mkt_del_words = _market_deletion_map.get(market_type)
+                _mkt_del_words = (
+                    None if _skip_filter else _market_deletion_map.get(market_type)
+                )
                 if _mkt_del_words and acct_product.get("name"):
                     acct_product["name"] = _strip_words_from_name(
                         acct_product["name"], _mkt_del_words
@@ -1848,7 +1898,7 @@ class SambaShipmentService:
                 _fb_words = (
                     list(_forbidden_common)
                     + (_market_forbidden_map.get(market_type) or [])
-                    if not is_price_stock_only
+                    if (not is_price_stock_only and not _skip_filter)
                     else []
                 )
                 if _fb_words:

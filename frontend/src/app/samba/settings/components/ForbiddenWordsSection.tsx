@@ -31,6 +31,28 @@ const MARKET_OPTIONS: { value: string; label: string }[] = [
   ...MARKETS.filter(m => !m.categoryOnly).map(m => ({ value: m.id, label: m.label })),
 ]
 
+// 미적용 선택용 — 판매처(마켓, 카테고리 전용 제외)
+const EXEMPT_MARKET_OPTIONS: { value: string; label: string }[] =
+  MARKETS.filter(m => !m.categoryOnly).map(m => ({ value: m.id, label: m.label }))
+
+// 미적용 선택용 — 소싱처(확장앱 source_site 표준값과 동일)
+const SOURCE_SITE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'MUSINSA', label: '무신사' },
+  { value: 'SSG', label: 'SSG' },
+  { value: 'LOTTEON', label: '롯데ON' },
+  { value: 'GSShop', label: 'GS샵' },
+  { value: 'ABCmart', label: 'ABC마트' },
+  { value: 'GrandStage', label: '그랜드스테이지' },
+  { value: 'KREAM', label: 'KREAM' },
+  { value: 'FashionPlus', label: '패션플러스' },
+  { value: 'eBay', label: 'eBay' },
+]
+
+const EXEMPT_MARKETS_KEY = 'forbidden_exempt_markets'
+const EXEMPT_SOURCES_KEY = 'forbidden_exempt_sources'
+
+const toStrArray = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
+
 const wordsToText = (words: SambaForbiddenWord[], type: string) =>
   [...new Set(words.filter(w => w.type === type).map(w => w.word.trim()).filter(Boolean))].join('; ')
 
@@ -42,6 +64,40 @@ export function ForbiddenWordsSection({ tagBanned, setTagBanned }: Props) {
   const [optionDeletionText, setOptionDeletionText] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState('')  // 저장 중인 type ('' = 없음)
+
+  // 금지어/삭제어 미적용 목록 (판매처/소싱처)
+  const [exemptMarkets, setExemptMarkets] = useState<string[]>([])
+  const [exemptSources, setExemptSources] = useState<string[]>([])
+  const [exemptSaving, setExemptSaving] = useState(false)
+
+  useEffect(() => {
+    forbiddenApi.getSetting(EXEMPT_MARKETS_KEY)
+      .then(v => setExemptMarkets(toStrArray(v)))
+      .catch(() => {})
+    forbiddenApi.getSetting(EXEMPT_SOURCES_KEY)
+      .then(v => setExemptSources(toStrArray(v)))
+      .catch(() => {})
+  }, [])
+
+  const toggleExempt = (kind: 'market' | 'source', value: string) => {
+    const setter = kind === 'market' ? setExemptMarkets : setExemptSources
+    setter(prev => (prev.includes(value) ? prev.filter(x => x !== value) : [...prev, value]))
+  }
+
+  const saveExempt = async () => {
+    setExemptSaving(true)
+    try {
+      await forbiddenApi.saveSetting(EXEMPT_MARKETS_KEY, exemptMarkets)
+      await forbiddenApi.saveSetting(EXEMPT_SOURCES_KEY, exemptSources)
+      showAlert(
+        `미적용 저장 완료 (판매처 ${fmtNum(exemptMarkets.length)}개 / 소싱처 ${fmtNum(exemptSources.length)}개)`,
+        'success',
+      )
+    } catch {
+      showAlert('미적용 저장 실패', 'error')
+    }
+    setExemptSaving(false)
+  }
 
   // 선택 마켓의 단어 로드
   const loadWords = useCallback((mk: string) => {
@@ -112,8 +168,56 @@ export function ForbiddenWordsSection({ tagBanned, setTagBanned }: Props) {
     </div>
   )
 
+  // 미적용 체크박스 그리드 1개 렌더
+  const exemptGroup = (
+    kind: 'market' | 'source',
+    title: string,
+    options: { value: string; label: string }[],
+    selected: string[],
+  ) => (
+    <div>
+      <div style={{ fontSize: '0.8125rem', color: c.text, fontWeight: 600, marginBottom: '0.5rem' }}>
+        {title} <span style={{ color: c.textMuted, fontWeight: 400 }}>({fmtNum(selected.length)}개 선택)</span>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+        {options.map(o => {
+          const on = selected.includes(o.value)
+          return (
+            <button
+              key={o.value}
+              onClick={() => toggleExempt(kind, o.value)}
+              style={{
+                fontSize: '0.75rem', padding: '4px 10px', borderRadius: '14px', cursor: 'pointer',
+                background: on ? 'rgba(96,165,250,0.16)' : c.surfaceAlt,
+                border: `1px solid ${on ? 'rgba(96,165,250,0.5)' : c.border}`,
+                color: on ? '#60A5FA' : c.textSub, fontWeight: on ? 600 : 400,
+              }}
+            >{on ? '✓ ' : ''}{o.label}</button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
   return (
     <>
+      {/* 금지어 / 삭제어 미적용 (판매처 / 소싱처) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>금지어 / 삭제어 미적용</span>
+          <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>선택한 판매처·소싱처는 금지어(전송 제외)·삭제어(상품명 제거)를 모두 적용하지 않음</span>
+          <button
+            disabled={exemptSaving}
+            onClick={saveExempt}
+            style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}
+          >{exemptSaving ? '...' : '저장'}</button>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          {exemptGroup('market', '판매처 (마켓)', EXEMPT_MARKET_OPTIONS, exemptMarkets)}
+          {exemptGroup('source', '소싱처', SOURCE_SITE_OPTIONS, exemptSources)}
+        </div>
+      </div>
+
       {/* 금지어 / 삭제어 (마켓별) */}
       <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
