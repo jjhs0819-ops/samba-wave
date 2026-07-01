@@ -11984,8 +11984,12 @@ async def import_kream_excel(
     content = await file.read()
     wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    all_rows = list(ws.iter_rows(min_row=1, values_only=True))
     wb.close()
+    header_row = [
+        str(c) if c is not None else "" for c in (all_rows[0] if all_rows else [])
+    ]
+    rows = all_rows[1:] if len(all_rows) > 1 else []
 
     # kream product_id → collected_product_id (SNKRDUNK 수집상품 ULID) 역매칭
     kream_pids = [str(r[3]) for r in rows if r and len(r) > 3 and r[3]]
@@ -12067,4 +12071,4 @@ async def import_kream_excel(
         created += 1
 
     await session.commit()
-    return {"ok": True, "created": created, "skipped": skipped}
+    return {"ok": True, "created": created, "skipped": skipped, "headers": header_row}
