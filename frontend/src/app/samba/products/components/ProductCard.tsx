@@ -1838,7 +1838,7 @@ const ProductCard = React.memo(function ProductCard({
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                               title={`${rr.name} 판매페이지`}
-                            >{rr.id}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
+                            >{rr.id}{rr.key === 'kream' && p.style_code ? ` / ${p.style_code}` : ''}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
                           ) : (
                             <span style={{ fontSize: '0.6rem', color: c.success, whiteSpace: 'nowrap' }}>{rr.id}</span>
                           )
