@@ -160,6 +160,12 @@ class SambaOrder(SQLModel, table=True):
     return_status: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # 반품/교환 클레임 주문번호 — GS 등 반품에 새 주문번호를 부여하는 마켓용.
+    # 원주문(order_number)은 유지하고, 반품이 부여받은 새 번호를 여기 보관해
+    # 주문 화면에 "원주문번호 반품 반품번호"로 함께 표시한다.
+    claim_order_number: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 배송 정보
     shipping_company: Optional[str] = Field(
