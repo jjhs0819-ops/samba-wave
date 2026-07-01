@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
@@ -11954,3 +11954,116 @@ async def kakao_name_candidates(
         len(candidates),
     )
     return {"ok": True, "count": len(candidates), "candidates": candidates}
+
+
+@router.post("/kream-excel")
+async def import_kream_excel(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """KREAM 발송완료내역 엑셀 업로드 → 주문 생성."""
+    import openpyxl  # noqa: F811
+    from datetime import timezone
+    from io import BytesIO
+
+    from sqlalchemy import text as sa_text
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    # KREAM 계정 조회 (channel_id 용)
+    acc_stmt = select(SambaMarketAccount).where(
+        SambaMarketAccount.market_type == "kream"
+    )
+    if tenant_id is not None:
+        acc_stmt = acc_stmt.where(SambaMarketAccount.tenant_id == tenant_id)
+    acc_row = await session.execute(acc_stmt)
+    kream_acc = acc_row.scalars().first()
+    kream_channel_id = kream_acc.id if kream_acc else None
+
+    content = await file.read()
+    wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    wb.close()
+
+    # kream product_id → collected_product_id (SNKRDUNK 수집상품 ULID) 역매칭
+    kream_pids = [str(r[3]) for r in rows if r and len(r) > 3 and r[3]]
+    cp_map: dict[str, str] = {}
+    if kream_pids:
+        tid_cond = "AND tenant_id = :tid" if tenant_id is not None else ""
+        bind = {"pids": kream_pids}
+        if tenant_id is not None:
+            bind["tid"] = tenant_id
+        cp_rows = await session.execute(
+            sa_text(f"""
+                SELECT id, resell_matches->'kream'->>'product_id' AS kream_pid
+                FROM samba_collected_product
+                WHERE source_site = 'SNKRDUNK'
+                  AND resell_matches->'kream'->>'product_id' = ANY(:pids)
+                  {tid_cond}
+            """),
+            bind,
+        )
+        for cp_row in cp_rows.mappings():
+            cp_map[str(cp_row["kream_pid"])] = str(cp_row["id"])
+
+    def _parse_dt(val):
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val.replace(tzinfo=timezone.utc) if val.tzinfo is None else val
+        try:
+            return datetime.fromisoformat(str(val).replace(" ", "T")).replace(
+                tzinfo=timezone.utc
+            )
+        except Exception:
+            return None
+
+    created = 0
+    skipped = 0
+    for row in rows:
+        if not row or not row[0]:
+            continue
+        order_number = str(row[0]).strip()
+        paid_at_raw = row[2] if len(row) > 2 else None
+        kream_pid = str(row[3]).strip() if len(row) > 3 and row[3] else ""
+        product_name = str(row[5]).strip() if len(row) > 5 and row[5] else ""
+        option_name = str(row[6]).strip() if len(row) > 6 and row[6] else ""
+        sale_price = float(row[7]) if len(row) > 7 and row[7] else 0.0
+        tracking_number = str(row[9]).strip() if len(row) > 9 and row[9] else ""
+        shipped_at_raw = row[10] if len(row) > 10 else None
+
+        # 중복 체크
+        dup_stmt = select(SambaOrder.id).where(SambaOrder.order_number == order_number)
+        if tenant_id is not None:
+            dup_stmt = dup_stmt.where(SambaOrder.tenant_id == tenant_id)
+        dup = await session.execute(dup_stmt)
+        if dup.scalar():
+            skipped += 1
+            continue
+
+        order = SambaOrder(
+            tenant_id=tenant_id,
+            order_number=order_number,
+            channel_id=kream_channel_id,
+            channel_name="KREAM",
+            source_site="KREAM",
+            product_id=kream_pid or None,
+            product_name=product_name,
+            option_name=option_name,
+            sale_price=sale_price,
+            cost=0.0,
+            profit=0.0,
+            tracking_number=tracking_number or None,
+            shipped_at=_parse_dt(shipped_at_raw),
+            paid_at=_parse_dt(paid_at_raw),
+            status="pending",
+            shipping_status="결제완료",
+            collected_product_id=cp_map.get(kream_pid) if kream_pid else None,
+        )
+        session.add(order)
+        created += 1
+
+    await session.commit()
+    return {"ok": True, "created": created, "skipped": skipped}
