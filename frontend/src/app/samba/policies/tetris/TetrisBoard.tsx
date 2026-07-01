@@ -513,7 +513,7 @@ export default function TetrisBoard() {
           ref={contentScrollRef}
           className="tetris-scroll-x"
           onScroll={onContentScroll}
-          style={{ overflowX: 'auto', overflowY: 'hidden', display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
+          style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 200px)', display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
         >
           {sortedMarkets.map(market => (
             <MarketColumn

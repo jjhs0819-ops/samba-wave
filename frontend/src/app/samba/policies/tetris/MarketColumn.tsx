@@ -123,7 +123,9 @@ export default function MarketColumn({
           minHeight: columnHeight,
           display: 'flex',
           flexDirection: 'column',
-          justifyContent: 'flex-end',
+          // 위정렬(아래로 뻗음) — 컬럼이 넘칠 때 위쪽 계정/블록이 잘려 안 보이던 문제 수정.
+          // (아래정렬 flex-end는 위로 넘쳐 상단이 뷰포트 밖으로 잘림)
+          justifyContent: 'flex-start',
         }}>
           {isAccountDragging && (
             <AccountSlot
