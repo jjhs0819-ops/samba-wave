@@ -507,7 +507,8 @@ class DetailClientMixin:
             )
             return None
 
-        logger.info(f"[LOTTEON] benefits API basicInfo keys: {sorted(basic.keys())}")
+        # 매 상품마다 200+키 sorted+INFO 로깅은 단일 워커 로그 부하 → debug 로 강등
+        logger.debug(f"[LOTTEON] benefits API basicInfo keys: {sorted(basic.keys())}")
 
         body = {
             "spdNo": spd_no,
