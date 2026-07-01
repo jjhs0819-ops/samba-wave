@@ -2320,7 +2320,14 @@ class SambaShipmentService:
                     # 3) last_sent_data.failed_at 제거 (preemptive 마킹 즉시 해소)
                     _imm_nos = res.get("product_nos") or {}
                     _imm_snap = res.get("sent_snapshot")
-                    if _imm_nos or _imm_snap:
+                    # 즉시저장 게이트(#542): 별도 세션이 메인 전송 세션과 같은 상품 행을
+                    # 두고 락 경합 → self-deadlock(상품당 ~90s). 대량 쿠팡 전송에서 극심.
+                    # DISABLE_IMMEDIATE_SAVE=1 이면 스킵 — 최종 writeback 이
+                    # registered_accounts/product_no 를 기록하므로 데이터 손실 없음.
+                    import os as _imm_os  # noqa: F811
+
+                    _imm_disabled = _imm_os.getenv("DISABLE_IMMEDIATE_SAVE", "") == "1"
+                    if (_imm_nos or _imm_snap) and not _imm_disabled:
                         # 즉시저장은 별도 세션에서 — self.session commit 시
                         # 세션 내 모든 ORM 객체(account 등)가 expired되어
                         # 이후 account.market_type 접근 시 greenlet_spawn 에러 발생.
