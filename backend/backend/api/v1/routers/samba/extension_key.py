@@ -151,8 +151,19 @@ from backend.api.v1.routers.samba.proxy.sourcing import (
 
 
 def _daemon_filename() -> str:
-    """다운로드 파일명 — 버전 박힘 (`samba-v{ver}.exe`). 지침: 파일명 버전 노출 필수."""
-    return f"samba-v{_DAEMON_VERSION}.exe"
+    """다운로드 파일명 — 버전 박힘 (`samba-v{ver}.exe`). 지침: 파일명 버전 노출 필수.
+
+    #539: `daemon_public_backend_url` 설정 시 파일명에 `_be-<hex>` 임베드.
+    데몬(`_extract_backend_from_argv_or_exename`)이 이 hex 를 디코드해 해당
+    backend 로 폴링한다. hex 인 이유: 브라우저 다운로드에서 `=`·`/` 절단 회피.
+    미설정 시 기존 파일명 유지 → 기본 backend 폴링.
+    """
+    base = f"samba-v{_DAEMON_VERSION}"
+    be_url = (settings.daemon_public_backend_url or "").strip()
+    if be_url:
+        be_hex = be_url.encode("utf-8").hex()
+        return f"{base}_be-{be_hex}.exe"
+    return f"{base}.exe"
 
 
 @router.get("/daemon-installer")
