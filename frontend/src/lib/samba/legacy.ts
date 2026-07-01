@@ -2054,6 +2054,14 @@ export interface CSSyncResultItem {
   error?: string
 }
 
+export interface CSStats {
+  total: number
+  pending: number
+  replied: number
+  by_market?: Record<string, number>
+  by_type?: Record<string, number>
+}
+
 export const csInquiryApi = {
   list: (params?: {
     skip?: number
@@ -2093,7 +2101,7 @@ export const csInquiryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/${id}/mark-replied`, { method: 'POST' }),
   batchDelete: (ids: string[]) =>
     request<{ deleted: number }>(`${SAMBA_PREFIX}/cs-inquiries/batch-delete`, { method: 'POST', body: JSON.stringify({ ids }) }),
-  getStats: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
+  getStats: () => request<CSStats>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
   getTemplates: () => request<Record<string, CSReplyTemplate>>(`${SAMBA_PREFIX}/cs-inquiries/templates`),
   addTemplate: (key: string, name: string, content: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),

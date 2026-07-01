@@ -594,29 +594,11 @@ class SambaCSInquiryService:
     # ==================== 통계 ====================
 
     async def get_stats(self) -> Dict[str, Any]:
-        """문의 통계: 전체/미답변/답변완료/마켓별."""
-        all_items = await self.repo.list_async()
+        """문의 통계: 전체/미답변/답변완료/마켓별.
 
-        market_counts: Dict[str, int] = {}
-        type_counts: Dict[str, int] = {}
-        pending = 0
-        replied = 0
-
-        for item in all_items:
-            market_counts[item.market] = market_counts.get(item.market, 0) + 1
-            type_counts[item.inquiry_type] = type_counts.get(item.inquiry_type, 0) + 1
-            if item.reply_status == "replied":
-                replied += 1
-            else:
-                pending += 1
-
-        return {
-            "total": len(all_items),
-            "pending": pending,
-            "replied": replied,
-            "by_market": market_counts,
-            "by_type": type_counts,
-        }
+        #540: 전체 행 메모리 로드(list_async) 제거 → GROUP BY 집계로 경량화.
+        """
+        return await self.repo.stats_grouped()
 
     async def collect_from_gsshop(
         self,

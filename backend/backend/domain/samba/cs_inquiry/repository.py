@@ -106,6 +106,52 @@ class SambaCSInquiryRepository(BaseRepository[SambaCSInquiry]):
         result = await self.session.execute(stmt)
         return result.scalar_one()
 
+    async def stats_grouped(self) -> dict:
+        """통계 집계 — 전체 행 로드 없이 GROUP BY 로 계산(#540).
+
+        반환: total / pending / replied / by_market / by_type
+        """
+        base = SambaCSInquiry.is_hidden == False  # noqa: E712
+
+        # reply_status 별 카운트 → total / pending / replied 도출
+        status_stmt = (
+            select(SambaCSInquiry.reply_status, func.count(SambaCSInquiry.id))
+            .where(base)
+            .group_by(SambaCSInquiry.reply_status)
+        )
+        status_rows = (await self.session.execute(status_stmt)).all()
+        replied = 0
+        total = 0
+        for status, cnt in status_rows:
+            total += cnt
+            if status == "replied":
+                replied += cnt
+        pending = total - replied
+
+        # 마켓별 카운트
+        market_stmt = (
+            select(SambaCSInquiry.market, func.count(SambaCSInquiry.id))
+            .where(base)
+            .group_by(SambaCSInquiry.market)
+        )
+        by_market = {m: c for m, c in (await self.session.execute(market_stmt)).all()}
+
+        # 타입별 카운트
+        type_stmt = (
+            select(SambaCSInquiry.inquiry_type, func.count(SambaCSInquiry.id))
+            .where(base)
+            .group_by(SambaCSInquiry.inquiry_type)
+        )
+        by_type = {t: c for t, c in (await self.session.execute(type_stmt)).all()}
+
+        return {
+            "total": total,
+            "pending": pending,
+            "replied": replied,
+            "by_market": by_market,
+            "by_type": by_type,
+        }
+
     async def find_by_external_id(
         self, market: str, external_id: str
     ) -> Optional[SambaCSInquiry]:
