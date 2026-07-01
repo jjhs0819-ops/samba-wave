@@ -681,15 +681,21 @@ async def _run_paginated_order_query(
 
         _cp_rows = (
             await session.execute(
-                select(_CP.id, _CP.name).where(_CP.id.in_(_kream_cp_ids))
+                select(_CP.id, _CP.name, _CP.images).where(_CP.id.in_(_kream_cp_ids))
             )
         ).all()
-        _cp_name_map = {r[0]: r[1] for r in _cp_rows if r[1]}
+        import json as _json
+
+        _cp_data_map = {r[0]: (r[1], r[2]) for r in _cp_rows}
         for o in items:
             if o.source_site == "KREAM" and o.collected_product_id:
-                _ko = _cp_name_map.get(o.collected_product_id)
-                if _ko:
-                    o.product_name = _ko
+                _name, _imgs = _cp_data_map.get(o.collected_product_id, (None, None))
+                if _name:
+                    o.product_name = _name
+                if not o.product_image and _imgs:
+                    _img_list = _json.loads(_imgs) if isinstance(_imgs, str) else _imgs
+                    if _img_list:
+                        o.product_image = _img_list[0]
 
     return PaginatedOrdersResponse(
         items=items,
