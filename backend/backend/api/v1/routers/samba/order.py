@@ -7297,8 +7297,20 @@ async def sync_orders_from_markets(
                     if not _gs_ord_no or not _gs_ord_item_no:
                         continue
 
-                    # 주문번호: ordNo:ordItemNo 조합
-                    _gs_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
+                    # 주문번호: ordNo:ordItemNo 조합.
+                    # 반품(R)/교환(X)은 GS가 새 주문번호(ordNo)를 부여하고 원주문번호를
+                    # orgOrdNo/orgOrdItemNo에 담아 보낸다 → 원주문번호로 매칭해야 원주문
+                    # (배송완료)이 반품요청/교환요청으로 전환되고, 반품이 별개 주문으로 잡혀
+                    # 정산 이중계산되는 것을 막는다. orgOrdNo 없으면 기존대로 ordNo 사용.
+                    _gs_org_no = str(ro.get("orgOrdNo", "") or "")
+                    _gs_org_item = str(ro.get("orgOrdItemNo", "") or "")
+                    _gs_claim_order_number = None
+                    if _gs_ord_type in ("R", "X") and _gs_org_no and _gs_org_item:
+                        _gs_order_number = f"{_gs_org_no}:{_gs_org_item}"
+                        # 반품이 부여받은 새 주문번호 — 주문 화면 표시·반품 처리용
+                        _gs_claim_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
+                    else:
+                        _gs_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
 
                     # 상태 매핑
                     # ordTypeCd: O=주문, C=취소, R=반품, X=교환주문
@@ -7349,6 +7361,7 @@ async def sync_orders_from_markets(
                     orders_data.append(
                         {
                             "order_number": _gs_order_number,
+                            "claim_order_number": _gs_claim_order_number,
                             "source": "gsshop",
                             "channel_id": account["id"],
                             "channel_name": label,
@@ -8709,6 +8722,13 @@ async def sync_orders_from_markets(
                         "customer_note"
                     ] != str(existing.customer_note or ""):
                         update_fields["customer_note"] = order_data["customer_note"]
+                    # 반품/교환 클레임 주문번호 — 원주문에 반품 새 번호 보관(GS 등)
+                    if order_data.get("claim_order_number") and order_data[
+                        "claim_order_number"
+                    ] != str(existing.claim_order_number or ""):
+                        update_fields["claim_order_number"] = order_data[
+                            "claim_order_number"
+                        ]
                     # SSG 취소신청 동기화는 shppNo 없는 "|seq" 형식 shipment_id를 만든다.
                     # 같은 주문이 출고대기(shppNo 있음)와 취소신청에 동시 존재하면 정상
                     # "shppNo|seq"를 "|seq"가 덮어써 송장 전송이 shppNo 누락으로 실패한다.

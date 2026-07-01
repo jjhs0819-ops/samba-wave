@@ -209,6 +209,7 @@ export interface SambaOrder {
   tracking_number?: string;
   notes?: string;
   ext_order_number?: string;
+  claim_order_number?: string;
   sourcing_order_number?: string;
   sourcing_account_id?: string;
   source?: string;

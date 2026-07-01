@@ -184,7 +184,7 @@ export default function OrderInfoCell(props: Props) {
             <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? c.accentBg : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? c.warn : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? c.warn : c.textSub, cursor: 'pointer' }}>KAKAO</button>
           </div>
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText((o.order_number || '').split(':')[0], '상품주문번호', { fontFamily: 'monospace' })}</div>
+            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText((o.order_number || '').split(':')[0], '상품주문번호', { fontFamily: 'monospace' })}{o.claim_order_number ? (<>{' '}<span style={{ color: c.textSub }}>반품 </span>{renderCopyableText((o.claim_order_number || '').split(':')[0], '반품주문번호', { fontFamily: 'monospace' })}</>) : null}</div>
             {o.shipment_id && (
               <div><span style={{ color: c.textSub }}>주문번호 </span>{renderCopyableText(o.shipment_id, '주문번호', { fontFamily: 'monospace', color: c.textSub })}</div>
             )}
