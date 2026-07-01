@@ -667,7 +667,7 @@ const ProductCard = React.memo(function ProductCard({
 
   // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
-    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number }>
+    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
       { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
       { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
@@ -681,6 +681,7 @@ const ProductCard = React.memo(function ProductCard({
         key: pl.key, name: pl.name, id,
         url: id && pl.url ? pl.url(id) : '',
         conf: m?.confidence,
+        style_code: m?.style_code,
         price: r.price, calcStr: r.calcStr,
       }
     })
@@ -1865,7 +1866,7 @@ const ProductCard = React.memo(function ProductCard({
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                               title={`${rr.name} 판매페이지`}
-                            >{rr.id}{rr.key === 'kream' && p.style_code ? ` / ${p.style_code}` : ''}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
+                            >{rr.id}{rr.key === 'kream' && rr.style_code ? ` / ${rr.style_code}` : ''}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
                           ) : (
                             <span style={{ fontSize: '0.6rem', color: c.success, whiteSpace: 'nowrap' }}>{rr.id}</span>
                           )
