@@ -50,6 +50,7 @@ from backend.api.v1.routers.samba.proxy import (
     cafe24_oauth_router as samba_cafe24_oauth_router,
     musinsa_extension_router as samba_musinsa_extension_router,
     router as samba_proxy_router,
+    snkrdunk_public_router as samba_snkrdunk_public_router,
     sourcing_queue_router as samba_sourcing_queue_router,
 )
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
@@ -211,6 +212,8 @@ def create_application() -> FastAPI:
     # main proxy router의 라우터 레벨 JWT가 확장앱 set-cookie 호출을 401로 막아
     # 2026-04-09부터 settings.musinsa_cookie 갱신 정지가 발생한 사고의 fix.
     app.include_router(samba_musinsa_extension_router, prefix="/api/v1/samba/proxy")
+    # snkrdunk 매칭 수정 (인증 불필요 — 로컬 검수 도구 전용)
+    app.include_router(samba_snkrdunk_public_router, prefix="/api/v1/samba/proxy")
     app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
     # 카페24 OAuth 콜백은 외부 서버 리다이렉트라 JWT 헤더 불가 → 별도 라우터로 JWT 예외
     app.include_router(samba_cafe24_oauth_router, prefix="/api/v1/samba")

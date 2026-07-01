@@ -18,6 +18,9 @@ from ._helpers import _get_kream_client, _set_setting
 
 router = APIRouter(tags=["samba-proxy"])
 
+# 인증 없는 로컬 전용 라우터 (snkrdunk 매칭 수정)
+snkrdunk_public_router = APIRouter(tags=["kream-public"])
+
 # 확장앱 큐: KreamClient 클래스 레벨 큐 사용 (collector.py와 공유)
 # KreamClient.collect_queue, KreamClient.collect_resolvers
 # KreamClient.search_queue, KreamClient.search_resolvers
@@ -474,12 +477,9 @@ async def snkrdunk_kream_compare(
     return {"total": total, "page": page, "per_page": per_page, "items": items}
 
 
-@router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
-async def snkrdunk_remove_match(
-    snkr_id: str,
-    session: AsyncSession = Depends(get_write_session_dependency),
+async def _snkrdunk_remove_match_impl(
+    snkr_id: str, session: AsyncSession
 ) -> dict[str, Any]:
-    """스니덩크 상품의 크림 매칭 해제."""
     from sqlalchemy import text
 
     sql = text("""
@@ -489,8 +489,71 @@ async def snkrdunk_remove_match(
     """)
     await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
     await session.commit()
-    # 캐시 무효화 불필요 (snkr_id 기준)
     return {"ok": True}
+
+
+async def _snkrdunk_update_match_impl(
+    snkr_id: str,
+    kream_id: str,
+    session: AsyncSession,
+    kream_name_ko: str = "",
+    style_code: str = "",
+) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    kream_obj = "jsonb_build_object('product_id', CAST(:kream_id AS text)"
+    if style_code:
+        kream_obj += ", 'style_code', CAST(:style_code AS text)"
+    kream_obj += ")"
+
+    name_set = ", name = :kream_name_ko" if kream_name_ko else ""
+
+    sql = text(f"""
+        UPDATE samba_collected_product
+        SET resell_matches = jsonb_set(
+            COALESCE(resell_matches, '{{}}'::jsonb),
+            '{{kream}}',
+            {kream_obj},
+            true
+        ){name_set}, updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    params: dict[str, Any] = {"sid": snkr_id, "kream_id": kream_id}
+    if style_code:
+        params["style_code"] = style_code
+    if kream_name_ko:
+        params["kream_name_ko"] = kream_name_ko
+    await session.exec(sql.bindparams(**params))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
+
+
+class SnkrdunkMatchPatchRequest(BaseModel):
+    kream_id: str
+    kream_name_ko: str = ""
+    style_code: str = ""
+
+
+# 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
+@snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
+async def snkrdunk_remove_match_public(
+    snkr_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 매칭 해제 (인증 불필요)."""
+    return await _snkrdunk_remove_match_impl(snkr_id, session)
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/match")
+async def snkrdunk_update_match_public(
+    snkr_id: str,
+    body: SnkrdunkMatchPatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 매칭 수정 (인증 불필요)."""
+    return await _snkrdunk_update_match_impl(
+        snkr_id, body.kream_id, session, body.kream_name_ko, body.style_code
+    )
 
 
 @router.get("/kream/image-proxy")
