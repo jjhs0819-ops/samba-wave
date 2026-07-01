@@ -11984,16 +11984,13 @@ async def import_kream_excel(
     content = await file.read()
     wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
-    all_rows = list(ws.iter_rows(min_row=1, values_only=True))
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()
-    header_row = [
-        str(c) if c is not None else "" for c in (all_rows[0] if all_rows else [])
-    ]
-    rows = all_rows[1:] if len(all_rows) > 1 else []
 
-    # kream product_id → collected_product_id (SNKRDUNK 수집상품 ULID) 역매칭
+    # kream product_id → collected_product_id + 한글 상품명 역매칭
     kream_pids = [str(r[3]) for r in rows if r and len(r) > 3 and r[3]]
     cp_map: dict[str, str] = {}
+    cp_name_map: dict[str, str] = {}
     if kream_pids:
         tid_cond = "AND tenant_id = :tid" if tenant_id is not None else ""
         bind = {"pids": kream_pids}
@@ -12001,7 +11998,7 @@ async def import_kream_excel(
             bind["tid"] = tenant_id
         cp_rows = await session.execute(
             sa_text(f"""
-                SELECT id, resell_matches->'kream'->>'product_id' AS kream_pid
+                SELECT id, name, resell_matches->'kream'->>'product_id' AS kream_pid
                 FROM samba_collected_product
                 WHERE source_site = 'SNKRDUNK'
                   AND resell_matches->'kream'->>'product_id' = ANY(:pids)
@@ -12010,7 +12007,9 @@ async def import_kream_excel(
             bind,
         )
         for cp_row in cp_rows.mappings():
-            cp_map[str(cp_row["kream_pid"])] = str(cp_row["id"])
+            pid = str(cp_row["kream_pid"])
+            cp_map[pid] = str(cp_row["id"])
+            cp_name_map[pid] = cp_row["name"] or ""
 
     def _parse_dt(val):
         if val is None:
@@ -12032,7 +12031,7 @@ async def import_kream_excel(
         order_number = str(row[0]).strip()
         paid_at_raw = row[2] if len(row) > 2 else None
         kream_pid = str(row[3]).strip() if len(row) > 3 and row[3] else ""
-        product_name = str(row[5]).strip() if len(row) > 5 and row[5] else ""
+        product_name = cp_name_map.get(kream_pid, "")
         option_name = str(row[6]).strip() if len(row) > 6 and row[6] else ""
         sale_price = float(row[7]) if len(row) > 7 and row[7] else 0.0
         tracking_number = str(row[9]).strip() if len(row) > 9 and row[9] else ""
@@ -12071,4 +12070,4 @@ async def import_kream_excel(
         created += 1
 
     await session.commit()
-    return {"ok": True, "created": created, "skipped": skipped, "headers": header_row}
+    return {"ok": True, "created": created, "skipped": skipped}
