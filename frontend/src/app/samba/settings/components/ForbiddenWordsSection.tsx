@@ -46,6 +46,7 @@ const SOURCE_SITE_OPTIONS: { value: string; label: string }[] = [
   { value: 'KREAM', label: 'KREAM' },
   { value: 'FashionPlus', label: '패션플러스' },
   { value: 'eBay', label: 'eBay' },
+  { value: 'SNKRDUNK', label: '스니덩크' },
 ]
 
 const EXEMPT_MARKETS_KEY = 'forbidden_exempt_markets'
