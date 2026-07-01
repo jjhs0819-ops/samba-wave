@@ -132,6 +132,8 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
                 _existing_acc is None
                 or _existing_acc.get("collected_product_id") == _cpid
             ):
+                # 신규 or 같은 cp 재반영 — 기존 ambiguous 플래그는 보존
+                _prev_ambig = bool(_existing_acc and _existing_acc.get("ambiguous"))
                 by_account[_acc_key] = {
                     "collected_product_id": _cpid,
                     "source_site": _site,
@@ -141,6 +143,13 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
                     "cost": _cp_cost,
                     "site_ids_by_account": dict(_sites_by_account),
                 }
+                if _prev_ambig:
+                    by_account[_acc_key]["ambiguous"] = True
+            else:
+                # #534 — 다른 cp가 같은 (account_id, product_no) 점유 = 진짜 identity 충돌.
+                # 한 마켓 리스팅이 두 수집상품을 가리킴 → 판매링크≠소싱대상 오연결 사고.
+                # 오래된 엔트리 유지하되 ambiguous 표시 → 주문 매칭에서 거부(오연결 방지).
+                _existing_acc["ambiguous"] = True
     return _ambiguous_new
 
 
@@ -2624,6 +2633,16 @@ async def backfill_product_links(
         )
     )
     mpn_map: dict[str, str] = {}
+    # #534 — 같은 상품번호를 복수 cp가 점유하면 오연결 위험. 충돌 키는 매핑서 제외.
+    _mpn_conflicts: set[str] = set()
+
+    def _put(_key: str, _cpid: str) -> None:
+        _prev = mpn_map.get(_key)
+        if _prev is not None and _prev != _cpid:
+            _mpn_conflicts.add(_key)
+        else:
+            mpn_map[_key] = _cpid
+
     for cpid, mpnos in cp_rows.fetchall():
         if not mpnos or not isinstance(mpnos, dict):
             continue
@@ -2637,9 +2656,18 @@ async def backfill_product_links(
                     _v.get("channelProductNo"),
                 ]:
                     if sv:
-                        mpn_map[str(sv)] = cpid
+                        _put(str(sv), cpid)
             else:
-                mpn_map[str(_v)] = cpid
+                _put(str(_v), cpid)
+    # 충돌 키 제거 — 오연결 방지(#534). 관리자 확인용 로그.
+    for _ck in _mpn_conflicts:
+        mpn_map.pop(_ck, None)
+    if _mpn_conflicts:
+        logger.warning(
+            "[주문링크] #534 identity 충돌 %d건 매핑 제외: %s",
+            len(_mpn_conflicts),
+            ", ".join(sorted(_mpn_conflicts)[:20]),
+        )
 
     # collected_product_id가 없는 주문 조회
     null_orders = await session.execute(
@@ -8527,8 +8555,18 @@ async def sync_orders_from_markets(
                 _ch_id = str(order_data.get("channel_id") or "")
                 _matched = None
                 # 1) 정확 매칭 — (channel_id, product_id)
+                #    #534 — 같은 (account_id, product_no)를 다른 cp가 점유(ambiguous)면
+                #    자동매칭 보류(엉뚱한 cp 오연결 방지). 관리자 확인용 경고 로그.
                 if _ch_id and _pid:
-                    _matched = _mpn_by_account.get(f"{_ch_id}:{_pid}")
+                    _cand = _mpn_by_account.get(f"{_ch_id}:{_pid}")
+                    if _cand and not _cand.get("ambiguous"):
+                        _matched = _cand
+                    elif _cand and _cand.get("ambiguous"):
+                        logger.warning(
+                            "[주문동기화] #534 identity 충돌 — (%s:%s) 복수 CP 점유, 자동매칭 보류",
+                            _ch_id,
+                            _pid,
+                        )
                 # 2) playauto master_code 글로벌 (master_code는 통상 unique)
                 if not _matched and order_data.get("source") == "playauto" and _pa_mc:
                     _cand = _mpn_global.get(_pa_mc)
