@@ -12060,6 +12060,7 @@ async def import_kream_excel(
             paid_at=_parse_dt(paid_at_raw),
             status="pending",
             shipping_status="결제완료",
+            shipping_company="허브넷로지스틱스",
             collected_product_id=cp_map.get(kream_pid) if kream_pid else None,
         )
         session.add(order)
