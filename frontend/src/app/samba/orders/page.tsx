@@ -15,7 +15,7 @@ import {
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { fmtTime, formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
-import { API_BASE_URL, API_GATEWAY_KEY } from '@/config/api'
+import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import OrdersTable from './components/OrdersTable'
 import { useSmsMessage } from './hooks/useSmsMessage'
 import { useOrderSync } from './hooks/useOrderSync'
@@ -648,13 +648,8 @@ export default function OrdersPage() {
     try {
       const form = new FormData()
       form.append('file', f)
-      const token = typeof window !== 'undefined' ? localStorage.getItem('SAMBA_USER') : null
-      const headers: Record<string, string> = {}
-      if (token) headers['Authorization'] = `Bearer ${token}`
-      if (API_GATEWAY_KEY) headers['X-Api-Key'] = API_GATEWAY_KEY
-      const res = await fetch(`${API_BASE_URL}/api/v1/samba/orders/kream-excel`, {
+      const res = await fetchWithAuth(`${SAMBA_PREFIX}/orders/kream-excel`, {
         method: 'POST',
-        headers,
         body: form,
       })
       const data = await res.json()
