@@ -357,6 +357,9 @@ _SITE_ABSENT_CANCEL_THRESHOLD = 3
 # 실패 시 product_id → 재시도 차단 만료시각(UTC) 기록, 다음 SELECT에서 제외.
 _soldout_delete_retry_block: dict[str, datetime] = {}
 _SOLDOUT_DELETE_BLOCK_TTL_SEC = 21600  # 6시간 (승인 완료까지 대기 후 재시도)
+_SOLDOUT_MAX_LOOP_SEC = (
+    60  # 재시도 루프 최대 60초 — 초과 시 남은 항목 6h 쿨다운 후 다음 배치 진행
+)
 
 
 def _get_pc_event(dev: str) -> asyncio.Event:
@@ -3866,7 +3869,34 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 except Exception:
                                     pass
 
-                                for _sp in _soldout_snaps:
+                                _soldout_loop_start = time.time()
+                                for _idx_sp, _sp in enumerate(_soldout_snaps):
+                                    # 60초 초과 시 남은 항목 6h 쿨다운 → 즉시 다음 배치 진행
+                                    if (
+                                        time.time() - _soldout_loop_start
+                                        > _SOLDOUT_MAX_LOOP_SEC
+                                    ):
+                                        _timeout_remain = len(_soldout_snaps) - _idx_sp
+                                        _now_blk2 = datetime.now(timezone.utc)
+                                        _blk_until = _now_blk2 + timedelta(
+                                            seconds=_SOLDOUT_DELETE_BLOCK_TTL_SEC
+                                        )
+                                        for _rem in _soldout_snaps[_idx_sp:]:
+                                            _rem_id = _rem["id"]
+                                            if (
+                                                _rem_id
+                                                not in _soldout_delete_retry_block
+                                                and _rem_id not in _all_delete_pids
+                                            ):
+                                                _soldout_delete_retry_block[_rem_id] = (
+                                                    _blk_until
+                                                )
+                                        log.warning(
+                                            "[오토튠] 품절잔존 재시도 %ds 초과 — 미처리 %d건 6h 쿨다운, 다음 배치 즉시 진행",
+                                            _SOLDOUT_MAX_LOOP_SEC,
+                                            _timeout_remain,
+                                        )
+                                        break
                                     _sp_id = _sp["id"]
                                     _sp_src = _sp["source_site"]
                                     _sp_brand = _sp["brand"]
