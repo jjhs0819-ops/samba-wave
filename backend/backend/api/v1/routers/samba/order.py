@@ -353,6 +353,9 @@ class PaginatedOrdersResponse(BaseModel):
     total_count: int
     total_sale: float
     pending_count: int
+    # 상품메모(#535) — {collected_product_id: memo}. 주문의 collected_product_id로
+    # 현재 상품 memo를 live-join(스냅샷 아님). 빈 메모는 제외.
+    product_memos: dict[str, str] = {}
 
 
 def _read_service(session: AsyncSession) -> SambaOrderService:
@@ -703,11 +706,34 @@ async def _run_paginated_order_query(
                 if _cp_src_url:
                     o.source_url = _cp_src_url
 
+    # 상품메모(#535) live-join — 주문의 collected_product_id로 현재 상품 memo 조회.
+    # cp_id는 전역 유니크라 tenant 필터 불요. 빈 메모는 맵에서 제외.
+    product_memos: dict[str, str] = {}
+    _memo_cp_ids = [
+        o.collected_product_id
+        for o in items
+        if o.collected_product_id and o.collected_product_id != "DELETED"
+    ]
+    if _memo_cp_ids:
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CPM
+
+        _memo_rows = (
+            await session.execute(
+                select(_CPM.id, _CPM.memo).where(
+                    _CPM.id.in_(_memo_cp_ids), _CPM.memo.isnot(None)
+                )
+            )
+        ).all()
+        for _cid, _memo in _memo_rows:
+            if _memo and str(_memo).strip():
+                product_memos[_cid] = _memo
+
     return PaginatedOrdersResponse(
         items=items,
         total_count=int(total_row.total_count or 0),
         total_sale=float(total_row.total_sale or 0),
         pending_count=int(total_row.pending_count or 0),
+        product_memos=product_memos,
     )
 
 

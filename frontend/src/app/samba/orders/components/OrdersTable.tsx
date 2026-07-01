@@ -44,6 +44,7 @@ interface OrdersTableProps {
   activeActions: Record<string, string | null>
   collectedProductCosts: Record<string, number>
   collectedProductSourceSites: Record<string, string>
+  productMemos: Record<string, string> // 상품메모(#535)
 
   // 부가 상태
   refreshLog: Record<string, string>
@@ -103,6 +104,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     activeActions,
     collectedProductCosts,
     collectedProductSourceSites,
+    productMemos,
     refreshLog, setRefreshLog,
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
@@ -181,6 +183,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                   sentFlags={sentFlags}
                   siteAliasMap={siteAliasMap}
                   actualSourceSite={o.collected_product_id ? (collectedProductSourceSites[o.collected_product_id] || '') : ''}
+                  productMemo={o.collected_product_id ? (productMemos[o.collected_product_id] || '') : ''}
                   activeActions={activeActions}
                   setPriceHistoryProduct={setPriceHistoryProduct}
                   setPriceHistoryData={setPriceHistoryData}

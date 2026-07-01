@@ -141,6 +141,7 @@ class CollectedProductUpdate(BaseModel):
     coupang_search_tags: Optional[list] = None
     options: Optional[list] = None
     extra_data: Optional[dict] = None
+    memo: Optional[str] = None  # 상품메모(#535)
 
 
 class BulkCreateRequest(BaseModel):

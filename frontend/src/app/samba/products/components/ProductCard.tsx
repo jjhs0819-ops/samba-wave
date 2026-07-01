@@ -1646,6 +1646,33 @@ const ProductCard = React.memo(function ProductCard({
                     style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', outline: 'none' }} />
                 </td>
               </tr>
+              {/* 상품메모(#535) — 소싱 특이사항·더 싼 소싱 URL 등. 주문건에도 표시됨 */}
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                <td style={tdLabel}>상품메모</td>
+                <td style={tdVal}>
+                  <textarea
+                    placeholder="소싱 특이사항, 더 싼 소싱 URL 등 (주문건에도 표시)"
+                    defaultValue={p.memo || ''}
+                    rows={2}
+                    style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', outline: 'none', resize: 'vertical' }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => {
+                      const val = e.target.value.trim()
+                      if (val === (p.memo || '')) return
+                      const memoVal = val || undefined
+                      collectorApi.updateProduct(p.id, { memo: memoVal } as Partial<SambaCollectedProduct>).then(() => {
+                        onProductUpdate(p.id, { memo: memoVal } as Partial<SambaCollectedProduct>)
+                        e.target.style.borderColor = c.success
+                        setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
+                      }).catch(() => {
+                        e.target.style.borderColor = c.danger
+                        setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
+                      })
+                    }}
+                  />
+                </td>
+              </tr>
               {/* 브랜드 */}
               <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>브랜드</td>

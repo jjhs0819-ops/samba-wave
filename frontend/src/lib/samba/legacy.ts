@@ -167,6 +167,8 @@ export interface PaginatedOrderList {
   total_count: number
   total_sale: number
   pending_count: number
+  // 상품메모(#535) — {collected_product_id: memo}. 주문카드 live-join 표시용
+  product_memos?: Record<string, string>
 }
 
 export interface SambaOrder {
@@ -763,6 +765,7 @@ export interface SambaCollectedProduct {
   registered_accounts?: string[];
   market_product_nos?: Record<string, string>;
   market_names?: Record<string, string>;
+  memo?: string; // 상품메모(#535)
   // 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 매칭
   resell_matches?: Record<string, { product_id?: string; confidence?: number; matched_by?: string[]; matched_at?: string }>;
   is_sold_out: boolean;

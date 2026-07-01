@@ -102,6 +102,7 @@ export default function OrdersPage() {
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
   const [collectedProductSourceSites, setCollectedProductSourceSites] = useState<Record<string, string>>({})
+  const [productMemos, setProductMemos] = useState<Record<string, string>>({}) // 상품메모(#535)
 
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
@@ -189,6 +190,7 @@ export default function OrdersPage() {
       setTotalCount(data.total_count)
       setTotalSale(data.total_sale)
       setPendingCount(data.pending_count)
+      setProductMemos(data.product_memos || {}) // 상품메모(#535) live-join
       setEditingTrackings({})
 
       const actions: Record<string, string | null> = {}
@@ -924,6 +926,7 @@ export default function OrdersPage() {
         activeActions={activeActions}
         collectedProductCosts={collectedProductCosts}
         collectedProductSourceSites={collectedProductSourceSites}
+        productMemos={productMemos}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
         sentFlags={sentFlags}

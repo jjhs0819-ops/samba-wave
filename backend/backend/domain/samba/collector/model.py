@@ -266,6 +266,9 @@ class SambaCollectedProduct(SQLModel, table=True):
     market_names: Optional[Any] = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
+    # 상품메모(#535) — 소싱 특이사항·더 싼 소싱 URL 등. 상품관리에서 입력하면
+    # 해당 상품의 주문건에서도 live-join으로 표시(더망고식). nullable.
+    memo: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 품절/가격 변동 추적
     is_sold_out: bool = Field(
