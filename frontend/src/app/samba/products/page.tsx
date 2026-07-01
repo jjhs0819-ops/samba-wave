@@ -2902,6 +2902,26 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {/* 완충 배너 — 목록이 있는 상태에서 새로고침 실패/재시도 시 기존 목록을 지우지 않고 상단에만 표시 */}
+      {products.length > 0 && (loadError || loading) && (
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px",
+          padding: "8px 12px", marginBottom: "8px", borderRadius: "8px", fontSize: "0.8rem",
+          background: c.surfaceAlt,
+          border: `1px solid ${loadError ? c.danger : c.border}`,
+        }}>
+          <span style={{ color: loadError ? c.danger : c.textMuted }}>
+            {loadError ? "목록 새로고침에 실패했습니다 — 이전 목록을 표시 중입니다" : "목록을 새로고침하는 중입니다…"}
+          </span>
+          {loadError && (
+            <button
+              onClick={() => loadProducts()}
+              style={{ ...btn("secondary"), padding: "4px 12px", fontSize: "0.75rem" }}
+            >다시 시도</button>
+          )}
+        </div>
+      )}
+
       {/* Product list */}
       {loading && products.length === 0 ? (
         /* 스켈레톤 — 빈 화면 대신 카드 형태 placeholder (체감 속도 향상) */
@@ -2927,9 +2947,7 @@ export default function ProductsPage() {
             }
           `}</style>
         </div>
-      ) : loading ? (
-        <div style={{ padding: "3rem", textAlign: "center", color: c.textMuted, fontSize: "0.9rem" }}>로딩 중...</div>
-      ) : loadError ? (
+      ) : (loadError && products.length === 0) ? (
         <div style={{ padding: "3rem", textAlign: "center", fontSize: "0.85rem" }}>
           <div style={{ color: c.danger, marginBottom: "8px" }}>서버 연결에 실패했습니다</div>
           <button
