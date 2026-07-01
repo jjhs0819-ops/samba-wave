@@ -3833,25 +3833,57 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     for _ra in _retry_acc_result.all():
                                         _account_cache[_ra.id] = _ra
 
+                                # commit 후 ORM expire → lazy reload → greenlet 에러 방지:
+                                # commit 전에 필요 필드 스냅샷 추출 (dict 형태로 보관)
+                                _soldout_snaps: list[dict] = []
+                                for _p in _soldout_products:
+                                    _mnos_raw = _p.market_product_nos or {}
+                                    _soldout_snaps.append(
+                                        {
+                                            "id": _p.id,
+                                            "source_site": _p.source_site or "",
+                                            "brand": getattr(_p, "brand", "") or "",
+                                            "name": _p.name or "",
+                                            # 무거운 컬럼 제외 — 마켓삭제에 불필요, loop 블로킹 주범
+                                            "dict": _p.model_dump(
+                                                exclude={
+                                                    "detail_html",
+                                                    "detail_images",
+                                                    "images",
+                                                    "extra_data",
+                                                }
+                                            ),
+                                            "reg": list(_p.registered_accounts or []),
+                                            # market_product_nos 가 list 인 구데이터 방어
+                                            "mnos": _mnos_raw
+                                            if isinstance(_mnos_raw, dict)
+                                            else {},
+                                        }
+                                    )
                                 # 읽기 완료 후 커밋 — delete_from_market HTTP 호출 중 idle in transaction 방지
                                 try:
                                     await session.commit()
                                 except Exception:
                                     pass
 
-                                for _sp in _soldout_products:
+                                for _sp in _soldout_snaps:
+                                    _sp_id = _sp["id"]
+                                    _sp_src = _sp["source_site"]
+                                    _sp_brand = _sp["brand"]
+                                    _sp_name = _sp["name"]
+                                    _sp_dict = _sp["dict"]
+                                    _sp_reg = _sp["reg"]
+                                    _sp_mnos = _sp["mnos"]
+                                    _sp_deleted_ids: list[str] = []
                                     # 품절 재시도 루프는 배치 후 순차 HTTP — heartbeat 없으면 10분 이상 미활성으로 오표시
                                     _pc_hb(device_id)[site] = time.time()
-                                    _sp_dict = _sp.model_dump()
-                                    _sp_reg = list(_sp.registered_accounts or [])
-                                    _sp_mnos = dict(_sp.market_product_nos or {})
-                                    _sp_deleted_ids: list[str] = []
 
                                     for _del_acc_id in _sp_reg:
                                         _del_acc = _account_cache.get(_del_acc_id)
                                         if not _del_acc:
                                             continue
-                                        _m_nos = _sp.market_product_nos or {}
+                                        # 위에서 list 방어된 dict 재사용(원본 재참조 시 list 크래시)
+                                        _m_nos = _sp_mnos
                                         if _del_acc.market_type == "smartstore":
                                             _pno = _m_nos.get(
                                                 f"{_del_acc_id}_origin", ""
@@ -3898,23 +3930,18 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 "soldout_fallback"
                                             ):
                                                 deleted_count += 1
-                                                _all_delete_pids.add(_sp.id)
+                                                _all_delete_pids.add(_sp_id)
                                                 _sp_deleted_ids.append(_del_acc_id)
                                                 _sp_site_tag = (
-                                                    f"[{_sp.source_site}] "
-                                                    if _sp.source_site
-                                                    else ""
-                                                )
-                                                _sp_brand = (
-                                                    getattr(_sp, "brand", "") or ""
+                                                    f"[{_sp_src}] " if _sp_src else ""
                                                 )
                                                 _sp_brand_part = (
                                                     f"{_sp_brand} " if _sp_brand else ""
                                                 )
                                                 _log_line(
-                                                    _sp.source_site or "",
-                                                    _sp.id,
-                                                    f"{_sp_site_tag}{_sp_brand_part}{_sp.name or _sp.id}: 품절잔존 → {_del_label} 마켓삭제 완료",
+                                                    _sp_src,
+                                                    _sp_id,
+                                                    f"{_sp_site_tag}{_sp_brand_part}{_sp_name or _sp_id}: 품절잔존 → {_del_label} 마켓삭제 완료",
                                                 )
                                             else:
                                                 # 영구실패(승인대기/중복상품/판매금지/삭제불가 등
@@ -3923,7 +3950,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 # STUCK_TIMEOUT 초과 Watchdog 강제재시작 → 처리량
                                                 # 1/5 토막의 주범. 6시간 auto-expire라 일시적 실패
                                                 # (쿠팡 동기화 지연 등)도 안전(최대 6시간 더 노출).
-                                                _soldout_delete_retry_block[_sp.id] = (
+                                                _soldout_delete_retry_block[_sp_id] = (
                                                     datetime.now(timezone.utc)
                                                     + timedelta(
                                                         seconds=_SOLDOUT_DELETE_BLOCK_TTL_SEC
@@ -3931,13 +3958,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 )
                                                 log.warning(
                                                     "[오토튠] 품절잔존 %s → %s 마켓삭제 실패: %s",
-                                                    _sp.id,
+                                                    _sp_id,
                                                     _del_acc.market_type,
                                                     _dr.get("message"),
                                                 )
                                         except Exception as _del_err:
                                             # 삭제 호출 자체 예외도 영구실패로 간주 → 쿨다운 차단
-                                            _soldout_delete_retry_block[_sp.id] = (
+                                            _soldout_delete_retry_block[_sp_id] = (
                                                 datetime.now(timezone.utc)
                                                 + timedelta(
                                                     seconds=_SOLDOUT_DELETE_BLOCK_TTL_SEC
@@ -3945,7 +3972,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             )
                                             log.error(
                                                 "[오토튠] 품절잔존 %s → 마켓삭제 오류: %s",
-                                                _sp.id,
+                                                _sp_id,
                                                 _del_err,
                                             )
 
@@ -3967,29 +3994,22 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         # 등록된 모든 마켓 삭제 성공 → 상품 자체 삭제
                                         if _sp_reg and not _new_reg:
                                             try:
-                                                await repo.delete_async(_sp.id)
+                                                await repo.delete_async(_sp_id)
                                                 _sp_site_tag2 = (
-                                                    f"[{_sp.source_site}] "
-                                                    if _sp.source_site
-                                                    else ""
-                                                )
-                                                _sp_brand2 = (
-                                                    getattr(_sp, "brand", "") or ""
+                                                    f"[{_sp_src}] " if _sp_src else ""
                                                 )
                                                 _sp_brand_part2 = (
-                                                    f"{_sp_brand2} "
-                                                    if _sp_brand2
-                                                    else ""
+                                                    f"{_sp_brand} " if _sp_brand else ""
                                                 )
                                                 _log_line(
-                                                    _sp.source_site or "",
-                                                    _sp.id,
-                                                    f"{_sp_site_tag2}{_sp_brand_part2}{_sp.name or _sp.id}: 품절잔존 전 마켓 삭제 성공 → 상품 DB 삭제 완료",
+                                                    _sp_src,
+                                                    _sp_id,
+                                                    f"{_sp_site_tag2}{_sp_brand_part2}{_sp_name or _sp_id}: 품절잔존 전 마켓 삭제 성공 → 상품 DB 삭제 완료",
                                                 )
                                             except Exception as _pd_err:
                                                 log.error(
                                                     "[오토튠] 품절잔존 %s 상품 DB 삭제 실패: %s",
-                                                    _sp.id,
+                                                    _sp_id,
                                                     _pd_err,
                                                 )
                                         else:
@@ -4001,7 +4021,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 if _new_mnos
                                                 else {},
                                             }
-                                            await repo.update_async(_sp.id, **_cleanup)
+                                            await repo.update_async(_sp_id, **_cleanup)
 
                                 try:
                                     await asyncio.wait_for(session.commit(), timeout=30)
