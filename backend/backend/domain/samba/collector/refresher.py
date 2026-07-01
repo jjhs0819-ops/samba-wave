@@ -10,7 +10,7 @@ import asyncio
 import contextvars
 import os
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -1754,7 +1754,7 @@ async def refresh_products_bulk(
         results = []
 
         async def _limited(p: Any) -> RefreshResult:
-            async with _autotune_concurrency_guard(sem, source):
+            async with sem:
                 # 취소 요청 시 즉시 중단 (자기 source만 체크)
                 if _cancel_flags.get(source, False):
                     return RefreshResult(
@@ -1781,20 +1781,15 @@ async def refresh_products_bulk(
                     _total_ref = None
                     _g_total = 0
                 _product_timeout = get_product_timeout(site)
-                try:
-                    r = await asyncio.wait_for(
-                        refresh_product(p, idx=_idx, total=_site_total, source=source),
-                        timeout=_product_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    r = RefreshResult(
-                        product_id=getattr(p, "id", "unknown"),
-                        error=f"전체 처리 타임아웃: {_product_timeout}초",
-                    )
-                # 실패 시 1회 재시도 (오토튠만)
-                if r.error and source == "autotune":
-                    interval = max(0.1, _site_intervals.get(site, base_interval))
-                    await asyncio.sleep(interval)
+                # fetch 구간만 global_sem 점유 — on_result·sleep은 global_sem 밖(site_sem만).
+                # 느린 사이트(LOTTEON/SSG/ABCmart)가 global_sem 슬롯을 on_result·sleep 동안
+                # 장기 점유하면 MUSINSA 실질 동시성이 1로 하락해 건당 6.5초 회귀 발생.
+                _global_ctx = (
+                    _get_global_autotune_sem()
+                    if source == "autotune"
+                    else nullcontext()
+                )
+                async with _global_ctx:
                     try:
                         r = await asyncio.wait_for(
                             refresh_product(
@@ -1803,7 +1798,24 @@ async def refresh_products_bulk(
                             timeout=_product_timeout,
                         )
                     except asyncio.TimeoutError:
-                        pass  # 재시도도 실패 → 원래 에러 유지
+                        r = RefreshResult(
+                            product_id=getattr(p, "id", "unknown"),
+                            error=f"전체 처리 타임아웃: {_product_timeout}초",
+                        )
+                    # 실패 시 1회 재시도 (오토튠만) — global_sem 유지
+                    if r.error and source == "autotune":
+                        interval = max(0.1, _site_intervals.get(site, base_interval))
+                        await asyncio.sleep(interval)
+                        try:
+                            r = await asyncio.wait_for(
+                                refresh_product(
+                                    p, idx=_idx, total=_site_total, source=source
+                                ),
+                                timeout=_product_timeout,
+                            )
+                        except asyncio.TimeoutError:
+                            pass  # 재시도도 실패 → 원래 에러 유지
+                # global_sem 해제 — 이하 site_sem만 점유
                 # 처리 완료 후 전역 카운터 증가 — 시작 시 증가하면 sem 획득 순서로
                 # 한꺼번에 점프하므로 완료 시점으로 이동해 실시간 1건씩 갱신.
                 if _gk is not None and _idx_ref is not None:
