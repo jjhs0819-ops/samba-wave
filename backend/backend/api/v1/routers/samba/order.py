@@ -9060,8 +9060,15 @@ async def sync_orders_from_markets(
                     ):
                         update_fields["orderer_name"] = new_orderer_name
                     new_cust_phone = order_data.get("customer_phone")
-                    if new_cust_phone and new_cust_phone != str(
-                        existing.customer_phone or ""
+                    # #536 — 기존이 실번호인데 새 값이 안심번호(050x)면 덮지 않음(실번호 보존).
+                    if (
+                        new_cust_phone
+                        and new_cust_phone != str(existing.customer_phone or "")
+                        and not (
+                            _is_safe_phone(new_cust_phone)
+                            and existing.customer_phone
+                            and not _is_safe_phone(existing.customer_phone)
+                        )
                     ):
                         update_fields["customer_phone"] = new_cust_phone
                     new_cust_addr = order_data.get("customer_address")
@@ -10024,6 +10031,28 @@ def _coupang_paid_to_utc(val: str | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+def _is_safe_phone(v: Any) -> bool:
+    """안심번호(050x) 판별 — 0503/0504/0505/0507/0508 등 050 으로 시작.
+
+    #536 — 마켓이 수령자 안심번호(050…)를 내려주면 판매자가 직접 연락 불가.
+    """
+    digits = re.sub(r"[^0-9]", "", str(v or ""))
+    return digits.startswith("050") and len(digits) >= 8
+
+
+def _pick_real_phone(primary: Any, real: Any) -> str:
+    """수령자 전화가 안심번호(050x)면 주문자 실번호로 대체.
+
+    #536 — primary(수령자, 안심 가능) 가 안심번호이고 real(주문자 실번호)이
+    실번호면 real 반환. 아니면 primary 우선(무해). 둘 다 안심이면 primary 유지.
+    """
+    p = str(primary or "").strip()
+    r = str(real or "").strip()
+    if _is_safe_phone(p) and r and not _is_safe_phone(r):
+        return r
+    return p or r
+
+
 def _parse_coupang_order(
     order: dict,
     account_id: str,
@@ -10156,6 +10185,16 @@ def _parse_coupang_order(
         or order.get("orderPhoneNumber", "")
         or ""
     )
+    # #536 — 수령자 안심번호(050x)면 주문자 실번호로 대체. 해외구매대행은
+    # overseaShippingInfoDto.ordererPhoneNumber(통관용 실번호)를 실번호로 사용.
+    _oversea = order.get("overseaShippingInfoDto") or {}
+    _real_phone = (
+        orderer.get("ordererNumber")
+        or _oversea.get("ordererPhoneNumber")
+        or order.get("ordererPhoneNumber", "")
+        or ""
+    )
+    customer_phone = _pick_real_phone(customer_phone, _real_phone)
 
     if not customer_name and not customer_address:
         logger.warning(
@@ -10389,10 +10428,11 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "shipping_status": shipping_status,
         "customer_name": item.get("dvpCustNm", "") or "",
         "orderer_name": item.get("odrNm", "") or "",
-        "customer_phone": item.get("dvpMphnNo", "")
-        or item.get("dvpTelNo", "")
-        or item.get("mphnNo", "")
-        or "",
+        # #536 — 수령자(dvpMphnNo)가 안심번호(050x)면 주문자 실번호(mphnNo)로 대체.
+        "customer_phone": _pick_real_phone(
+            item.get("dvpMphnNo", "") or item.get("dvpTelNo", ""),
+            item.get("mphnNo", ""),
+        ),
         "customer_address": addr_base,
         "customer_address_detail": addr_detail,
         "customer_postal_code": postal_code,
