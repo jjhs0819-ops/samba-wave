@@ -670,6 +670,27 @@ async def _run_paginated_order_query(
     )
     items = list((await session.execute(items_stmt)).scalars().all())
 
+    # KREAM 주문 한글 상품명 보강 — collected_product.name(한글)으로 오버라이드
+    _kream_cp_ids = [
+        o.collected_product_id
+        for o in items
+        if o.source_site == "KREAM" and o.collected_product_id
+    ]
+    if _kream_cp_ids:
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
+        _cp_rows = (
+            await session.execute(
+                select(_CP.id, _CP.name).where(_CP.id.in_(_kream_cp_ids))
+            )
+        ).all()
+        _cp_name_map = {r[0]: r[1] for r in _cp_rows if r[1]}
+        for o in items:
+            if o.source_site == "KREAM" and o.collected_product_id:
+                _ko = _cp_name_map.get(o.collected_product_id)
+                if _ko:
+                    o.product_name = _ko
+
     return PaginatedOrdersResponse(
         items=items,
         total_count=int(total_row.total_count or 0),
