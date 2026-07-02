@@ -2182,7 +2182,43 @@ async def delete_collected_product(
     product_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
+    from backend.domain.samba.collector.repository import (
+        SambaCollectedProductRepository as _CPR,
+    )
+
+    _cp_repo = _CPR(session)
+    _cp = await _cp_repo.get_async(product_id)
+    if _cp is None:
+        raise HTTPException(404, "상품을 찾을 수 없습니다")
+
+    # 주문 스냅샷 — delete_from_markets 예외 시 rollback 방지를 위해 먼저 commit (issue #546)
     await _snapshot_cp_to_orders(session, [product_id])
+    await session.commit()
+
+    # 마켓 삭제 — 등록된 계정 전체. 실패 시 DB 삭제 보류 (고아상품 방지)
+    _reg_accounts = list(getattr(_cp, "registered_accounts", None) or [])
+    if _reg_accounts:
+        from backend.domain.samba.shipment.repository import (
+            SambaShipmentRepository as _SR,
+        )
+        from backend.domain.samba.shipment.service import SambaShipmentService as _SS
+
+        _ship_svc = _SS(_SR(session), session)
+        _del_r = await _ship_svc.delete_from_markets([product_id], _reg_accounts)
+        _del_entry = (_del_r.get("results") or [{}])[0]
+        _del_ok = _del_entry.get("success_count", 0) >= len(
+            _del_entry.get("delete_results") or {}
+        )
+        if not _del_ok:
+            logger.warning(
+                "[단건삭제] 마켓삭제 일부 실패 — DB삭제 보류 pid=%s (issue #546: 고아상품 방지)",
+                product_id,
+            )
+            raise HTTPException(
+                500,
+                "마켓 삭제 실패 — DB 삭제 보류. 마켓에서 수동 삭제 후 재시도 해주세요.",
+            )
+
     svc = _get_services(session)
     if not await svc.delete_collected_product(product_id):
         raise HTTPException(404, "상품을 찾을 수 없습니다")

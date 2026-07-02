@@ -260,7 +260,9 @@ async def aligo_send_kakao(
     if body.subject:
         data["subject_1"] = body.subject
     elif not body.template_code:
-        _first_line = body.message.strip().splitlines()[0] if body.message.strip() else ""
+        _first_line = (
+            body.message.strip().splitlines()[0] if body.message.strip() else ""
+        )
         data["subject_1"] = _first_line[:40] or "고객 안내"
 
     url = (
@@ -301,7 +303,7 @@ async def aligo_send_kakao(
                         },
                         headers={"Content-Type": "application/x-www-form-urlencoded"},
                     )
-                    for _t in (_tmpl.json().get("list") or []):
+                    for _t in _tmpl.json().get("list") or []:
                         if str(_t.get("templtCode")) == str(body.template_code):
                             _btns = _t.get("buttons")
                             if _btns:
@@ -329,7 +331,13 @@ async def aligo_send_kakao(
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             result = _parse_aligo_response(resp, "카카오 발송")
-            logger.info("[알리고발송경로] url=%s tpl_code=%r code=%s receiver=%s", url, body.template_code, result.get("code"), data.get("receiver_1"))
+            logger.info(
+                "[알리고발송경로] url=%s tpl_code=%r code=%s receiver=%s",
+                url,
+                body.template_code,
+                result.get("code"),
+                data.get("receiver_1"),
+            )
             if result.get("code") == 0 or str(result.get("code")) == "0":
                 success = True
                 result_msg = "카카오톡 발송 성공"
@@ -338,7 +346,10 @@ async def aligo_send_kakao(
                 result_msg = result.get("message", "카카오 발송 실패")
                 logger.error(
                     "[알리고진단] 발송실패 url=%s tpl=%r userid=%r 응답=%r",
-                    url, body.template_code, data.get("userid"), resp.text[:400],
+                    url,
+                    body.template_code,
+                    data.get("userid"),
+                    resp.text[:400],
                 )
     except ValueError as exc:
         # _parse_aligo_response가 이미 명확한 메시지 + 로깅 완료
