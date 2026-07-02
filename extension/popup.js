@@ -133,19 +133,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateConn(!!keyData.apiKey)
 
   // ============================================================
-  // 적립금 우선 모드 토글 — 켜면 background 가 reward 외 잡(송장/점수/가구매/수집) 스킵
+  // 우선 모드 토글 — 적립금 우선 / 가구매 우선 (상호배타: 하나 켜면 다른 거 자동 꺼짐)
+  // 켜면 background 가 해당 타입 외 잡(송장/점수/가구매/수집/적립금)을 스킵
   // ============================================================
   const rewardOnly = $('rewardOnly')
-  const rewardOnlyStatus = $('rewardOnlyStatus')
-  function _roStatus() {
-    if (rewardOnly.checked) setStatus(rewardOnlyStatus, '⚡ ON — 적립금만 처리 (송장/점수/가구매 멈춤)', 'ok')
-    else setStatus(rewardOnlyStatus, 'OFF — 모든 잡 정상 처리', '')
+  const purchaseOnly = $('purchaseOnly')
+  const priorityStatus = $('rewardOnlyStatus')
+  function _priStatus() {
+    if (rewardOnly.checked) setStatus(priorityStatus, '⚡ ON — 적립금만 처리 (송장/점수/가구매 멈춤)', 'ok')
+    else if (purchaseOnly.checked) setStatus(priorityStatus, '🛒 ON — 가구매만 처리 (적립금/송장/점수 멈춤)', 'ok')
+    else setStatus(priorityStatus, 'OFF — 모든 잡 정상 처리', '')
   }
-  const ro = await chrome.storage.local.get('rewardOnlyMode')
-  rewardOnly.checked = !!ro.rewardOnlyMode
-  _roStatus()
+  const _pm = await chrome.storage.local.get(['rewardOnlyMode', 'purchaseOnlyMode'])
+  rewardOnly.checked = !!_pm.rewardOnlyMode
+  purchaseOnly.checked = !!_pm.purchaseOnlyMode
+  _priStatus()
   rewardOnly.addEventListener('change', async () => {
-    await chrome.storage.local.set({ rewardOnlyMode: rewardOnly.checked })
-    _roStatus()
+    if (rewardOnly.checked) purchaseOnly.checked = false // 상호배타
+    await chrome.storage.local.set({ rewardOnlyMode: rewardOnly.checked, purchaseOnlyMode: purchaseOnly.checked })
+    _priStatus()
+  })
+  purchaseOnly.addEventListener('change', async () => {
+    if (purchaseOnly.checked) rewardOnly.checked = false // 상호배타
+    await chrome.storage.local.set({ rewardOnlyMode: rewardOnly.checked, purchaseOnlyMode: purchaseOnly.checked })
+    _priStatus()
   })
 })
