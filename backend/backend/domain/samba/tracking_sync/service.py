@@ -1238,6 +1238,28 @@ async def dispatch_to_market(
                 "error": "취소요청 주문은 송장 등록을 진행하지 않습니다",
             }
 
+        # 배송상태 가드 (#558) — enqueue 제외 기준과 대칭.
+        # 이미 배송중/배송완료/구매확정 등 종결 주문은 마켓 송장이 이미 반영된 상태.
+        # 재전송을 시도하면 마켓 API가 거부하고, 그 실패가 정상 '배송완료'를
+        # '송장전송실패'로 덮어쓰는 오flip 발생 → 마켓 API 호출 전에 잡만 SENT로 닫는다
+        # (order.status/shipping_status 는 건드리지 않아 정상 표시 보존).
+        _ship_raw = (order.shipping_status or "").strip()
+        if any(kw in _ship_raw for kw in SHIPPED_SHIPPING_STATUS_KEYWORDS):
+            logger.info(
+                f"[송장동기화][가드] 이미 배송 진행/종결 주문 dispatch 생략 "
+                f"job_id={job.id} order_id={order.id} shipping_status={_ship_raw}"
+            )
+            job.status = STATUS_SENT
+            job.last_error = f"이미 마켓 배송상태({_ship_raw}) — 재전송 생략"
+            job.updated_at = datetime.now(_UTC)
+            session.add(job)
+            await session.commit()
+            return {
+                "success": True,
+                "skipped": True,
+                "reason": f"이미 마켓 배송상태({_ship_raw}) — 재전송 생략",
+            }
+
         channel_source = (order.source or "").lower()
         result: dict[str, Any] = {
             "channel": channel_source,
