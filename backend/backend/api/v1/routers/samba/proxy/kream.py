@@ -421,6 +421,7 @@ async def snkrdunk_kream_compare(
     rows_sql = text("""
         SELECT site_product_id, name, images,
                resell_matches->'kream'->>'product_id' AS kream_id,
+               resell_matches->'kream'->>'image' AS kream_image_db,
                options
         FROM samba_collected_product
         WHERE source_site = 'SNKRDUNK'
@@ -466,9 +467,8 @@ async def snkrdunk_kream_compare(
                 "snkr_image": images[0] if images else "",
                 "kream_id": r.kream_id,
                 "kream_name": kinfo.get("name", ""),
-                "kream_image": kinfo.get("images", [""])[0]
-                if kinfo.get("images")
-                else "",
+                "kream_image": r.kream_image_db
+                or (kinfo.get("images", [""])[0] if kinfo.get("images") else ""),
                 "psa10_price": psa_opts[0].get("price", 0) if psa_opts else 0,
                 "psa10_stock": psa_opts[0].get("stock", 0) if psa_opts else 0,
             }
@@ -501,10 +501,26 @@ async def _snkrdunk_update_match_impl(
 ) -> dict[str, Any]:
     from sqlalchemy import text
 
-    kream_obj = "jsonb_build_object('product_id', CAST(:kream_id AS text)"
+    # 크림 API로 이름/이미지 조회 (캐시 우선)
+    kream_image = ""
+    try:
+        kream_client = KreamClient()
+        if kream_id not in _kream_info_cache:
+            info = await kream_client.get_product(kream_id)
+            _kream_info_cache[kream_id] = info
+        kinfo = _kream_info_cache.get(kream_id, {})
+        if not kream_name_ko:
+            kream_name_ko = kinfo.get("name", "")
+        kream_image = kinfo.get("images", [""])[0] if kinfo.get("images") else ""
+    except Exception:
+        pass
+
+    kream_obj_parts = ["'product_id', CAST(:kream_id AS text)"]
     if style_code:
-        kream_obj += ", 'style_code', CAST(:style_code AS text)"
-    kream_obj += ")"
+        kream_obj_parts.append("'style_code', CAST(:style_code AS text)")
+    if kream_image:
+        kream_obj_parts.append("'image', CAST(:kream_image AS text)")
+    kream_obj = "jsonb_build_object(" + ", ".join(kream_obj_parts) + ")"
 
     name_set = ", name = :kream_name_ko" if kream_name_ko else ""
 
@@ -521,6 +537,8 @@ async def _snkrdunk_update_match_impl(
     params: dict[str, Any] = {"sid": snkr_id, "kream_id": kream_id}
     if style_code:
         params["style_code"] = style_code
+    if kream_image:
+        params["kream_image"] = kream_image
     if kream_name_ko:
         params["kream_name_ko"] = kream_name_ko
     await session.exec(sql.bindparams(**params))  # type: ignore[arg-type]
@@ -532,6 +550,10 @@ class SnkrdunkMatchPatchRequest(BaseModel):
     kream_id: str
     kream_name_ko: str = ""
     style_code: str = ""
+
+
+class SnkrdunkStyleCodePatchRequest(BaseModel):
+    style_code: str
 
 
 # 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
@@ -554,6 +576,30 @@ async def snkrdunk_update_match_public(
     return await _snkrdunk_update_match_impl(
         snkr_id, body.kream_id, session, body.kream_name_ko, body.style_code
     )
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/style-code")
+async def snkrdunk_update_style_code_public(
+    snkr_id: str,
+    body: SnkrdunkStyleCodePatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 품번(style_code) 직접 수정 (kream API 호출 없음, 인증 불필요)."""
+    from sqlalchemy import text
+
+    sql = text("""
+        UPDATE samba_collected_product
+        SET resell_matches = jsonb_set(
+            COALESCE(resell_matches, '{}'::jsonb),
+            '{kream,style_code}',
+            to_jsonb(CAST(:style_code AS text)),
+            true
+        ), updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    await session.exec(sql.bindparams(sid=snkr_id, style_code=body.style_code))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
 
 
 @router.get("/kream/image-proxy")
