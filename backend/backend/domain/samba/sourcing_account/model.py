@@ -20,6 +20,7 @@ def generate_sourcing_account_id() -> str:
 SUPPORTED_SOURCING_SITES = [
     {"id": "MUSINSA", "name": "무신사", "group": "패션"},
     {"id": "KREAM", "name": "크림", "group": "리셀"},
+    {"id": "SNKRDUNK", "name": "스니덩크", "group": "리셀"},
     {"id": "Nike", "name": "나이키", "group": "스포츠"},
     {"id": "Adidas", "name": "아디다스", "group": "스포츠"},
     {"id": "ABCmart", "name": "ABC마트", "group": "신발"},

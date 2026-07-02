@@ -5,6 +5,7 @@ Revises: add_cp_memo_0701
 Create Date: 2026-07-02
 """
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -19,7 +20,7 @@ def upgrade() -> None:
     # 데드락 유발. IF NOT EXISTS 조건으로 컬럼 존재 시 ALTER 자체 스킵.
     conn = op.get_bind()
     rows = conn.execute(
-        op.inline_literal(
+        sa.text(
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name='samba_order' "
             "AND column_name IN ('overseas_shipping_company','overseas_tracking_number')"
@@ -28,15 +29,11 @@ def upgrade() -> None:
     existing = {r[0] for r in rows}
     if "overseas_shipping_company" not in existing:
         conn.execute(
-            op.inline_literal(
-                "ALTER TABLE samba_order ADD COLUMN overseas_shipping_company TEXT"
-            )
+            sa.text("ALTER TABLE samba_order ADD COLUMN overseas_shipping_company TEXT")
         )
     if "overseas_tracking_number" not in existing:
         conn.execute(
-            op.inline_literal(
-                "ALTER TABLE samba_order ADD COLUMN overseas_tracking_number TEXT"
-            )
+            sa.text("ALTER TABLE samba_order ADD COLUMN overseas_tracking_number TEXT")
         )
 
 
