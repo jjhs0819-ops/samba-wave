@@ -628,7 +628,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                         <button
                           type="button"
                           title="SNKRDUNK 발송송장 자동조회"
-                          style={{ ...inputStyle, flex: '0 0 auto', fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', padding: '0.25rem 0.5rem' }}
+                          style={{ ...btn('send'), padding: '0.18rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                           onClick={async () => {
                             if (!o.sourcing_order_number) { showAlert('소싱주문번호(취引ID)가 없습니다', 'error'); return }
                             try {
