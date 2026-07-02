@@ -548,11 +548,11 @@ class JobWorker:
                     threshold_sec=threshold,
                     fail_threshold_sec=fail_threshold,
                 )
-                # autotune_transmit 전용: 60초 초과 시 failed (1상품 전송, 1분이면 충분)
+                # autotune_transmit 전용: 300초 초과 시 failed (쿠팡 등 느린 마켓 API 90~300s 허용)
                 at_recovered = await repo.recover_stuck_running(
                     exclude_ids=self._active_job_ids,
-                    threshold_sec=60,
-                    fail_threshold_sec=60,
+                    threshold_sec=300,
+                    fail_threshold_sec=300,
                     job_type="autotune_transmit",
                 )
                 total = recovered + at_recovered
@@ -2115,7 +2115,7 @@ class JobWorker:
                     from sqlalchemy import text as _iit_text
 
                     await _transmit_session.execute(
-                        _iit_text("SET idle_in_transaction_session_timeout = '90000'")
+                        _iit_text("SET idle_in_transaction_session_timeout = '300000'")
                     )
                     try:
                         item_svc = SambaShipmentService(
