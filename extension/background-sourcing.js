@@ -482,15 +482,14 @@ function _serializeMusinsaTracking(fn) {
 
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
-  // [적립금 우선 모드] storage.rewardOnlyMode 켜져 있으면 reward(적립금) 외 잡(송장/점수/가구매/수집)은
-  // 스킵 → 적립금이 다른 잡 뒤에서 안 밀리고 바로 처리된다. 스킵된 잡은 결과 미보고라 백엔드가
-  // 나중에 재배포(유실 없음). 모드 끄면 원복.
-  if (job.type !== 'reward') {
-    try {
-      const st = await chrome.storage.local.get('rewardOnlyMode')
-      if (st.rewardOnlyMode) return
-    } catch {}
-  }
+  // [우선 모드] rewardOnlyMode(적립금만) / purchaseOnlyMode(가구매만) 켜져 있으면 해당 타입 외 잡은
+  // 스킵 → 선택한 잡이 다른 잡 뒤에서 안 밀리고 바로 처리된다. 스킵된 잡은 결과 미보고라 백엔드가
+  // 나중에 재배포(유실 없음). 모드 끄면 원복. (팝업에서 둘은 상호배타 — 동시 ON 불가)
+  try {
+    const st = await chrome.storage.local.get(['rewardOnlyMode', 'purchaseOnlyMode'])
+    if (st.rewardOnlyMode && job.type !== 'reward') return
+    if (st.purchaseOnlyMode && job.type !== 'purchase') return
+  } catch {}
   // 적립금 자동 적립 잡(type=reward) — 가격수집과 격리, 사이트 세마포어 사용
   if (job.type === 'reward') {
     await _siteSemAcquire(site)
