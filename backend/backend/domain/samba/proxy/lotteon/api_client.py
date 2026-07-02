@@ -366,7 +366,13 @@ class LotteonClient:
                 if item_code and item_code not in ("0000", "00", "SUCCESS"):
                     msg = item.get("resultMessage", "") or str(item)
                     logger.warning(f"[롯데ON] 상품 등록 실패: {item_code} — {msg}")
-                    raise LotteonApiError(f"상품 등록 실패 ({item_code}): {msg}")
+                    # 에러 응답에 spdNo/epdNo가 있으면 실제로는 생성된 것 —
+                    # 예외에 실어 보내 플러그인 중복등록 가드가 채택하게 한다.
+                    raise LotteonApiError(
+                        f"상품 등록 실패 ({item_code}): {msg}",
+                        spd_no=str(item.get("spdNo") or "").strip(),
+                        epd_no=str(item.get("epdNo") or "").strip(),
+                    )
                 # 성공 시 spdNo 추출 — 응답에 없으면 epdNo로 list API 보강
                 spd_no = str(item.get("spdNo") or "").strip()
                 epd_no = str(item.get("epdNo") or "").strip()
@@ -435,6 +441,48 @@ class LotteonClient:
             if attempt < retries - 1:
                 await _asyncio.sleep(delay)
         return ""
+
+    async def find_recent_registrations_by_name(
+        self, spd_nm: str, reg_strt_dttm: str, max_pages: int = 3
+    ) -> list[dict[str, Any]]:
+        """최근 등록분에서 상품명(spdNm) 정확일치 검색 — 중복등록 가드용.
+
+        등록 API가 resultCode 에러를 반환하면서도 실제로는 상품을 생성하는
+        케이스가 있어(2026-07-02 중복등록 사고), 재등록 전 이 조회로 감지한다.
+        reg_strt_dttm(yyyymmddHHMMSS) 이후 등록분만 대상, END/DELETED 제외.
+        """
+        target = (spd_nm or "").strip()
+        if not target:
+            return []
+        if not self.tr_no:
+            await self.test_auth()
+        out: list[dict[str, Any]] = []
+        page = 1
+        while page <= max_pages:
+            resp = await self.list_registered_products(
+                page=page,
+                size=100,
+                reg_strt_dttm=reg_strt_dttm,
+                reg_end_dttm="99991231235959",
+            )
+            data = resp.get("data") or []
+            if not isinstance(data, list) or not data:
+                break
+            for it in data:
+                if not isinstance(it, dict):
+                    continue
+                if str(it.get("spdNm") or "").strip() != target:
+                    continue
+                stat = str(it.get("slStatCd") or "").strip().upper()
+                if stat in ("END", "DELETED"):
+                    continue
+                spd = str(it.get("spdNo") or "").strip()
+                if spd:
+                    out.append({"spdNo": spd, "slStatCd": stat})
+            if len(data) < 100:
+                break
+            page += 1
+        return out
 
     async def update_product(self, product_data: dict[str, Any]) -> dict[str, Any]:
         """승인 상품 수정.
@@ -2477,6 +2525,13 @@ class LotteonClient:
 
 
 class LotteonApiError(Exception):
-    """롯데ON API 에러."""
+    """롯데ON API 에러.
 
-    pass
+    spd_no/epd_no: 등록 API가 에러 응답에 spdNo/epdNo를 실어 보내는 경우가
+    있어(에러여도 실제로는 상품 생성됨) 중복등록 가드가 참조한다.
+    """
+
+    def __init__(self, message: str, spd_no: str = "", epd_no: str = ""):
+        super().__init__(message)
+        self.spd_no = spd_no
+        self.epd_no = epd_no

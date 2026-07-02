@@ -2569,10 +2569,120 @@ class LotteonPlugin(MarketPlugin):
                     (None, "DMST"),  # 4. impDvsCd 제거 + 국내
                     ("_REMOVE_BOTH_", ""),  # 5. 둘 다 제거
                 ]
+
+                # ── 중복등록 가드 ─────────────────────────────────────
+                # 롯데ON 등록 API는 resultCode 에러를 반환하면서도 실제로는
+                # 상품을 생성하는 경우가 있다(2026-07-02 후놀 2~3중 등록 사고).
+                # 아래 fallback들이 그대로 재등록하면 시도 횟수만큼 복사본이
+                # 쌓이고, 삼바는 마지막 성공본만 매핑해 나머지는 가격/재고
+                # 연동이 안 되는 유령이 된다. 모든 재시도 직전에 직전 시도가
+                # 이미 생성했는지 확인해, 있으면 재등록 대신 그 spdNo를
+                # 채택하고 여분 복사본은 즉시 END 처리한다.
+                import asyncio as _aio_guard
+                from datetime import datetime as _dt_guard
+                from datetime import timedelta as _td_guard
+                from datetime import timezone as _tz_guard
+
+                # 조회 창 시작 = 첫 시도 60초 전(삼바-롯데온 시계 오차 버퍼).
+                # 창을 좁게 잡아 이번 시도분만 매칭 — 과거 동명 상품 오인 방지.
+                _guard_strt_dttm = (
+                    _dt_guard.now(_tz_guard(_td_guard(hours=9)))
+                    - _td_guard(seconds=60)
+                ).strftime("%Y%m%d%H%M%S")
+                try:
+                    _guard_name = str(
+                        (data.get("spdLst") or [{}])[0].get("spdNm") or ""
+                    ).strip()
+                except Exception:
+                    _guard_name = ""
+
+                async def _adopt_created_despite_error(
+                    _exc: Exception | None, _final: bool = False
+                ) -> str:
+                    """직전 시도가 에러였지만 실제 생성됐으면 spdNo 반환(채택)."""
+                    # 1) 에러 응답에 spdNo/epdNo가 실려 온 경우가 가장 확실
+                    _espd = str(getattr(_exc, "spd_no", "") or "").strip()
+                    if _espd:
+                        return _espd
+                    _eepd = str(getattr(_exc, "epd_no", "") or "").strip()
+                    if _eepd:
+                        try:
+                            _found = await client._lookup_spd_no_by_epd_no(
+                                _eepd, retries=2
+                            )
+                            if _found:
+                                return _found
+                        except Exception:
+                            pass
+                    # 2) 상품명 정확일치로 이번 시도 창 내 등록분 조회
+                    if not _guard_name:
+                        return ""
+                    for _gt in range(3 if _final else 1):
+                        # 등록 직후 list 인덱싱 지연 대응 (epdNo 보강 조회와 동일 사유)
+                        await _aio_guard.sleep(2.0)
+                        try:
+                            _matches = (
+                                await client.find_recent_registrations_by_name(
+                                    _guard_name, _guard_strt_dttm
+                                )
+                            )
+                        except Exception as _ge:
+                            logger.warning(
+                                f"[롯데ON] 중복등록 가드 조회 실패(무시): {_ge}"
+                            )
+                            _matches = []
+                        if _matches:
+                            _adopt = _matches[0]["spdNo"]
+                            for _extra in _matches[1:]:
+                                try:
+                                    await client.change_status(
+                                        [
+                                            {
+                                                "spdNo": _extra["spdNo"],
+                                                "slStatCd": "END",
+                                            }
+                                        ]
+                                    )
+                                    logger.warning(
+                                        "[롯데ON] 중복등록 가드 — 여분 복사본 END: "
+                                        f"{_extra['spdNo']}"
+                                    )
+                                except Exception as _ee:
+                                    logger.warning(
+                                        f"[롯데ON] 여분 복사본 END 실패({_extra['spdNo']}): {_ee}"
+                                    )
+                            return _adopt
+                    return ""
+
+                _reg_attempted = False
+                _last_reg_exc: Exception | None = None
+
+                async def _register_guarded(_d: dict[str, Any]) -> dict[str, Any]:
+                    nonlocal _reg_attempted, _last_reg_exc
+                    if _reg_attempted:
+                        _adopted = await _adopt_created_despite_error(_last_reg_exc)
+                        if _adopted:
+                            logger.warning(
+                                "[롯데ON] 중복등록 가드 — 직전 실패 시도가 이미 생성함, "
+                                f"재등록 스킵·채택 spdNo={_adopted}"
+                            )
+                            return {
+                                "success": True,
+                                "spdNo": _adopted,
+                                "epdNo": "",
+                                "adopted": True,
+                            }
+                    _reg_attempted = True
+                    try:
+                        return await client.register_product(_d)
+                    except Exception as _rexc:
+                        _last_reg_exc = _rexc
+                        raise
+
                 _reg_exception: Exception | None = None
                 api_result = None
                 try:
-                    api_result = await client.register_product(data)
+                    api_result = await _register_guarded(data)
                 except Exception as _e:
                     if "수입구분코드" in str(_e):
                         _reg_exception = _e
@@ -2604,7 +2714,7 @@ class LotteonPlugin(MarketPlugin):
                                 f"[롯데ON] impDvsCd fallback: impDvsCd={_imp_code!r} dmst={_dmst_code} (원인: {_e})"
                             )
                             try:
-                                api_result = await client.register_product(data)
+                                api_result = await _register_guarded(data)
                                 _reg_exception = None
                                 break
                             except Exception as _e2:
@@ -2636,7 +2746,7 @@ class LotteonPlugin(MarketPlugin):
                                                 if a.get("pdArtlCd") != _bad
                                             ]
                                         try:
-                                            api_result = await client.register_product(
+                                            api_result = await _register_guarded(
                                                 data
                                             )
                                             _reg_exception = None
@@ -2692,7 +2802,7 @@ class LotteonPlugin(MarketPlugin):
                                             for _artl38_try in range(15):
                                                 try:
                                                     api_result = (
-                                                        await client.register_product(
+                                                        await _register_guarded(
                                                             data
                                                         )
                                                     )
@@ -2770,7 +2880,7 @@ class LotteonPlugin(MarketPlugin):
                                         if a.get("pdArtlCd") != _bad_code
                                     ]
                             try:
-                                api_result = await client.register_product(data)
+                                api_result = await _register_guarded(data)
                                 _reg_exception = None
                                 break
                             except Exception as _e3:
@@ -2791,7 +2901,7 @@ class LotteonPlugin(MarketPlugin):
                             )
                             data["spdLst"][0].pop("pdItmsInfo", None)
                             try:
-                                api_result = await client.register_product(data)
+                                api_result = await _register_guarded(data)
                                 _reg_exception = None
                             except Exception as _ea_final:
                                 logger.warning(
@@ -2809,7 +2919,7 @@ class LotteonPlugin(MarketPlugin):
                             f"[롯데ON] scatAttrLst 미지원 optValCd fallback — scatAttrLst 제거 재시도 (원인: {_e})"
                         )
                         try:
-                            api_result = await client.register_product(data)
+                            api_result = await _register_guarded(data)
                             _reg_exception = None
                         except Exception as _es:
                             logger.warning(
@@ -2828,15 +2938,36 @@ class LotteonPlugin(MarketPlugin):
                             f"[롯데ON] 브랜드 불가 fallback — brdNo={_orig_brd_no!r} → '' 재시도 (원인: {_e})"
                         )
                         try:
-                            api_result = await client.register_product(data)
+                            api_result = await _register_guarded(data)
                             _reg_exception = None
                         except Exception as _eb:
                             logger.warning(f"[롯데ON] 브랜드 공란 재시도 실패: {_eb}")
                             _reg_exception = _eb
                     else:
-                        raise
+                        # 비재시도 에러도 즉시 raise하지 않고 아래 최후 가드를
+                        # 거친다 — 에러 응답에도 실제로는 생성됐을 수 있음.
+                        _reg_exception = _e
                 if _reg_exception is not None:
-                    raise _reg_exception
+                    # 최후 가드: 전부 실패로 끝났어도 롯데온엔 생성돼 있을 수
+                    # 있다. 여기서 채택하지 않으면 삼바 미매핑 고아가 되어
+                    # 가격/재고 연동이 영영 안 된다.
+                    _adopted_final = await _adopt_created_despite_error(
+                        _reg_exception, _final=True
+                    )
+                    if _adopted_final:
+                        logger.warning(
+                            "[롯데ON] 등록 실패로 끝났지만 실제로는 생성됨 — "
+                            f"spdNo={_adopted_final} 채택(고아 방지). "
+                            f"원래 에러: {str(_reg_exception)[:200]}"
+                        )
+                        api_result = {
+                            "success": True,
+                            "spdNo": _adopted_final,
+                            "epdNo": "",
+                            "adopted": True,
+                        }
+                    else:
+                        raise _reg_exception
                 if api_result is None:
                     raise RuntimeError("등록 결과 없음 (api_result=None)")
                 # proxy.register_product 가 spdNo를 최상위로 반환 (service.py가 api_result.get("spdNo")로 읽음)
