@@ -1782,6 +1782,9 @@ class JobWorker:
         # 실패해도(except 무시) _process_one 클로저가 미할당 참조로 죽지 않도록.
         # 기본 False = 테트리스 매칭 끄고 일반 등록은 정상 진행.
         _tetris_enabled = False
+        # 배제된 (norm_site, norm_brand, account_id) — bg 잡(오토튠/테트리스)은
+        # 이 조합으로 전송하지 않음. 배제 이전에 쌓인 pending 잡 방어용.
+        _tetris_excluded_keys: set[tuple[str, str, str]] = set()
         try:
             from backend.domain.samba.forbidden.model import SambaSettings
             from backend.domain.samba.tetris.repository import SambaTetrisRepository
@@ -1831,6 +1834,10 @@ class JobWorker:
                             _ts_norm_site(_a.source_site),
                             _ts_norm_brand(_a.brand_name),
                         )
+                        if getattr(_a, "excluded", False):
+                            _tetris_excluded_keys.add(
+                                (_norm_key[0], _norm_key[1], _a.market_account_id)
+                            )
                         _tetris_account_map.setdefault(_norm_key, []).append(
                             _a.market_account_id
                         )
@@ -2058,6 +2065,36 @@ class JobWorker:
                         else:
                             # target 미지정 — 배치된 테트리스 계정 전부 사용
                             effective_account_ids = list(_assigned_all)
+
+                    # 테트리스 배제 가드 (bg 잡 한정) — 배제된 (소싱처, 브랜드, 계정)
+                    # 으로는 오토튠/테트리스 잡이 전송하지 않음. 배제 이전에 발행돼
+                    # 큐에 남아있던 pending 잡이 뒤늦게 재전송하는 것 방어.
+                    if (
+                        _is_bg_job
+                        and _tetris_excluded_keys
+                        and prod
+                        and effective_account_ids
+                    ):
+                        _ex_site = _ts_norm_site(prod.source_site)
+                        _ex_brand = _ts_norm_brand(prod.brand)
+                        _ex_removed = [
+                            a
+                            for a in effective_account_ids
+                            if (_ex_site, _ex_brand, a) in _tetris_excluded_keys
+                        ]
+                        if _ex_removed:
+                            effective_account_ids = [
+                                a
+                                for a in effective_account_ids
+                                if a not in _ex_removed
+                            ]
+                            _add_job_log(
+                                job.id,
+                                f"[{i + 1}/{total:,}] {prod_name}: 테트리스 배제 계정 "
+                                f"스킵 ({len(_ex_removed)}건)",
+                            )
+                            if not effective_account_ids:
+                                _unmatched_logged = True
 
                     # 전송 대상 계정이 비었을 때만 스킵
                     # 미배치 마켓 스킵 로그를 이미 찍었으면 중복 줄 생략 (스킵 2줄 방지).
