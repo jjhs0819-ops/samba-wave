@@ -464,6 +464,57 @@ class CoupangPlugin(MarketPlugin):
                     logger.warning(
                         f"[쿠팡] 중복등록 사전조회 실패 — 등록 진행: {_dup_e}"
                     )
+                else:
+                    # 레거시 키 폴백 (issue #548)
+                    # 2026-06-08 이전 등록분은 {id} 단독 키로 저장돼 {id}_{vendor_id} 조회에서
+                    # 안 잡힘 → 재등록으로 중복 리스팅 생성. 레거시 키로 재조회 후 vendorId
+                    # 소유 검증 통과 시에만 재연결(타계정 오연결 방지).
+                    if _ext_sku and vendor_id and _ext_sku != _sku_key:
+                        try:
+                            _dup_legacy = await client.find_by_external_sku(_ext_sku)
+                            if _dup_legacy.get("found") and _dup_legacy.get(
+                                "seller_product_id"
+                            ):
+                                _leg_spid = str(_dup_legacy["seller_product_id"])
+                                _leg_prod = await client.get_product(_leg_spid)
+                                _leg_data = _leg_prod.get("data", _leg_prod)
+                                if isinstance(_leg_data, dict):
+                                    _leg_vendor = str(
+                                        _leg_data.get("vendorId") or ""
+                                    ).strip()
+                                else:
+                                    _leg_vendor = ""
+                                if (
+                                    _leg_vendor
+                                    and _leg_vendor == str(vendor_id).strip()
+                                ):
+                                    logger.warning(
+                                        "[쿠팡] 레거시 SKU 재연결 — externalVendorSku=%s "
+                                        "(레거시키=%s) sellerProductId=%s vendorId=%s",
+                                        _sku_key,
+                                        _ext_sku,
+                                        _leg_spid,
+                                        _leg_vendor,
+                                    )
+                                    return {
+                                        "success": True,
+                                        "product_no": _leg_spid,
+                                        "message": "쿠팡 레거시 SKU 재연결 (중복등록 차단)",
+                                        "data": {"sellerProductId": _leg_spid},
+                                        "_already_registered": True,
+                                    }
+                                elif _leg_vendor:
+                                    logger.warning(
+                                        "[쿠팡] 레거시 SKU 발견됐으나 vendorId 불일치 — "
+                                        "등록 진행: 발견=%s 현재=%s",
+                                        _leg_vendor,
+                                        vendor_id,
+                                    )
+                        except Exception as _leg_e:
+                            logger.warning(
+                                "[쿠팡] 레거시 SKU 폴백 조회 실패 — 등록 진행: %s",
+                                _leg_e,
+                            )
 
             result = await client.register_product(data)
 

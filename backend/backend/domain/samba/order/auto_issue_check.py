@@ -458,16 +458,31 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                             await _del_sess.commit()
 
                         # 2) 마켓 삭제 (등록된 계정 전체)
+                        _del_ok = True
                         if _reg_accounts:
                             _ship_svc2 = _SS2(_SR2(_del_sess), _del_sess)
-                            await _ship_svc2.delete_from_markets([_pid], _reg_accounts)
+                            _del_r = await _ship_svc2.delete_from_markets(
+                                [_pid], _reg_accounts
+                            )
+                            _del_entry = (_del_r.get("results") or [{}])[0]
+                            _del_ok = _del_entry.get("success_count", 0) >= len(
+                                _del_entry.get("delete_results") or {}
+                            )
+                            if not _del_ok:
+                                logger.warning(
+                                    "[주문이슈체크] 마켓삭제 일부 실패 — DB삭제 보류 pid=%s "
+                                    "(issue #546: 고아상품 방지)",
+                                    _pid,
+                                )
 
-                        # 3) 수집상품 DB 삭제
-                        _coll_repo = SambaCollectedProductRepository(_del_sess)
-                        await _coll_repo.delete_async(_pid)
+                        # 3) 수집상품 DB 삭제 — 마켓삭제 전부 성공 시에만
+                        if _del_ok:
+                            _coll_repo = SambaCollectedProductRepository(_del_sess)
+                            await _coll_repo.delete_async(_pid)
 
                         await _del_sess.commit()
-                    _deleted += 1
+                    if _del_ok:
+                        _deleted += 1
                 except Exception as _de:
                     logger.warning(
                         "[주문이슈체크] 자동삭제 실패 pid=%s: %s",

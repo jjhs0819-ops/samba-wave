@@ -470,6 +470,58 @@ class ElevenstPlugin(MarketPlugin):
                     "data": result,
                 }
             else:
+                # 품번×계정 중복 게이트 (issue #548)
+                # 같은 계정에 동일 style_code+color cp가 이미 등록돼 있으면 스킵.
+                # sellerPrdCd(cp.id) 가드는 같은 cp 재등록만 막지만, 소싱 페이지별로
+                # 분리된 다른 cp 가 같은 품번으로 이미 등록된 경우는 통과해 중복 리스팅 생성.
+                # style_code 빈값/6자 미만은 오차단 위험으로 게이트 미적용.
+                _sc = str(product.get("style_code") or "").strip()
+                _aid = str(getattr(account, "id", "") or "")
+                if len(_sc) >= 6 and _aid and session is not None:
+                    try:
+                        from sqlalchemy import text as _sa_text
+
+                        _dup_sc_row = (
+                            await session.execute(
+                                _sa_text(
+                                    """
+                                    SELECT id FROM samba_collected_product
+                                    WHERE id != CAST(:pid AS text)
+                                      AND jsonb_exists(market_product_nos, CAST(:aid AS text))
+                                      AND upper(style_code) = upper(CAST(:sc AS text))
+                                      AND coalesce(color, '') = coalesce(CAST(:clr AS text), '')
+                                    LIMIT 1
+                                    """
+                                ),
+                                {
+                                    "pid": str(product.get("id") or ""),
+                                    "aid": _aid,
+                                    "sc": _sc,
+                                    "clr": product.get("color") or "",
+                                },
+                            )
+                        ).first()
+                        if _dup_sc_row:
+                            logger.warning(
+                                "[11번가] 중복품번 스킵 — style_code=%s color=%s "
+                                "계정 %s 에 이미 cp=%s 등록됨",
+                                _sc,
+                                product.get("color"),
+                                _aid,
+                                _dup_sc_row[0],
+                            )
+                            return {
+                                "success": True,
+                                "product_no": "",
+                                "message": f"중복품번 스킵 (style_code={_sc}, 동일 계정 기등록)",
+                                "_already_registered": True,
+                                "_style_dedup": True,
+                            }
+                    except Exception as _sd_e:
+                        logger.warning(
+                            "[11번가] 품번 중복 게이트 조회 실패 — 등록 진행: %s", _sd_e
+                        )
+
                 # 중복등록 방지(유령 차단): 등록 전 sellerPrdCd(=samba product.id)로
                 # 11번가 기존 등록 여부 확인. DB 매핑이 유실돼 existing_no가 비어도
                 # 11번가에 이미 있으면 재등록(중복 생성) 대신 기존 prdNo를 채택한다.
