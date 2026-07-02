@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import json
 import httpx
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -248,8 +249,8 @@ async def aligo_send_kakao(
         }
 
     data = {
-        "key": api_key,
-        "user_id": user_id,
+        "apikey": api_key,
+        "userid": user_id,
         "sender": sender,
         "receiver_1": body.receiver.replace("-", ""),
         "message_1": body.message,
@@ -258,29 +259,87 @@ async def aligo_send_kakao(
     }
     if body.subject:
         data["subject_1"] = body.subject
+    elif not body.template_code:
+        _first_line = body.message.strip().splitlines()[0] if body.message.strip() else ""
+        data["subject_1"] = _first_line[:40] or "고객 안내"
 
     url = (
         "https://kakaoapi.aligo.in/akv10/alimtalk/send/"
         if body.template_code
-        else "https://kakaoapi.aligo.in/akv10/friendtalk/send/"
+        else "https://kakaoapi.aligo.in/akv10/friend/send/"
     )
 
     success = False
     result_msg = ""
+    _kakao_mid = ""
 
     try:
         async with httpx.AsyncClient(timeout=15, verify=True) as client:
+            token_resp = await client.post(
+                "https://kakaoapi.aligo.in/akv10/token/create/30/s",
+                data={"apikey": api_key, "userid": user_id},
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+            token_result = token_resp.json()
+            if str(token_result.get("code")) != "0":
+                raise RuntimeError(token_result.get("message", "카카오 토큰 발급 실패"))
+            data["token"] = token_result.get("token", "")
+
+            # 알림톡 템플릿에 버튼(채널추가 등)이 있으면 발송 시 button_1로 함께 보내야
+            # 카카오가 '템플릿 일치'로 인정해 실제 전송한다. 안 보내면 접수(code=0)는
+            # 되지만 카카오가 '메시지가 템플릿과 일치하지않음'으로 최종 전송을 거부한다.
+            if body.template_code:
+                try:
+                    _tmpl = await client.post(
+                        "https://kakaoapi.aligo.in/akv10/template/list/",
+                        data={
+                            "apikey": api_key,
+                            "userid": user_id,
+                            "token": data["token"],
+                            "senderkey": sender_key,
+                            "tpl_code": body.template_code,
+                        },
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                    for _t in (_tmpl.json().get("list") or []):
+                        if str(_t.get("templtCode")) == str(body.template_code):
+                            _btns = _t.get("buttons")
+                            if _btns:
+                                data["button_1"] = json.dumps(
+                                    {"button": _btns}, ensure_ascii=False
+                                )
+                            break
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[알리고] 템플릿 버튼 조회 실패: %s", exc)
+                try:
+                    _t2 = await client.post(
+                        "https://kakaoapi.aligo.in/akv10/token/create/30/s",
+                        data={"apikey": api_key, "userid": user_id},
+                        headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    )
+                    _t2j = _t2.json()
+                    if str(_t2j.get("code")) == "0" and _t2j.get("token"):
+                        data["token"] = _t2j.get("token", "")
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[알리고] 발송용 토큰 재발급 실패: %s", exc)
+
             resp = await client.post(
                 url,
                 data=data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
             result = _parse_aligo_response(resp, "카카오 발송")
+            logger.info("[알리고발송경로] url=%s tpl_code=%r code=%s receiver=%s", url, body.template_code, result.get("code"), data.get("receiver_1"))
             if result.get("code") == 0 or str(result.get("code")) == "0":
                 success = True
                 result_msg = "카카오톡 발송 성공"
+                _kakao_mid = str((result.get("info") or {}).get("mid", "") or "")
             else:
                 result_msg = result.get("message", "카카오 발송 실패")
+                logger.error(
+                    "[알리고진단] 발송실패 url=%s tpl=%r userid=%r 응답=%r",
+                    url, body.template_code, data.get("userid"), resp.text[:400],
+                )
     except ValueError as exc:
         # _parse_aligo_response가 이미 명확한 메시지 + 로깅 완료
         result_msg = str(exc)
@@ -302,6 +361,7 @@ async def aligo_send_kakao(
                 receiver=body.receiver.replace("-", ""),
                 success=success,
                 result_message=result_msg,
+                msg_id=_kakao_mid,
             )
         )
     except Exception as exc:
