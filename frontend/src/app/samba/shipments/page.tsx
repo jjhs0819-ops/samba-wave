@@ -114,12 +114,20 @@ export default function ShipmentsPage() {
 
   // 선택
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
-  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
   const [selectedMarkets, setSelectedMarkets] = useState<string[]>([])
-  // 마켓 타입 → 해당 마켓의 모든 계정 ID
-  const getAccountIdsByMarkets = useCallback((marketTypes: string[]) =>
-    accounts.filter(a => marketTypes.includes(a.market_type)).map(a => a.id),
-  [accounts])
+  // 마켓별 개별 선택 계정 아이디 (개별 선택이 없는 마켓은 전체 계정에 전송)
+  const [accountPicks, setAccountPicks] = useState<string[]>([])
+  // 실제 전송 대상 계정: 선택 마켓별로 개별 선택 계정이 있으면 그 계정만, 없으면 마켓 전체 계정
+  const selectedAccounts = useMemo(() => {
+    const picks = new Set(accountPicks)
+    const result: string[] = []
+    for (const type of selectedMarkets) {
+      const groupIds = accounts.filter(a => a.market_type === type).map(a => a.id)
+      const picked = groupIds.filter(id => picks.has(id))
+      result.push(...(picked.length > 0 ? picked : groupIds))
+    }
+    return result
+  }, [accounts, selectedMarkets, accountPicks])
   const [updateItems, setUpdateItems] = useState({ all: true, price: true, thumb: true, detail: true })
   const [skipEnabled] = useState(false)
   const [selectedSites, setSelectedSites] = useState<string[]>([])
@@ -404,6 +412,16 @@ export default function ShipmentsPage() {
   const [categoryMappings, setCategoryMappings] = useState<{ source_site: string; source_category: string; target_mappings: Record<string, string> }[]>([])
   const productsById = useMemo(() => new Map(products.map(product => [product.id, product] as const)), [products])
   const accountsById = useMemo(() => new Map(accounts.map(account => [account.id, account] as const)), [accounts])
+  // 마켓 타입별 계정 그룹 (마켓 체크박스 아래 계정 체크박스 렌더링용)
+  const marketGroups = useMemo(() => {
+    const map = new Map<string, { name: string; accs: SambaMarketAccount[] }>()
+    for (const account of accounts) {
+      const group = map.get(account.market_type) || { name: account.market_name, accs: [] }
+      group.accs.push(account)
+      map.set(account.market_type, group)
+    }
+    return [...map.entries()]
+  }, [accounts])
   const policiesById = useMemo(() => new Map(policies.map(policy => [policy.id, policy] as const)), [policies])
   const categoryMappingByKey = useMemo(() => {
     const map = new Map<string, Record<string, string>>()
@@ -617,9 +635,8 @@ export default function ShipmentsPage() {
         ? [...mappedMarketTypes].filter(type => availableMarketTypes.has(type))
         : [...availableMarketTypes]
       setSelectedMarkets(targetTypes)
-      setSelectedAccounts(getAccountIdsByMarkets(targetTypes))
     }
-  }, [products, accounts, fromStorage, preSelectedIds, preSelectedSites, autoAll, priceOnly, productsById, categoryMappingByKey, policiesById, accountsById, availableMarketTypes, getAccountIdsByMarkets])
+  }, [products, accounts, fromStorage, preSelectedIds, preSelectedSites, autoAll, priceOnly, productsById, categoryMappingByKey, policiesById, accountsById, availableMarketTypes])
 
   const toggleProduct = (id: string) => setSelectedProducts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
   const toggleAllProducts = () => {
@@ -1285,7 +1302,7 @@ export default function ShipmentsPage() {
           </div>
         </div>
 
-        {/* 마켓 체크박스 (마켓별 통합 — 선택 시 해당 마켓의 모든 계정에 전송) */}
+        {/* 마켓 체크박스 (마켓만 선택 시 해당 마켓의 모든 계정에 전송) */}
         <div style={{ padding: '10px 16px 12px' }}>
           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: c.text, marginBottom: '8px', paddingBottom: '6px', borderBottom: `1px solid ${c.border}` }}>마켓</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 20px' }}>
@@ -1302,32 +1319,52 @@ export default function ShipmentsPage() {
                     onChange={() => {
                       const allTypes = [...new Set(accounts.map(a => a.market_type))]
                       const allSelected = allTypes.every(t => selectedMarkets.includes(t))
-                      if (allSelected) {
-                        setSelectedMarkets([])
-                        setSelectedAccounts([])
-                      } else {
-                        setSelectedMarkets(allTypes)
-                        setSelectedAccounts(getAccountIdsByMarkets(allTypes))
-                      }
+                      setSelectedMarkets(allSelected ? [] : allTypes)
+                      setAccountPicks([])
                     }}
                     style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
                   전체
                 </label>
-                {[...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()].map(([type, name]) => (
+                {marketGroups.map(([type, group]) => (
                   <label key={type} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: c.textMuted, cursor: 'pointer' }}>
                     <input type="checkbox" checked={selectedMarkets.includes(type)}
                       onChange={() => {
-                        const next = selectedMarkets.includes(type) ? selectedMarkets.filter(m => m !== type) : [...selectedMarkets, type]
-                        setSelectedMarkets(next)
-                        setSelectedAccounts(getAccountIdsByMarkets(next))
+                        if (selectedMarkets.includes(type)) {
+                          setSelectedMarkets(selectedMarkets.filter(m => m !== type))
+                          // 마켓 해제 시 해당 마켓의 개별 아이디 선택도 초기화
+                          const groupIds = new Set(group.accs.map(a => a.id))
+                          setAccountPicks(prev => prev.filter(id => !groupIds.has(id)))
+                        } else {
+                          setSelectedMarkets([...selectedMarkets, type])
+                        }
                       }}
                       style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
-                    {name}
+                    {group.name}
                   </label>
                 ))}
               </>
             )}
           </div>
+          {/* 선택한 마켓의 계정 아이디 — 체크하면 해당 아이디에만 전송, 미체크면 마켓 전체 계정 */}
+          {selectedMarkets.length > 0 && (
+            <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: `1px dashed ${c.border}`, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+              {marketGroups.filter(([type]) => selectedMarkets.includes(type)).map(([type, group]) => (
+                <div key={type} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 16px' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: c.text, minWidth: '90px' }}>{group.name}</span>
+                  {group.accs.map(acc => (
+                    <label key={acc.id} style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.8rem', color: c.textMuted, cursor: 'pointer' }}>
+                      <input type="checkbox"
+                        checked={accountPicks.includes(acc.id)}
+                        onChange={() => setAccountPicks(prev => prev.includes(acc.id) ? prev.filter(x => x !== acc.id) : [...prev, acc.id])}
+                        style={{ accentColor: c.primary, width: '14px', height: '14px' }} />
+                      {acc.seller_id || acc.account_label || acc.business_name || '-'}
+                    </label>
+                  ))}
+                </div>
+              ))}
+              <span style={{ fontSize: '0.72rem', color: c.textMuted }}>아이디를 체크하지 않으면 해당 마켓의 전체 계정에 전송됩니다</span>
+            </div>
+          )}
         </div>
       </div>
 
