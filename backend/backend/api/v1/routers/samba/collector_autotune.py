@@ -1595,6 +1595,41 @@ async def _site_autotune_loop(device_id: str, site: str):
                             for _pol in _pol_result.all():
                                 _policy_cache[_pol.id] = _pol
 
+                        # 테트리스 배제 사전 로드 — 배제된 (소싱처, 브랜드, 계정) 조합과
+                        # 계정단위 배제(tetrisExcluded)는 오토튠 전송 대상에서 제외.
+                        # 배제했는데 오토튠이 계속 가격/재고를 재전송하던 문제 방지.
+                        from backend.domain.samba.tetris.service import (
+                            _norm_site_key as _tx_norm_site,
+                            _norm_tetris_key as _tx_norm_brand,
+                        )
+
+                        _tetris_excluded_keys: set[tuple[str, str, str]] = set()
+                        _tetris_excluded_accounts: set[str] = set()
+                        try:
+                            from backend.domain.samba.tetris.model import (
+                                SambaTetrisAssignment as _TetA,
+                            )
+
+                            _ex_stmt = select(_TetA).where(_TetA.excluded == True)  # noqa: E712
+                            for _ex in (await session.exec(_ex_stmt)).all():
+                                _tetris_excluded_keys.add(
+                                    (
+                                        _tx_norm_site(_ex.source_site),
+                                        _tx_norm_brand(_ex.brand_name),
+                                        _ex.market_account_id,
+                                    )
+                                )
+                            for _exacc in _account_cache.values():
+                                _exacc_extra = (
+                                    getattr(_exacc, "additional_fields", None) or {}
+                                )
+                                if _exacc_extra.get("tetrisExcluded"):
+                                    _tetris_excluded_accounts.add(_exacc.id)
+                        except Exception as _tex_e:
+                            log.warning(
+                                "[오토튠] 테트리스 배제 로드 실패(무시): %s", _tex_e
+                            )
+
                         # 롯데홈쇼핑 자격증명 사전 로드 (등록 계정 중 lottehome이 있을 때만)
                         _lottehome_creds: dict = {}
                         _has_lottehome = any(
@@ -2375,6 +2410,16 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 for acc_id in reg_accounts:
                                     acc = _account_cache.get(acc_id)
                                     if not acc:
+                                        continue
+                                    # 테트리스 배제 가드 — 배제된 (소싱처, 브랜드, 계정)
+                                    # 조합 또는 배제 계정은 오토튠 전송 대상에서 제외
+                                    if acc_id in _tetris_excluded_accounts or (
+                                        _tx_norm_site(
+                                            getattr(product, "source_site", "") or site
+                                        ),
+                                        _tx_norm_brand(product.brand),
+                                        acc_id,
+                                    ) in _tetris_excluded_keys:
                                         continue
                                     # market_product_nos에 상품번호가 없는 계정은 스킵
                                     # (등록된 적 없는 계정에 신규 등록 시도하는 것은 오토튠 역할 아님)

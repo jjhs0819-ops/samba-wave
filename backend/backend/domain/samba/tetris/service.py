@@ -955,6 +955,58 @@ class SambaTetrisService:
                     f"({source_site}/{brand_name} ← {account_id})"
                 )
 
+    async def _cancel_autotune_jobs_for_brand_account(
+        self, source_site: str, brand_name: str, account_id: str
+    ) -> int:
+        """특정 브랜드+계정의 pending/running autotune_transmit 잡 취소.
+
+        오토튠 잡 payload에는 brand_name/source_site가 없어(단일 product_id +
+        단일 account_id 구조) 상품 테이블로 브랜드를 역추적해 매칭한다.
+        배제/삭제 시 transmit 잡만 취소하면 이미 쌓인 autotune_transmit 잡이
+        뒤늦게 실행돼 재전송되는 문제 방지 — 마켓삭제 후에도 잡은 남으므로
+        등록여부와 무관하게 (소싱처, 브랜드) 상품 전체를 매칭한다.
+        """
+        from backend.domain.samba.job.model import JobStatus, SambaJob
+        from backend.domain.samba.shipment.service import request_cancel_transmit
+        from sqlmodel import select
+
+        rows = await self._session.execute(
+            text("""
+                SELECT id FROM samba_collected_product
+                WHERE source_site = :site AND BTRIM(brand) = :brand
+            """),
+            {"site": source_site, "brand": brand_name},
+        )
+        brand_pids = {row[0] for row in rows}
+        if not brand_pids:
+            return 0
+
+        job_rows = await self._session.execute(
+            select(SambaJob).where(
+                SambaJob.job_type == "autotune_transmit",
+                SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
+            )
+        )
+        cancelled = 0
+        for job in job_rows.scalars().all():
+            payload = job.payload or {}
+            if account_id not in (payload.get("target_account_ids") or []):
+                continue
+            if not any(p in brand_pids for p in (payload.get("product_ids") or [])):
+                continue
+            if job.status == JobStatus.PENDING:
+                job.status = JobStatus.CANCELLED
+                self._session.add(job)
+            else:
+                request_cancel_transmit(job.id)
+            cancelled += 1
+        if cancelled:
+            logger.info(
+                f"[테트리스] autotune_transmit 잡 취소 — {source_site}/{brand_name} "
+                f"← {account_id} ({cancelled}건)"
+            )
+        return cancelled
+
     async def _create_delete_market_job(
         self,
         tenant_id: Optional[str],
@@ -1009,6 +1061,11 @@ class SambaTetrisService:
         await self._cancel_running_transmit_jobs(
             source_site, brand_name, market_account_id
         )
+        # 오토튠 잡도 함께 취소 — 남은 autotune_transmit 잡이 마켓삭제 후
+        # 뒤늦게 실행돼 재전송되는 문제 방지
+        await self._cancel_autotune_jobs_for_brand_account(
+            source_site, brand_name, market_account_id
+        )
 
         # 등록된 상품 → delete_market 잡 큐 등록
         product_ids = await self._get_product_ids_for_remove(
@@ -1039,6 +1096,11 @@ class SambaTetrisService:
             source_site, brand_name, market_account_id
         )
         await self._cancel_running_transmit_jobs(
+            source_site, brand_name, market_account_id
+        )
+        # 오토튠 잡도 함께 취소 — 남은 autotune_transmit 잡이 마켓삭제 후
+        # 뒤늦게 실행돼 재전송되는 문제 방지
+        await self._cancel_autotune_jobs_for_brand_account(
             source_site, brand_name, market_account_id
         )
 
@@ -1126,9 +1188,15 @@ class SambaTetrisService:
             await self._cancel_running_transmit_jobs(
                 source_site, brand_name, market_account_id
             )
+            # 오토튠 잡도 함께 취소 — transmit만 취소하면 이미 쌓인
+            # autotune_transmit 잡이 배제 후에도 실행돼 재전송됨
+            autotune_cancelled = await self._cancel_autotune_jobs_for_brand_account(
+                source_site, brand_name, market_account_id
+            )
             logger.info(
                 f"[테트리스] set_excluded(True) — {source_site}/{brand_name} "
-                f"← {market_account_id} (pending취소={pending_cancelled})"
+                f"← {market_account_id} (pending취소={pending_cancelled}, "
+                f"오토튠취소={autotune_cancelled})"
             )
         else:
             logger.info(
@@ -1176,14 +1244,14 @@ class SambaTetrisService:
         return {"account_id": account_id, "tetris_excluded": excluded}
 
     async def _cancel_all_transmit_jobs_for_account(self, account_id: str) -> int:
-        """특정 계정의 모든 pending/running transmit 잡 취소."""
+        """특정 계정의 모든 pending/running transmit + autotune_transmit 잡 취소."""
         from backend.domain.samba.job.model import JobStatus, SambaJob
         from backend.domain.samba.shipment.service import request_cancel_transmit
         from sqlmodel import select
 
         rows = await self._session.execute(
             select(SambaJob).where(
-                SambaJob.job_type == "transmit",
+                SambaJob.job_type.in_(["transmit", "autotune_transmit"]),
                 SambaJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING]),
             )
         )
