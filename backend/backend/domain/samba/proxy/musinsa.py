@@ -617,7 +617,7 @@ class MusinsaClient:
                 # STAND_BY_SALE: 재입고 알림 전체 품절 상태 (isRestock=True이지만 SALE 상태인 부분품절과 구분)
                 "isOutOfStock": bool(
                     str(d.get("goodsSaleType", "")).upper()
-                    in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT", "STAND_BY_SALE")
+                    in ("STOP_SALE", "PROHIBITED", "CLOSE", "SOLD_OUT", "SOLDOUT", "STAND_BY_SALE")
                     or d.get("isSoldOut")
                     or (d.get("goodsPrice") or {}).get("isSoldOut")
                     or d.get("isOutOfStock", False)
@@ -642,6 +642,7 @@ class MusinsaClient:
                             "PROHIBITED",
                             "CLOSE",
                             "SOLD_OUT",
+                            "SOLDOUT",
                             "STAND_BY_SALE",
                         )
                         or d.get("canBuy") is False
@@ -970,6 +971,7 @@ class MusinsaClient:
                             "PROHIBITED",
                             "CLOSE",
                             "SOLD_OUT",
+                            "SOLDOUT",
                             "STAND_BY_SALE",
                         )
                         or d.get("isSoldOut")
@@ -1064,6 +1066,7 @@ class MusinsaClient:
                                     "PROHIBITED",
                                     "CLOSE",
                                     "SOLD_OUT",
+                                    "SOLDOUT",
                                     "STAND_BY_SALE",
                                 )
                                 or d.get("isSoldOut")
