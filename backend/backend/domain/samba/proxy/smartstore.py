@@ -1454,12 +1454,16 @@ class SmartStoreClient:
         # 정렬되며 응답 limit이 있어 since가 멀수록 잘림(2026-05-12 검증: since=5/7 → 1건만,
         # since=5/10 → 9건). 응답이 잘리면 마지막 lastChangedDate를 새 cursor로 써서
         # 더 이상 새 productOrderId가 안 나올 때까지 반복 호출.
-        async def _fetch_with_pagination(initial_from: str) -> None:
+        async def _fetch_with_pagination(
+            initial_from: str, forced_type: str | None = None
+        ) -> None:
             cursor = initial_from
             for _page in range(20):  # 안전 상한: 20페이지
                 qparams = dict(params)
                 qparams["lastChangedFrom"] = cursor
                 qparams.pop("lastChangedType", None)
+                if forced_type:
+                    qparams["lastChangedType"] = forced_type
                 result = None
                 for _retry in range(3):
                     try:
@@ -1517,6 +1521,17 @@ class SmartStoreClient:
         recent_str = recent.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
         if recent_str > since_str:
             await _fetch_with_pagination(recent_str)
+
+        # PAYED 전용 14일 보강 호출 — last-changed-statuses는 이벤트 기반이라
+        # 결제 후 발주확인 없이 방치된 주문(PAYED 상태 유지, 이후 변경 없음)이
+        # 일반 호출에서 누락될 수 있음. PAYED 타입 지정 + 14일 윈도우로 보완.
+        _payed_since = datetime.now(kst) - timedelta(days=14)
+        _payed_since_str = _payed_since.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
+        _before_count = len(seen_po_ids)
+        await _fetch_with_pagination(_payed_since_str, forced_type="PAYED")
+        _payed_new = len(seen_po_ids) - _before_count
+        if _payed_new:
+            logger.info(f"[스마트스토어] PAYED 보강 조회로 {_payed_new}건 추가 발견")
 
         logger.info(f"[스마트스토어] 주문 변경 조회 완료 — 총 {len(all_statuses)}건")
 
