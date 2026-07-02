@@ -47,6 +47,8 @@ class OrderUpdate(BaseModel):
     fee_rate: Optional[float] = None
     shipping_company: Optional[str] = None
     tracking_number: Optional[str] = None
+    overseas_shipping_company: Optional[str] = None
+    overseas_tracking_number: Optional[str] = None
     customer_note: Optional[str] = None
     notes: Optional[str] = None
     sourcing_order_number: Optional[str] = None

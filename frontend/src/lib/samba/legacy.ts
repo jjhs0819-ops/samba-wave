@@ -209,6 +209,8 @@ export interface SambaOrder {
   shipping_status: string;
   shipping_company?: string;
   tracking_number?: string;
+  overseas_shipping_company?: string;
+  overseas_tracking_number?: string;
   notes?: string;
   ext_order_number?: string;
   claim_order_number?: string;

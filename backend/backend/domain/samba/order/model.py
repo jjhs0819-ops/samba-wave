@@ -174,6 +174,13 @@ class SambaOrder(SQLModel, table=True):
     tracking_number: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # [2026-07-02] 해외택배사/해외송장 — 크림(SNKRDUNK 해외매입) 전용. 마켓 전송 안 함(자체 기록용).
+    overseas_shipping_company: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    overseas_tracking_number: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     # 반품 회수 송장 (소싱처 회수조회에서 자동 수집 — CS 답변용, 마켓 전송 안 함)
     return_collect_courier: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)

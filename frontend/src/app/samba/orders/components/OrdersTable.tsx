@@ -9,7 +9,7 @@ import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
-import { STATUS_MAP, SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
+import { STATUS_MAP, SHIPPING_COMPANIES, OVERSEAS_SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
 import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
 import { useTheme } from '@/lib/samba/useTheme'
@@ -591,6 +591,41 @@ export default function OrdersTable(props: OrdersTableProps) {
                         title="택배사+송장번호를 마켓에 전송 (재전송 가능)"
                       >{o.status === 'ship_failed' ? '재전송' : '마켓전송'}</button>
                     </div>
+
+                    {/* [2026-07-02] 크림 전용 — 해외택배사 + 해외송장번호 (SNKRDUNK 해외매입 기록용, 마켓 전송 안 함) */}
+                    {(String(o.source_site || '').toUpperCase().includes('KREAM') || String(o.sales_channel_alias || '').toUpperCase().includes('KREAM') || String(o.source_url || '').includes('kream.co.kr')) && (
+                      <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <input
+                          id={`ov-co-${o.id}`}
+                          list={`ov-list-${o.id}`}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                          defaultValue={o.overseas_shipping_company || ''}
+                          placeholder="해외택배사(일본/직접입력)"
+                          onBlur={async () => {
+                            const co = (document.getElementById(`ov-co-${o.id}`) as HTMLInputElement)?.value.trim() || ''
+                            const tn = (document.getElementById(`ov-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
+                            if (co === (o.overseas_shipping_company || '') && tn === (o.overseas_tracking_number || '')) return
+                            try { await orderApi.update(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }); patchOrder(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }) } catch { /* ignore */ }
+                          }}
+                        />
+                        <datalist id={`ov-list-${o.id}`}>
+                          {OVERSEAS_SHIPPING_COMPANIES.map(c => <option key={c} value={c} />)}
+                        </datalist>
+                        <input
+                          id={`ov-tn-${o.id}`}
+                          style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                          defaultValue={o.overseas_tracking_number || ''}
+                          placeholder="해외송장번호"
+                          onBlur={async () => {
+                            const co = (document.getElementById(`ov-co-${o.id}`) as HTMLInputElement)?.value.trim() || ''
+                            const tn = (document.getElementById(`ov-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
+                            if (co === (o.overseas_shipping_company || '') && tn === (o.overseas_tracking_number || '')) return
+                            try { await orderApi.update(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }); patchOrder(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }) } catch { /* ignore */ }
+                          }}
+                          onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
+                        />
+                      </div>
+                    )}
 
                     {/* 간단메모 */}
                     <textarea
