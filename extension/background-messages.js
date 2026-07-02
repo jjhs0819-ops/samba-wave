@@ -11,6 +11,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return
   }
 
+  // SNKRDUNK 로그인 세션쿠키 → 백엔드 저장 (크림 해외송장 조회용).
+  // session 쿠키는 httpOnly 라 여기(background, chrome.cookies)서만 읽을 수 있다.
+  if (msg.type === 'SNKRDUNK_SYNC_SESSION') {
+    ;(async () => {
+      try {
+        const ck = await chrome.cookies.get({
+          url: 'https://snkrdunk.com',
+          name: 'session',
+        })
+        if (!ck || !ck.value) {
+          sendResponse({ ok: false, reason: 'no-session' })
+          return
+        }
+        const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
+        const base = proxyUrl || SambaBackgroundCore.DEFAULT_PROXY_URL
+        const res = await SambaBackgroundCore.apiFetch(
+          `${base}${SambaBackgroundCore.API_PREFIX}/orders/snkrdunk/session-cookie`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cookie: ck.value }),
+          }
+        )
+        sendResponse({ ok: res.ok })
+      } catch (e) {
+        sendResponse({ ok: false, reason: String(e) })
+      }
+    })()
+    return true
+  }
+
   // content_script(삼바 프론트엔드 페이지)가 deviceId를 요청할 때 응답
   if (msg.type === 'GET_DEVICE_ID') {
     ;(async () => {

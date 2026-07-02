@@ -2896,6 +2896,168 @@ async def update_order(
     return order
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# SNKRDUNK 해외송장 자동수집 (크림 해외매입 — 사무국→구매자 발송송장)
+# MFA(SMS OTP)라 백엔드 id/pw 자동로그인 불가 → 확장앱이 SNKRDUNK 로그인 세션쿠키를
+# 캡처해 아래로 전송. 백엔드가 이 쿠키로 /v1/orders/{취引ID} + get-delivery-company 호출.
+# sourcing_order_number = SNKRDUNK 취引ID (③에서 채움).
+# ─────────────────────────────────────────────────────────────────────────
+_SNKR_COOKIE_KEY = "snkrdunk_session_cookie"
+
+
+class SnkrCookieBody(BaseModel):
+    cookie: str
+
+
+async def _get_snkr_session_cookie(session: AsyncSession) -> str:
+    """저장된 SNKRDUNK 세션쿠키 조회 (samba_settings)."""
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    r = await session.execute(
+        select(SambaSettings).where(SambaSettings.key == _SNKR_COOKIE_KEY)
+    )
+    row = r.scalars().first()
+    val = row.value if row else None
+    if isinstance(val, dict):
+        return str(val.get("cookie") or "").strip()
+    return str(val).strip() if isinstance(val, str) else ""
+
+
+async def _apply_snkr_overseas_tracking(
+    session: AsyncSession, order: SambaOrder, cookie: str
+) -> dict:
+    """주문 1건에 대해 SNKRDUNK 해외송장 조회 → 발송됐으면 DB 저장."""
+    from datetime import timezone as _tz
+
+    from backend.domain.samba.proxy.snkrdunk import fetch_order_overseas_tracking
+
+    ord_no = (order.sourcing_order_number or "").strip()
+    if not ord_no:
+        return {"success": False, "error": "소싱주문번호(취引ID) 없음"}
+    r = await fetch_order_overseas_tracking(cookie, ord_no)
+    if r.get("error"):
+        return {"success": False, "error": r["error"]}
+    if not r.get("shipped"):
+        # 아직 사무국→구매자 발송 전 — 송장 미존재
+        return {
+            "success": True,
+            "shipped": False,
+            "order_status": r.get("order_status"),
+        }
+    order.overseas_shipping_company = r["delivery_company"]
+    order.overseas_tracking_number = r["tracking_number"]
+    order.updated_at = datetime.now(_tz.utc)
+    await session.commit()
+    return {
+        "success": True,
+        "shipped": True,
+        "delivery_company": r["delivery_company"],
+        "tracking_number": r["tracking_number"],
+        "order_status": r.get("order_status"),
+    }
+
+
+@router.post("/snkrdunk/session-cookie")
+async def save_snkrdunk_session_cookie(
+    body: SnkrCookieBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """확장앱이 캡처한 SNKRDUNK 로그인 세션쿠키 저장 (samba_settings upsert)."""
+    from datetime import UTC, datetime as _dt
+    from sqlalchemy import func as _func
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from backend.core.tenant_context import current_tenant_id
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    cookie = (body.cookie or "").strip()
+    if cookie.lower().startswith("session="):
+        cookie = cookie.split("=", 1)[1]
+    if not cookie:
+        raise HTTPException(status_code=400, detail="cookie 비어있음")
+
+    now = _dt.now(UTC)
+    tid = current_tenant_id.get()
+    value = {"cookie": cookie, "updated_at": now.isoformat()}
+    ins = pg_insert(SambaSettings).values(
+        key=_SNKR_COOKIE_KEY, value=value, updated_at=now, tenant_id=tid
+    )
+    stmt = ins.on_conflict_do_update(
+        index_elements=["key"],
+        set_={
+            "value": value,
+            "updated_at": now,
+            "tenant_id": _func.coalesce(
+                ins.excluded.tenant_id, SambaSettings.__table__.c.tenant_id
+            ),
+        },
+    )
+    await session.execute(stmt)
+    await session.commit()
+    return {"success": True}
+
+
+@router.post("/{order_id}/fetch-snkrdunk-tracking")
+async def fetch_snkrdunk_tracking(
+    order_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """주문 1건 해외송장(사무국→구매자 발송) 조회 + 저장."""
+    order = await session.get(SambaOrder, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    cookie = await _get_snkr_session_cookie(session)
+    if not cookie:
+        return {
+            "success": False,
+            "error": "SNKRDUNK 세션쿠키 없음 — 확장앱으로 SNKRDUNK 로그인 필요",
+        }
+    return await _apply_snkr_overseas_tracking(session, order, cookie)
+
+
+@router.post("/snkrdunk/sync-overseas-tracking")
+async def sync_snkrdunk_overseas_tracking(
+    limit: int = 200,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """미수집 KREAM 주문 일괄 해외송장 조회 (소싱주문번호 有 & 해외송장 空)."""
+    from sqlalchemy import func as _func, or_ as _or
+
+    cookie = await _get_snkr_session_cookie(session)
+    if not cookie:
+        return {
+            "success": False,
+            "error": "SNKRDUNK 세션쿠키 없음 — 확장앱으로 SNKRDUNK 로그인 필요",
+        }
+    stmt = (
+        select(SambaOrder)
+        .where(
+            SambaOrder.sourcing_order_number.is_not(None),
+            SambaOrder.sourcing_order_number != "",
+            (SambaOrder.overseas_tracking_number.is_(None))
+            | (SambaOrder.overseas_tracking_number == ""),
+            _or(
+                _func.upper(_func.coalesce(SambaOrder.source_site, "")) == "KREAM",
+                _func.upper(_func.coalesce(SambaOrder.sales_channel_alias, "")).like(
+                    "%KREAM%"
+                ),
+            ),
+        )
+        .limit(max(1, min(int(limit or 200), 500)))
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    checked = 0
+    shipped = 0
+    for o in rows:
+        checked += 1
+        res = await _apply_snkr_overseas_tracking(session, o, cookie)
+        if res.get("shipped"):
+            shipped += 1
+        await asyncio.sleep(0.3)  # SNKRDUNK 레이트리밋 보수값
+    logger.info(f"[SNKRDUNK해외송장] 일괄조회 checked={checked} shipped={shipped}")
+    return {"success": True, "checked": checked, "shipped": shipped}
+
+
 @router.put("/{order_id}/status", response_model=SambaOrder)
 async def update_order_status(
     order_id: str,

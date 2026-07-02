@@ -45,6 +45,21 @@ SIZES_URL = f"{BASE}/en/v1/products/SW---{{id}}/sizes"
 JP_DETAIL_URL = f"{BASE}/v1/apparels/{{id}}"
 JP_USED_URL = f"{BASE}/v1/apparels/{{id}}/used"
 JP_SIZES_URL = f"{BASE}/v1/apparels/{{id}}/sizes"
+# 구매주문 배송조회 API (해외매입 송장) — session 쿠키 인증 필요. 취引ID = order_id.
+#   ORDER_DETAIL: order.trackingNumber(사무국→구매자 발송송장)·orderStatus·orderAdminShippedAt
+#   ORDER_DELIVERY_COMPANY: {"deliveryCompany":"yamato"} 택배사 코드 (확인값 2026-07-02)
+ORDER_DETAIL_URL = f"{BASE}/v1/orders/{{id}}"
+ORDER_DELIVERY_COMPANY_URL = f"{BASE}/v2/orders/{{id}}/get-delivery-company"
+# 택배사 코드 → 표시명. 확인값: yamato. 미확인 코드는 원본 그대로 노출.
+_DELIVERY_COMPANY_LABELS = {
+    "yamato": "야마토운수",
+    "kuronekoyamato": "야마토운수",
+    "sagawa": "사가와급편",
+    "jppost": "일본우편",
+    "japanpost": "일본우편",
+}
+# 사무국→구매자 발송완료 상태 — 이때 order.trackingNumber 채워짐(해외송장 수집 가능).
+SNKR_SHIPPED_ORDER_STATUSES = {"waiting-for-delivered-to-buyer"}
 # JP API는 ja-JP 로케일로 엔화 반환
 JP_HEADERS = {
     "User-Agent": (
@@ -839,4 +854,82 @@ class SnkrdunkClient:
                 "low_price": low_price,
                 "high_price": high_price,
             },
+        }
+
+
+async def fetch_order_overseas_tracking(
+    session_cookie: str,
+    order_id: str,
+    timeout: float = 15.0,
+) -> dict[str, Any]:
+    """SNKRDUNK 구매주문의 해외송장(사무국→구매자 발송) 조회.
+
+    session 쿠키 인증(MFA라 id/pw 자동로그인 불가 → 확장앱이 캡처한 쿠키 사용).
+    발송 전(감정/발송대기)이면 tracking_number 는 빈 문자열로 반환.
+
+    Returns:
+        {
+          "order_id": str,
+          "tracking_number": str,       # order.trackingNumber (해외송장번호)
+          "delivery_company": str,      # 표시명 (예: 야마토운수)
+          "delivery_company_code": str, # 원본 코드 (예: yamato)
+          "order_status": str,          # waiting-for-delivered-to-buyer 등
+          "admin_shipped_at": str,      # 사무국 발송일 (없으면 "")
+          "shipped": bool,              # trackingNumber 존재 여부
+          "error": str,                 # 실패 시에만
+        }
+    """
+    cookie = (session_cookie or "").strip()
+    if not cookie:
+        return {"order_id": str(order_id), "error": "session 쿠키 없음"}
+    # 쿠키 문자열이 "session=..." 형태로 넘어와도 값만 추출
+    if cookie.lower().startswith("session="):
+        cookie = cookie.split("=", 1)[1]
+    headers = {
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "application/json",
+        "Cookie": f"session={cookie}",
+        "Referer": f"{BASE}/",
+    }
+    async with httpx.AsyncClient(
+        headers=headers, timeout=timeout, follow_redirects=True
+    ) as client:
+        # 1) 주문 상세 — trackingNumber(해외송장)·orderStatus·orderAdminShippedAt
+        try:
+            r = await client.get(ORDER_DETAIL_URL.format(id=order_id))
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            logger.warning(f"[SNKRDUNK] 주문상세 실패 id={order_id}: {e}")
+            return {"order_id": str(order_id), "error": str(e)}
+
+        order = (data.get("order") if isinstance(data, dict) else None) or {}
+        tracking = str(order.get("trackingNumber") or "").strip()
+        status = str(order.get("orderStatus") or "").strip()
+        admin_shipped_raw = str(order.get("orderAdminShippedAt") or "").strip()
+        # 0001-01-01 = 미발송 sentinel
+        admin_shipped = (
+            "" if admin_shipped_raw.startswith("0001") else admin_shipped_raw
+        )
+
+        # 2) 택배사 코드 (발송 후에만 유의미). 실패해도 송장은 반환.
+        company_code = ""
+        try:
+            cr = await client.get(ORDER_DELIVERY_COMPANY_URL.format(id=order_id))
+            if cr.status_code == 200:
+                cj = cr.json()
+                if isinstance(cj, dict):
+                    company_code = str(cj.get("deliveryCompany") or "").strip()
+        except Exception as e:
+            logger.warning(f"[SNKRDUNK] 택배사 조회 실패 id={order_id}: {e}")
+
+        label = _DELIVERY_COMPANY_LABELS.get(company_code.lower(), company_code)
+        return {
+            "order_id": str(order_id),
+            "tracking_number": tracking,
+            "delivery_company": label,
+            "delivery_company_code": company_code,
+            "order_status": status,
+            "admin_shipped_at": admin_shipped,
+            "shipped": bool(tracking),
         }

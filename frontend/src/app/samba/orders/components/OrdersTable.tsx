@@ -624,6 +624,29 @@ export default function OrdersTable(props: OrdersTableProps) {
                           }}
                           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                         />
+                        {/* SNKRDUNK 해외송장 자동조회 — 소싱주문번호(취引ID) 필요, 발송된 건만 채워짐 */}
+                        <button
+                          type="button"
+                          title="SNKRDUNK 발송송장 자동조회"
+                          style={{ ...inputStyle, flex: '0 0 auto', fontSize: '0.72rem', cursor: 'pointer', whiteSpace: 'nowrap', padding: '0.25rem 0.5rem' }}
+                          onClick={async () => {
+                            if (!o.sourcing_order_number) { showAlert('소싱주문번호(취引ID)가 없습니다', 'error'); return }
+                            try {
+                              const r = await orderApi.fetchSnkrdunkTracking(o.id)
+                              if (r.success && r.shipped) {
+                                patchOrder(o.id, { overseas_shipping_company: r.delivery_company || '', overseas_tracking_number: r.tracking_number || '' })
+                                const coEl = document.getElementById(`ov-co-${o.id}`) as HTMLInputElement | null
+                                const tnEl = document.getElementById(`ov-tn-${o.id}`) as HTMLInputElement | null
+                                if (coEl) coEl.value = r.delivery_company || ''
+                                if (tnEl) tnEl.value = r.tracking_number || ''
+                              } else if (r.success) {
+                                showAlert('아직 발송 전입니다 (송장 미발급)', 'info')
+                              } else {
+                                showAlert(r.error || '조회 실패', 'error')
+                              }
+                            } catch (e) { showAlert(e instanceof Error ? e.message : '조회 실패', 'error') }
+                          }}
+                        >가져오기</button>
                       </div>
                     )}
 

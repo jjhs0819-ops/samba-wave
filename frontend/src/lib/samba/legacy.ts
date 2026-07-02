@@ -597,6 +597,19 @@ export const orderApi = {
     }),
   getTracking: (carrier: string, invoice: string) =>
     request<TrackingInfo>(`${SAMBA_PREFIX}/orders/tracking?carrier=${encodeURIComponent(carrier)}&invoice=${encodeURIComponent(invoice)}`),
+  // SNKRDUNK 해외송장(사무국→구매자 발송) 자동조회 — 주문 1건
+  fetchSnkrdunkTracking: (id: string) =>
+    request<{ success: boolean; shipped?: boolean; delivery_company?: string; tracking_number?: string; order_status?: string; error?: string }>(
+      `${SAMBA_PREFIX}/orders/${id}/fetch-snkrdunk-tracking`, { method: "POST" }),
+  // SNKRDUNK 해외송장 일괄조회 — 소싱주문번호 있고 해외송장 빈 KREAM 주문 전체
+  syncSnkrdunkOverseasTracking: () =>
+    request<{ success: boolean; checked?: number; shipped?: number; error?: string }>(
+      `${SAMBA_PREFIX}/orders/snkrdunk/sync-overseas-tracking`, { method: "POST" }),
+  // SNKRDUNK 로그인 세션쿠키 저장 (확장앱이 호출)
+  saveSnkrdunkCookie: (cookie: string) =>
+    request<{ success: boolean }>(`${SAMBA_PREFIX}/orders/snkrdunk/session-cookie`, {
+      method: "POST", body: JSON.stringify({ cookie }),
+    }),
 };
 
 interface TrackingEvent {
