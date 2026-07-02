@@ -19,6 +19,9 @@ from backend.utils.logger import logger
 
 # 일시 오류(쿠팡 게이트웨이 타임아웃/혼잡) 마커 — 이 경우만 재시도. 4xx(404 등)는 영구오류라 즉시 raise.
 _COUPANG_TRANSIENT_MARKERS = ("502", "503", "504", "timeout", "timed out")
+# 429 Rate Limit 전용 backoff — concurrency 상향 시 쿠팡이 동시요청 제한을 걸므로
+# 일반 재시도보다 긴 대기 필요 (issue #559).
+_COUPANG_RATE_LIMIT_DELAY = 10.0
 
 
 async def _call_with_retry(coro_factory, *, attempts: int = 3, base_delay: float = 1.0):
@@ -27,6 +30,7 @@ async def _call_with_retry(coro_factory, *, attempts: int = 3, base_delay: float
     coro_factory: 매 시도마다 새 코루틴을 만드는 무인자 콜러블 (예: lambda: client.foo()).
     경량 업데이트(vendor-items)의 504 타임아웃이 깨진 전체수정 PUT(404)으로 둔갑하던
     문제 대응 — 일시 504는 여기서 흡수.
+    429 Rate Limit은 10초 대기 후 재시도 (issue #559).
     """
     last_exc: Exception | None = None
     for i in range(attempts):
@@ -34,13 +38,19 @@ async def _call_with_retry(coro_factory, *, attempts: int = 3, base_delay: float
             return await coro_factory()
         except Exception as e:
             msg = str(e).lower()
-            is_transient = isinstance(
-                e, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)
-            ) or any(m in msg for m in _COUPANG_TRANSIENT_MARKERS)
+            is_rate_limit = "429" in msg or "too many" in msg
+            is_transient = (
+                isinstance(
+                    e, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)
+                )
+                or any(m in msg for m in _COUPANG_TRANSIENT_MARKERS)
+                or is_rate_limit
+            )
             if not is_transient or i == attempts - 1:
                 raise
             last_exc = e
-            await asyncio.sleep(base_delay * (i + 1))
+            delay = _COUPANG_RATE_LIMIT_DELAY if is_rate_limit else base_delay * (i + 1)
+            await asyncio.sleep(delay)
     if last_exc:
         raise last_exc
 
