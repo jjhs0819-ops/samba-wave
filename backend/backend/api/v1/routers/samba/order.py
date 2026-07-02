@@ -12253,9 +12253,13 @@ async def import_kream_excel(
             source_site="KREAM",
             product_id=kream_pid or None,
             product_name=product_name,
-            option_name=option_name,
+            product_option=option_name,
             sale_price=sale_price,
+            # 정산금액 = 결제금액과 동일 표시 (크림 해외판매 — 마켓수수료 별도)
+            revenue=sale_price,
             cost=0.0,
+            # 배송비 기본 8,000원 자동 입력 (크림 해외배송 고정)
+            shipping_fee=8000.0,
             profit=0.0,
             tracking_number=tracking_number or None,
             shipped_at=_parse_dt(shipped_at_raw),
