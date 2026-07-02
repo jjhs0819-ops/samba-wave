@@ -12143,6 +12143,43 @@ async def import_kream_excel(
     kream_acc = acc_row.scalars().first()
     kream_channel_id = kream_acc.id if kream_acc else None
 
+    # 크림 주문의 실제 소싱처는 SNKRDUNK(성희 계정) — 주문계정 자동 선택.
+    # 기본 로그인 계정 우선, 없으면 활성 계정 중 최초.
+    snkr_sourcing_account_id = None
+    try:
+        from sqlalchemy import func as _sfunc
+
+        from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+        _snkr_base = (
+            select(SambaSourcingAccount.id)
+            .where(
+                _sfunc.upper(SambaSourcingAccount.site_name) == "SNKRDUNK",
+                SambaSourcingAccount.is_active.is_(True),
+            )
+            .order_by(
+                SambaSourcingAccount.is_login_default.desc(),
+                SambaSourcingAccount.created_at,
+            )
+        )
+        if tenant_id is not None:
+            snkr_sourcing_account_id = (
+                (
+                    await session.execute(
+                        _snkr_base.where(SambaSourcingAccount.tenant_id == tenant_id)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+        if not snkr_sourcing_account_id:
+            snkr_sourcing_account_id = (
+                (await session.execute(_snkr_base)).scalars().first()
+            )
+    except Exception as _e:
+        logger.warning(f"[KREAM엑셀] SNKRDUNK 주문계정 조회 실패(무시): {_e}")
+        snkr_sourcing_account_id = None
+
     content = await file.read()
     wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
     ws = wb.active
@@ -12227,6 +12264,7 @@ async def import_kream_excel(
             shipping_status="결제완료",
             shipping_company="허브넷로지스틱스",
             collected_product_id=cp_map.get(kream_pid) if kream_pid else None,
+            sourcing_account_id=snkr_sourcing_account_id,
         )
         session.add(order)
         created += 1
