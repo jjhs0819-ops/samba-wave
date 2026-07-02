@@ -681,6 +681,9 @@ export default function ProductsPage() {
     const counts = new Map<string, number>()
     targetProducts.forEach(product => {
       ;(product.registered_accounts ?? []).forEach(accountId => {
+        // registered_accounts에 null이 낀 상품 대응 — 아래 map의 accountId.slice가
+        // null에서 터져 마켓삭제 모달이 안 뜨던 문제 방지.
+        if (!accountId) return
         counts.set(accountId, (counts.get(accountId) ?? 0) + 1)
       })
     })
@@ -693,7 +696,7 @@ export default function ProductsPage() {
         if (!account) {
           return {
             accountId,
-            label: `삭제된 계정 (${accountId.slice(0, 8)})`,
+            label: `삭제된 계정 (${String(accountId).slice(0, 8)})`,
             marketType: '연결 끊김',
             productCount,
           }
