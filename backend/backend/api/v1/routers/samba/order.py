@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
@@ -132,6 +132,8 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
                 _existing_acc is None
                 or _existing_acc.get("collected_product_id") == _cpid
             ):
+                # 신규 or 같은 cp 재반영 — 기존 ambiguous 플래그는 보존
+                _prev_ambig = bool(_existing_acc and _existing_acc.get("ambiguous"))
                 by_account[_acc_key] = {
                     "collected_product_id": _cpid,
                     "source_site": _site,
@@ -141,6 +143,13 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
                     "cost": _cp_cost,
                     "site_ids_by_account": dict(_sites_by_account),
                 }
+                if _prev_ambig:
+                    by_account[_acc_key]["ambiguous"] = True
+            else:
+                # #534 — 다른 cp가 같은 (account_id, product_no) 점유 = 진짜 identity 충돌.
+                # 한 마켓 리스팅이 두 수집상품을 가리킴 → 판매링크≠소싱대상 오연결 사고.
+                # 오래된 엔트리 유지하되 ambiguous 표시 → 주문 매칭에서 거부(오연결 방지).
+                _existing_acc["ambiguous"] = True
     return _ambiguous_new
 
 
@@ -353,6 +362,9 @@ class PaginatedOrdersResponse(BaseModel):
     total_count: int
     total_sale: float
     pending_count: int
+    # 상품메모(#535) — {collected_product_id: memo}. 주문의 collected_product_id로
+    # 현재 상품 memo를 live-join(스냅샷 아님). 빈 메모는 제외.
+    product_memos: dict[str, str] = {}
 
 
 def _read_service(session: AsyncSession) -> SambaOrderService:
@@ -670,11 +682,67 @@ async def _run_paginated_order_query(
     )
     items = list((await session.execute(items_stmt)).scalars().all())
 
+    # KREAM 주문 한글 상품명 보강 — collected_product.name(한글)으로 오버라이드
+    _kream_cp_ids = [
+        o.collected_product_id
+        for o in items
+        if o.source_site == "KREAM" and o.collected_product_id
+    ]
+    if _kream_cp_ids:
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
+        _cp_rows = (
+            await session.execute(
+                select(_CP.id, _CP.name, _CP.images, _CP.source_url).where(
+                    _CP.id.in_(_kream_cp_ids)
+                )
+            )
+        ).all()
+        import json as _json
+
+        _cp_data_map = {r[0]: (r[1], r[2], r[3]) for r in _cp_rows}
+        for o in items:
+            if o.source_site == "KREAM" and o.collected_product_id:
+                _name, _imgs, _cp_src_url = _cp_data_map.get(
+                    o.collected_product_id, (None, None, None)
+                )
+                if _name:
+                    o.product_name = _name
+                if not o.product_image and _imgs:
+                    _img_list = _json.loads(_imgs) if isinstance(_imgs, str) else _imgs
+                    if _img_list:
+                        o.product_image = _img_list[0]
+                if _cp_src_url:
+                    o.source_url = _cp_src_url
+
+    # 상품메모(#535) live-join — 주문의 collected_product_id로 현재 상품 memo 조회.
+    # cp_id는 전역 유니크라 tenant 필터 불요. 빈 메모는 맵에서 제외.
+    product_memos: dict[str, str] = {}
+    _memo_cp_ids = [
+        o.collected_product_id
+        for o in items
+        if o.collected_product_id and o.collected_product_id != "DELETED"
+    ]
+    if _memo_cp_ids:
+        from backend.domain.samba.collector.model import SambaCollectedProduct as _CPM
+
+        _memo_rows = (
+            await session.execute(
+                select(_CPM.id, _CPM.memo).where(
+                    _CPM.id.in_(_memo_cp_ids), _CPM.memo.isnot(None)
+                )
+            )
+        ).all()
+        for _cid, _memo in _memo_rows:
+            if _memo and str(_memo).strip():
+                product_memos[_cid] = _memo
+
     return PaginatedOrdersResponse(
         items=items,
         total_count=int(total_row.total_count or 0),
         total_sale=float(total_row.total_sale or 0),
         pending_count=int(total_row.pending_count or 0),
+        product_memos=product_memos,
     )
 
 
@@ -2565,6 +2633,16 @@ async def backfill_product_links(
         )
     )
     mpn_map: dict[str, str] = {}
+    # #534 — 같은 상품번호를 복수 cp가 점유하면 오연결 위험. 충돌 키는 매핑서 제외.
+    _mpn_conflicts: set[str] = set()
+
+    def _put(_key: str, _cpid: str) -> None:
+        _prev = mpn_map.get(_key)
+        if _prev is not None and _prev != _cpid:
+            _mpn_conflicts.add(_key)
+        else:
+            mpn_map[_key] = _cpid
+
     for cpid, mpnos in cp_rows.fetchall():
         if not mpnos or not isinstance(mpnos, dict):
             continue
@@ -2578,9 +2656,18 @@ async def backfill_product_links(
                     _v.get("channelProductNo"),
                 ]:
                     if sv:
-                        mpn_map[str(sv)] = cpid
+                        _put(str(sv), cpid)
             else:
-                mpn_map[str(_v)] = cpid
+                _put(str(_v), cpid)
+    # 충돌 키 제거 — 오연결 방지(#534). 관리자 확인용 로그.
+    for _ck in _mpn_conflicts:
+        mpn_map.pop(_ck, None)
+    if _mpn_conflicts:
+        logger.warning(
+            "[주문링크] #534 identity 충돌 %d건 매핑 제외: %s",
+            len(_mpn_conflicts),
+            ", ".join(sorted(_mpn_conflicts)[:20]),
+        )
 
     # collected_product_id가 없는 주문 조회
     null_orders = await session.execute(
@@ -7105,31 +7192,108 @@ async def sync_orders_from_markets(
                                     f"{_ssg_cancel_found}건 취소요청 처리"
                                 )
 
-                        # 취소요청 주문 중 cancel_requests·listShppDirection 모두에 없는 것 → 취소완료
+                        # 취소요청 주문 중 cancel_requests·listShppDirection 모두에 없는 것.
+                        # #531 — 과거엔 이 집합을 무조건 '취소완료'로 flip 했으나(음성추론),
+                        # 배송완료 종결주문이 listShppDirection(배송지시 only) 조회창에서
+                        # 빠지면서 취소 철회 후 배송된 정상주문이 오취소됐다.
+                        # get_order_detail 단건 양성확인으로 전환 — 롯데ON '21 미매핑' 가드와 동일 취지.
                         _ssg_completed = (
                             _db_cancel_req_nos - _ssg_cancel_req_nos - _ssg_seen_ord_nos
                         )
                         if _ssg_completed:
-                            logger.info(
-                                f"[주문동기화] {label}: SSG 취소완료 감지 {len(_ssg_completed)}건"
-                            )
-                            for _cpno in _ssg_completed:
-                                orders_data.append(
-                                    {
-                                        "order_number": _cpno,
-                                        "channel_id": account["id"],
-                                        "channel_name": label,
-                                        "status": "cancelled",
-                                        "shipping_status": "취소완료",
-                                        "source": "ssg",
-                                        "sale_price": 0.0,
-                                        "revenue": 0.0,
-                                        "fee_rate": _ssg_fee_rate,
-                                        "cost": 0,
-                                    }
-                                )
+
+                            def _ssg_iqty(v) -> int:
+                                try:
+                                    return int(float(str(v or "0")))
+                                except (TypeError, ValueError):
+                                    return 0
+
+                            _cpno_list = list(_ssg_completed)
+                            if len(_cpno_list) > 30:
                                 logger.info(
-                                    f"[주문동기화] {label}: SSG 취소완료 — {_cpno}"
+                                    f"[주문동기화] {label}: SSG 취소완료 후보 "
+                                    f"{len(_cpno_list)}건 중 30건만 확인 — "
+                                    f"{len(_cpno_list) - 30}건 다음 싱크로 이월"
+                                )
+                            logger.info(
+                                f"[주문동기화] {label}: SSG 취소완료 후보 "
+                                f"{min(len(_cpno_list), 30)}건 단건 양성확인"
+                            )
+                            _ssg_cmpl_cancel = 0
+                            _ssg_cmpl_fix = 0
+                            # API 호출 과다 방지 — 최대 30건
+                            for _cpno in _cpno_list[:30]:
+                                try:
+                                    _cd_items = await _ssg_client.get_order_detail(
+                                        _cpno
+                                    )
+                                except Exception as _cd_e:
+                                    # 조회 실패 — 판단 불가, 보수적 스킵(오flip 방지)
+                                    logger.warning(
+                                        f"[주문동기화] {label}: SSG 취소완료 확인 조회 실패 "
+                                        f"{_cpno} — {_cd_e} (스킵)"
+                                    )
+                                    continue
+                                if not _cd_items:
+                                    # 빈 응답 — 판단 불가, 보수적 스킵
+                                    continue
+                                _divs2 = {
+                                    str(it.get("ordItemDiv", "")) for it in _cd_items
+                                }
+                                _cncl_qty = sum(
+                                    _ssg_iqty(it.get("cnclQty")) for it in _cd_items
+                                )
+                                _shpmt_qty = sum(
+                                    _ssg_iqty(it.get("shpmtQty")) for it in _cd_items
+                                )
+                                if "021" in _divs2 or _cncl_qty > 0:
+                                    # 실제 취소 확인(취소구분 또는 취소수량>0) → 취소완료
+                                    orders_data.append(
+                                        {
+                                            "order_number": _cpno,
+                                            "channel_id": account["id"],
+                                            "channel_name": label,
+                                            "status": "cancelled",
+                                            "shipping_status": "취소완료",
+                                            "source": "ssg",
+                                            "sale_price": 0.0,
+                                            "revenue": 0.0,
+                                            "fee_rate": _ssg_fee_rate,
+                                            "cost": 0,
+                                        }
+                                    )
+                                    _ssg_cmpl_cancel += 1
+                                    logger.info(
+                                        f"[주문동기화] {label}: SSG 취소완료 확인 — {_cpno}"
+                                    )
+                                elif (
+                                    "011" in _divs2
+                                    and _cncl_qty == 0
+                                    and _shpmt_qty > 0
+                                ):
+                                    # 취소 철회 후 출고/배송 — 오취소 방지, 배송완료로 정정.
+                                    # (financial 미포함 dict → upsert 좀비해제 분기가
+                                    #  status=delivered + cancel_requested_at 해제, 금액 보존)
+                                    orders_data.append(
+                                        {
+                                            "order_number": _cpno,
+                                            "channel_id": account["id"],
+                                            "channel_name": label,
+                                            "status": "delivered",
+                                            "shipping_status": "배송완료",
+                                            "source": "ssg",
+                                        }
+                                    )
+                                    _ssg_cmpl_fix += 1
+                                    logger.info(
+                                        f"[주문동기화] {label}: SSG 취소철회·출고 → "
+                                        f"배송완료 정정 — {_cpno}"
+                                    )
+                                # 그 외(미출고·불명) → 보수적 스킵
+                            if _ssg_cmpl_cancel or _ssg_cmpl_fix:
+                                logger.info(
+                                    f"[주문동기화] {label}: SSG 취소완료 확인 "
+                                    f"{_ssg_cmpl_cancel}건 / 배송완료 정정 {_ssg_cmpl_fix}건"
                                 )
                     except Exception as _cdet_e:
                         logger.warning(
@@ -7297,8 +7461,20 @@ async def sync_orders_from_markets(
                     if not _gs_ord_no or not _gs_ord_item_no:
                         continue
 
-                    # 주문번호: ordNo:ordItemNo 조합
-                    _gs_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
+                    # 주문번호: ordNo:ordItemNo 조합.
+                    # 반품(R)/교환(X)은 GS가 새 주문번호(ordNo)를 부여하고 원주문번호를
+                    # orgOrdNo/orgOrdItemNo에 담아 보낸다 → 원주문번호로 매칭해야 원주문
+                    # (배송완료)이 반품요청/교환요청으로 전환되고, 반품이 별개 주문으로 잡혀
+                    # 정산 이중계산되는 것을 막는다. orgOrdNo 없으면 기존대로 ordNo 사용.
+                    _gs_org_no = str(ro.get("orgOrdNo", "") or "")
+                    _gs_org_item = str(ro.get("orgOrdItemNo", "") or "")
+                    _gs_claim_order_number = None
+                    if _gs_ord_type in ("R", "X") and _gs_org_no and _gs_org_item:
+                        _gs_order_number = f"{_gs_org_no}:{_gs_org_item}"
+                        # 반품이 부여받은 새 주문번호 — 주문 화면 표시·반품 처리용
+                        _gs_claim_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
+                    else:
+                        _gs_order_number = f"{_gs_ord_no}:{_gs_ord_item_no}"
 
                     # 상태 매핑
                     # ordTypeCd: O=주문, C=취소, R=반품, X=교환주문
@@ -7349,6 +7525,7 @@ async def sync_orders_from_markets(
                     orders_data.append(
                         {
                             "order_number": _gs_order_number,
+                            "claim_order_number": _gs_claim_order_number,
                             "source": "gsshop",
                             "channel_id": account["id"],
                             "channel_name": label,
@@ -7698,8 +7875,15 @@ async def sync_orders_from_markets(
                         lh_start_str, lh_end_str
                     )
                     for ro in _lh_cncl:
+                        # #528 — 취소조회 OrdDtlSn 은 재발급 클레임 라인번호라
+                        # 원주문(OrgOrdDtlSn)과 어긋남 → prefer_org_dtl_sn=True 로
+                        # 원주문 매칭(반품 #393 과 동일). 유령 취소행 방지.
                         for parsed in _parse_lottehome_order_multi(
-                            ro, account["id"], label, "cancelled"
+                            ro,
+                            account["id"],
+                            label,
+                            "cancelled",
+                            prefer_org_dtl_sn=True,
                         ):
                             _lh_override(parsed)
                 except Exception as _e:
@@ -7989,6 +8173,161 @@ async def sync_orders_from_markets(
                             f"{_esm_conf_ok}/{len(_esm_confirm_nos)}건 완료"
                         )
 
+                # ── ESM 판매대금 정산 reconcile (#532) ──────────────────────
+                # 주문 조회의 revenue/fee_rate 는 ServiceFee 기반 추정이라 실수수료
+                # (해외채널 +5% 등)를 반영 못 함. 정산 API(getsettleorder)의
+                # SettlementPrice(실 정산금)로 덮어쓴다. 정산은 배송완료·구매확정
+                # 후 수일 지나 생성되므로 60일 창으로 넓게 조회(롯데온 패턴 미러).
+                try:
+                    _esm_settle_site = "G" if market_type == "gmarket" else "A"
+                    _esm_settle_from = (_esm_now - _esm_td(days=60)).strftime(
+                        "%Y-%m-%d"
+                    )
+                    _esm_settle_to = _esm_now.strftime("%Y-%m-%d")
+
+                    def _esm_find_settle_rows(obj):
+                        # 응답 컨테이너 키가 불확실 — ContrNo 를 가진 dict 리스트를
+                        # 재귀 탐색. 못 찾으면 [] → 0매칭 no-op(오염 없음).
+                        if isinstance(obj, list):
+                            if (
+                                obj
+                                and isinstance(obj[0], dict)
+                                and any(k in obj[0] for k in ("ContrNo", "contrNo"))
+                            ):
+                                return obj
+                            for _e in obj:
+                                _r = _esm_find_settle_rows(_e)
+                                if _r:
+                                    return _r
+                        elif isinstance(obj, dict):
+                            for _v in obj.values():
+                                _r = _esm_find_settle_rows(_v)
+                                if _r:
+                                    return _r
+                        return None
+
+                    def _esm_settle_f(d, *keys):
+                        for k in keys:
+                            if k in d and d[k] not in (None, ""):
+                                try:
+                                    return float(str(d[k]))
+                                except (TypeError, ValueError):
+                                    return 0.0
+                        return 0.0
+
+                    # {ContrNo: [net_settlement, gross_sell]} — 환불은 반대부호로 합산
+                    _esm_settle_map: dict[str, list[float]] = {}
+                    _esm_settle_page = 1
+                    _esm_settle_rows_total = 0
+                    while _esm_settle_page <= 20:
+                        try:
+                            _st_resp = await esm_client.search_settle_orders(
+                                {
+                                    "SiteType": _esm_settle_site,
+                                    "SrchType": "D1",
+                                    "SrchStartDate": _esm_settle_from,
+                                    "SrchEndDate": _esm_settle_to,
+                                    "PageNo": _esm_settle_page,
+                                    "PageRowCnt": 500,
+                                }
+                            )
+                        except Exception as _st_e:
+                            logger.warning(
+                                f"[주문동기화] {label}: ESM 정산 조회 실패 "
+                                f"page={_esm_settle_page} — {_st_e}"
+                            )
+                            break
+                        _st_rows = _esm_find_settle_rows(_st_resp) or []
+                        if not _st_rows:
+                            break
+                        for _sr in _st_rows:
+                            if not isinstance(_sr, dict):
+                                continue
+                            _cn = str(
+                                _sr.get("ContrNo") or _sr.get("contrNo") or ""
+                            ).strip()
+                            if not _cn:
+                                continue
+                            _settle = _esm_settle_f(
+                                _sr, "SettlementPrice", "settlementPrice"
+                            )
+                            _sell = _esm_settle_f(
+                                _sr, "SellOrderPrice", "sellOrderPrice"
+                            )
+                            _qty = _esm_settle_f(_sr, "OrderQty", "orderQty") or 1.0
+                            _acc = _esm_settle_map.setdefault(_cn, [0.0, 0.0])
+                            _acc[0] += _settle
+                            _acc[1] += _sell * _qty
+                        _esm_settle_rows_total += len(_st_rows)
+                        if len(_st_rows) < 500:
+                            break
+                        _esm_settle_page += 1
+
+                    # in-memory 매칭 — 이번 sync 로 들어온 주문에 실 정산값 반영
+                    _esm_settle_mem = 0
+                    for _od in orders_data:
+                        if _od.get("source") != market_type:
+                            continue
+                        _acc = _esm_settle_map.get(str(_od.get("order_number") or ""))
+                        if not _acc:
+                            continue
+                        _net, _gross = _acc
+                        if _net == 0 or _gross <= 0:
+                            continue
+                        _od["revenue"] = _net
+                        _od["fee_rate"] = round((1 - _net / _gross) * 100, 2)
+                        _esm_settle_mem += 1
+
+                    # DB 보정 — 조회창에서 빠진 구매확정 주문(롯데온 db_updated 패턴).
+                    # 8093 의 방어적 rollback 이 uncommitted 를 날리므로 여기서 commit.
+                    _esm_settle_db = 0
+                    if _esm_settle_map:
+                        from sqlalchemy import text as _sa_text_esm
+
+                        for _cn, (_net, _gross) in _esm_settle_map.items():
+                            if _net == 0 or _gross <= 0:
+                                continue
+                            _fr = round((1 - _net / _gross) * 100, 2)
+                            try:
+                                _res = await session.execute(
+                                    _sa_text_esm(
+                                        "UPDATE samba_order "
+                                        "SET revenue = :rev, fee_rate = :fr, "
+                                        "    updated_at = now() "
+                                        "WHERE source = :src "
+                                        "  AND order_number = :cn "
+                                        "  AND (revenue IS NULL OR revenue <> :rev)"
+                                    ),
+                                    {
+                                        "rev": _net,
+                                        "fr": _fr,
+                                        "src": market_type,
+                                        "cn": _cn,
+                                    },
+                                )
+                                _esm_settle_db += _res.rowcount or 0
+                            except Exception as _ue:
+                                logger.warning(
+                                    f"[주문동기화] {label}: ESM 정산 DB UPDATE 실패 "
+                                    f"ContrNo={_cn} — {_ue}"
+                                )
+                        try:
+                            await session.commit()
+                        except Exception as _ce:
+                            logger.warning(
+                                f"[주문동기화] {label}: ESM 정산 commit 실패 — {_ce}"
+                            )
+                    logger.info(
+                        f"[주문동기화] {label}: ESM({market_type}) 정산 reconcile — "
+                        f"정산행 {_esm_settle_rows_total}건 / in-memory "
+                        f"{_esm_settle_mem}건 / DB보정 {_esm_settle_db}건"
+                    )
+                except Exception as _esm_settle_e:
+                    logger.warning(
+                        f"[주문동기화] {label}: ESM 정산 reconcile 실패 — "
+                        f"{_esm_settle_e}"
+                    )
+
             else:
                 results.append(
                     {
@@ -8216,8 +8555,18 @@ async def sync_orders_from_markets(
                 _ch_id = str(order_data.get("channel_id") or "")
                 _matched = None
                 # 1) 정확 매칭 — (channel_id, product_id)
+                #    #534 — 같은 (account_id, product_no)를 다른 cp가 점유(ambiguous)면
+                #    자동매칭 보류(엉뚱한 cp 오연결 방지). 관리자 확인용 경고 로그.
                 if _ch_id and _pid:
-                    _matched = _mpn_by_account.get(f"{_ch_id}:{_pid}")
+                    _cand = _mpn_by_account.get(f"{_ch_id}:{_pid}")
+                    if _cand and not _cand.get("ambiguous"):
+                        _matched = _cand
+                    elif _cand and _cand.get("ambiguous"):
+                        logger.warning(
+                            "[주문동기화] #534 identity 충돌 — (%s:%s) 복수 CP 점유, 자동매칭 보류",
+                            _ch_id,
+                            _pid,
+                        )
                 # 2) playauto master_code 글로벌 (master_code는 통상 unique)
                 if not _matched and order_data.get("source") == "playauto" and _pa_mc:
                     _cand = _mpn_global.get(_pa_mc)
@@ -8709,6 +9058,13 @@ async def sync_orders_from_markets(
                         "customer_note"
                     ] != str(existing.customer_note or ""):
                         update_fields["customer_note"] = order_data["customer_note"]
+                    # 반품/교환 클레임 주문번호 — 원주문에 반품 새 번호 보관(GS 등)
+                    if order_data.get("claim_order_number") and order_data[
+                        "claim_order_number"
+                    ] != str(existing.claim_order_number or ""):
+                        update_fields["claim_order_number"] = order_data[
+                            "claim_order_number"
+                        ]
                     # SSG 취소신청 동기화는 shppNo 없는 "|seq" 형식 shipment_id를 만든다.
                     # 같은 주문이 출고대기(shppNo 있음)와 취소신청에 동시 존재하면 정상
                     # "shppNo|seq"를 "|seq"가 덮어써 송장 전송이 shppNo 누락으로 실패한다.
@@ -8768,8 +9124,15 @@ async def sync_orders_from_markets(
                     ):
                         update_fields["orderer_name"] = new_orderer_name
                     new_cust_phone = order_data.get("customer_phone")
-                    if new_cust_phone and new_cust_phone != str(
-                        existing.customer_phone or ""
+                    # #536 — 기존이 실번호인데 새 값이 안심번호(050x)면 덮지 않음(실번호 보존).
+                    if (
+                        new_cust_phone
+                        and new_cust_phone != str(existing.customer_phone or "")
+                        and not (
+                            _is_safe_phone(new_cust_phone)
+                            and existing.customer_phone
+                            and not _is_safe_phone(existing.customer_phone)
+                        )
                     ):
                         update_fields["customer_phone"] = new_cust_phone
                     new_cust_addr = order_data.get("customer_address")
@@ -9732,6 +10095,28 @@ def _coupang_paid_to_utc(val: str | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+def _is_safe_phone(v: Any) -> bool:
+    """안심번호(050x) 판별 — 0503/0504/0505/0507/0508 등 050 으로 시작.
+
+    #536 — 마켓이 수령자 안심번호(050…)를 내려주면 판매자가 직접 연락 불가.
+    """
+    digits = re.sub(r"[^0-9]", "", str(v or ""))
+    return digits.startswith("050") and len(digits) >= 8
+
+
+def _pick_real_phone(primary: Any, real: Any) -> str:
+    """수령자 전화가 안심번호(050x)면 주문자 실번호로 대체.
+
+    #536 — primary(수령자, 안심 가능) 가 안심번호이고 real(주문자 실번호)이
+    실번호면 real 반환. 아니면 primary 우선(무해). 둘 다 안심이면 primary 유지.
+    """
+    p = str(primary or "").strip()
+    r = str(real or "").strip()
+    if _is_safe_phone(p) and r and not _is_safe_phone(r):
+        return r
+    return p or r
+
+
 def _parse_coupang_order(
     order: dict,
     account_id: str,
@@ -9864,6 +10249,16 @@ def _parse_coupang_order(
         or order.get("orderPhoneNumber", "")
         or ""
     )
+    # #536 — 수령자 안심번호(050x)면 주문자 실번호로 대체. 해외구매대행은
+    # overseaShippingInfoDto.ordererPhoneNumber(통관용 실번호)를 실번호로 사용.
+    _oversea = order.get("overseaShippingInfoDto") or {}
+    _real_phone = (
+        orderer.get("ordererNumber")
+        or _oversea.get("ordererPhoneNumber")
+        or order.get("ordererPhoneNumber", "")
+        or ""
+    )
+    customer_phone = _pick_real_phone(customer_phone, _real_phone)
 
     if not customer_name and not customer_address:
         logger.warning(
@@ -10097,10 +10492,11 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
         "shipping_status": shipping_status,
         "customer_name": item.get("dvpCustNm", "") or "",
         "orderer_name": item.get("odrNm", "") or "",
-        "customer_phone": item.get("dvpMphnNo", "")
-        or item.get("dvpTelNo", "")
-        or item.get("mphnNo", "")
-        or "",
+        # #536 — 수령자(dvpMphnNo)가 안심번호(050x)면 주문자 실번호(mphnNo)로 대체.
+        "customer_phone": _pick_real_phone(
+            item.get("dvpMphnNo", "") or item.get("dvpTelNo", ""),
+            item.get("mphnNo", ""),
+        ),
         "customer_address": addr_base,
         "customer_address_detail": addr_detail,
         "customer_postal_code": postal_code,
@@ -10818,6 +11214,37 @@ def _lh_style_tokens(name: str) -> list[str]:
     ]
 
 
+# 색상토큰 재조합용 — 영숫자 단어 분리(하이픈/언더스코어 경계).
+_LH_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _lh_reconstructed(name: str) -> list[str]:
+    """상품명의 base 스타일코드 + 인접 색상숫자를 결합한 style_code 후보 생성(#365 확장).
+
+    롯데홈 상품명은 코드와 색상을 공백으로 분리하는 경우가 많다
+    (예: '나이키 IF2737 100 ...' — cp 저장 style_code 는 'IF2737-100').
+    base 코드(하이픈/언더스코어 없는 순수 코드) 바로 앞/뒤의 색상숫자(2~4자리)를
+    '-','_','' 로 결합한 후보를 반환한다. 색상이 글자(BLACK 등)면 재조합하지 않는다.
+    정확매칭 + 단일후보 가드로 잘못된 결합은 자연히 0건 매칭되어 오매칭이 없다.
+    """
+    bare = {b for b in _lh_style_tokens(name) if "-" not in b and "_" not in b}
+    if not bare:
+        return []
+    words = _LH_WORD_RE.findall(name or "")
+    out: set[str] = set()
+    for i, w in enumerate(words):
+        if w not in bare:
+            continue
+        for j in (i - 1, i + 1):
+            if 0 <= j < len(words):
+                c = words[j]
+                if c.isdigit() and 2 <= len(c) <= 4:
+                    out.add(f"{w}-{c}")
+                    out.add(f"{w}_{c}")
+                    out.add(f"{w}{c}")
+    return list(out)
+
+
 async def _lh_resolve_by_style_code(
     product_name: str, channel_id: str, cache: dict
 ) -> dict | None:
@@ -10832,7 +11259,8 @@ async def _lh_resolve_by_style_code(
     tokens = _lh_style_tokens(product_name)
     if not tokens:
         return None
-    key = (channel_id, tuple(sorted(set(tokens))))
+    # 캐시 키 — 상품명 단위(재조합 후보는 상품명 인접관계에 의존하므로 name 기준).
+    key = (channel_id, product_name)
     if key in cache:
         return cache[key]
     res: dict | None = None
@@ -10840,7 +11268,12 @@ async def _lh_resolve_by_style_code(
         from sqlalchemy import text as _sa_text2
 
         _cols = "id, source_site, source_url, (images->>0) AS thumb, category, style_code, cost"
-        async with get_read_session() as _s:
+
+        async def _run(_s, cands: list[str]):
+            """주어진 style_code 후보로 채널>글로벌>개별토큰 순 단일후보 매칭.
+
+            반환: (picked_row, route) | (None, "")
+            """
             ch_rows = (
                 await _s.execute(
                     _sa_text2(
@@ -10848,33 +11281,34 @@ async def _lh_resolve_by_style_code(
                         "WHERE registered_accounts @> CAST(:a AS jsonb) "
                         "AND style_code = ANY(:t)"
                     ),
-                    {"a": _json.dumps([channel_id]), "t": tokens},
+                    {"a": _json.dumps([channel_id]), "t": cands},
                 )
             ).fetchall()
-            _picked = None
-            _route = ""
+            # 단일후보 판정 — distinct cp id 1개, 또는 distinct style_code 1개
+            # (같은 style_code 중복등록 cp는 동일 물리상품이라 아무거나 연결 안전).
+            # 서로 다른 style_code 가 섞이면(다른 상품 오매칭) 여전히 거부.
             _ch_ids = {str(r[0]) for r in ch_rows}
-            if len(_ch_ids) == 1:
-                _picked = ch_rows[0]
-                _route = "channel"
-            elif not _ch_ids:
+            _ch_styles = {str(r[5]) for r in ch_rows}
+            if len(_ch_ids) == 1 or (ch_rows and len(_ch_styles) == 1):
+                return ch_rows[0], "channel"
+            if not _ch_ids:
                 gl_rows = (
                     await _s.execute(
                         _sa_text2(
                             f"SELECT {_cols} FROM samba_collected_product "
                             "WHERE style_code = ANY(:t)"
                         ),
-                        {"t": tokens},
+                        {"t": cands},
                     )
                 ).fetchall()
                 _gl_ids = {str(r[0]) for r in gl_rows}
-                if len(_gl_ids) == 1:
-                    _picked = gl_rows[0]
-                    _route = "global"
-                elif len(_gl_ids) > 1 and len(tokens) > 1:
-                    # 복수 토큰이 여러 CP 히트(ambiguous) → 개별 토큰 단독 재시도.
-                    # 가장 긴(=가장 구체적인) 토큰부터 시도해 고유 CP 단 1개면 매칭.
-                    for _tok in sorted(tokens, key=len, reverse=True):
+                _gl_styles = {str(r[5]) for r in gl_rows}
+                if len(_gl_ids) == 1 or (gl_rows and len(_gl_styles) == 1):
+                    return gl_rows[0], "global"
+                if len(_gl_ids) > 1 and len(cands) > 1:
+                    # 복수 후보가 여러 style CP 히트(ambiguous) → 개별 후보 단독 재시도.
+                    # 가장 긴(=가장 구체적인) 후보부터 시도해 고유 style CP 1개면 매칭.
+                    for _tok in sorted(cands, key=len, reverse=True):
                         _gl2 = (
                             await _s.execute(
                                 _sa_text2(
@@ -10884,12 +11318,23 @@ async def _lh_resolve_by_style_code(
                                 {"t": _tok},
                             )
                         ).fetchall()
-                        _gl2_ids = {str(r[0]) for r in _gl2}
-                        if len(_gl2_ids) == 1:
-                            _picked = _gl2[0]
-                            _route = f"global-single({_tok})"
-                            break
-            # 다중후보(채널>1 또는 글로벌>1)는 자동연결 금지 → None(수동)
+                        if len({str(r[0]) for r in _gl2}) == 1 or (
+                            _gl2 and len({str(r[5]) for r in _gl2}) == 1
+                        ):
+                            return _gl2[0], f"global-single({_tok})"
+            # 서로 다른 style 다중후보(채널>1 또는 글로벌>1)는 자동연결 금지 → 수동
+            return None, ""
+
+        async with get_read_session() as _s:
+            _picked, _route = await _run(_s, tokens)
+            # 1차(기본 토큰) 실패 시 색상숫자 재조합 후보로 재시도(#365 확장).
+            # 예: '나이키 IF2737 100' → 'IF2737-100' 정확매칭. 기본 경로는 그대로라 회귀 없음.
+            if _picked is None:
+                _recon = _lh_reconstructed(product_name)
+                if _recon:
+                    _picked, _route = await _run(_s, _recon)
+                    if _picked is not None:
+                        _route = f"recon/{_route}"
             if _picked is not None:
                 res = {
                     "collected_product_id": str(_picked[0]),
@@ -10902,7 +11347,7 @@ async def _lh_resolve_by_style_code(
                 }
                 logger.info(
                     f"[주문매칭/롯데홈] style_code 보강({_route}): ch={channel_id} "
-                    f"tokens={tokens} → cp {_picked[0]}(style={_picked[5]})"
+                    f"name={product_name!r} → cp {_picked[0]}(style={_picked[5]})"
                 )
     except Exception as e:
         logger.warning(f"[주문매칭/롯데홈] style_code 매칭 실패 ch={channel_id}: {e}")
@@ -10911,9 +11356,17 @@ async def _lh_resolve_by_style_code(
 
 
 def _parse_lottehome_order_multi(
-    item: dict, account_id: str, label: str, force_status: str = ""
+    item: dict,
+    account_id: str,
+    label: str,
+    force_status: str = "",
+    prefer_org_dtl_sn: bool = False,
 ) -> list[dict]:
-    """취소/반품처럼 ProdInfo가 리스트인 롯데홈쇼핑 주문 → 상품별 SambaOrder dict 리스트 반환."""
+    """취소/반품처럼 ProdInfo가 리스트인 롯데홈쇼핑 주문 → 상품별 SambaOrder dict 리스트 반환.
+
+    prefer_org_dtl_sn: 취소/반품 응답의 OrdDtlSn 은 재발급 클레임 라인번호라 원주문과
+        어긋난다. True 면 OrgOrdDtlSn(원주문 라인번호) 우선으로 원주문과 매칭(#528/#393).
+    """
     _shipping_status_map = {
         "cancelled": "취소완료",
         "return_requested": "반품요청",
@@ -10929,7 +11382,9 @@ def _parse_lottehome_order_multi(
         flat = dict(item)
         flat["ProdInfo"] = prod
         flat["_lh_prod_idx"] = i
-        parsed = _parse_lottehome_order(flat, account_id, label)
+        parsed = _parse_lottehome_order(
+            flat, account_id, label, prefer_org_dtl_sn=prefer_org_dtl_sn
+        )
         if force_status:
             parsed["status"] = force_status
             parsed["shipping_status"] = _shipping_status_map.get(
@@ -10949,10 +11404,10 @@ def _parse_lottehome_order(
 ) -> dict:
     """롯데홈쇼핑 주문 데이터 → SambaOrder dict 변환.
 
-    prefer_org_dtl_sn: 반품 조회(searchReturnList) 응답은 OrdDtlSn 에 새 클레임
-        라인번호를 발급하므로 order_number/shipment_id 가 원주문과 어긋난다.
+    prefer_org_dtl_sn: 취소/반품 조회 응답은 OrdDtlSn 에 새 클레임 라인번호를
+        발급하므로 order_number/shipment_id 가 원주문과 어긋난다.
         True 면 OrgOrdDtlSn(원주문 라인번호)을 우선 사용해 원주문과 매칭되도록 통일.
-        취소 경로는 OrgOrdDtlSn 검증이 안 됐으므로 현행(OrdDtlSn 우선) 유지.
+        반품(#393)·취소(#528) 경로 모두 라이브 응답에서 OrgOrdDtlSn 존재 검증 완료.
     """
     from datetime import datetime, timezone
 
@@ -11036,9 +11491,15 @@ def _parse_lottehome_order(
     product_option = str(
         prod_info.get("prodOption") or prod_info.get("GoodsDesc") or ""
     )
-    product_id = str(prod_info.get("ProdCode") or prod_info.get("GoodsNo") or "")
+    # #528 — 취소조회(searchCnclList) 응답은 상품번호 키가 GoodNo(단수형)라
+    # ProdCode/GoodsNo 폴백에 안 잡혀 product_id 가 비었다. GoodNo 폴백 추가.
+    product_id = str(
+        prod_info.get("ProdCode")
+        or prod_info.get("GoodsNo")
+        or prod_info.get("GoodNo")
+        or ""
+    )
     # product_id 빈 lottehome 주문 — 미등록 주문 발생 원인 진단용 raw 키 로그
-    # 신규/배송/취소/반품 4개 엔드포인트 중 어디서 빈 케이스 오는지 파악 후 별도 PR 에서 폴백 키 확장.
     if not product_id:
         logger.warning(
             f"[주문동기화] lottehome product_id 누락 — "
@@ -11493,3 +11954,120 @@ async def kakao_name_candidates(
         len(candidates),
     )
     return {"ok": True, "count": len(candidates), "candidates": candidates}
+
+
+@router.post("/kream-excel")
+async def import_kream_excel(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """KREAM 발송완료내역 엑셀 업로드 → 주문 생성."""
+    import openpyxl  # noqa: F811
+    from datetime import timezone
+    from io import BytesIO
+
+    from sqlalchemy import text as sa_text
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    # KREAM 계정 조회 (channel_id 용)
+    acc_stmt = select(SambaMarketAccount).where(
+        SambaMarketAccount.market_type == "kream"
+    )
+    if tenant_id is not None:
+        acc_stmt = acc_stmt.where(SambaMarketAccount.tenant_id == tenant_id)
+    acc_row = await session.execute(acc_stmt)
+    kream_acc = acc_row.scalars().first()
+    kream_channel_id = kream_acc.id if kream_acc else None
+
+    content = await file.read()
+    wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    wb.close()
+
+    # kream product_id → collected_product_id + 한글 상품명 역매칭
+    kream_pids = [str(r[3]) for r in rows if r and len(r) > 3 and r[3]]
+    cp_map: dict[str, str] = {}
+    cp_name_map: dict[str, str] = {}
+    if kream_pids:
+        tid_cond = "AND tenant_id = :tid" if tenant_id is not None else ""
+        bind = {"pids": kream_pids}
+        if tenant_id is not None:
+            bind["tid"] = tenant_id
+        cp_rows = await session.execute(
+            sa_text(f"""
+                SELECT id, name, resell_matches->'kream'->>'product_id' AS kream_pid
+                FROM samba_collected_product
+                WHERE source_site = 'SNKRDUNK'
+                  AND resell_matches->'kream'->>'product_id' = ANY(:pids)
+                  {tid_cond}
+            """),
+            bind,
+        )
+        for cp_row in cp_rows.mappings():
+            pid = str(cp_row["kream_pid"])
+            cp_map[pid] = str(cp_row["id"])
+            cp_name_map[pid] = cp_row["name"] or ""
+
+    def _parse_dt(val):
+        if val is None:
+            return None
+        if isinstance(val, datetime):
+            return val.replace(tzinfo=timezone.utc) if val.tzinfo is None else val
+        try:
+            return datetime.fromisoformat(str(val).replace(" ", "T")).replace(
+                tzinfo=timezone.utc
+            )
+        except Exception:
+            return None
+
+    created = 0
+    skipped = 0
+    for row in rows:
+        if not row or not row[0]:
+            continue
+        order_number = str(row[0]).strip()
+        paid_at_raw = row[2] if len(row) > 2 else None
+        kream_pid = str(row[3]).strip() if len(row) > 3 and row[3] else ""
+        product_name = cp_name_map.get(kream_pid, "")
+        option_name = str(row[6]).strip() if len(row) > 6 and row[6] else ""
+        sale_price = float(row[7]) if len(row) > 7 and row[7] else 0.0
+        tracking_number = str(row[9]).strip() if len(row) > 9 and row[9] else ""
+        shipped_at_raw = row[10] if len(row) > 10 else None
+
+        # 중복 체크
+        dup_stmt = select(SambaOrder.id).where(SambaOrder.order_number == order_number)
+        if tenant_id is not None:
+            dup_stmt = dup_stmt.where(SambaOrder.tenant_id == tenant_id)
+        dup = await session.execute(dup_stmt)
+        if dup.scalar():
+            skipped += 1
+            continue
+
+        order = SambaOrder(
+            tenant_id=tenant_id,
+            order_number=order_number,
+            channel_id=kream_channel_id,
+            channel_name="KREAM",
+            source_site="KREAM",
+            product_id=kream_pid or None,
+            product_name=product_name,
+            option_name=option_name,
+            sale_price=sale_price,
+            cost=0.0,
+            profit=0.0,
+            tracking_number=tracking_number or None,
+            shipped_at=_parse_dt(shipped_at_raw),
+            paid_at=_parse_dt(paid_at_raw),
+            status="pending",
+            shipping_status="결제완료",
+            shipping_company="허브넷로지스틱스",
+            collected_product_id=cp_map.get(kream_pid) if kream_pid else None,
+        )
+        session.add(order)
+        created += 1
+
+    await session.commit()
+    return {"ok": True, "created": created, "skipped": skipped}

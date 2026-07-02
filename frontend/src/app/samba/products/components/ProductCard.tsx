@@ -667,7 +667,7 @@ const ProductCard = React.memo(function ProductCard({
 
   // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
-    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number }>
+    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
       { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
       { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
@@ -681,6 +681,7 @@ const ProductCard = React.memo(function ProductCard({
         key: pl.key, name: pl.name, id,
         url: id && pl.url ? pl.url(id) : '',
         conf: m?.confidence,
+        style_code: m?.style_code,
         price: r.price, calcStr: r.calcStr,
       }
     })
@@ -1646,6 +1647,33 @@ const ProductCard = React.memo(function ProductCard({
                     style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', outline: 'none' }} />
                 </td>
               </tr>
+              {/* 상품메모(#535) — 소싱 특이사항·더 싼 소싱 URL 등. 주문건에도 표시됨 */}
+              <tr style={{ borderBottom: `1px solid ${c.border}` }}>
+                <td style={tdLabel}>상품메모</td>
+                <td style={tdVal}>
+                  <textarea
+                    placeholder="소싱 특이사항, 더 싼 소싱 URL 등 (주문건에도 표시)"
+                    defaultValue={p.memo || ''}
+                    rows={2}
+                    style={{ width: '100%', padding: '3px 7px', fontSize: '0.8rem', background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', outline: 'none', resize: 'vertical' }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    onBlur={(e) => {
+                      const val = e.target.value.trim()
+                      if (val === (p.memo || '')) return
+                      const memoVal = val || undefined
+                      collectorApi.updateProduct(p.id, { memo: memoVal } as Partial<SambaCollectedProduct>).then(() => {
+                        onProductUpdate(p.id, { memo: memoVal } as Partial<SambaCollectedProduct>)
+                        e.target.style.borderColor = c.success
+                        setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
+                      }).catch(() => {
+                        e.target.style.borderColor = c.danger
+                        setTimeout(() => { e.target.style.borderColor = c.border }, 1500)
+                      })
+                    }}
+                  />
+                </td>
+              </tr>
               {/* 브랜드 */}
               <tr style={{ borderBottom: `1px solid ${c.border}` }}>
                 <td style={tdLabel}>브랜드</td>
@@ -1838,7 +1866,7 @@ const ProductCard = React.memo(function ProductCard({
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
                               title={`${rr.name} 판매페이지`}
-                            >{rr.id}{rr.key === 'kream' && p.style_code ? ` / ${p.style_code}` : ''}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
+                            >{rr.id}{rr.key === 'kream' && rr.style_code ? ` / ${rr.style_code}` : ''}{rr.conf != null ? ` (매칭 ${fmtNum(rr.conf)}%)` : ''}</button>
                           ) : (
                             <span style={{ fontSize: '0.6rem', color: c.success, whiteSpace: 'nowrap' }}>{rr.id}</span>
                           )

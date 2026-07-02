@@ -10,6 +10,7 @@ export type {
   SambaCSInquiry,
   CSReplyTemplate,
   CSSyncResultItem,
+  CSStats,
   SambaDetailTemplate,
   SambaNameRule,
 } from '../legacy'

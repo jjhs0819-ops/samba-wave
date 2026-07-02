@@ -562,6 +562,10 @@ class SambaTetrisService:
                     )
                 if col_cnt <= 0 and reg_cnt <= 0:
                     continue
+                # 배제(excluded)된 배치는 등록수 0이면 숨김 — 수집수와 무관.
+                # (배제 = 매칭보드에서 빼겠다는 의도. 등록분이 남아있으면 계속 표시.)
+                if a.excluded and reg_cnt <= 0:
+                    continue
                 assignment_blocks.append(
                     {
                         "id": a.id,
@@ -699,19 +703,28 @@ class SambaTetrisService:
             tenant_id, source_site, brand_name, market_account_id
         )
         if existing:
-            raise HTTPException(
-                status_code=409,
-                detail=f"{source_site}/{brand_name} 배치가 이미 해당 계정에 존재합니다 (id={existing.id})",
+            if not existing.excluded:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{source_site}/{brand_name} 배치가 이미 해당 계정에 존재합니다 (id={existing.id})",
+                )
+            # 배제(excluded)됐던 배치를 다시 올림 → 배제 해제 + 재활성화(등록 가능)
+            assignment = await self._repo.update_async(
+                existing.id,
+                excluded=False,
+                policy_id=policy_id,
+                position_order=position_order,
+                updated_at=datetime.now(tz=timezone.utc),
             )
-
-        assignment = await self._repo.create_async(
-            tenant_id=tenant_id,
-            source_site=source_site,
-            brand_name=brand_name,
-            market_account_id=market_account_id,
-            policy_id=policy_id,
-            position_order=position_order,
-        )
+        else:
+            assignment = await self._repo.create_async(
+                tenant_id=tenant_id,
+                source_site=source_site,
+                brand_name=brand_name,
+                market_account_id=market_account_id,
+                policy_id=policy_id,
+                position_order=position_order,
+            )
 
         # 즉시 전송하지 않음 — 인터벌 루프(sync_all)에서 잡큐로 스테이징
         # clear_board_cache() 금지 — 61초 쿼리 유발로 프론트 15초 타임아웃 발생

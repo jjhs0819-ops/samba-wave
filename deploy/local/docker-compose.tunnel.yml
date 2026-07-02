@@ -97,6 +97,9 @@ services:
       # api 와 같은 netns(service:wireguard) 공유 → 8080 충돌 방지 위해 worker 는 8081
       WORKER_BIND_PORT: "8081"
       DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
+      # #542 쿠팡 대량전송 self-deadlock 방지 — 즉시저장 별도세션 스킵.
+      # 최종 writeback 이 registered_accounts/product_no 기록하므로 손실 없음.
+      DISABLE_IMMEDIATE_SAVE: "1"
 
   # 유지보수 루프 전용 프로세스(C) — 고스트 리컨실러/송장sweep/soldout 정리.
   # 단일 인스턴스(중복 리컨실 방지). api(A) 이벤트루프 과부하 → HTTP 503 분리용.

@@ -20,7 +20,9 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
       return
     }
     // 3. 마켓 상품번호로 수집상품 역추적
-    if (o.product_id) {
+    // KREAM 주문은 product_id가 KREAM 마켓 번호 — 무신사 등 다른 소싱처 상품에 오매칭됨. 건너뜀.
+    const _srcSiteBase = (o.source_site || '').split('(')[0].trim()
+    if (o.product_id && _srcSiteBase !== 'KREAM') {
       try {
         const res = await collectorApi.lookupByMarketNo(o.product_id)
         if (res.found && res.original_link) {
@@ -29,7 +31,18 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
         }
       } catch { /* ignore */ }
     }
-    // 4. fallback 금지 — 상품명 끝 숫자(`\d{6,}`)를 상품번호로 가정하면 옵션/스타일코드와
+    // 4. KREAM 주문: collected_product_id로 수집상품 source_url 직접 조회 (SNKRDUNK 페이지)
+    if (_srcSiteBase === 'KREAM' && o.collected_product_id) {
+      try {
+        const cps = await collectorApi.getProductsByIds([o.collected_product_id])
+        const cp = cps?.[0]
+        if (cp?.source_url) {
+          window.open(cp.source_url, '_blank')
+          return
+        }
+      } catch { /* ignore */ }
+    }
+    // 5. fallback 금지 — 상품명 끝 숫자(`\d{6,}`)를 상품번호로 가정하면 옵션/스타일코드와
     // 충돌해 엉뚱한 상품(예: 스파이더 ↔ 푸마) 페이지가 열리는 사고가 반복됨(2026-05-20).
     // 백엔드 주문동기화에서 source_url을 채우지 못한 케이스는 안전하게 안내만 한다.
     showAlert('소싱처 원문링크 정보가 없습니다', 'info')

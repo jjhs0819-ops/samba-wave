@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { orderApi, accountApi } from '@/lib/samba/api/commerce'
-import { returnApi, csInquiryApi, type SambaCSInquiry, type CSReplyTemplate, type CSSyncResultItem } from '@/lib/samba/api/support'
+import { returnApi, csInquiryApi, type SambaCSInquiry, type CSReplyTemplate, type CSSyncResultItem, type CSStats } from '@/lib/samba/api/support'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
 
 import { showAlert, showConfirm } from '@/components/samba/Modal'
@@ -54,7 +54,7 @@ export default function CSPage() {
   // 데이터
   const [inquiries, setInquiries] = useState<SambaCSInquiry[]>([])
   const [total, setTotal] = useState(0)
-  const [, setStats] = useState<Record<string, unknown>>({})
+  const [stats, setStats] = useState<CSStats>({ total: 0, pending: 0, replied: 0 })
   const [templates, setTemplates] = useState<Record<string, CSReplyTemplate>>({})
   const [loading, setLoading] = useState(true)
 
@@ -291,7 +291,7 @@ export default function CSPage() {
           start_date: csCustomStart || undefined,
           end_date: csCustomEnd || undefined,
         }).catch(() => ({ items: [], total: 0 })),
-        csInquiryApi.getStats().catch(() => ({})),
+        csInquiryApi.getStats().catch((): CSStats => ({ total: 0, pending: 0, replied: 0 })),
         csInquiryApi.getTemplates().catch(() => ({})),
       ])
       setInquiries(data.items)
@@ -353,7 +353,7 @@ export default function CSPage() {
       setSearchInput('')
       const [data, st, tpl] = await Promise.all([
         csInquiryApi.list({ skip: 0, limit: pageSize, sort_desc: sortDesc, reply_status: filterStatus || undefined, market: (() => { if (!filterMarket) return undefined; if (filterMarket.startsWith('type:')) return accounts.find(a => a.market_type === filterMarket.slice(5))?.market_name; if (filterMarket.startsWith('acc:')) return accounts.find(a => a.id === filterMarket.slice(4))?.market_name; return filterMarket })(), start_date: csCustomStart || undefined, end_date: csCustomEnd || undefined }).catch(() => ({ items: [], total: 0 })),
-        csInquiryApi.getStats().catch(() => ({})),
+        csInquiryApi.getStats().catch((): CSStats => ({ total: 0, pending: 0, replied: 0 })),
         csInquiryApi.getTemplates().catch(() => ({})),
       ])
       setInquiries(data.items)
@@ -591,6 +591,19 @@ export default function CSPage() {
           <select style={{ ...inputStyle, width: '78px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(0) }}>
             <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
+        </div>
+      </div>
+
+      {/* 통계 요약바 (#540) — 백엔드 집계값 표시. 미답변/답변완료/전체 한눈에 */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '0.5rem 0.9rem', fontSize: '0.8125rem', color: c.text }}>
+          미답변 <span style={{ fontWeight: 700, color: '#ef4444' }}>{fmtNum(stats.pending)}</span>
+        </div>
+        <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '0.5rem 0.9rem', fontSize: '0.8125rem', color: c.text }}>
+          답변완료 <span style={{ fontWeight: 700, color: '#22c55e' }}>{fmtNum(stats.replied)}</span>
+        </div>
+        <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '0.5rem 0.9rem', fontSize: '0.8125rem', color: c.text }}>
+          전체 <span style={{ fontWeight: 700 }}>{fmtNum(stats.total)}</span>
         </div>
       </div>
 

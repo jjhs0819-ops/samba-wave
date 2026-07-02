@@ -167,6 +167,8 @@ export interface PaginatedOrderList {
   total_count: number
   total_sale: number
   pending_count: number
+  // 상품메모(#535) — {collected_product_id: memo}. 주문카드 live-join 표시용
+  product_memos?: Record<string, string>
 }
 
 export interface SambaOrder {
@@ -209,6 +211,7 @@ export interface SambaOrder {
   tracking_number?: string;
   notes?: string;
   ext_order_number?: string;
+  claim_order_number?: string;
   sourcing_order_number?: string;
   sourcing_account_id?: string;
   source?: string;
@@ -762,8 +765,9 @@ export interface SambaCollectedProduct {
   registered_accounts?: string[];
   market_product_nos?: Record<string, string>;
   market_names?: Record<string, string>;
+  memo?: string; // 상품메모(#535)
   // 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 매칭
-  resell_matches?: Record<string, { product_id?: string; confidence?: number; matched_by?: string[]; matched_at?: string }>;
+  resell_matches?: Record<string, { product_id?: string; confidence?: number; matched_by?: string[]; matched_at?: string; style_code?: string }>;
   is_sold_out: boolean;
   sale_status?: string;
   kream_data?: Record<string, unknown>;
@@ -2050,6 +2054,14 @@ export interface CSSyncResultItem {
   error?: string
 }
 
+export interface CSStats {
+  total: number
+  pending: number
+  replied: number
+  by_market?: Record<string, number>
+  by_type?: Record<string, number>
+}
+
 export const csInquiryApi = {
   list: (params?: {
     skip?: number
@@ -2089,7 +2101,7 @@ export const csInquiryApi = {
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/${id}/mark-replied`, { method: 'POST' }),
   batchDelete: (ids: string[]) =>
     request<{ deleted: number }>(`${SAMBA_PREFIX}/cs-inquiries/batch-delete`, { method: 'POST', body: JSON.stringify({ ids }) }),
-  getStats: () => request<Record<string, unknown>>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
+  getStats: () => request<CSStats>(`${SAMBA_PREFIX}/cs-inquiries/stats`),
   getTemplates: () => request<Record<string, CSReplyTemplate>>(`${SAMBA_PREFIX}/cs-inquiries/templates`),
   addTemplate: (key: string, name: string, content: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/cs-inquiries/templates`, { method: 'POST', body: JSON.stringify({ key, name, content }) }),

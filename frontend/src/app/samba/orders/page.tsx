@@ -15,6 +15,7 @@ import {
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { fmtTime, formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
+import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import OrdersTable from './components/OrdersTable'
 import { useSmsMessage } from './hooks/useSmsMessage'
 import { useOrderSync } from './hooks/useOrderSync'
@@ -102,6 +103,7 @@ export default function OrdersPage() {
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
   const [collectedProductSourceSites, setCollectedProductSourceSites] = useState<Record<string, string>>({})
+  const [productMemos, setProductMemos] = useState<Record<string, string>>({}) // 상품메모(#535)
 
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
@@ -189,6 +191,7 @@ export default function OrdersPage() {
       setTotalCount(data.total_count)
       setTotalSale(data.total_sale)
       setPendingCount(data.pending_count)
+      setProductMemos(data.product_memos || {}) // 상품메모(#535) live-join
       setEditingTrackings({})
 
       const actions: Record<string, string | null> = {}
@@ -436,6 +439,7 @@ export default function OrdersPage() {
   })
   const [trackingOrder, setTrackingOrder] = useState<SambaOrder | null>(null)
   const [trackingSyncing, setTrackingSyncing] = useState(false)
+  const [kreamExcelUploading, setKreamExcelUploading] = useState(false)
   // 주문 자동실행 인터벌 (분 단위, 0=OFF)
   const [autoSyncIntervalInput, setAutoSyncIntervalInput] = useState<number>(60)
   const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(false)
@@ -556,6 +560,7 @@ export default function OrdersPage() {
   // 백엔드가 dispatch 성공 시 order.status='shipping' / shipping_status='국내배송중'
   // 으로 갱신하므로 드롭박스가 자동으로 '국내배송중' 으로 바뀐다.
   const lastSentCountRef = useRef<number>(0)
+  const kreamExcelInputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!trackingStatusOpen) {
       lastSentCountRef.current = 0
@@ -635,6 +640,29 @@ export default function OrdersPage() {
       setTrackingSyncing(false)
     }
   }
+  const handleKreamExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    e.target.value = ''
+    setKreamExcelUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', f)
+      const res = await fetchWithAuth(`${SAMBA_PREFIX}/orders/kream-excel`, {
+        method: 'POST',
+        body: form,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || '업로드 실패')
+      await showAlert(`크림주문 등록 완료: ${fmtNum(data.created)}건 생성, ${fmtNum(data.skipped)}건 중복 건너뜀`, 'success')
+      await loadOrders()
+    } catch (err) {
+      await showAlert((err as Error).message || '엑셀 업로드 실패', 'error')
+    } finally {
+      setKreamExcelUploading(false)
+    }
+  }
+
   const { handleSourceLink, handleMarketLink } = useOrderLinks(accounts)
 
   const {
@@ -883,6 +911,25 @@ export default function OrdersPage() {
         >
           {trackingSyncing ? '큐 적재 중...' : '송장수집'}
         </button>
+        <input
+          ref={kreamExcelInputRef}
+          type='file'
+          accept='.xlsx,.xls'
+          style={{ display: 'none' }}
+          onChange={handleKreamExcelUpload}
+        />
+        <button
+          onClick={() => kreamExcelInputRef.current?.click()}
+          disabled={kreamExcelUploading}
+          style={{
+            ...btn('secondary'),
+            ...(kreamExcelUploading ? btnDisabled : null),
+            padding: '6px 14px',
+            fontSize: 13,
+          }}
+        >
+          {kreamExcelUploading ? '등록 중...' : '크림주문'}
+        </button>
         {selectedIds.size > 0 && (
           <button
             onClick={async () => {
@@ -924,6 +971,7 @@ export default function OrdersPage() {
         activeActions={activeActions}
         collectedProductCosts={collectedProductCosts}
         collectedProductSourceSites={collectedProductSourceSites}
+        productMemos={productMemos}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
         sentFlags={sentFlags}

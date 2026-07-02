@@ -43,6 +43,7 @@ interface Props {
   openUrlModal: (orderId: string) => void
   handleTracking: (order: SambaOrder) => void
   loadOrders: () => void | Promise<void>
+  productMemo?: string // 상품메모(#535) — 상품관리 memo live-join
 }
 
 export default function OrderInfoCell(props: Props) {
@@ -53,7 +54,7 @@ export default function OrderInfoCell(props: Props) {
     customerAddress, renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
-    openUrlModal, handleTracking, loadOrders,
+    openUrlModal, handleTracking, loadOrders, productMemo,
   } = props
 
   const handleCopyCustomerMemo = async () => {
@@ -184,11 +185,18 @@ export default function OrderInfoCell(props: Props) {
             <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? c.accentBg : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? c.warn : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? c.warn : c.textSub, cursor: 'pointer' }}>KAKAO</button>
           </div>
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText((o.order_number || '').split(':')[0], '상품주문번호', { fontFamily: 'monospace' })}</div>
+            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText((o.order_number || '').split(':')[0], '상품주문번호', { fontFamily: 'monospace' })}{o.claim_order_number ? (<>{' '}<span style={{ color: c.textSub }}>반품 </span>{renderCopyableText((o.claim_order_number || '').split(':')[0], '반품주문번호', { fontFamily: 'monospace' })}</>) : null}</div>
             {o.shipment_id && (
               <div><span style={{ color: c.textSub }}>주문번호 </span>{renderCopyableText(o.shipment_id, '주문번호', { fontFamily: 'monospace', color: c.textSub })}</div>
             )}
           </div>
+          {/* 상품메모(#535) — 상품관리 memo live-join, 값 있을 때만 */}
+          {productMemo ? (
+            <div style={{ display: 'flex', gap: '0.375rem', marginBottom: '0.25rem', fontSize: '0.75rem', alignItems: 'flex-start' }}>
+              <span style={{ color: c.textSub, flexShrink: 0 }}>상품메모</span>
+              <span style={{ color: c.warn, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{productMemo}</span>
+            </div>
+          ) : null}
           <div style={{ minWidth: 0 }}>
             <span style={{ color: c.text, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
             {(o.product_option || showOrderBtns) && (

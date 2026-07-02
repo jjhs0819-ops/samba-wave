@@ -18,6 +18,9 @@ from ._helpers import _get_kream_client, _set_setting
 
 router = APIRouter(tags=["samba-proxy"])
 
+# 인증 없는 로컬 전용 라우터 (snkrdunk 매칭 수정)
+snkrdunk_public_router = APIRouter(tags=["kream-public"])
+
 # 확장앱 큐: KreamClient 클래스 레벨 큐 사용 (collector.py와 공유)
 # KreamClient.collect_queue, KreamClient.collect_resolvers
 # KreamClient.search_queue, KreamClient.search_resolvers
@@ -273,6 +276,284 @@ async def kream_my_bids(
     if not client.token:
         raise HTTPException(status_code=401, detail="KREAM 로그인이 필요합니다.")
     return await client.get_my_asks()
+
+
+# 입찰 중인 크림 상품번호 제외 목록
+_BID_EXCLUDE_IDS = {
+    "647550",
+    "647566",
+    "647571",
+    "647572",
+    "647660",
+    "648666",
+    "649207",
+    "649343",
+    "649345",
+    "649348",
+    "649349",
+    "649352",
+    "649354",
+    "649355",
+    "649360",
+    "649367",
+    "649502",
+    "649919",
+    "649931",
+    "650609",
+    "650611",
+    "651028",
+    "651052",
+    "651302",
+    "651309",
+    "651409",
+    "651473",
+    "651517",
+    "651521",
+    "651523",
+    "651551",
+    "652139",
+    "652197",
+    "652293",
+    "652309",
+    "652319",
+    "652339",
+    "652680",
+    "652706",
+    "652713",
+    "652717",
+    "652722",
+    "652730",
+    "652868",
+    "653134",
+    "653275",
+    "653373",
+    "653374",
+    "653813",
+    "654148",
+    "654164",
+    "654166",
+    "654275",
+    "654285",
+    "656392",
+    "656460",
+    "656517",
+    "656530",
+    "657236",
+    "657546",
+    "657553",
+    "657564",
+    "660679",
+    "660881",
+    "662562",
+    "662757",
+    "667591",
+    "667683",
+    "667796",
+    "668209",
+    "670152",
+    "670201",
+    "670245",
+    "670269",
+    "670276",
+    "670287",
+    "670302",
+    "70056",
+    "70058",
+    "70140",
+    "70141",
+    "70145",
+    "70153",
+    "70163",
+    "70168",
+    "70173",
+    "726943",
+    "728970",
+    "754351",
+    "754384",
+    "803225",
+    "809373",
+    "809391",
+    "809401",
+    "831248",
+    "831275",
+    "842194",
+    "845571",
+    "845577",
+    "845588",
+    "873214",
+    "873239",
+    "873246",
+    "920139",
+}
+
+# 크림 상품 정보 메모리 캐시
+_kream_info_cache: dict[str, dict] = {}
+
+
+@router.get("/kream/snkrdunk-compare")
+async def snkrdunk_kream_compare(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=50),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크-크림 매칭 상품 비교 목록 (오매칭 검수용)."""
+    import asyncio
+    import json
+    from sqlalchemy import text
+
+    offset = (page - 1) * per_page
+    exclude_list = list(_BID_EXCLUDE_IDS)
+
+    count_sql = text("""
+        SELECT COUNT(*) FROM samba_collected_product
+        WHERE source_site = 'SNKRDUNK'
+        AND resell_matches->'kream'->>'product_id' IS NOT NULL
+        AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
+        AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(options::jsonb) opt
+            WHERE opt->>'name' ILIKE '%PSA 10%'
+            AND (opt->>'stock')::int > 0
+        )
+    """)
+    total_row = await session.exec(count_sql.bindparams(excl=exclude_list))  # type: ignore[arg-type]
+    total = total_row.scalar()
+
+    rows_sql = text("""
+        SELECT site_product_id, name, images,
+               resell_matches->'kream'->>'product_id' AS kream_id,
+               options
+        FROM samba_collected_product
+        WHERE source_site = 'SNKRDUNK'
+        AND resell_matches->'kream'->>'product_id' IS NOT NULL
+        AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
+        AND EXISTS (
+            SELECT 1 FROM jsonb_array_elements(options::jsonb) opt
+            WHERE opt->>'name' ILIKE '%PSA 10%'
+            AND (opt->>'stock')::int > 0
+        )
+        ORDER BY site_product_id
+        LIMIT :lim OFFSET :off
+    """)
+    result = await session.exec(
+        rows_sql.bindparams(excl=exclude_list, lim=per_page, off=offset)
+    )  # type: ignore[arg-type]
+    rows = result.fetchall()
+
+    # 크림 정보 병렬 조회 (캐시 활용)
+    kream_client = KreamClient()
+    uncached = [r.kream_id for r in rows if r.kream_id not in _kream_info_cache]
+
+    async def _fetch_kream(kid: str) -> None:
+        try:
+            info = await kream_client.get_product(kid)
+            _kream_info_cache[kid] = info
+        except Exception:
+            _kream_info_cache[kid] = {"name": "", "images": []}
+
+    if uncached:
+        await asyncio.gather(*[_fetch_kream(kid) for kid in uncached])
+
+    items = []
+    for r in rows:
+        images = json.loads(r.images) if r.images else []
+        opts = json.loads(r.options) if r.options else []
+        psa_opts = [o for o in opts if "PSA 10" in (o.get("name") or "")]
+        kinfo = _kream_info_cache.get(r.kream_id, {})
+        items.append(
+            {
+                "snkr_id": r.site_product_id,
+                "snkr_name": r.name or "",
+                "snkr_image": images[0] if images else "",
+                "kream_id": r.kream_id,
+                "kream_name": kinfo.get("name", ""),
+                "kream_image": kinfo.get("images", [""])[0]
+                if kinfo.get("images")
+                else "",
+                "psa10_price": psa_opts[0].get("price", 0) if psa_opts else 0,
+                "psa10_stock": psa_opts[0].get("stock", 0) if psa_opts else 0,
+            }
+        )
+
+    return {"total": total, "page": page, "per_page": per_page, "items": items}
+
+
+async def _snkrdunk_remove_match_impl(
+    snkr_id: str, session: AsyncSession
+) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    sql = text("""
+        UPDATE samba_collected_product
+        SET resell_matches = resell_matches - 'kream', updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
+
+
+async def _snkrdunk_update_match_impl(
+    snkr_id: str,
+    kream_id: str,
+    session: AsyncSession,
+    kream_name_ko: str = "",
+    style_code: str = "",
+) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    kream_obj = "jsonb_build_object('product_id', CAST(:kream_id AS text)"
+    if style_code:
+        kream_obj += ", 'style_code', CAST(:style_code AS text)"
+    kream_obj += ")"
+
+    name_set = ", name = :kream_name_ko" if kream_name_ko else ""
+
+    sql = text(f"""
+        UPDATE samba_collected_product
+        SET resell_matches = jsonb_set(
+            COALESCE(resell_matches, '{{}}'::jsonb),
+            '{{kream}}',
+            {kream_obj},
+            true
+        ){name_set}, updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    params: dict[str, Any] = {"sid": snkr_id, "kream_id": kream_id}
+    if style_code:
+        params["style_code"] = style_code
+    if kream_name_ko:
+        params["kream_name_ko"] = kream_name_ko
+    await session.exec(sql.bindparams(**params))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
+
+
+class SnkrdunkMatchPatchRequest(BaseModel):
+    kream_id: str
+    kream_name_ko: str = ""
+    style_code: str = ""
+
+
+# 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
+@snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
+async def snkrdunk_remove_match_public(
+    snkr_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 매칭 해제 (인증 불필요)."""
+    return await _snkrdunk_remove_match_impl(snkr_id, session)
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/match")
+async def snkrdunk_update_match_public(
+    snkr_id: str,
+    body: SnkrdunkMatchPatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 매칭 수정 (인증 불필요)."""
+    return await _snkrdunk_update_match_impl(
+        snkr_id, body.kream_id, session, body.kream_name_ko, body.style_code
+    )
 
 
 @router.get("/kream/image-proxy")

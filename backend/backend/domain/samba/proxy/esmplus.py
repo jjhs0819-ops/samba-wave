@@ -1075,6 +1075,14 @@ class ESMPlusClient:
             "POST", "/shipping/v1/Order/OrderStatus", data=params
         )
 
+    async def get_delivery_companies(self) -> dict[str, Any]:
+        """택배사 코드 조회 — GET /item/v1/shipping/delivery-company.
+
+        응답: deliveryCompCode / deliveryCompName 목록.
+        register_shipping 의 DeliveryCompanyCode 매핑용 (#530).
+        """
+        return await self._call_api("GET", "/item/v1/shipping/delivery-company")
+
     # ------------------------------------------------------------------
     # 카탈로그 (catalogs): 브랜드/제조사/마니샵
     # 권한 OK (movestory1 검증): brands / makers
