@@ -28,13 +28,14 @@ class SambaOrder(SQLModel, table=True):
     __tablename__ = "samba_order"
     __table_args__ = (
         # 11번가 1주문 다중상품 대응 (issue #208): order_number + ord_prd_seq 조합 unique
-        # ord_prd_seq NULL은 PG가 distinct로 취급 → 타 마켓(NULL) 영향 없음.
+        # NULLS NOT DISTINCT(PG15+): ord_prd_seq=NULL 마켓도 중복 차단 (fix_order_unique_nulls_not_distinct_0703)
         Index(
             "uq_order_tenant_number_seq",
             "tenant_id",
             "order_number",
             "ord_prd_seq",
             unique=True,
+            postgresql_nulls_not_distinct=True,
         ),
         # 롯데ON 중복 차단 — 동일 테넌트 내 (od_no, od_seq) 단위 unique.
         # channel_id 포함 시 동일 API key를 공유하는 2개 마켓계정이 같은 주문을

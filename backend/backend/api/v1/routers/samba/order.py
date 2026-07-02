@@ -7714,6 +7714,7 @@ async def sync_orders_from_markets(
             elif market_type == "lottehome":
                 from backend.domain.samba.proxy.lottehome import LotteHomeClient
                 from backend.domain.samba.forbidden.model import SambaSettings
+                from sqlalchemy import text as _sa_text  # noqa: F811 — pre-sync 고아 정리 블록에서 사용 (8504 지역 import보다 먼저 필요)
                 from sqlmodel import select as _select_lh
 
                 _lh_creds_result = await session.exec(
