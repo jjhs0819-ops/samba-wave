@@ -745,6 +745,7 @@ const _REVIEW_META = {
   abcmart_review: {
     mode: 'inplace',
     reloadBetween: true, // [2026-06-29] 등록 후 ABC가 '작성한 후기' 탭(#tabContent2)으로 전환 + 모달 잔여 → 매 건 목록 새로고침으로 '작성 가능한' 탭 복귀
+    autoAcceptDialogs: true, // [2026-07-02] "500P 적립" 네이티브 alert 가 새로고침 로드를 막아 다음 건 정지 → chrome.debugger 로 자동확인
     // [2026-06-29] '나의 상품후기' 페이지 — 작성가능(배송완료+구매확정) 항목만 노출.
     // 이전 claim-order-main(주문/배송 현황)은 미구매확정 주문까지 떠서 '후기작성' 클릭 시
     // "구매확정 후 가능" alert → 전건 실패. product-review 페이지가 정답(수동 검증: 작성됨).
@@ -968,6 +969,31 @@ async function handleReviewJob(job) {
   }
 }
 
+// [2026-07-02] 리뷰 탭 네이티브 다이얼로그 자동확인 — chrome.debugger 브라우저 레벨.
+// ABC "후기 500P 적립" alert 가 reloadBetween 새로고침 시 페이지 로드를 막아(waitForTabLoad 정지)
+// 다음 건이 멈추던 문제 해결 → 페이지컨텍스트 override(격리월드 타이밍 race)보다 확실. 잡 끝나면 detach.
+async function _attachReviewDialogAutoAccept(tabId) {
+  const target = { tabId }
+  const handler = (src, method) => {
+    if (src.tabId === tabId && method === 'Page.javascriptDialogOpening') {
+      chrome.debugger.sendCommand(target, 'Page.handleJavaScriptDialog', { accept: true }).catch(() => {})
+    }
+  }
+  try {
+    await chrome.debugger.attach(target, '1.3')
+    await chrome.debugger.sendCommand(target, 'Page.enable', {})
+    chrome.debugger.onEvent.addListener(handler)
+  } catch (e) {
+    console.warn(`[적립금-리뷰] 다이얼로그 자동확인 attach 실패(무시): ${e?.message || e}`)
+    return null
+  }
+  return async () => {
+    try { chrome.debugger.onEvent.removeListener(handler) } catch {}
+    try { await chrome.debugger.detach(target) } catch {}
+  }
+}
+
+
 async function _handleReviewJobInner(job) {
   const { requestId, action, sourcingAccountId, site } = job
   const meta = _REVIEW_META[action]
@@ -985,10 +1011,13 @@ async function _handleReviewJobInner(job) {
   const processed = new Set()
 
   let listTabId = null
+  let _detachDialog = null
   try {
     // 목록 탭 열기
     const listTab = await chrome.tabs.create({ url: meta.listUrl, active: false })
     listTabId = listTab.id
+    // ABC 등: 네이티브 alert(500P 적립)이 새로고침 시 로드를 막는 문제 → 다이얼로그 브라우저레벨 자동확인
+    if (meta.autoAcceptDialogs) _detachDialog = await _attachReviewDialogAutoAccept(listTabId)
     try { await waitForTabLoad(listTabId, 30000) } catch {}
     await new Promise(r => setTimeout(r, 4000)) // 가상스크롤 초기 렌더 대기
 
@@ -1142,6 +1171,7 @@ async function _handleReviewJobInner(job) {
     lastError = String(e?.message || e)
     console.warn(`[적립금-리뷰] ${action} 오류:`, e)
   } finally {
+    if (_detachDialog) { try { await _detachDialog() } catch {} }
     if (listTabId) {
       try { await chrome.tabs.remove(listTabId) } catch {}
     }
