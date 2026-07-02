@@ -149,5 +149,8 @@ async def smartstore_auth_test(
                     or f"HTTP {resp.status_code}",
                 }
     except Exception as exc:
-        logger.error(f"[스마트스토어] 인증 테스트 실패: {exc}")
-        return {"success": False, "message": f"API 호출 실패: {exc}"}
+        logger.error(f"[스마트스토어] 인증 테스트 실패: {type(exc).__name__}: {exc}")
+        return {
+            "success": False,
+            "message": f"API 호출 실패: {type(exc).__name__}: {exc}",
+        }

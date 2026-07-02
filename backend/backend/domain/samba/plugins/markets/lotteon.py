@@ -2586,8 +2586,7 @@ class LotteonPlugin(MarketPlugin):
                 # 조회 창 시작 = 첫 시도 60초 전(삼바-롯데온 시계 오차 버퍼).
                 # 창을 좁게 잡아 이번 시도분만 매칭 — 과거 동명 상품 오인 방지.
                 _guard_strt_dttm = (
-                    _dt_guard.now(_tz_guard(_td_guard(hours=9)))
-                    - _td_guard(seconds=60)
+                    _dt_guard.now(_tz_guard(_td_guard(hours=9))) - _td_guard(seconds=60)
                 ).strftime("%Y%m%d%H%M%S")
                 try:
                     _guard_name = str(
@@ -2621,10 +2620,8 @@ class LotteonPlugin(MarketPlugin):
                         # 등록 직후 list 인덱싱 지연 대응 (epdNo 보강 조회와 동일 사유)
                         await _aio_guard.sleep(2.0)
                         try:
-                            _matches = (
-                                await client.find_recent_registrations_by_name(
-                                    _guard_name, _guard_strt_dttm
-                                )
+                            _matches = await client.find_recent_registrations_by_name(
+                                _guard_name, _guard_strt_dttm
                             )
                         except Exception as _ge:
                             logger.warning(
@@ -2746,9 +2743,7 @@ class LotteonPlugin(MarketPlugin):
                                                 if a.get("pdArtlCd") != _bad
                                             ]
                                         try:
-                                            api_result = await _register_guarded(
-                                                data
-                                            )
+                                            api_result = await _register_guarded(data)
                                             _reg_exception = None
                                             _artl_resolved = True
                                             break
@@ -2802,9 +2797,7 @@ class LotteonPlugin(MarketPlugin):
                                             for _artl38_try in range(15):
                                                 try:
                                                     api_result = (
-                                                        await _register_guarded(
-                                                            data
-                                                        )
+                                                        await _register_guarded(data)
                                                     )
                                                     _reg_exception = None
                                                     _artl_resolved = True

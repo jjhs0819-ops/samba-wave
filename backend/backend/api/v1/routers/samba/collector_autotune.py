@@ -2413,13 +2413,18 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         continue
                                     # 테트리스 배제 가드 — 배제된 (소싱처, 브랜드, 계정)
                                     # 조합 또는 배제 계정은 오토튠 전송 대상에서 제외
-                                    if acc_id in _tetris_excluded_accounts or (
-                                        _tx_norm_site(
-                                            getattr(product, "source_site", "") or site
-                                        ),
-                                        _tx_norm_brand(product.brand),
-                                        acc_id,
-                                    ) in _tetris_excluded_keys:
+                                    if (
+                                        acc_id in _tetris_excluded_accounts
+                                        or (
+                                            _tx_norm_site(
+                                                getattr(product, "source_site", "")
+                                                or site
+                                            ),
+                                            _tx_norm_brand(product.brand),
+                                            acc_id,
+                                        )
+                                        in _tetris_excluded_keys
+                                    ):
                                         continue
                                     # market_product_nos에 상품번호가 없는 계정은 스킵
                                     # (등록된 적 없는 계정에 신규 등록 시도하는 것은 오토튠 역할 아님)

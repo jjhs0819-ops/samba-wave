@@ -2084,9 +2084,7 @@ class JobWorker:
                         ]
                         if _ex_removed:
                             effective_account_ids = [
-                                a
-                                for a in effective_account_ids
-                                if a not in _ex_removed
+                                a for a in effective_account_ids if a not in _ex_removed
                             ]
                             _add_job_log(
                                 job.id,

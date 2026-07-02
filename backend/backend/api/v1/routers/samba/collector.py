@@ -2230,13 +2230,55 @@ async def bulk_delete_products(
     body: BulkProductIdsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """상품 일괄 삭제 — 단일 DELETE 쿼리."""
+    """상품 일괄 삭제 — 마켓 등록 상품은 마켓 먼저 삭제 후 DB 삭제 (issue #557)."""
+    from sqlmodel import col as _col_bd, select as _sel_bd
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP_bd
+    from backend.domain.samba.shipment.repository import (
+        SambaShipmentRepository as _SR_bd,
+    )
+    from backend.domain.samba.shipment.service import SambaShipmentService as _SS_bd
+
     await _snapshot_cp_to_orders(session, body.ids)
+    await session.commit()
+
+    _stmt = _sel_bd(_CP_bd).where(_col_bd(_CP_bd.id).in_(body.ids))
+    _rows = (await session.execute(_stmt)).scalars().all()
+
+    _market_pids: list[str] = []
+    _all_accs: list[str] = []
+    _seen_accs: set[str] = set()
+    for _p in _rows:
+        _reg = list(getattr(_p, "registered_accounts", None) or [])
+        if _reg:
+            _market_pids.append(_p.id)
+            for _a in _reg:
+                if _a not in _seen_accs:
+                    _seen_accs.add(_a)
+                    _all_accs.append(_a)
+
+    _failed_pids: set[str] = set()
+    if _market_pids and _all_accs:
+        _ship_svc = _SS_bd(_SR_bd(session), session)
+        _del_r = await _ship_svc.delete_from_markets(_market_pids, _all_accs)
+        for _entry in _del_r.get("results") or []:
+            _dr = _entry.get("delete_results") or {}
+            if _dr and _entry.get("success_count", 0) < len(_dr):
+                _failed_pids.add(_entry.get("product_id", ""))
+                logger.warning(
+                    "[일괄삭제] 마켓삭제 실패 — DB삭제 보류 pid=%s (issue #557)",
+                    _entry.get("product_id"),
+                )
+
+    _deletable = [pid for pid in body.ids if pid not in _failed_pids]
     svc = _get_services(session)
-    deleted = await svc.bulk_delete_collected_products(body.ids)
-    # 상품 삭제 시 캐시 무효화
+    deleted = await svc.bulk_delete_collected_products(_deletable)
     await cache.clear_pattern("products:*")
-    return {"deleted": deleted}
+
+    _resp: dict[str, Any] = {"deleted": deleted}
+    if _failed_pids:
+        _resp["market_delete_failed"] = list(_failed_pids)
+    return _resp
 
 
 @router.post("/products/block-and-delete")
@@ -2296,16 +2338,57 @@ async def block_and_delete_products(
 
     # 삭제 전 주문 이미지/소싱처 스냅샷
     await _snapshot_cp_to_orders(session, list(body.product_ids))
-    # 상품 삭제
+    await session.commit()
+
+    # 마켓 등록 상품 먼저 삭제 (issue #557)
+    from backend.domain.samba.shipment.repository import (
+        SambaShipmentRepository as _SR_bad,
+    )
+    from backend.domain.samba.shipment.service import SambaShipmentService as _SS_bad
+
+    _bad_market_pids: list[str] = []
+    _bad_all_accs: list[str] = []
+    _bad_seen: set[str] = set()
+    for _p in products:
+        _reg = list(getattr(_p, "registered_accounts", None) or [])
+        if _reg:
+            _bad_market_pids.append(_p.id)
+            for _a in _reg:
+                if _a not in _bad_seen:
+                    _bad_seen.add(_a)
+                    _bad_all_accs.append(_a)
+
+    _bad_failed: set[str] = set()
+    if _bad_market_pids and _bad_all_accs:
+        _ship_svc = _SS_bad(_SR_bad(session), session)
+        _del_r = await _ship_svc.delete_from_markets(_bad_market_pids, _bad_all_accs)
+        for _entry in _del_r.get("results") or []:
+            _dr = _entry.get("delete_results") or {}
+            if _dr and _entry.get("success_count", 0) < len(_dr):
+                _bad_failed.add(_entry.get("product_id", ""))
+                logger.warning(
+                    "[차단삭제] 마켓삭제 실패 — DB삭제 보류 pid=%s (issue #557)",
+                    _entry.get("product_id"),
+                )
+
+    # 마켓 삭제 실패 상품 제외 후 DB 삭제
+    _deletable_ids = {pid for pid in body.product_ids if pid not in _bad_failed}
     del_stmt = sa_delete(SambaCollectedProduct).where(
-        col(SambaCollectedProduct.id).in_(body.product_ids)
+        col(SambaCollectedProduct.id).in_(_deletable_ids)
     )
     del_result = await session.exec(del_stmt)  # type: ignore[arg-type]
     await session.commit()
     await cache.clear_pattern("products:*")
     _invalidate_blacklist_cache()
 
-    return {"ok": True, "blocked": added, "deleted": del_result.rowcount}
+    _resp2: dict[str, Any] = {
+        "ok": True,
+        "blocked": added,
+        "deleted": del_result.rowcount,
+    }
+    if _bad_failed:
+        _resp2["market_delete_failed"] = list(_bad_failed)
+    return _resp2
 
 
 class BulkResetRegistrationRequest(BaseModel):
