@@ -667,7 +667,7 @@ const ProductCard = React.memo(function ProductCard({
 
   // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
-    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string }>
+    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string; name_ko?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
       { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
       { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
@@ -682,6 +682,7 @@ const ProductCard = React.memo(function ProductCard({
         url: id && pl.url ? pl.url(id) : '',
         conf: m?.confidence,
         style_code: m?.style_code,
+        name_ko: m?.name_ko,
         price: r.price, calcStr: r.calcStr,
       }
     })
@@ -1874,6 +1875,9 @@ const ProductCard = React.memo(function ProductCard({
                           <span style={{ fontSize: '0.68rem', color: c.textMuted }}>미매칭</span>
                         )}
                       </div>
+                      {rr.key === 'kream' && rr.name_ko && (
+                        <span style={{ fontSize: '0.68rem', color: c.textSub }}>{rr.name_ko}</span>
+                      )}
                       <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{rr.calcStr}</span>
                     </div>
                   </td>
