@@ -444,6 +444,7 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                         (
                             and_(
                                 _CP.tags.isnot(None),
+                                func.jsonb_typeof(_CP.tags) == "array",
                                 func.jsonb_array_length(_CP.tags) > 0,
                             ),
                             literal(1),
