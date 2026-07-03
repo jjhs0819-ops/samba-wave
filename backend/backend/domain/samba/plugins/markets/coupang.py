@@ -132,6 +132,21 @@ class CoupangPlugin(MarketPlugin):
                 else:
                     items = []
 
+                # 판매페이지 URL용 productId/vendorItemId 보강 — 등록 시점에 승인 전이라
+                # _pid/_vid가 빈값으로 남은 상품은 이후 경량 업데이트에서 채워지도록
+                # register 경로(하단)와 동일하게 GET 응답에서 추출해 반환에 포함한다.
+                # (이미 조회한 응답 재사용 — 추가 API 호출 없음)
+                coupang_product_id = ""
+                coupang_vendor_item_id = ""
+                if isinstance(prod_data, dict):
+                    _pid = prod_data.get("productId")
+                    if _pid:
+                        coupang_product_id = str(_pid)
+                    if items and isinstance(items[0], dict):
+                        _vid = items[0].get("vendorItemId")
+                        if _vid:
+                            coupang_vendor_item_id = str(_vid)
+
                 if not items:
                     # 옵션(items) 없음 = 임시저장/심사중 등 비승인 상태 추정.
                     # vendor-items 불가 + 전체수정 PUT 404 → 폴백 불가. 재시도가능 실패 반환.
@@ -209,6 +224,8 @@ class CoupangPlugin(MarketPlugin):
                 return {
                     "success": True,
                     "product_no": existing_no,
+                    "coupang_product_id": coupang_product_id,
+                    "coupang_vendor_item_id": coupang_vendor_item_id,
                     "message": f"쿠팡 경량 업데이트: {', '.join(_parts)}",
                     "data": {"sellerProductId": existing_no},
                 }
