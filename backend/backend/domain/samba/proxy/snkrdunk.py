@@ -931,5 +931,7 @@ async def fetch_order_overseas_tracking(
             "delivery_company_code": company_code,
             "order_status": status,
             "admin_shipped_at": admin_shipped,
-            "shipped": bool(tracking),
+            # 발송 판정: 송장 有 + 사무국 발송일(admin_shipped) 有 여야 진짜 배대지 발송.
+            # admin_shipped 없이 송장만 있으면 셀러→사무국(감정센터) 송장이라 오수집됨.
+            "shipped": bool(tracking) and bool(admin_shipped),
         }

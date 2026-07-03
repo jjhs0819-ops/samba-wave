@@ -59,6 +59,8 @@ class CoupangPlugin(MarketPlugin):
     market_type = "coupang"
     policy_key = "쿠팡"
     required_fields = ["name", "sale_price"]
+    _CLAIM_PREFIX = "__claiming__"
+    _CLAIM_STALE_SECONDS = 900
 
     def _validate_category(self, category_id: str) -> str:
         """쿠팡은 비숫자 카테고리(경로 문자열)도 허용 — resolve_category_code 로 동적 조회."""
@@ -415,53 +417,58 @@ class CoupangPlugin(MarketPlugin):
         if not existing_no:
             _product_id = str(product.get("id") or "").strip()
             _account_id = str(getattr(account, "id", "") or "")
-            # ── 레이스 안전 가드 (2026-06-25 중복등록 사고 대응) ──
-            # 같은 상품·계정을 거의 동시에 두 번 등록하면 아래 find_by_external_sku
-            # 가드(2026-06-08 추가) 가 있어도 쿠팡 식별키 검색 색인 지연 때문에 둘 다
-            # "없음" 으로 통과해 중복 리스팅이 생긴다(실측: 동일 externalVendorSku 가
-            # 6초 간격 2건 생성). 쿠팡 색인은 못 믿지만 우리 DB 는 즉시 정확하므로:
-            #   (1) pg_advisory_xact_lock 으로 동일 (상품,계정) 등록을 직렬화
-            #   (2) 락 확보 후 DB market_product_nos 재확인 — 직전 등록분을 즉시 본다.
-            #       있으면 재등록 안 하고 기존 번호 채택.
-            # 락은 본 트랜잭션(transmit self.session) 커밋 시 풀리고, 등록 직후
-            # 같은 세션에서 매핑을 즉시 기록하므로(아래) 대기 잡이 커밋 후 재확인에서
-            # 중복을 걸러낸다.
-            if _product_id and _account_id and session is not None:
-                try:
-                    await session.execute(
-                        text(
-                            "SELECT pg_advisory_xact_lock("
-                            "hashtext(CAST(:k1 AS text)), hashtext(CAST(:k2 AS text)))"
-                        ),
-                        {"k1": f"coupang_reg:{_product_id}", "k2": _account_id},
+            # ── 레이스 안전 가드 (2026-06-25 중복등록 → DB CAS 방식, issue #562 ②) ──
+            # pg_advisory_xact_lock → HTTP 내내 보유 → samba_jobs 행 락 캐스케이드 사고.
+            # market_product_nos[account] 에 __claiming__<epoch> 표식을 원자 기록해 직렬화.
+            # 대기 잡은 3초 폴링으로 실제 sellerProductId 확인 후 채택.
+            import time as _cp_time
+
+            _claim_val = f"{self._CLAIM_PREFIX}{int(_cp_time.time())}"
+            _claim_owned = False
+            _pre_adopted_no = ""
+            if _product_id and _account_id:
+                _c_status, _c_val = await self._claim_registration_slot(
+                    _product_id, _account_id, _claim_val
+                )
+                _c_deadline = _cp_time.monotonic() + 60
+                while _c_status == "pending" and _cp_time.monotonic() < _c_deadline:
+                    await asyncio.sleep(3.0)
+                    _c_status, _c_val = await self._claim_registration_slot(
+                        _product_id, _account_id, _claim_val
                     )
-                    _row = (
-                        await session.execute(
-                            text(
-                                "SELECT market_product_nos ->> (CAST(:acct AS text)) "
-                                "FROM samba_collected_product "
-                                "WHERE id = CAST(:pid AS text)"
-                            ),
-                            {"acct": _account_id, "pid": _product_id},
-                        )
-                    ).first()
-                    _existing_db_no = (_row[0] if _row else None) or ""
-                    if _existing_db_no:
-                        logger.warning(
-                            f"[쿠팡] 중복등록 방지(DB 재확인) — 상품 {_product_id} "
-                            f"계정 {_account_id} 에 이미 {_existing_db_no} 등록됨 → 기존 연결"
-                        )
-                        return {
-                            "success": True,
-                            "product_no": _existing_db_no,
-                            "message": "쿠팡 기등록 상품 재연결 (DB 재확인 중복차단)",
-                            "data": {"sellerProductId": _existing_db_no},
-                            "_already_registered": True,
-                        }
-                except Exception as _lock_e:
+                if _c_status == "owned":
+                    _claim_owned = True
+                elif _c_status == "exists" and _c_val:
+                    _pre_adopted_no = _c_val
                     logger.warning(
-                        f"[쿠팡] 레이스 가드(advisory lock/DB 재확인) 실패 — 등록 진행: {_lock_e}"
+                        f"[쿠팡] 등록 선점 — 이미 sellerProductId 존재 "
+                        f"product={_product_id} account={_account_id} no={_c_val} → 기존 연결"
                     )
+                elif _c_status == "pending":
+                    return {
+                        "success": False,
+                        "message": "동시 전송 감지 — 다른 전송이 같은 상품을 등록 중입니다. 재전송하세요.",
+                    }
+                elif _c_status == "stale":
+                    _claim_owned = await self._cas_claim(
+                        _product_id, _account_id, _c_val, _claim_val
+                    )
+                    if not _claim_owned:
+                        return {
+                            "success": False,
+                            "message": "동시 전송 감지 — 다른 전송이 같은 상품을 등록 중입니다. 재전송하세요.",
+                        }
+                else:
+                    _claim_owned = True  # fail-open: 선점 실패 시 등록 진행
+
+            if _pre_adopted_no:
+                return {
+                    "success": True,
+                    "product_no": _pre_adopted_no,
+                    "message": "쿠팡 기등록 상품 재연결 (CAS 선점 중복차단)",
+                    "data": {"sellerProductId": _pre_adopted_no},
+                    "_already_registered": True,
+                }
 
             # 중복등록 방지(유령 차단): 등록 전 {product.id}_{vendor_id} 키로
             # 쿠팡 기존 등록 확인. DB 매핑이 유실돼 existing_no가 비어도 쿠팡에 이미
