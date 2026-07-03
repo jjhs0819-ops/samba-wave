@@ -1067,7 +1067,11 @@ async def cleanup_coupang_orphans(
     if not accounts:
         raise HTTPException(status_code=404, detail="활성 쿠팡 계정 없음")
 
-    # 2) DB 상품 로드 (화면 필터)
+    # 2) DB 상품 로드 (전체 카탈로그 — 화면 필터 무시)
+    # [중요·issue #565] orphan("쿠팡에 있는데 DB 매핑 없음") 판정은 반드시 전체 DB를
+    # 비교 대상으로 삼아야 한다. 화면 필터(body.product_ids)로 부분집합만 로드하면
+    # 쿠팡 미등록 상품만 필터된 경우 account_db_spids=0 → 쿠팡 전체가 orphan 오판 →
+    # 전량 삭제(복구 불가) 위험. 따라서 body.product_ids 는 의도적으로 적용하지 않는다.
     # 무거운 컬럼 defer — 전체 카탈로그 스캔 시 TOAST 로드로 인한 풀 고갈 방지
     prod_q = select(SambaCollectedProduct).options(
         defer(SambaCollectedProduct.detail_html),
@@ -1075,8 +1079,6 @@ async def cleanup_coupang_orphans(
         defer(SambaCollectedProduct.images),
         defer(SambaCollectedProduct.extra_data),
     )
-    if body.product_ids:
-        prod_q = prod_q.where(SambaCollectedProduct.id.in_(body.product_ids))
     all_db_products = (await session.execute(prod_q)).scalars().all()
 
     per_account: list[dict] = []
