@@ -101,19 +101,66 @@ class FashionPlusPlugin(SourcingPlugin):
             or new_cost != old_cost
         )
 
-        # 옵션 재고 갱신
+        # 옵션 재고 갱신 — 패션플러스는 품절 사이즈를 옵션 API 응답에서 "제거"한다.
+        # 따라서 (a) isSoldout HTML 플래그, (b) 빈 옵션 = 완전품절, (c) 사라진 사이즈를
+        # stock=0 으로 복원 — 세 가지로 옵션제거 방식 품절을 감지한다 (#499 와 동일 로직,
+        # 실제 오토튠이 쓰는 경로는 이 플러그인이므로 여기에 적용).
         new_options = fresh.get("options")
-        stock_changed = False
-        new_sale_status = "in_stock"
-        if new_options is not None:
-            all_sold_out = all(
-                o.get("isSoldOut", False) or o.get("stock", 0) == 0 for o in new_options
-            )
-            if all_sold_out and len(new_options) > 0:
-                new_sale_status = "sold_out"
-                stock_changed = True
+        opts_fetched = bool(fresh.get("_options_fetched"))
+        html_sold_out = bool(fresh.get("is_sold_out"))
 
-        # 가격불확실 — sale_price/original_price/sale_status/options 갱신 모두 보류.
+        # 사이즈별 품절 복원: old 옵션 중 new 에 없는 사이즈를 stock=0 으로 되살린다.
+        # (재입고되면 API 가 그 옵션을 다시 반환 → 복원 안 함, 자가치유)
+        old_options = getattr(product, "options", None) or []
+        if opts_fetched and new_options and old_options:
+            _new_keys = {
+                (o.get("name") or "").strip()
+                for o in new_options
+                if isinstance(o, dict)
+            }
+            for _oo in old_options:
+                if not isinstance(_oo, dict):
+                    continue
+                _nm = (_oo.get("name") or "").strip()
+                if _nm and _nm not in _new_keys:
+                    _merged = dict(_oo)
+                    _merged["stock"] = 0
+                    _merged["isSoldOut"] = True
+                    new_options.append(_merged)
+
+        stock_changed = False
+        is_sold_out = False
+        if html_sold_out:
+            is_sold_out = True
+        elif opts_fetched and not new_options:
+            # 옵션 fetch 성공 + 옵션 0개 = 완전품절 (fetch 실패와 구분)
+            is_sold_out = True
+        elif new_options:
+            is_sold_out = all(
+                (o.get("isSoldOut", False) or (o.get("stock", 0) or 0) == 0)
+                for o in new_options
+            )
+        new_sale_status = "sold_out" if is_sold_out else "in_stock"
+        if new_sale_status != getattr(product, "sale_status", "in_stock"):
+            stock_changed = True
+
+        # 품절 확정이면 가격불확실이어도 sold_out 을 반영한다.
+        # (패플은 품절 시 상세 가격이 0 → price_uncertain=True 가 되는데, 이때 옛 in_stock
+        #  으로 덮어버리면 품절이 영원히 미반영된다. 품절은 확실하므로 uncertain 해제.)
+        if is_sold_out:
+            return RefreshResult(
+                product_id=product_id,
+                new_sale_price=None,
+                new_original_price=None,
+                new_cost=None,
+                new_sale_status="sold_out",
+                new_options=new_options,
+                changed=False,
+                stock_changed=True,
+                price_uncertain=False,
+            )
+
+        # 가격불확실(품절 아님) — sale_price/cost/options 갱신 보류.
         # 옵션 stock 만 보고 in_stock 박으면, 이전 좀비 cost(예: 3000) 가 유지된 채
         # 마켓에 가짜 가격(8400 등)으로 노출되는 회귀.
         if _price_uncertain:
