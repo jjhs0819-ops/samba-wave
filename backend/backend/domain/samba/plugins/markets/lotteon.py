@@ -2653,9 +2653,18 @@ class LotteonPlugin(MarketPlugin):
 
                 _reg_attempted = False
                 _last_reg_exc: Exception | None = None
+                _pre_adopted_spd = ""
 
                 async def _register_guarded(_d: dict[str, Any]) -> dict[str, Any]:
                     nonlocal _reg_attempted, _last_reg_exc
+                    if _pre_adopted_spd:
+                        # 선점 경쟁에서 진 실행 — 이긴 쪽이 등록한 spdNo 채택
+                        return {
+                            "success": True,
+                            "spdNo": _pre_adopted_spd,
+                            "epdNo": "",
+                            "adopted": True,
+                        }
                     if _reg_attempted:
                         _adopted = await _adopt_created_despite_error(_last_reg_exc)
                         if _adopted:
@@ -2675,6 +2684,94 @@ class LotteonPlugin(MarketPlugin):
                     except Exception as _rexc:
                         _last_reg_exc = _rexc
                         raise
+
+                # ── 등록 슬롯 선점 — 동시 이중등록 차단 ──────────────
+                # 메모리 락(_transmitting_products/_account_semaphores)은 다른
+                # 프로세스/이벤트루프의 전송을 못 본다(2026-07-02 19시 배치
+                # 같은초 2~4중 등록 사고). DB 원자 UPDATE로 선점한 실행만
+                # 등록하고, 진 실행은 이긴 쪽 spdNo를 기다려 채택한다.
+                import time as _cl_time_g
+
+                _claim_pid = str(product.get("id") or "")
+                _claim_val = f"{self._CLAIM_PREFIX}{int(_cl_time_g.time())}"
+                _claim_owned = False
+                if _claim_pid and _account_id_snapshot:
+                    _c_status, _c_val = await self._claim_registration_slot(
+                        _claim_pid, _account_id_snapshot, _claim_val
+                    )
+                    # 다른 실행이 등록 중(신선한 선점) — 최대 120초 결과 대기
+                    _c_deadline = _cl_time_g.monotonic() + 120
+                    while (
+                        _c_status == "pending"
+                        and _cl_time_g.monotonic() < _c_deadline
+                    ):
+                        await _aio_guard.sleep(3.0)
+                        _c_status, _c_val = await self._claim_registration_slot(
+                            _claim_pid, _account_id_snapshot, _claim_val
+                        )
+                    if _c_status == "owned":
+                        _claim_owned = True
+                    elif _c_status == "exists" and _c_val:
+                        _pre_adopted_spd = _c_val
+                        logger.warning(
+                            "[롯데ON] 등록 선점 — 다른 실행이 이미 등록함, "
+                            f"spdNo={_c_val} 채택 (product={_claim_pid}, "
+                            f"account={_account_id_snapshot})"
+                        )
+                    elif _c_status == "pending":
+                        return {
+                            "success": False,
+                            "message": "동시 전송 감지 — 다른 전송이 같은 상품을 "
+                            "등록 중입니다. 이전 전송 완료 후 재전송하세요.",
+                        }
+                    elif _c_status == "stale":
+                        # 이전 실행 비정상 종료(타임아웃 등) 흔적. 그 시점 이후
+                        # 같은 상품명이 롯데온에 있으면 고아 회수, 없으면 강제 선점.
+                        if _guard_name:
+                            try:
+                                _st_ts = int(
+                                    _c_val[len(self._CLAIM_PREFIX):] or 0
+                                )
+                                _st_win = (
+                                    _dt_guard.fromtimestamp(
+                                        _st_ts - 60,
+                                        _tz_guard(_td_guard(hours=9)),
+                                    ).strftime("%Y%m%d%H%M%S")
+                                    if _st_ts
+                                    else _guard_strt_dttm
+                                )
+                                _st_m = await client.find_recent_registrations_by_name(
+                                    _guard_name, _st_win
+                                )
+                                if _st_m:
+                                    _pre_adopted_spd = _st_m[0]["spdNo"]
+                                    await self._persist_spd_no_immediately(
+                                        _claim_pid,
+                                        _account_id_snapshot,
+                                        _pre_adopted_spd,
+                                    )
+                                    logger.warning(
+                                        "[롯데ON] 방치 선점 회수 — 이전 실행이 "
+                                        f"등록한 spdNo={_pre_adopted_spd} 채택"
+                                    )
+                            except Exception as _st_e:
+                                logger.warning(
+                                    f"[롯데ON] 방치 선점 회수 조회 실패(무시): {_st_e}"
+                                )
+                        if not _pre_adopted_spd:
+                            _claim_owned = await self._cas_claim(
+                                _claim_pid,
+                                _account_id_snapshot,
+                                _c_val,
+                                _claim_val,
+                            )
+                            if not _claim_owned:
+                                return {
+                                    "success": False,
+                                    "message": "동시 전송 감지 — 다른 전송이 같은 "
+                                    "상품을 등록 중입니다. 이전 전송 완료 후 "
+                                    "재전송하세요.",
+                                }
 
                 _reg_exception: Exception | None = None
                 api_result = None
@@ -2960,6 +3057,12 @@ class LotteonPlugin(MarketPlugin):
                             "adopted": True,
                         }
                     else:
+                        # 등록 최종 실패 — 선점 표식을 되돌려 다음 전송이
+                        # 15분 기다리지 않고 바로 재시도할 수 있게 한다.
+                        if _claim_owned:
+                            await self._release_registration_claim(
+                                _claim_pid, _account_id_snapshot, _claim_val
+                            )
                         raise _reg_exception
                 if api_result is None:
                     raise RuntimeError("등록 결과 없음 (api_result=None)")
@@ -3043,6 +3146,138 @@ class LotteonPlugin(MarketPlugin):
             # 발생 라인 추적이 안 되던 문제 — traceback 전체를 로그에 남긴다.
             logger.error(f"[롯데ON] {action} 실패: {e}\n{_tb.format_exc()}")
             return {"success": False, "message": f"롯데ON {action} 실패: {e}"}
+
+    # 등록 선점(claim) 표식 — market_product_nos[account]에 임시 저장되는 값.
+    # 실제 spdNo가 영속되면 덮어써지고, 실패 시 해제(CAS)된다. 비정상 종료로
+    # 남은 표식은 STALE_SECONDS 경과 후 무시(강제 선점 가능).
+    _CLAIM_PREFIX = "__claiming__"
+    _CLAIM_STALE_SECONDS = 900
+
+    async def _claim_registration_slot(
+        self, product_id: str, account_id: str, claim_val: str
+    ) -> tuple[str, str]:
+        """등록 슬롯 원자 선점 — 프로세스/스레드 불문 동시 이중등록 차단.
+
+        반환 (status, value):
+          owned   — 이 실행이 선점 성공(등록 진행). value=claim_val
+          exists  — 이미 실제 spdNo 매핑 존재. value=spdNo
+          pending — 다른 실행이 등록 중(신선한 선점). value=상대 선점값
+          stale   — 방치된 선점(비정상 종료 흔적). value=옛 선점값
+        조회/선점 자체가 실패하면 ("owned", claim_val) — 등록을 막지 않는다(fail-open).
+        """
+        try:
+            from sqlalchemy import text as _cl_text
+
+            from backend.db.orm import get_write_session as _cl_gws
+
+            async with _cl_gws() as _s:
+                _r = await _s.execute(
+                    _cl_text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = jsonb_set("
+                        "  CASE WHEN market_product_nos IS NOT NULL "
+                        "        AND jsonb_typeof(market_product_nos) = 'object' "
+                        "       THEN market_product_nos ELSE '{}'::jsonb END, "
+                        "  ARRAY[:acct]::text[], to_jsonb(CAST(:val AS text)), true) "
+                        "WHERE id = :pid AND (market_product_nos IS NULL "
+                        "  OR jsonb_typeof(market_product_nos) <> 'object' "
+                        "  OR NOT jsonb_exists(market_product_nos, :acct)) "
+                        "RETURNING id"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": claim_val},
+                )
+                _won = _r.first() is not None
+                _v = None
+                if not _won:
+                    _v = (
+                        await _s.execute(
+                            _cl_text(
+                                "SELECT market_product_nos ->> :acct "
+                                "FROM samba_collected_product WHERE id = :pid"
+                            ),
+                            {"pid": product_id, "acct": account_id},
+                        )
+                    ).scalar()
+                await _s.commit()
+            if _won:
+                return ("owned", claim_val)
+            _vs = str(_v or "").strip()
+            if not _vs:
+                # 행이 없거나 값이 빈 경우 — 선점 없이 등록 진행(현행 유지)
+                return ("owned", claim_val)
+            if _vs.startswith(self._CLAIM_PREFIX):
+                import time as _cl_time
+
+                try:
+                    _ts = int(_vs[len(self._CLAIM_PREFIX):])
+                except Exception:
+                    _ts = 0
+                if _cl_time.time() - _ts > self._CLAIM_STALE_SECONDS:
+                    return ("stale", _vs)
+                return ("pending", _vs)
+            if _vs.startswith("{"):
+                # dict 형태(타 경로 저장) — 판별 불가, 선점 없이 진행
+                return ("owned", claim_val)
+            return ("exists", _vs)
+        except Exception as _e:
+            logger.warning(f"[롯데ON] 등록 선점 조회 실패(무시, 등록 진행): {_e}")
+            return ("owned", claim_val)
+
+    async def _cas_claim(
+        self, product_id: str, account_id: str, old_val: str, new_val: str
+    ) -> bool:
+        """방치된 선점값을 원자 교체(compare-and-swap). 성공 시 True."""
+        try:
+            from sqlalchemy import text as _cl_text
+
+            from backend.db.orm import get_write_session as _cl_gws
+
+            async with _cl_gws() as _s:
+                _r = await _s.execute(
+                    _cl_text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = jsonb_set(market_product_nos, "
+                        "  ARRAY[:acct]::text[], to_jsonb(CAST(:val AS text)), true) "
+                        "WHERE id = :pid AND market_product_nos ->> :acct = :old "
+                        "RETURNING id"
+                    ),
+                    {
+                        "pid": product_id,
+                        "acct": account_id,
+                        "val": new_val,
+                        "old": old_val,
+                    },
+                )
+                _won = _r.first() is not None
+                await _s.commit()
+            return _won
+        except Exception as _e:
+            logger.warning(f"[롯데ON] 선점 교체 실패(무시): {_e}")
+            return False
+
+    async def _release_registration_claim(
+        self, product_id: str, account_id: Optional[str], claim_val: str
+    ) -> None:
+        """등록 실패 시 선점 표식 제거 — 아직 내 선점값일 때만(CAS)."""
+        if not (product_id and account_id):
+            return
+        try:
+            from sqlalchemy import text as _cl_text
+
+            from backend.db.orm import get_write_session as _cl_gws
+
+            async with _cl_gws() as _s:
+                await _s.execute(
+                    _cl_text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = market_product_nos - :acct "
+                        "WHERE id = :pid AND market_product_nos ->> :acct = :val"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": claim_val},
+                )
+                await _s.commit()
+        except Exception as _e:
+            logger.warning(f"[롯데ON] 등록 선점 해제 실패(무시): {_e}")
 
     async def _persist_spd_no_immediately(
         self, product_id: str, account_id: Optional[str], spd_no: str
