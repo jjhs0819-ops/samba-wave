@@ -2946,6 +2946,9 @@ async def _apply_snkr_overseas_tracking(
         }
     order.overseas_shipping_company = r["delivery_company"]
     order.overseas_tracking_number = r["tracking_number"]
+    # 해외송장 수집 완료 → 상태 '국내배송중'(shipping) — 배송완료/확정/취소/반품은 유지
+    if order.status not in ("delivered", "confirmed", "cancelled", "returned"):
+        order.status = "shipping"
     order.updated_at = datetime.now(_tz.utc)
     await session.commit()
     return {
@@ -12119,6 +12122,121 @@ async def kakao_name_candidates(
     return {"ok": True, "count": len(candidates), "candidates": candidates}
 
 
+async def _kream_cost_backfill_from_shopmine(
+    ws, session: AsyncSession, tenant_id: Optional[str]
+) -> dict:
+    """마스터 엑셀 '샵마인' 시트 → 크림주문 실구매가(cost)+소싱주문번호 백필 후
+    스니덩크 해외송장 자동수집.
+
+    컬럼(0-based): B(1)/C(2)=쇼핑몰·별칭(크림 필터), H(7)=오픈마켓주문번호(매칭키),
+    P(15)=소싱주문번호, Q(16)=매입금액(실구매가). profit·수익률은 화면에서 자동계산되므로
+    저장하지 않는다.
+    """
+    import asyncio
+    from datetime import datetime, timezone
+
+    from sqlalchemy import func, select
+
+    # 1) 샵마인 크림행 파싱 → {오픈마켓주문번호: (소싱주문번호, 실구매가)}
+    sheet_map: dict[str, tuple[str, float]] = {}
+    for r in ws.iter_rows(min_row=2, values_only=True):
+        if not r or len(r) < 17:
+            continue
+        if "크림" not in (str(r[1] or "") + str(r[2] or "")):
+            continue
+        h = str(r[7] or "").strip()  # 앞 개행 포함될 수 있어 strip 필수
+        if not h:
+            continue
+        p, q = r[15], r[16]
+        sono = str(p).strip() if p is not None else ""
+        try:
+            cost = float(round(float(q))) if q not in (None, "") else None
+        except (TypeError, ValueError):
+            cost = None
+        if cost is None:
+            continue
+        sheet_map[h] = (sono, cost)
+
+    # 2) 크림주문 매칭 → cost + sourcing_order_number 갱신
+    stmt = select(SambaOrder).where(
+        func.upper(func.coalesce(SambaOrder.source_site, "")) == "KREAM"
+    )
+    if tenant_id is not None:
+        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
+    kream_orders = (await session.execute(stmt)).scalars().all()
+
+    filled = 0
+    unmatched = 0
+    for o in kream_orders:
+        key = (o.order_number or "").strip()
+        if key not in sheet_map:
+            unmatched += 1
+            continue
+        sono, cost = sheet_map[key]
+        changed = False
+        if float(o.cost or 0) != cost:
+            o.cost = cost
+            changed = True
+        if sono and (o.sourcing_order_number or "") != sono:
+            o.sourcing_order_number = sono
+            changed = True
+        # 소싱주문번호 있으면 상태 '배송대기중'(wait_ship) — 이미 진행된 상태는 유지(역행 방지)
+        _advanced = {
+            "shipping",
+            "delivered",
+            "confirmed",
+            "cancelled",
+            "returned",
+            "cancel_requested",
+            "return_requested",
+            "ship_failed",
+        }
+        if (
+            (o.sourcing_order_number or "")
+            and o.status not in _advanced
+            and o.status != "wait_ship"
+        ):
+            o.status = "wait_ship"
+            changed = True
+        if changed:
+            o.updated_at = datetime.now(timezone.utc)
+            filled += 1
+    await session.commit()
+
+    # 3) 스니덩크 해외송장 자동수집 (확장앱 세션쿠키 필요, 소싱주문번호 有 & 송장 空)
+    tracking_checked = 0
+    tracking_shipped = 0
+    cookie = await _get_snkr_session_cookie(session)
+    if cookie:
+        tstmt = select(SambaOrder).where(
+            func.upper(func.coalesce(SambaOrder.source_site, "")) == "KREAM",
+            SambaOrder.sourcing_order_number.is_not(None),
+            SambaOrder.sourcing_order_number != "",
+            (SambaOrder.overseas_tracking_number.is_(None))
+            | (SambaOrder.overseas_tracking_number == ""),
+        )
+        if tenant_id is not None:
+            tstmt = tstmt.where(SambaOrder.tenant_id == tenant_id)
+        tstmt = tstmt.limit(500)
+        targets = (await session.execute(tstmt)).scalars().all()
+        for o in targets:
+            tracking_checked += 1
+            res = await _apply_snkr_overseas_tracking(session, o, cookie)
+            if res.get("shipped"):
+                tracking_shipped += 1
+            await asyncio.sleep(0.3)  # SNKRDUNK 레이트리밋 보수값
+
+    return {
+        "ok": True,
+        "mode": "cost_backfill",
+        "filled": filled,
+        "unmatched": unmatched,
+        "tracking_checked": tracking_checked,
+        "tracking_shipped": tracking_shipped,
+        "cookie_missing": not cookie,
+    }
+
+
 @router.post("/kream-excel")
 async def import_kream_excel(
     file: UploadFile = File(...),
@@ -12183,6 +12301,15 @@ async def import_kream_excel(
 
     content = await file.read()
     wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
+    # 마스터 엑셀('샵마인' 시트) 감지 → 발송완료 주문생성 대신 실구매가/소싱주문번호 백필 +
+    # 스니덩크 해외송장 자동수집 모드로 분기.
+    _shopmine_sheet = next((s for s in wb.sheetnames if "샵마인" in s), None)
+    if _shopmine_sheet is not None:
+        _sm_result = await _kream_cost_backfill_from_shopmine(
+            wb[_shopmine_sheet], session, tenant_id
+        )
+        wb.close()
+        return _sm_result
     ws = wb.active
     rows = list(ws.iter_rows(min_row=2, values_only=True))
     wb.close()

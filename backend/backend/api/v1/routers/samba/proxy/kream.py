@@ -422,6 +422,9 @@ async def snkrdunk_kream_compare(
         SELECT site_product_id, name, images,
                resell_matches->'kream'->>'product_id' AS kream_id,
                resell_matches->'kream'->>'image' AS kream_image_db,
+               resell_matches->'kream'->>'name_en' AS kream_name_en_db,
+               resell_matches->'kream'->>'name_ko' AS kream_name_ko_db,
+               resell_matches->'kream'->>'style_code' AS kream_style_code_db,
                options
         FROM samba_collected_product
         WHERE source_site = 'SNKRDUNK'
@@ -471,6 +474,9 @@ async def snkrdunk_kream_compare(
                 or (kinfo.get("images", [""])[0] if kinfo.get("images") else ""),
                 "psa10_price": psa_opts[0].get("price", 0) if psa_opts else 0,
                 "psa10_stock": psa_opts[0].get("stock", 0) if psa_opts else 0,
+                "kream_name_en": r.kream_name_en_db or "",
+                "kream_name_ko": r.kream_name_ko_db or "",
+                "kream_style_code": r.kream_style_code_db or "",
             }
         )
 
@@ -501,7 +507,8 @@ async def _snkrdunk_update_match_impl(
 ) -> dict[str, Any]:
     from sqlalchemy import text
 
-    # 크림 API로 이름/이미지 조회 (캐시 우선)
+    # 크림 API로 이미지 조회 (캐시 우선). 이름은 자동으로 덮어쓰지 않는다
+    # — 사용자가 검수툴에서 직접 저장한 한글명을 링크 교정이 지우는 버그 방지.
     kream_image = ""
     try:
         kream_client = KreamClient()
@@ -509,19 +516,21 @@ async def _snkrdunk_update_match_impl(
             info = await kream_client.get_product(kream_id)
             _kream_info_cache[kream_id] = info
         kinfo = _kream_info_cache.get(kream_id, {})
-        if not kream_name_ko:
-            kream_name_ko = kinfo.get("name", "")
         kream_image = kinfo.get("images", [""])[0] if kinfo.get("images") else ""
     except Exception:
         pass
 
-    kream_obj_parts = ["'product_id', CAST(:kream_id AS text)"]
+    # merge 방식: 기존 kream 객체(style_code/image 등)를 보존하고
+    # product_id 와 명시적으로 넘어온 값만 덮어쓴다. `||`는 우측 우선이라
+    # 기존 키는 유지된다. 링크 교정이 품번/이미지를 날리는 사고 방지.
+    override_parts = ["'product_id', CAST(:kream_id AS text)"]
     if style_code:
-        kream_obj_parts.append("'style_code', CAST(:style_code AS text)")
+        override_parts.append("'style_code', CAST(:style_code AS text)")
     if kream_image:
-        kream_obj_parts.append("'image', CAST(:kream_image AS text)")
-    kream_obj = "jsonb_build_object(" + ", ".join(kream_obj_parts) + ")"
+        override_parts.append("'image', CAST(:kream_image AS text)")
+    override_obj = "jsonb_build_object(" + ", ".join(override_parts) + ")"
 
+    # 한글명(name)은 caller가 kream_name_ko를 명시했을 때만 갱신
     name_set = ", name = :kream_name_ko" if kream_name_ko else ""
 
     sql = text(f"""
@@ -529,7 +538,7 @@ async def _snkrdunk_update_match_impl(
         SET resell_matches = jsonb_set(
             COALESCE(resell_matches, '{{}}'::jsonb),
             '{{kream}}',
-            {kream_obj},
+            COALESCE(resell_matches -> 'kream', '{{}}'::jsonb) || {override_obj},
             true
         ){name_set}, updated_at = NOW()
         WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
@@ -543,7 +552,12 @@ async def _snkrdunk_update_match_impl(
         params["kream_name_ko"] = kream_name_ko
     await session.exec(sql.bindparams(**params))  # type: ignore[arg-type]
     await session.commit()
-    return {"ok": True}
+    return {
+        "ok": True,
+        "kream_name_ko": kream_name_ko,
+        "kream_image": kream_image,
+        "style_code": style_code,
+    }
 
 
 class SnkrdunkMatchPatchRequest(BaseModel):
@@ -554,6 +568,14 @@ class SnkrdunkMatchPatchRequest(BaseModel):
 
 class SnkrdunkStyleCodePatchRequest(BaseModel):
     style_code: str
+
+
+class SnkrdunkKreamNamePatchRequest(BaseModel):
+    kream_name_ko: str
+
+
+class SnkrdunkKreamNameEnPatchRequest(BaseModel):
+    kream_name_en: str
 
 
 # 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
@@ -598,6 +620,49 @@ async def snkrdunk_update_style_code_public(
         WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, style_code=body.style_code))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/kream-name")
+async def snkrdunk_update_kream_name_public(
+    snkr_id: str,
+    body: SnkrdunkKreamNamePatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 한글명 직접 수정 (인증 불필요)."""
+    from sqlalchemy import text
+
+    sql = text("""
+        UPDATE samba_collected_product
+        SET name = CAST(:kream_name_ko AS text), updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    await session.exec(sql.bindparams(sid=snkr_id, kream_name_ko=body.kream_name_ko))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/kream-name-en")
+async def snkrdunk_update_kream_name_en_public(
+    snkr_id: str,
+    body: SnkrdunkKreamNameEnPatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """스니덩크 크림 영문명(resell_matches.kream.name_en) 직접 수정 (인증 불필요)."""
+    from sqlalchemy import text
+
+    sql = text("""
+        UPDATE samba_collected_product
+        SET resell_matches = jsonb_set(
+            COALESCE(resell_matches, '{}'::jsonb),
+            '{kream,name_en}',
+            to_jsonb(CAST(:name_en AS text)),
+            true
+        ), updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    await session.exec(sql.bindparams(sid=snkr_id, name_en=body.kream_name_en))  # type: ignore[arg-type]
     await session.commit()
     return {"ok": True}
 

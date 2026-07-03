@@ -369,8 +369,12 @@ export default function OrdersTable(props: OrdersTableProps) {
                           setEditingOrderNumbers(prev => { const n = { ...prev }; delete n[o.id]; return n })
                           if (val === (o.sourcing_order_number ?? '')) return
                           try {
-                            await orderApi.update(o.id, { sourcing_order_number: val })
-                            patchOrder(o.id, { sourcing_order_number: val })
+                            // 소싱주문번호 입력 → 상태 '배송대기중'(wait_ship) 자동 전환 (진행된 상태는 역행 안 함)
+                            const advanced = ['shipping', 'delivered', 'confirmed', 'cancelled', 'returned', 'cancel_requested', 'return_requested', 'ship_failed']
+                            const patch: Partial<SambaOrder> = { sourcing_order_number: val }
+                            if (val && !advanced.includes(o.status)) patch.status = 'wait_ship'
+                            await orderApi.update(o.id, patch)
+                            patchOrder(o.id, patch)
                           } catch { showAlert('소싱주문번호 저장 실패', 'error') }
                         }}
                         onKeyDown={(e) => {
@@ -605,7 +609,13 @@ export default function OrdersTable(props: OrdersTableProps) {
                             const co = (document.getElementById(`ov-co-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             const tn = (document.getElementById(`ov-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             if (co === (o.overseas_shipping_company || '') && tn === (o.overseas_tracking_number || '')) return
-                            try { await orderApi.update(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }); patchOrder(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }) } catch { /* ignore */ }
+                            try {
+                              // 해외송장번호 입력 → 상태 '국내배송중'(shipping) 자동 전환 (배송완료/확정/취소/반품은 유지)
+                              const done = ['delivered', 'confirmed', 'cancelled', 'returned']
+                              const patch: Partial<SambaOrder> = { overseas_shipping_company: co, overseas_tracking_number: tn }
+                              if (tn && !done.includes(o.status)) patch.status = 'shipping'
+                              await orderApi.update(o.id, patch); patchOrder(o.id, patch)
+                            } catch { /* ignore */ }
                           }}
                         />
                         <datalist id={`ov-list-${o.id}`}>
@@ -620,7 +630,13 @@ export default function OrdersTable(props: OrdersTableProps) {
                             const co = (document.getElementById(`ov-co-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             const tn = (document.getElementById(`ov-tn-${o.id}`) as HTMLInputElement)?.value.trim() || ''
                             if (co === (o.overseas_shipping_company || '') && tn === (o.overseas_tracking_number || '')) return
-                            try { await orderApi.update(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }); patchOrder(o.id, { overseas_shipping_company: co, overseas_tracking_number: tn }) } catch { /* ignore */ }
+                            try {
+                              // 해외송장번호 입력 → 상태 '국내배송중'(shipping) 자동 전환 (배송완료/확정/취소/반품은 유지)
+                              const done = ['delivered', 'confirmed', 'cancelled', 'returned']
+                              const patch: Partial<SambaOrder> = { overseas_shipping_company: co, overseas_tracking_number: tn }
+                              if (tn && !done.includes(o.status)) patch.status = 'shipping'
+                              await orderApi.update(o.id, patch); patchOrder(o.id, patch)
+                            } catch { /* ignore */ }
                           }}
                           onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
                         />
@@ -634,7 +650,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                             try {
                               const r = await orderApi.fetchSnkrdunkTracking(o.id)
                               if (r.success && r.shipped) {
-                                patchOrder(o.id, { overseas_shipping_company: r.delivery_company || '', overseas_tracking_number: r.tracking_number || '' })
+                                // 송장 수집 성공 → 상태 '국내배송중'(shipping) (백엔드도 동일 저장)
+                                patchOrder(o.id, { overseas_shipping_company: r.delivery_company || '', overseas_tracking_number: r.tracking_number || '', status: 'shipping' })
                                 const coEl = document.getElementById(`ov-co-${o.id}`) as HTMLInputElement | null
                                 const tnEl = document.getElementById(`ov-tn-${o.id}`) as HTMLInputElement | null
                                 if (coEl) coEl.value = r.delivery_company || ''

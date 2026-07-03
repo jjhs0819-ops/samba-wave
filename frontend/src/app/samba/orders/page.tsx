@@ -654,7 +654,14 @@ export default function OrdersPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || '업로드 실패')
-      await showAlert(`크림주문 등록 완료: ${fmtNum(data.created)}건 생성, ${fmtNum(data.skipped)}건 중복 건너뜀`, 'success')
+      if (data.mode === 'cost_backfill') {
+        // 마스터 엑셀(샵마인 시트) — 실구매가/소싱주문번호 백필 + 스니덩크 해외송장 수집
+        let msg = `실구매가 ${fmtNum(data.filled)}건 채움 · 해외송장 ${fmtNum(data.tracking_shipped)}/${fmtNum(data.tracking_checked)}건 수집 · 미매칭 ${fmtNum(data.unmatched)}건`
+        if (data.cookie_missing) msg += ' (SNKRDUNK 세션쿠키 없음 — 확장앱으로 로그인 필요, 송장은 건너뜀)'
+        await showAlert(msg, data.cookie_missing ? 'info' : 'success')
+      } else {
+        await showAlert(`크림주문 등록 완료: ${fmtNum(data.created)}건 생성, ${fmtNum(data.skipped)}건 중복 건너뜀`, 'success')
+      }
       await loadOrders()
     } catch (err) {
       await showAlert((err as Error).message || '엑셀 업로드 실패', 'error')
@@ -914,7 +921,7 @@ export default function OrdersPage() {
         <input
           ref={kreamExcelInputRef}
           type='file'
-          accept='.xlsx,.xls'
+          accept='.xlsx,.xls,.xlsm'
           style={{ display: 'none' }}
           onChange={handleKreamExcelUpload}
         />

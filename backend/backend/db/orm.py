@@ -229,6 +229,16 @@ async def get_write_session() -> AsyncGenerator[AsyncSession, None]:
             except BaseException:  # rollback 중 2차 CancelledError도 억제
                 pass
             raise
+        finally:
+            # 정상 종료 시에도 커밋 안 된 열린 tx가 남으면 즉시 롤백.
+            # asyncpg는 SELECT만 해도 autobegin으로 tx가 열리는데, 이를 안 닫고
+            # 풀에 반납하면 서버 쪽 "idle in transaction" 좀비가 쌓여 커넥션 포화 →
+            # "서버 연결 실패" 유발. commit한 콜러는 in_transaction()=False라 무영향.
+            try:
+                if sess.in_transaction():
+                    await sess.rollback()
+            except BaseException:
+                pass
 
 
 @asynccontextmanager
@@ -245,6 +255,13 @@ async def get_read_session() -> AsyncGenerator[AsyncSession, None]:
             except BaseException:  # rollback 중 2차 CancelledError도 억제
                 pass
             raise
+        finally:
+            # 읽기 세션도 SELECT autobegin tx를 명시적으로 닫아 idle-in-tx 누적 방지
+            try:
+                if sess.in_transaction():
+                    await sess.rollback()
+            except BaseException:
+                pass
 
 
 # Non-decorator versions for dependency injection
@@ -267,6 +284,12 @@ async def get_write_session_dependency() -> AsyncGenerator[AsyncSession, None]:
         raise
     finally:
         try:
+            # close 전에 열린 tx 명시적 롤백 — idle-in-transaction 좀비 방지
+            if session.in_transaction():
+                await session.rollback()
+        except BaseException:
+            pass
+        try:
             await session.close()
         except BaseException:
             pass
@@ -288,6 +311,12 @@ async def get_read_session_dependency() -> AsyncGenerator[AsyncSession, None]:
             pass
         raise
     finally:
+        try:
+            # close 전에 열린 tx 명시적 롤백 — idle-in-transaction 좀비 방지
+            if session.in_transaction():
+                await session.rollback()
+        except BaseException:
+            pass
         try:
             await session.close()
         except BaseException:
