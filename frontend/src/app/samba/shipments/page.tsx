@@ -78,6 +78,93 @@ async function fetchProductsByIdsChunked(ids: string[]) {
   return merged
 }
 
+// 상품 행 — React.memo 분리로 폴링/로그 갱신 리렌더 시 변경 없는 행은 스킵.
+// "전체(10000)" 페이지에서 상태변경마다 수천 행이 통째로 재렌더되어
+// 선택전송/잡취소 클릭 시 탭이 수십 초 멈추던 문제의 핵심 수정.
+const ProductRow = React.memo(function ProductRow({
+  p,
+  rowNo,
+  checked,
+  onToggle,
+  accountsById,
+  c,
+}: {
+  p: SambaCollectedProduct
+  rowNo: number
+  checked: boolean
+  onToggle: (id: string) => void
+  accountsById: Map<string, SambaMarketAccount>
+  c: ReturnType<typeof useTheme>
+}) {
+  const regAccounts = p.registered_accounts || []
+  const regMarkets = regAccounts.map(aid => accountsById.get(aid)?.market_name).filter(Boolean)
+  const optCount = (p.options || []).length
+  return (
+    <tr style={{ borderBottom: `1px solid ${c.border}`, verticalAlign: 'top' }}
+      onMouseEnter={e => (e.currentTarget.style.background = c.surfaceAlt)}
+      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+    >
+      <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center' }}>
+        <input type="checkbox" checked={checked} onChange={() => onToggle(p.id)} style={{ accentColor: c.primary }} />
+      </td>
+      <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: c.textMuted, fontSize: '0.72rem' }}>{rowNo}</td>
+      <td style={{ padding: '0.625rem 0.5rem', color: c.textMuted, fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
+      <td style={{ padding: '0.625rem 0.5rem' }}>
+        <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, color: SITE_COLORS[p.source_site] || c.textMuted, background: `${SITE_COLORS[p.source_site] || c.textMuted}18`, border: `1px solid ${SITE_COLORS[p.source_site] || c.textMuted}40` }}>{p.source_site}</span>
+      </td>
+      <td style={{ padding: '0.625rem 0.5rem' }}>
+        <div>
+          <a href={`/samba/products?highlight=${p.id}`} style={{ color: c.text, textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
+            onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
+            onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
+          >
+            [{p.site_product_id || ''}] {p.brand ? <span style={{ color: c.text, fontWeight: 600 }}>[{p.brand}]</span> : ''}{p.brand ? ' ' : ''}{p.name} {optCount > 0 ? <span style={{ color: c.text }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
+          </a>
+        </div>
+        {regMarkets.length > 0 && (
+          <div style={{ fontSize: '0.72rem', color: c.textSub, marginTop: '2px' }}>
+            (등록된 마켓 : {regMarkets.map((m, i) => (
+              <span key={i}><span style={{ color: c.text }}>{m}</span>{i < regMarkets.length - 1 ? ' / ' : ''}</span>
+            ))})
+          </div>
+        )}
+      </td>
+      <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
+        {(() => {
+          const ts = p.last_refreshed_at || p.updated_at
+          if (!ts) return '-'
+          const d = new Date(ts)
+          return (
+            <span style={{ color: c.textSub }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
+          )
+        })()}
+      </td>
+      <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
+        {(() => {
+          const regAccs = (p.registered_accounts || [])
+          if (regAccs.length === 0) return <span style={{ color: c.textMuted }}>-</span>
+          const sent = p.last_sent_data || {}
+          return regAccs.map(aid => {
+            const acc = accountsById.get(aid)
+            if (!acc) return null
+            const sentAt = sent[aid]?.sent_at
+            const timeLabel = sentAt ? (() => {
+              const d = new Date(sentAt)
+              return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+            })() : ''
+            return (
+              <div key={aid} style={{ marginBottom: '2px', fontSize: '0.68rem' }}>
+                <span style={{ color: c.success }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
+                {timeLabel && <span style={{ color: c.textSub, marginLeft: '6px' }}>{timeLabel}</span>}
+              </div>
+            )
+          })
+        })()}
+      </td>
+    </tr>
+  )
+})
+
 export default function ShipmentsPage() {
   const c = useTheme()
   useEffect(() => { document.title = 'SAMBA-상품전송삭제' }, [])
@@ -138,7 +225,12 @@ export default function ShipmentsPage() {
   const deleting = false
   const [stopping, setStopping] = useState('')  // '' | 'cancel' | 'emergency'
   const [pausedJobPayload, setPausedJobPayload] = useState<Record<string, unknown> | null>(null)
-  const [, setProgress] = useState({ current: 0, total: 0 })
+  // progress는 화면에 표시하지 않음 — state로 두면 1초 잡 폴링마다 값이 같아도
+  // 새 객체로 페이지 전체 리렌더 발생(대량 행 로드 시 탭 프리즈). ref에만 기록.
+  const progressValueRef = useRef({ current: 0, total: 0 })
+  const setProgress = useCallback((p: { current: number; total: number }) => {
+    progressValueRef.current = p
+  }, [])
   const progressRef = useRef<NodeJS.Timeout | null>(null)
   const abortRef = useRef(false)
   const activeJobIdRef = useRef('')
@@ -275,10 +367,14 @@ export default function ShipmentsPage() {
         const { API_BASE_URL: apiBase } = await import('@/config/api')
         const res = await fetchWithAuth(`${apiBase}/api/v1/samba/jobs/transmit-queue-status`)
         const data = await res.json()
-        setJobQueueStatus({
+        const next = {
           running: Array.isArray(data.running) ? data.running : [],
           pending: Array.isArray(data.pending) ? data.pending : [],
-        })
+        }
+        // 내용이 같으면 이전 참조 유지 — 5초마다 새 객체로 전체 리렌더되는 것 방지
+        setJobQueueStatus(prev =>
+          JSON.stringify(prev) === JSON.stringify(next) ? prev : next
+        )
       } catch { /* ignore */ }
     }
     // 초기 로딩 차단 방지: 3초 후 첫 호출
@@ -638,10 +734,13 @@ export default function ShipmentsPage() {
     }
   }, [products, accounts, fromStorage, preSelectedIds, preSelectedSites, autoAll, priceOnly, productsById, categoryMappingByKey, policiesById, accountsById, availableMarketTypes])
 
-  const toggleProduct = (id: string) => setSelectedProducts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  // 선택 조회용 Set — 배열 includes는 행수×선택수 O(n²)라 대량 로드 시 렌더 한 번에
+  // 수천만 번 비교가 돌아 탭 프리즈 유발
+  const selectedProductsSet = useMemo(() => new Set(selectedProducts), [selectedProducts])
+  const toggleProduct = useCallback((id: string) => setSelectedProducts(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), [])
   const toggleAllProducts = () => {
     const pageIds = pageProducts.map(p => p.id)
-    const allChecked = pageIds.every(id => selectedProducts.includes(id))
+    const allChecked = pageIds.every(id => selectedProductsSet.has(id))
     setSelectedProducts(allChecked ? [] : pageIds)
   }
   const allSites = SOURCE_SITES.filter(s => s !== '전체')
@@ -657,6 +756,23 @@ export default function ShipmentsPage() {
       ? filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize)
       : filteredProducts,
     [clientPagingMode, filteredProducts, currentPage, pageSize],
+  )
+
+  // 행 엘리먼트 배열을 메모 — 로그/모달/폴링 등 무관한 상태변경 렌더에서는
+  // 동일 참조를 반환해 React가 1만 행 재조정(props 비교)조차 건너뛰게 함
+  const productRows = useMemo(
+    () => pageProducts.map((p, idx) => (
+      <ProductRow
+        key={p.id}
+        p={p}
+        rowNo={(currentPage - 1) * pageSize + idx + 1}
+        checked={selectedProductsSet.has(p.id)}
+        onToggle={toggleProduct}
+        accountsById={accountsById}
+        c={c}
+      />
+    )),
+    [pageProducts, currentPage, pageSize, selectedProductsSet, toggleProduct, accountsById, c],
   )
 
   // 등록된 마켓 목록 (동적)
@@ -1594,7 +1710,7 @@ export default function ShipmentsPage() {
                 }
                 try {
                   let allIds: string[]
-                  const importedSelectedIds = importedSelectionRef.current.filter(id => selectedProducts.includes(id))
+                  const importedSelectedIds = importedSelectionRef.current.filter(id => selectedProductsSet.has(id))
                   if (!userFilterChangedRef.current && importedSelectedIds.length > 0) {
                     allIds = products
                       .filter(p => importedSelectedIds.includes(p.id) && new Set(selectedSites).has(p.source_site))
@@ -1758,7 +1874,7 @@ export default function ShipmentsPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
           <thead>
             <tr style={{ background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
-              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={pageProducts.length > 0 && pageProducts.every(p => selectedProducts.includes(p.id))} onChange={toggleAllProducts} style={{ accentColor: c.primary }} /></th>
+              <th style={{ width: '36px', padding: '0.625rem' }}><input type="checkbox" checked={pageProducts.length > 0 && pageProducts.every(p => selectedProductsSet.has(p.id))} onChange={toggleAllProducts} style={{ accentColor: c.primary }} /></th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem', color: c.textSub, width: '40px' }}>No</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: c.textSub }}>상품번호</th>
               <th style={{ padding: '0.625rem 0.5rem', textAlign: 'left', fontSize: '0.72rem', color: c.textSub }}>사이트</th>
@@ -1774,75 +1890,7 @@ export default function ShipmentsPage() {
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</td></tr>
             ) : products.length === 0 ? (
               <tr><td colSpan={7} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>상품이 없습니다</td></tr>
-            ) : pageProducts.map((p, idx) => {
-              const regAccounts = p.registered_accounts || []
-              const regMarkets = regAccounts.map(aid => accountsById.get(aid)?.market_name).filter(Boolean)
-              const optCount = (p.options || []).length
-              return (
-                <tr key={p.id} style={{ borderBottom: `1px solid ${c.border}`, verticalAlign: 'top' }}
-                  onMouseEnter={e => (e.currentTarget.style.background = c.surfaceAlt)}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-                >
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center' }}>
-                    <input type="checkbox" checked={selectedProducts.includes(p.id)} onChange={() => toggleProduct(p.id)} style={{ accentColor: c.primary }} />
-                  </td>
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: c.textMuted, fontSize: '0.72rem' }}>{(currentPage - 1) * pageSize + idx + 1}</td>
-                  <td style={{ padding: '0.625rem 0.5rem', color: c.textMuted, fontSize: '0.72rem' }}>{p.site_product_id || '-'}</td>
-                  <td style={{ padding: '0.625rem 0.5rem' }}>
-                    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 600, color: SITE_COLORS[p.source_site] || c.textMuted, background: `${SITE_COLORS[p.source_site] || c.textMuted}18`, border: `1px solid ${SITE_COLORS[p.source_site] || c.textMuted}40` }}>{p.source_site}</span>
-                  </td>
-                  <td style={{ padding: '0.625rem 0.5rem' }}>
-                    <div>
-                      <a href={`/samba/products?highlight=${p.id}`} style={{ color: c.text, textDecoration: 'none', fontSize: '0.8rem', cursor: 'pointer' }}
-                        onMouseEnter={e => (e.currentTarget.style.textDecoration = 'underline')}
-                        onMouseLeave={e => (e.currentTarget.style.textDecoration = 'none')}
-                      >
-                        [{p.site_product_id || ''}] {p.brand ? <span style={{ color: c.text, fontWeight: 600 }}>[{p.brand}]</span> : ''}{p.brand ? ' ' : ''}{p.name} {optCount > 0 ? <span style={{ color: c.text }}>[옵션수:{fmtNum(optCount)}]</span> : ''}
-                      </a>
-                    </div>
-                    {regMarkets.length > 0 && (
-                      <div style={{ fontSize: '0.72rem', color: c.textSub, marginTop: '2px' }}>
-                        (등록된 마켓 : {regMarkets.map((m, i) => (
-                          <span key={i}><span style={{ color: c.text }}>{m}</span>{i < regMarkets.length - 1 ? ' / ' : ''}</span>
-                        ))})
-                      </div>
-                    )}
-                  </td>
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
-                    {(() => {
-                      const ts = p.last_refreshed_at || p.updated_at
-                      if (!ts) return '-'
-                      const d = new Date(ts)
-                      return (
-                        <span style={{ color: c.textSub }}>{d.getFullYear()}-{String(d.getMonth() + 1).padStart(2, '0')}-{String(d.getDate()).padStart(2, '0')} {String(d.getHours()).padStart(2, '0')}:{String(d.getMinutes()).padStart(2, '0')}:{String(d.getSeconds()).padStart(2, '0')}</span>
-                      )
-                    })()}
-                  </td>
-                  <td style={{ padding: '0.625rem 0.5rem', textAlign: 'center', fontSize: '0.72rem' }}>
-                    {(() => {
-                      const regAccs = (p.registered_accounts || [])
-                      if (regAccs.length === 0) return <span style={{ color: c.textMuted }}>-</span>
-                      const sent = p.last_sent_data || {}
-                      return regAccs.map(aid => {
-                        const acc = accountsById.get(aid)
-                        if (!acc) return null
-                        const sentAt = sent[aid]?.sent_at
-                        const timeLabel = sentAt ? (() => {
-                          const d = new Date(sentAt)
-                          return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-                        })() : ''
-                        return (
-                          <div key={aid} style={{ marginBottom: '2px', fontSize: '0.68rem' }}>
-                            <span style={{ color: c.success }}>{acc.market_name}({acc.seller_id || acc.account_label || '-'})</span>
-                            {timeLabel && <span style={{ color: c.textSub, marginLeft: '6px' }}>{timeLabel}</span>}
-                          </div>
-                        )
-                      })
-                    })()}
-                  </td>
-                </tr>
-              )
-            })}
+            ) : productRows}
           </tbody>
         </table>
 
