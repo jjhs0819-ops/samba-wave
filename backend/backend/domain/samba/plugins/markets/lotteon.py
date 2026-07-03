@@ -2702,8 +2702,7 @@ class LotteonPlugin(MarketPlugin):
                     # 다른 실행이 등록 중(신선한 선점) — 최대 120초 결과 대기
                     _c_deadline = _cl_time_g.monotonic() + 120
                     while (
-                        _c_status == "pending"
-                        and _cl_time_g.monotonic() < _c_deadline
+                        _c_status == "pending" and _cl_time_g.monotonic() < _c_deadline
                     ):
                         await _aio_guard.sleep(3.0)
                         _c_status, _c_val = await self._claim_registration_slot(
@@ -2729,9 +2728,7 @@ class LotteonPlugin(MarketPlugin):
                         # 같은 상품명이 롯데온에 있으면 고아 회수, 없으면 강제 선점.
                         if _guard_name:
                             try:
-                                _st_ts = int(
-                                    _c_val[len(self._CLAIM_PREFIX):] or 0
-                                )
+                                _st_ts = int(_c_val[len(self._CLAIM_PREFIX) :] or 0)
                                 _st_win = (
                                     _dt_guard.fromtimestamp(
                                         _st_ts - 60,
@@ -3209,7 +3206,7 @@ class LotteonPlugin(MarketPlugin):
                 import time as _cl_time
 
                 try:
-                    _ts = int(_vs[len(self._CLAIM_PREFIX):])
+                    _ts = int(_vs[len(self._CLAIM_PREFIX) :])
                 except Exception:
                     _ts = 0
                 if _cl_time.time() - _ts > self._CLAIM_STALE_SECONDS:

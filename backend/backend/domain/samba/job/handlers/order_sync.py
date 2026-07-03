@@ -71,11 +71,6 @@ async def run(
 
     total = len(accs)
     _add_job_log(job.id, f"전체마켓 주문수집 시작 ({total}개 계정, 최근 {days}일)")
-    job.total = total
-    job.current = 0
-    job.progress = 0
-    session.add(job)
-    await session.flush()
 
     # 라우터 함수 직접 호출(Depends 우회) — 라우터 변경 0
     from backend.api.v1.routers.samba.order import (
@@ -83,6 +78,16 @@ async def run(
         SyncOrdersRequest,
     )
     from backend.db.orm import get_write_session
+
+    # 초기 진행률 fresh 세션 격리 — main session flush가 samba_jobs 행 락을
+    # 계정 순회(최대 300초×N) 내내 보유하는 문제 방지 (issue #562)
+    try:
+        async with get_write_session() as _init_s:
+            _init_repo = SambaJobRepository(_init_s)
+            await _init_repo.update_progress(job.id, 0, total)
+            await _init_s.commit()
+    except Exception as _ie:
+        logger.warning(f"[order_sync] {job.id} 초기 진행률 설정 실패(무시): {_ie}")
 
     total_synced = 0
     all_results: list[dict[str, Any]] = []
