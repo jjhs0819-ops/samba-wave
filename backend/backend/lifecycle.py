@@ -1618,6 +1618,7 @@ async def _start_smartstore_ghost_reconciler() -> None:
 
 
 _coupang_ghost_reconciler_task: asyncio.Task | None = None
+_esmplus_ghost_reconciler_task: asyncio.Task | None = None
 _soldout_cleanup_task: asyncio.Task | None = None
 
 
@@ -1780,6 +1781,19 @@ async def _start_coupang_ghost_reconciler() -> None:
     _coupang_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
     logging.getLogger("backend.lifecycle").info(
         "[lifecycle] 쿠팡 유령상품 reconciler 시작"
+    )
+
+
+async def _start_esmplus_ghost_reconciler() -> None:
+    """ESMPlus(지마켓/옥션) 유령상품 일일 자동 감지 잡 — 24시간 주기."""
+    global _esmplus_ghost_reconciler_task
+    from backend.domain.samba.proxy.esmplus_ghost_reconciler import (
+        ghost_reconciler_loop,
+    )
+
+    _esmplus_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] ESMPlus 유령상품 reconciler 시작"
     )
 
 
@@ -2013,6 +2027,7 @@ async def lifespan(app: FastAPI):
         await _start_ssg_status_reconciler()
         await _start_smartstore_ghost_reconciler()
         await _start_coupang_ghost_reconciler()
+        await _start_esmplus_ghost_reconciler()
         await _start_tracking_dispatch_sweep()
         await _start_soldout_cleanup()
         worker_runtime = WorkerRuntime(
