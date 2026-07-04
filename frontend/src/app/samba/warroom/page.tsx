@@ -580,6 +580,31 @@ function ActiveCyclesPanel(): React.ReactElement {
                           cursor: busy === k ? 'wait' : 'pointer',
                         }}
                       >{busy === k ? '삭제중…' : '분담삭제'}</button>
+                    ) : isDaemonDead ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <button
+                          disabled={busy === k}
+                          onClick={() => cancelCycle(c.device_id, c.site)}
+                          style={{
+                            ...btn('danger'),
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            cursor: busy === k ? 'wait' : 'pointer',
+                          }}
+                        >{busy === k ? '중단중…' : '중단'}</button>
+                        <button
+                          disabled={busy === k}
+                          onClick={() => removeAllowedSite(c.device_id, c.site)}
+                          style={{
+                            ...btn('secondary'),
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            cursor: busy === k ? 'wait' : 'pointer',
+                          }}
+                        >{busy === k ? '삭제중…' : '분담삭제'}</button>
+                      </div>
                     ) : (
                       <button
                         disabled={busy === k}
