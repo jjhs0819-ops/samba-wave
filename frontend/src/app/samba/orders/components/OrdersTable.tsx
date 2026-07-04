@@ -341,7 +341,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                   </div>
                 </td>
                 {/* 주문상태 */}
-                <td style={{ padding: '0.625rem', fontSize: '0.8rem', height: '100%' }}>
+                <td style={{ padding: '0.625rem', fontSize: '0.8rem', height: '1px' }}>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', height: '100%' }}>
                     {/* 1행: 상태 드롭박스 + 주문번호 인풋 */}
                     <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
