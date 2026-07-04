@@ -534,18 +534,41 @@ async def _build_order_filters(
             filters.append(action_filter)
 
     # 송장필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
+    # 크림(KREAM) 주문은 tracking_number(허브넷 HBL)가 주문 생성 시부터 채워지므로
+    # 송장 유무 판정을 해외송장번호(overseas_tracking_number, 스니덩크→사무국 발송) 기준으로 함
+    _is_kream = func.upper(func.coalesce(SambaOrder.source_site, "")) == "KREAM"
     if invoice_filter == "has_invoice":
         filters.append(
-            and_(
-                SambaOrder.tracking_number != None,  # noqa: E711
-                SambaOrder.tracking_number != "",
+            or_(
+                and_(
+                    _is_kream,
+                    SambaOrder.overseas_tracking_number != None,  # noqa: E711
+                    SambaOrder.overseas_tracking_number != "",
+                ),
+                and_(
+                    ~_is_kream,
+                    SambaOrder.tracking_number != None,  # noqa: E711
+                    SambaOrder.tracking_number != "",
+                ),
             )
         )
     elif invoice_filter == "no_invoice":
         filters.append(
             or_(
-                SambaOrder.tracking_number == None,  # noqa: E711
-                SambaOrder.tracking_number == "",
+                and_(
+                    _is_kream,
+                    or_(
+                        SambaOrder.overseas_tracking_number == None,  # noqa: E711
+                        SambaOrder.overseas_tracking_number == "",
+                    ),
+                ),
+                and_(
+                    ~_is_kream,
+                    or_(
+                        SambaOrder.tracking_number == None,  # noqa: E711
+                        SambaOrder.tracking_number == "",
+                    ),
+                ),
             )
         )
 
@@ -11116,6 +11139,11 @@ def _parse_playauto_order(
     return {
         "order_number": ro.get("OrderCode", ""),
         "shipment_id": str(ro.get("Number", "")),
+        # 라인 유니크키(Number)를 ord_prd_seq에 넣어 멀티라인 구분.
+        # 같은 OrderCode에 상품 여러 개일 때 order_number만으론 uq_order_tenant_number_seq
+        # (NULLS NOT DISTINCT)에서 NULL끼리 충돌 → 2번째 라인부터 유실되던 버그 수정.
+        # 기존주문(ord_prd_seq=NULL)은 shipment_id 폴백으로 매칭돼 중복 안 생김.
+        "ord_prd_seq": str(ro.get("Number", "")).strip() or None,
         "channel_id": account_id,
         "channel_name": account_label,
         "product_id": ro.get("ProdCode", ""),

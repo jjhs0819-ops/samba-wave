@@ -131,11 +131,17 @@ class BaseRepository(Generic[ModelType]):
             return created_entity
 
         except IntegrityError as e:
-            await self.session.rollback()
-            logger.exception(f"Integrity error creating {self.model.__name__}: {e}")
+            # commit=False(청크 persist 모드)에서는 세션 전체를 롤백하면 안 된다.
+            # 호출부가 begin_nested(SAVEPOINT)로 감싸 그 1건만 격리 롤백하고
+            # 나머지 청크는 살리기 때문. 여기서 session.rollback()을 하면 SAVEPOINT가
+            # 무력화되고 청크 전체(주문 수십건)가 유실됨(플레이오토 최근주문 누락 사고).
+            if commit:
+                await self.session.rollback()
+            logger.warning(f"Integrity error creating {self.model.__name__}: {e}")
             raise
         except SQLAlchemyError as e:
-            await self.session.rollback()
+            if commit:
+                await self.session.rollback()
             logger.exception(f"Error creating {self.model.__name__}: {e}")
             raise
 

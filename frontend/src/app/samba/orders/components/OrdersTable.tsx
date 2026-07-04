@@ -669,7 +669,7 @@ export default function OrdersTable(props: OrdersTableProps) {
 
                     {/* 간단메모 */}
                     <textarea
-                      style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '2rem', lineHeight: '1.4' }}
+                      style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '1.7rem', lineHeight: '1.4', overflowY: 'hidden' }}
                       placeholder="간단메모"
                       value={editingNotes[o.id] ?? o.notes ?? ''}
                       onChange={e => setEditingNotes(prev => ({ ...prev, [o.id]: e.target.value }))}

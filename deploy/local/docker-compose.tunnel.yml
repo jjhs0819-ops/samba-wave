@@ -99,6 +99,9 @@ services:
       DB_WRITE_MAX_OVERFLOW: "15"
       DB_READ_POOL_SIZE: "5"
       DB_READ_MAX_OVERFLOW: "5"
+      # 오토튠 bg 전송 동시성 300 → 20. 풀(30) 초과로 270개 timeout 나던 것 차단.
+      # order_sync·오토튠 여유분 남기고 풀 안에서 안정 처리.
+      JOB_BG_TRANSMIT_MAX_CONCURRENCY: "20"
       # api 와 같은 netns(service:wireguard) 공유 → 8080 충돌 방지 위해 worker 는 8081
       WORKER_BIND_PORT: "8081"
       DISABLE_BACKGROUND_WORKERS: "${BG_DISABLE:-1}"
