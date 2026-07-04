@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.48"
+DAEMON_VERSION = "1.4.49"
 
 # N건 처리 후 프록시 교체를 위해 supervisor 재기동 유도 (0=비활성)
 _PROXY_ROTATE_AFTER = 10
@@ -173,6 +173,68 @@ def _register_run_key(exe_path: Path) -> None:
         logger_print(f"Run 키 등록 완료: {exe_path}")
     except Exception as exc:
         logger_print(f"Run 키 등록 실패(무시): {exc}")
+
+
+_TASK_NAME = "SambaDaemon"
+
+
+def _register_task_scheduler(exe_path: Path) -> None:
+    """Windows 작업 스케줄러에 데몬 등록 — 크래시 시 1분 후 자동 재시작.
+
+    Run 키는 로그온 시만 실행. 작업 스케줄러는 실패(비정상 종료) 시에도 재시작.
+    admin 불필요(TASK_LOGON_INTERACTIVE_TOKEN). 멱등 (/F 덮어쓰기).
+    """
+    if os.name != "nt":
+        return
+    try:
+        import tempfile
+
+        xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>99</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions>
+    <Exec>
+      <Command>"{exe_path}"</Command>
+    </Exec>
+  </Actions>
+</Task>"""
+        tmp = Path(tempfile.mktemp(suffix=".xml"))
+        tmp.write_text(xml, encoding="utf-16")
+        result = subprocess.run(
+            ["schtasks", "/Create", "/XML", str(tmp), "/TN", _TASK_NAME, "/F"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        tmp.unlink(missing_ok=True)
+        if result.returncode == 0:
+            logger_print(f"작업 스케줄러 등록 완료 ({_TASK_NAME}) — 크래시 시 1분 자동 재시작")
+        else:
+            logger_print(f"작업 스케줄러 등록 실패(무시): {result.stderr.strip()}")
+    except Exception as exc:
+        logger_print(f"작업 스케줄러 등록 실패(무시): {exc}")
 
 
 # 레거시 무버전 자산 — 1.4.16부터 자산명이 `samba-v{ver}.exe` 로 변경되어 404 회귀.
@@ -342,6 +404,7 @@ def _self_install_and_relaunch() -> None:
             time.sleep(1.0)
 
     _register_run_key(dst)
+    _register_task_scheduler(dst)
 
     # 다운로드 파일명(autotune-daemon-setup_it-<token>_be-<hex>.exe)에 박힌 식별자는
     # dst('daemon.exe')로 복사되며 사라진다. 재실행 데몬이 _extract_*(파일명/argv)로
@@ -4041,6 +4104,9 @@ def main() -> int:
 
     # 2. --worker 인자 없으면 supervisor 모드 (자기를 --worker 로 spawn + watchdog)
     if "--worker" not in sys.argv:
+        # 기존 설치 PC도 업데이트 후 첫 supervisor 시작 시 작업 스케줄러 자동 등록
+        if _is_frozen():
+            _register_task_scheduler(_install_dir() / "daemon.exe")
         return _supervisor_loop()
 
     # 3. --worker 인자 있으면 실제 작업 (이 분기에서만 Playwright + polling)
