@@ -207,6 +207,7 @@ export default function OrdersFilterBar(props: Props) {
           <option value="customer">고객명</option>
           <option value="product_id">상품ID</option>
           <option value="order_number">주문번호</option>
+          <option value="sourcing_order_number">소싱주문번호</option>
         </select>
         <input style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
         <button onClick={loadOrders} style={{ ...btn('primary'), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
