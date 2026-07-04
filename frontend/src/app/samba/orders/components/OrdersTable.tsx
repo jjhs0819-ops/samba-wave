@@ -341,8 +341,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                   </div>
                 </td>
                 {/* 주문상태 */}
-                <td style={{ padding: '0.625rem', fontSize: '0.8rem' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                <td style={{ padding: '0.625rem', fontSize: '0.8rem', height: '100%' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', height: '100%' }}>
                     {/* 1행: 상태 드롭박스 + 주문번호 인풋 */}
                     <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
                       <select value={o.status} onChange={e => handleStatusChange(o.id, e.target.value)}
@@ -669,7 +669,7 @@ export default function OrdersTable(props: OrdersTableProps) {
 
                     {/* 간단메모 */}
                     <textarea
-                      style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', height: '1.7rem', lineHeight: '1.4', overflowY: 'hidden' }}
+                      style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', flex: 1, height: 0, minHeight: '1.5rem', overflowY: 'hidden' }}
                       placeholder="간단메모"
                       value={editingNotes[o.id] ?? o.notes ?? ''}
                       onChange={e => setEditingNotes(prev => ({ ...prev, [o.id]: e.target.value }))}
