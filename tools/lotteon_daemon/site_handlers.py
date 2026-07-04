@@ -939,7 +939,7 @@ SITE_HANDLERS: dict[str, SiteHandler] = {
         # (2026-05-27 오토튠 SSG 실패율 높음 — 헤드리스 + 이미지 차단 환경에서
         # resultItemObj XHR 지연 케이스 보강).
         pre_extract_marker_timeout_ms=10_000,
-        pre_extract_wait_ms=1_500,
+        pre_extract_wait_ms=500,
         # 송장(tracking)은 마이페이지 접근 → 로그인 필수. login_url/selectors 추가.
         # requires_login=False 유지 → detail 흐름은 ensure_logged_in_for_site 가 스킵.
         login_url=SSG_TRACKING_LOGIN_URL,

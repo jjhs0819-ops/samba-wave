@@ -232,7 +232,7 @@ export default function OrdersPage() {
 
   const [siteAliasMap, setSiteAliasMap] = useState<Record<string, string>>({})
   const siteOptions = useMemo(() => {
-    const knownSites = ['MUSINSA', 'KREAM', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSSHOP', 'ElandMall', 'SSF']
+    const knownSites = ['MUSINSA', 'KREAM', 'SNKRDUNK', 'FashionPlus', 'Nike', 'Adidas', 'ABCmart', 'REXMONDE', 'SSG', 'LOTTEON', 'GSSHOP', 'ElandMall', 'SSF']
     const options = new Map<string, string>()
 
     const formatSiteLabel = (site: string) => {

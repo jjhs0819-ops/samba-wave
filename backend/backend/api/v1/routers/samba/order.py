@@ -448,7 +448,20 @@ async def _build_order_filters(
         )
         # GSSHOP 통합 필터 — DB에는 GSShop/GS이숍/GS이숍(고경) 등 변형 혼재 → 모두 매칭
         gs_aliases = {"GSSHOP", "GSShop", "GS이숍", "GS이샵", "GS샵"}
-        if normalized_site_filter in gs_aliases:
+        if normalized_site_filter.upper() == "SNKRDUNK":
+            # 소싱처=스니덩크: 크림 판매 주문의 실제 소싱처 — 소싱계정이 SNKRDUNK인 주문
+            from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+            snkr_acc_subq = select(SambaSourcingAccount.id).where(
+                func.upper(SambaSourcingAccount.site_name) == "SNKRDUNK"
+            )
+            filters.append(
+                or_(
+                    normalized_source_site == "SNKRDUNK",
+                    SambaOrder.sourcing_account_id.in_(snkr_acc_subq),
+                )
+            )
+        elif normalized_site_filter in gs_aliases:
             from backend.core.sql_safe import escape_like
 
             gs_filters = []
