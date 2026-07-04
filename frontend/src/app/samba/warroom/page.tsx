@@ -418,6 +418,35 @@ function ActiveCyclesPanel(): React.ReactElement {
     const t = setInterval(fetchCycles, 2000)
     return () => clearInterval(t)
   }, [fetchCycles])
+  // 데몬 끊김 — 5분 이상 dead인 항목
+  const deadDaemons = cycles.filter(
+    c => c.daemon_alive === false && (c.daemon_last_seen_ago_sec ?? 0) > 300
+  )
+
+  // 사이클 취소 + 분담삭제 순서로 완전 정리
+  const cleanupDeadDaemon = useCallback(async (device_id: string, site: string) => {
+    const key = `${device_id}|${site}`
+    setBusy(key)
+    try {
+      const { API_BASE_URL: api } = await import('@/config/api')
+      await fetchWithAuth(`${api}/api/v1/samba/collector/autotune/cancel-cycle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id, site }),
+      }).catch(() => {/* 이미 없어도 무시 */})
+      const allSitesForDev = cycles.filter(c => c.device_id === device_id).map(c => c.site)
+      const remaining = Array.from(new Set(allSitesForDev.filter(s => s !== site)))
+      await fetchWithAuth(`${api}/api/v1/samba/collector/autotune/pc-allowed-sites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ device_id, sites: remaining }),
+      })
+      await fetchCycles()
+    } finally {
+      setBusy('')
+    }
+  }, [cycles, fetchCycles])
+
   const cancelCycle = useCallback(async (device_id: string, site: string) => {
     const key = `${device_id}|${site}`
     setBusy(key)
@@ -470,6 +499,48 @@ function ActiveCyclesPanel(): React.ReactElement {
         </div>
         <button onClick={fetchCycles} style={{ ...btn('secondary'), padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem' }}>새로고침</button>
       </div>
+      {deadDaemons.length > 0 && (
+        <div style={{
+          background: 'rgba(220,38,38,0.12)',
+          border: '1px solid rgba(220,38,38,0.5)',
+          borderRadius: '6px',
+          padding: '0.6rem 0.75rem',
+          marginBottom: '0.75rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.4rem',
+        }}>
+          <div style={{ fontSize: '0.82rem', fontWeight: 700, color: clr.danger }}>
+            ⚠ 데몬 연결 끊김 — 재시작 필요
+          </div>
+          {deadDaemons.map(d => {
+            const k = `${d.device_id}|${d.site}`
+            const pcLabel = d.device_id.replace('samba-daemon-', '').slice(0, 16)
+            const agoMin = Math.floor((d.daemon_last_seen_ago_sec ?? 0) / 60)
+            return (
+              <div key={k} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.78rem', color: clr.text }}>
+                  <b>{d.site}</b> ({pcLabel}…) — {fmtNum(agoMin)}분 전 끊김
+                </span>
+                <button
+                  disabled={busy === k}
+                  onClick={() => cleanupDeadDaemon(d.device_id, d.site)}
+                  style={{
+                    background: clr.danger,
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '0.15rem 0.55rem',
+                    fontSize: '0.74rem',
+                    cursor: busy === k ? 'wait' : 'pointer',
+                    fontWeight: 600,
+                  }}
+                >{busy === k ? '정리중…' : '정리 후 재시작 준비'}</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
       {cycles.length === 0 ? (
         <div style={{ fontSize: '0.85rem', color: clr.textMuted, padding: '0.5rem 0' }}>활성 사이클 없음</div>
       ) : (
