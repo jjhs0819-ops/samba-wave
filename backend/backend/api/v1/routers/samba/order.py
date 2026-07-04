@@ -3063,6 +3063,114 @@ async def sync_snkrdunk_overseas_tracking(
     return {"success": True, "checked": checked, "shipped": shipped}
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 허브넷(kpartner.ehub24.net) 택배번호 자동입력
+# 크림 해외판매 배대지 — 스니덩크 해외송장을 허브넷 행에 기입해야 국내 재발송됨.
+# 서버사이드 로그인(auth) → search_kream 으로 (A-LI주문번호 → 행PK) 매핑 →
+# bulk_tracking_update 로 일괄 기입. 크레덴셜은 samba_settings.hubnet_credentials.
+# ─────────────────────────────────────────────────────────────────────────
+_HUBNET_BASE = "https://kpartner.ehub24.net"
+
+
+async def _push_hubnet_tracking(session: AsyncSession) -> dict:
+    """해외송장 보유 크림주문 → 허브넷 택배번호 일괄 기입. 실패해도 예외 안 던짐."""
+    import json  # noqa: F811 — 로컬 import (모듈 최상위에 없음)
+
+    import httpx as _httpx
+
+    from backend.domain.samba.forbidden.model import SambaSettings
+
+    r = await session.execute(
+        select(SambaSettings).where(SambaSettings.key == "hubnet_credentials")
+    )
+    row = r.scalars().first()
+    creds = row.value if row and isinstance(row.value, dict) else None
+    if not creds or not creds.get("email"):
+        return {"updated": 0, "error": "hubnet_credentials 없음"}
+
+    orders = (
+        await session.execute(
+            select(SambaOrder.order_number, SambaOrder.overseas_tracking_number).where(
+                SambaOrder.order_number.like("A-LI%"),
+                SambaOrder.overseas_tracking_number.is_not(None),
+                SambaOrder.overseas_tracking_number != "",
+            )
+        )
+    ).all()
+    trk = {o[0]: o[1] for o in orders}
+    if not trk:
+        return {"updated": 0, "error": None}
+
+    from datetime import date as _date, timedelta as _td
+
+    start = (_date.today() - _td(days=30)).isoformat()
+    end = _date.today().isoformat()
+    ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
+    try:
+        async with _httpx.AsyncClient(
+            headers={
+                "User-Agent": ua,
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"{_HUBNET_BASE}/list",
+            },
+            timeout=30,
+            follow_redirects=True,
+        ) as client:
+            login = await client.post(
+                f"{_HUBNET_BASE}/auth",
+                data={
+                    "action": "login",
+                    "email": creds["email"],
+                    "password": creds.get("password", ""),
+                },
+            )
+            if '"success":true' not in login.text:
+                return {"updated": 0, "error": f"허브넷 로그인 실패: {login.text[:80]}"}
+
+            search = await client.post(
+                f"{_HUBNET_BASE}/list_ajax",
+                data={
+                    "mode": "search_kream",
+                    "start_date": start,
+                    "end_date": end,
+                    "date_type": "order",
+                    "search_type": "hbl",
+                    "numbers": "",
+                    "work_status": "",
+                    "origin": "",
+                },
+            )
+            data = search.json()
+            if not data.get("success"):
+                return {"updated": 0, "error": "허브넷 조회 실패"}
+            payload = []
+            for hrow in data.get("data", []):
+                onum = str(hrow.get("add1") or "").strip()
+                if onum in trk:
+                    payload.append({"no": hrow.get("no"), "tracking_no": trk[onum]})
+            if not payload:
+                return {"updated": 0, "error": None}
+            upd = await client.post(
+                f"{_HUBNET_BASE}/list_ajax",
+                data={
+                    "mode": "bulk_tracking_update",
+                    "update_data": json.dumps(payload, ensure_ascii=False),
+                },
+            )
+            ok = '"success":true' in upd.text
+            logger.info(f"[허브넷] 택배번호 기입 {len(payload)}건 ok={ok}")
+            return {
+                "updated": len(payload) if ok else 0,
+                "error": None if ok else upd.text[:80],
+            }
+    except Exception as e:
+        logger.warning(f"[허브넷] 자동기입 실패(무시): {e}")
+        return {"updated": 0, "error": str(e)[:80]}
+
+
 @router.put("/{order_id}/status", response_model=SambaOrder)
 async def update_order_status(
     order_id: str,
@@ -9613,12 +9721,25 @@ async def sync_orders_from_markets(
                             await session.commit()
                             _pending = 0
                     continue
-                await svc.create_order(order_data, commit=False)
-                synced += 1
-                _pending += 1
-                if _pending >= _PERSIST_CHUNK:
-                    await session.commit()
-                    _pending = 0
+                # savepoint로 감싸 중복주문(uq_order_tenant_number_seq) 1건이
+                # 청크 전체를 롤백시켜 계정 주문 전부 유실되던 버그 방지.
+                # asyncpg는 tx 중 IntegrityError 발생 시 이후 쿼리가 전부 abort되므로
+                # begin_nested(SAVEPOINT)로 그 1건만 격리 롤백하고 나머지는 저장.
+                from sqlalchemy.exc import IntegrityError as _IntegrityError  # noqa: F811
+
+                try:
+                    async with session.begin_nested():
+                        await svc.create_order(order_data, commit=False)
+                    synced += 1
+                    _pending += 1
+                    if _pending >= _PERSIST_CHUNK:
+                        await session.commit()
+                        _pending = 0
+                except _IntegrityError:
+                    logger.warning(
+                        f"[주문동기화] {label}: 중복주문 스킵 "
+                        f"order_number={order_data.get('order_number')}"
+                    )
 
             # 루프 끝 잔여 청크 일괄 commit (issue #401) — continue 분기와 무관하게 항상 실행
             if _pending:
@@ -12228,6 +12349,9 @@ async def _kream_cost_backfill_from_shopmine(
                 tracking_shipped += 1
             await asyncio.sleep(0.3)  # SNKRDUNK 레이트리밋 보수값
 
+    # 4) 허브넷 택배번호 자동기입 (해외송장 보유 주문 전체)
+    hubnet = await _push_hubnet_tracking(session)
+
     return {
         "ok": True,
         "mode": "cost_backfill",
@@ -12235,6 +12359,8 @@ async def _kream_cost_backfill_from_shopmine(
         "unmatched": unmatched,
         "tracking_checked": tracking_checked,
         "tracking_shipped": tracking_shipped,
+        "hubnet_updated": hubnet.get("updated", 0),
+        "hubnet_error": hubnet.get("error"),
         "cookie_missing": not cookie,
     }
 
@@ -12404,4 +12530,44 @@ async def import_kream_excel(
         created += 1
 
     await session.commit()
-    return {"ok": True, "created": created, "skipped": skipped}
+
+    # 발송완료 업로드 후에도 스니덩크 해외송장 수집 + 허브넷 기입 자동 수행
+    # (기존 주문 중 소싱주문번호 있고 송장 없는 것 대상 — 방금 생성분은 소싱번호 없어 스킵됨)
+    from sqlalchemy import func as _kfunc
+
+    tracking_checked = 0
+    tracking_shipped = 0
+    snkr_cookie = await _get_snkr_session_cookie(session)
+    if snkr_cookie:
+        tstmt = (
+            select(SambaOrder)
+            .where(
+                _kfunc.upper(_kfunc.coalesce(SambaOrder.source_site, "")) == "KREAM",
+                SambaOrder.sourcing_order_number.is_not(None),
+                SambaOrder.sourcing_order_number != "",
+                (SambaOrder.overseas_tracking_number.is_(None))
+                | (SambaOrder.overseas_tracking_number == ""),
+            )
+            .limit(500)
+        )
+        if tenant_id is not None:
+            tstmt = tstmt.where(SambaOrder.tenant_id == tenant_id)
+        for o in (await session.execute(tstmt)).scalars().all():
+            tracking_checked += 1
+            res = await _apply_snkr_overseas_tracking(session, o, snkr_cookie)
+            if res.get("shipped"):
+                tracking_shipped += 1
+            await asyncio.sleep(0.3)
+
+    hubnet = await _push_hubnet_tracking(session)
+
+    return {
+        "ok": True,
+        "created": created,
+        "skipped": skipped,
+        "tracking_checked": tracking_checked,
+        "tracking_shipped": tracking_shipped,
+        "hubnet_updated": hubnet.get("updated", 0),
+        "hubnet_error": hubnet.get("error"),
+        "cookie_missing": not snkr_cookie,
+    }

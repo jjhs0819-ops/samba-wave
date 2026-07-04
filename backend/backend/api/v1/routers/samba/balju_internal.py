@@ -13,6 +13,7 @@ samba_auth(JWT)를 우회하므로 X-Internal-Token 헤더로만 인증한다(CS
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
@@ -78,8 +79,15 @@ def _pick(cands: List[Dict[str, Any]], option_hint: Optional[str]) -> Dict[str, 
         # 짧은 hint(예: "85")는 부분일치가 오탐 잦으므로 양방향 포함만 인정
         return hint in opt or opt in hint if opt else False
 
-    def paid_key(c: Dict[str, Any]):
-        return c.get("paid_at") or ""
+    def paid_key(c: Dict[str, Any]) -> float:
+        # 항상 float 반환 — paid_at(datetime)과 빈값(str) 혼재 시 정렬 TypeError 방지.
+        pa = c.get("paid_at")
+        if isinstance(pa, _dt.datetime):
+            try:
+                return pa.timestamp()
+            except (OverflowError, OSError, ValueError):
+                return 0.0
+        return 0.0
 
     return sorted(
         cands,
