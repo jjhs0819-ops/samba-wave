@@ -9,6 +9,9 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    # /dev/shm 기본 64MB → 1GB. 병렬쿼리 shared temp 부족 시 DiskFullError로
+    # 큰 쿼리(전체 상품 스캔 등) 실패하던 것 방지 (2026-07-03)
+    shm_size: 1gb
     environment:
       POSTGRES_USER: ${LOCAL_DB_USER:-samba}
       POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD 필요}

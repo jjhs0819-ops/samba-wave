@@ -579,6 +579,104 @@ class SnkrdunkKreamNameEnPatchRequest(BaseModel):
 
 
 # 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
+@snkrdunk_public_router.get("/kream/snkrdunk-compare/all")
+async def snkrdunk_compare_all_public(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """검수페이지용 전체 SNKRDUNK 상품 목록 (인증 불필요).
+
+    카테고리는 DB 실시간 기준:
+    1=PSA10재고O+크림매칭 / 2=재고X+매칭 / 3=재고O+미매칭 / 4=재고X+미매칭
+    """
+    from sqlalchemy import text
+
+    sql = text("""
+        SELECT
+            site_product_id AS snkr_id,
+            name AS snkr_name,
+            COALESCE(style_code, '') AS style_code,
+            COALESCE(extra_data->>'name_ja', '') AS name_ja,
+            COALESCE(extra_data->>'name_en', '') AS name_en,
+            COALESCE((images::jsonb)->>0, '') AS snkr_image,
+            COALESCE(resell_matches->'kream'->>'product_id', '') AS kream_id,
+            COALESCE(resell_matches->'kream'->>'name_ko', '') AS kream_name_ko,
+            COALESCE(resell_matches->'kream'->>'name_en', '') AS kream_name_en,
+            COALESCE(resell_matches->'kream'->>'image', '') AS kream_image,
+            COALESCE(resell_matches->'kream'->>'style_code', '') AS kream_style_code,
+            (COALESCE(resell_matches->'kream'->>'verified', '') = 'true') AS verified,
+            COALESCE((
+                SELECT NULLIF(o->>'stock', '')::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
+                LIMIT 1
+            ), 0) AS psa10_stock,
+            COALESCE((
+                SELECT NULLIF(o->>'price', '')::numeric::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
+                LIMIT 1
+            ), 0) AS psa10_price,
+            COALESCE((
+                SELECT NULLIF(o->>'stock', '')::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
+                LIMIT 1
+            ), 0) AS psa9_stock,
+            COALESCE((
+                SELECT NULLIF(o->>'price', '')::numeric::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
+                LIMIT 1
+            ), 0) AS psa9_price
+        FROM samba_collected_product
+        WHERE source_site = 'SNKRDUNK'
+        ORDER BY site_product_id
+    """)
+    result = await session.exec(sql)  # type: ignore[arg-type]
+    items = []
+    for r in result.mappings():
+        d = dict(r)
+        matched = bool(d["kream_id"])
+        # PSA10 없어도 PSA9 재고 있으면 재고 있는 것으로 취급
+        has_stock = (d["psa10_stock"] or 0) > 0 or (d["psa9_stock"] or 0) > 0
+        d["has_stock"] = has_stock
+        d["model_no"] = d["kream_style_code"]
+        d["kream_name"] = d["kream_name_ko"]
+        d["cat"] = (1 if has_stock else 2) if matched else (3 if has_stock else 4)
+        items.append(d)
+    return {"total": len(items), "items": items}
+
+
+class SnkrdunkVerifyPatchRequest(BaseModel):
+    verified: bool
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/verify")
+async def snkrdunk_update_verify_public(
+    snkr_id: str,
+    body: SnkrdunkVerifyPatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """검수 '일치' 확정 플래그 저장 (자동 입찰 관리 대상 지정, 인증 불필요)."""
+    from sqlalchemy import text
+
+    sql = text("""
+        UPDATE samba_collected_product
+        SET resell_matches = jsonb_set(
+            COALESCE(resell_matches, '{}'::jsonb),
+            '{kream,verified}',
+            CAST(:verified AS jsonb),
+            true
+        ), updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    await session.exec(  # type: ignore[arg-type]
+        sql.bindparams(sid=snkr_id, verified="true" if body.verified else "false")
+    )
+    await session.commit()
+    return {"ok": True}
+
+
 @snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
 async def snkrdunk_remove_match_public(
     snkr_id: str,

@@ -230,8 +230,8 @@ export default function OrdersFilterBar(props: Props) {
             <option value="">전체 소싱처</option>
             {siteOptions.map(site => <option key={site.value} value={site.value}>{site.label}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
-            <option value="">전체 소싱계정</option>
+          <select style={{ ...inputStyle, width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
+            <option value="">소싱계정</option>
             <option value="etc">기타(미매핑)</option>
             {[...new Set(sourcingAccounts.map(sa => sa.site_name))].sort().map(site => (
               <optgroup key={site} label={site}>
@@ -241,7 +241,7 @@ export default function OrdersFilterBar(props: Props) {
               </optgroup>
             ))}
           </select>
-          <select style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+          <select style={{ ...inputStyle, width: '77px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">배송상태</option>
             <option value="결제완료">주문접수</option>
             <option value="배송대기중">배송대기중</option>
@@ -253,7 +253,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="교환요청">교환요청</option>
             <option value="교환완료">교환완료</option>
           </select>
-          <select style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
+          <select style={{ ...inputStyle, width: '77px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
             <option value="">등록필터</option>
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
