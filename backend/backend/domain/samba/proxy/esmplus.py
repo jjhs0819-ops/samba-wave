@@ -1337,6 +1337,17 @@ class ESMPlusClient:
         """교환 조회 — POST /claim/v1/sa/Exchanges."""
         return await self._call_api("POST", "/claim/v1/sa/Exchanges", data=params)
 
+    async def search_returns(self, params: dict[str, Any]) -> dict[str, Any]:
+        """반품 조회 — POST /claim/v1/sa/Returns.
+
+        params:
+          - SiteType: 1=옥션, 3=G마켓
+          - ReturnStatus: 0(전체)~5
+          - Type: 0=주문번호, 1=장바구니, 2=신청일, 3=완료일, 4=결제일
+          - StartDate / EndDate: 7일 이내 범위
+        """
+        return await self._call_api("POST", "/claim/v1/sa/Returns", data=params)
+
     async def search_non_receipts(self, params: dict[str, Any]) -> dict[str, Any]:
         """미수령 신고 조회 — POST /claim/v1/sa/NonReceipts."""
         return await self._call_api("POST", "/claim/v1/sa/NonReceipts", data=params)

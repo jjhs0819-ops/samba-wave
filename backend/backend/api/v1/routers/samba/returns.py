@@ -2286,6 +2286,14 @@ async def sync_returns_from_markets(
                     4: ("completed", "교환완료"),
                     5: ("rejected", "교환거부"),
                 }
+                # ReturnStatus 1~5 → status
+                _return_status_map = {
+                    1: ("requested", "반품요청"),
+                    2: ("approved", "반품진행"),
+                    3: ("approved", "반품진행"),
+                    4: ("completed", "반품완료"),
+                    5: ("rejected", "반품거부"),
+                }
 
                 _market_label = "G마켓" if market_type == "gmarket" else "옥션"
 
@@ -2321,6 +2329,22 @@ async def sync_returns_from_markets(
                     )
                     _exchange_resp = {}
 
+                try:
+                    _return_resp = await _esm_client.search_returns(
+                        {
+                            "SiteType": _esm_claim_site_type,
+                            "ReturnStatus": 0,
+                            "Type": 2,
+                            "StartDate": _esm_from_claim,
+                            "EndDate": _esm_to_claim,
+                        }
+                    )
+                except Exception as _rre:
+                    logger.warning(
+                        f"[반품동기화][ESM] {label}: returns 조회 실패 — {_rre}"
+                    )
+                    _return_resp = {}
+
                 _cancel_items = (
                     _cancel_resp.get("Data") if isinstance(_cancel_resp, dict) else []
                 ) or []
@@ -2329,9 +2353,14 @@ async def sync_returns_from_markets(
                     if isinstance(_exchange_resp, dict)
                     else []
                 ) or []
+                _return_items = (
+                    _return_resp.get("Data") if isinstance(_return_resp, dict) else []
+                ) or []
 
                 _esm_synced = 0
-                _esm_total = len(_cancel_items) + len(_exchange_items)
+                _esm_total = (
+                    len(_cancel_items) + len(_exchange_items) + len(_return_items)
+                )
 
                 async def _esm_upsert_claim(
                     order_number: str,
@@ -2417,6 +2446,8 @@ async def sync_returns_from_markets(
                         new_ss = "교환요청"
                     if return_type == "cancel" and "취소" not in new_ss:
                         new_ss = "취소요청"
+                    if return_type == "return" and "반품" not in new_ss:
+                        new_ss = "반품요청"
                     if existing_order.shipping_status != new_ss:
                         await order_repo.update_async(
                             existing_order.id, shipping_status=new_ss
@@ -2457,6 +2488,21 @@ async def sync_returns_from_markets(
                         product_name=str(_xi.get("GoodsName") or ""),
                     )
 
+                for _ri in _return_items:
+                    if not isinstance(_ri, dict):
+                        continue
+                    _rs = int(_ri.get("ReturnStatus") or 1)
+                    _st, _mos = _return_status_map.get(_rs, ("requested", "반품요청"))
+                    _esm_synced += await _esm_upsert_claim(
+                        order_number=str(_ri.get("OrderNo") or ""),
+                        return_type="return",
+                        market_order_status=_mos,
+                        status=_st,
+                        reason=str(_ri.get("ReturnReason") or _ri.get("Reason") or ""),
+                        quantity=int(_ri.get("ReturnQty") or _ri.get("OrderQty") or 1),
+                        product_name=str(_ri.get("GoodsName") or ""),
+                    )
+
                 total_synced += _esm_synced
                 results.append(
                     {
@@ -2468,7 +2514,8 @@ async def sync_returns_from_markets(
                 )
                 logger.info(
                     f"[반품동기화][ESM] {label}: cancels={len(_cancel_items)}, "
-                    f"exchanges={len(_exchange_items)}, synced={_esm_synced}"
+                    f"exchanges={len(_exchange_items)}, returns={len(_return_items)}, "
+                    f"synced={_esm_synced}"
                 )
 
             else:
