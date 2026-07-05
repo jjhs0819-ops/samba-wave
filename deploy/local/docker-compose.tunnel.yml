@@ -109,6 +109,32 @@ services:
       # 최종 writeback 이 registered_accounts/product_no 기록하므로 손실 없음.
       DISABLE_IMMEDIATE_SAVE: "1"
 
+  # Cloudflare Tunnel 로컬 Caddy — /images/* R2 프록시 + samba-api 역프록시
+  # Cloudflare가 TLS 처리하므로 HTTP 80포트만 운용
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    env_file: [./local.env]
+    networks: [samba-local]
+    depends_on:
+      wireguard:
+        condition: service_started
+
+  # Cloudflare Tunnel 클라이언트 — cloudflared-samba 독립 컨테이너 대체
+  # 터널 토큰은 local.env CLOUDFLARE_TUNNEL_TOKEN 에 저장
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    networks: [samba-local]
+    depends_on:
+      caddy:
+        condition: service_started
+
   # 유지보수 루프 전용 프로세스(C) — 고스트 리컨실러/송장sweep/soldout 정리.
   # 단일 인스턴스(중복 리컨실 방지). api(A) 이벤트루프 과부하 → HTTP 503 분리용.
   samba-reconciler:
@@ -141,6 +167,8 @@ services:
 
 volumes:
   pg_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   samba-local:

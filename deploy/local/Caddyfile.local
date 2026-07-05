@@ -1,0 +1,54 @@
+# Cloudflare Tunnel 로컬 Caddy — HTTP 전용 (TLS는 Cloudflare 엣지가 처리)
+# 포트 80에서 받아 /images/* R2 프록시 + samba-api 역방향 프록시
+
+:80 {
+    # OPTIONS CORS preflight — 단일 worker 오토튠 busy 시 preflight 지연 방지
+    @cors_preflight method OPTIONS
+    handle @cors_preflight {
+        header Access-Control-Allow-Origin {header.Origin}
+        header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        header Access-Control-Allow-Headers "authorization, content-type, x-api-key, x-device-id"
+        header Access-Control-Max-Age "86400"
+        respond 204
+    }
+
+    # /images/* — Cloudflare R2 역방향 프록시
+    # 롯데홈쇼핑 등 일부 마켓 API가 r2.dev 도메인 다운로드 실패 → 자체 도메인으로 우회
+    # R2 봇/Java/Python UA 차단(1010) 우회를 위해 크롬 UA 강제
+    handle_path /images/* {
+        header -X-Frame-Options
+        header -Strict-Transport-Security
+        header -X-Content-Type-Options
+        header -Via
+        header -Server
+        header -Cf-Ray
+        header -Alt-Svc
+        reverse_proxy https://{$R2_PUBLIC_HOST} {
+            header_up Host {$R2_PUBLIC_HOST}
+            header_up User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            transport http {
+                tls
+                tls_server_name {$R2_PUBLIC_HOST}
+            }
+        }
+    }
+
+    reverse_proxy wireguard:8080 {
+        health_uri /api/v1/health
+        health_interval 5s
+        health_timeout 10s
+        fail_duration 30s
+        max_fails 10
+        unhealthy_status 5xx
+        transport http {
+            dial_timeout 10s
+            response_header_timeout 600s
+            read_timeout 600s
+        }
+    }
+
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+    }
+}
