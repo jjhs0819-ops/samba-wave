@@ -294,7 +294,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수수료율</span><span style={{ color: c.textMuted }}>{liveFeeRate}%</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수익률</span><span style={{ color: c.textMuted }}>{liveProfitRate}%</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>원가</span><span style={{ color: c.textMuted }}>{fmtNum(displayCost)}</span></div>
+                    {/* 스니덩크 소싱 상품의 cp 원가는 엔화 — ¥ 표기로 원화 오해 방지 */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>원가</span><span style={{ color: c.textMuted }}>{(o.collected_product_id && collectedProductSourceSites[o.collected_product_id] === 'SNKRDUNK' && collectedProductCosts[o.collected_product_id] !== undefined) ? `¥${fmtNum(displayCost)}` : fmtNum(displayCost)}</span></div>
                   </div>
                   {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px', marginTop: '0.375rem', borderTop: `1px solid ${c.borderStrong}`, paddingTop: '0.375rem' }}>
