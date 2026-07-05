@@ -8640,6 +8640,125 @@ async def sync_orders_from_markets(
                         f"{_esm_settle_e}"
                     )
 
+                # 클레임 상태 배선 — 취소/교환/반품 중인 주문 shipping_status 업데이트
+                try:
+                    _esm_claim_site_type = 3 if market_type == "gmarket" else 1
+                    _esm_claim_days = min(_esm_days, 6)
+                    _esm_from_claim = (
+                        _esm_now - _esm_td(days=_esm_claim_days)
+                    ).strftime("%Y-%m-%d")
+                    _esm_to_claim = _esm_now.strftime("%Y-%m-%d")
+                    _claim_base = {
+                        "SiteType": _esm_claim_site_type,
+                        "Type": 2,
+                        "StartDate": _esm_from_claim,
+                        "EndDate": _esm_to_claim,
+                    }
+                    _cancel_ss_map = {
+                        1: "취소요청",
+                        2: "취소완료",
+                        3: "취소완료",
+                        4: "취소거부",
+                    }
+                    _exchange_ss_map = {
+                        1: "교환요청",
+                        2: "교환진행",
+                        3: "교환진행",
+                        4: "교환완료",
+                        5: "교환거부",
+                    }
+                    _return_ss_map = {
+                        1: "반품요청",
+                        2: "반품진행",
+                        3: "반품진행",
+                        4: "반품완료",
+                        5: "반품거부",
+                    }
+                    try:
+                        _oc_cancels_resp = await esm_client.search_cancels(
+                            {**_claim_base, "CancelStatus": 0}
+                        )
+                    except Exception:
+                        _oc_cancels_resp = {}
+                    try:
+                        _oc_exchanges_resp = await esm_client.search_exchanges(
+                            {**_claim_base, "ExchangeStatus": 0}
+                        )
+                    except Exception:
+                        _oc_exchanges_resp = {}
+                    try:
+                        _oc_returns_resp = await esm_client.search_returns(
+                            {**_claim_base, "ReturnStatus": 0}
+                        )
+                    except Exception:
+                        _oc_returns_resp = {}
+
+                    _oc_cancels = (
+                        _oc_cancels_resp.get("Data")
+                        if isinstance(_oc_cancels_resp, dict)
+                        else []
+                    ) or []
+                    _oc_exchanges = (
+                        _oc_exchanges_resp.get("Data")
+                        if isinstance(_oc_exchanges_resp, dict)
+                        else []
+                    ) or []
+                    _oc_returns = (
+                        _oc_returns_resp.get("Data")
+                        if isinstance(_oc_returns_resp, dict)
+                        else []
+                    ) or []
+
+                    from sqlalchemy import text as _claim_text
+
+                    _claim_updates = 0
+                    for _items, _status_key, _ss_map in [
+                        (_oc_cancels, "CancelStatus", _cancel_ss_map),
+                        (_oc_exchanges, "ExchangeStatus", _exchange_ss_map),
+                        (_oc_returns, "ReturnStatus", _return_ss_map),
+                    ]:
+                        for _cl in _items:
+                            if not isinstance(_cl, dict):
+                                continue
+                            _cl_ord_no = str(_cl.get("OrderNo") or "")
+                            if not _cl_ord_no:
+                                continue
+                            _cl_status = int(_cl.get(_status_key) or 1)
+                            _cl_ss = _ss_map.get(_cl_status)
+                            if not _cl_ss:
+                                continue
+                            try:
+                                _cl_res = await session.execute(
+                                    _claim_text(
+                                        "UPDATE samba_order "
+                                        "SET shipping_status = :ss, updated_at = now() "
+                                        "WHERE source = :src AND order_number = :ono "
+                                        "AND (shipping_status IS NULL OR shipping_status != :ss)"
+                                    ),
+                                    {
+                                        "ss": _cl_ss,
+                                        "src": market_type,
+                                        "ono": _cl_ord_no,
+                                    },
+                                )
+                                _claim_updates += _cl_res.rowcount or 0
+                            except Exception as _cl_e:
+                                logger.warning(
+                                    f"[주문동기화][ESM] {label}: 클레임 상태 업데이트 실패 "
+                                    f"OrderNo={_cl_ord_no} — {_cl_e}"
+                                )
+                    if _claim_updates:
+                        await session.commit()
+                    logger.info(
+                        f"[주문동기화] {label}: ESM 클레임 배선 — "
+                        f"cancels={len(_oc_cancels)}, exchanges={len(_oc_exchanges)}, "
+                        f"returns={len(_oc_returns)}, updated={_claim_updates}"
+                    )
+                except Exception as _esm_claim_e:
+                    logger.warning(
+                        f"[주문동기화] {label}: ESM 클레임 배선 실패 — {_esm_claim_e}"
+                    )
+
             else:
                 results.append(
                     {
