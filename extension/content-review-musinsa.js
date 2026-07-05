@@ -52,13 +52,81 @@
   }
 
   const SKIP_KEYWORDS = ['상품권', '기프트카드', '기프트 카드', 'gift card']
-  function getGeneralReviewPaths() {
+
+  function hasSkipKeyword(text) {
+    const t = (text || '').toLowerCase()
+    return SKIP_KEYWORDS.some(k => t.includes(k.toLowerCase()))
+  }
+
+  function isActiveReviewPeriod(writeItem) {
+    if (!writeItem.endAvailableDate) return true
+    return new Date(writeItem.endAvailableDate) > new Date()
+  }
+
+  function buildApiWritePath(item, writeItem) {
+    if (!item?.confirmed) return null
+    if (writeItem?.wrote || writeItem?.reviewType !== 'general') return null
+    if (!isActiveReviewPeriod(writeItem)) return null
+    const itemText = [item.goodsName, item.goodsOptionName, item.optionName, item.brandName]
+      .filter(Boolean).join(' ')
+    if (hasSkipKeyword(itemText)) return null
+    const targetId = item.orderOptionNo || writeItem.orderOptionNo || writeItem.channelActivityId
+    if (!targetId) return null
+    const params = new URLSearchParams()
+    params.set('doneToBack', 'true')
+    params.set('channelSource', writeItem.channelSource || 'musinsa')
+    const slug = writeItem.reviewSubType
+      ? `general/${encodeURIComponent(writeItem.reviewSubType)}/${encodeURIComponent(String(targetId))}`
+      : `general/${encodeURIComponent(String(targetId))}`
+    return `/mypage/myreview/write/${slug}?${params.toString()}`
+  }
+
+  function extractApiReviewPaths(items) {
+    const paths = []
+    for (const item of items || []) {
+      for (const writeItem of item.writeItemList || []) {
+        const p = buildApiWritePath(item, writeItem)
+        if (p) paths.push(p)
+      }
+    }
+    return [...new Set(paths)]
+  }
+
+  const REVIEW_ORDERS_API = 'https://goods.musinsa.com/api2/review/v1/mypage/orders'
+  let _apiPage = 1
+  let _apiDone = false
+
+  async function collectNextApiPage() {
+    if (_apiDone) return { paths: [], done: true }
+    try {
+      const url = new URL(REVIEW_ORDERS_API)
+      url.searchParams.set('page', String(_apiPage))
+      url.searchParams.set('size', '20')
+      const res = await fetch(url.toString(), {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) { _apiDone = true; return { paths: [], done: true } }
+      const json = await res.json()
+      const list = json?.data?.list || []
+      _apiPage++
+      const hasMore = list.length >= 20
+      if (!hasMore) _apiDone = true
+      return { paths: extractApiReviewPaths(list), done: !hasMore }
+    } catch {
+      _apiDone = true
+      return { paths: [], done: true }
+    }
+  }
+
+  // DOM 링크 수집 (API 실패 시 fallback)
+  function getDomReviewPaths() {
     const links = [...document.querySelectorAll('a[href*="/mypage/myreview/write/general/"]')]
     const paths = links.map(a => {
       try {
         const container = a.closest('[class*="item"]') || a.closest('li') || a.closest('div')?.parentElement
         const text = container?.textContent || ''
-        if (SKIP_KEYWORDS.some(k => text.includes(k))) return null
+        if (hasSkipKeyword(text)) return null
         return new URL(a.href).pathname
       } catch { return null }
     }).filter(Boolean)
@@ -70,10 +138,8 @@
     const prevHeight = document.body.scrollHeight
     window.scrollBy(0, 4000)
     await sleep(2000)
-    const paths = getGeneralReviewPaths()
+    const paths = getDomReviewPaths()
     const newHeight = document.body.scrollHeight
-    // 진짜 바닥 판정: 스크롤이 더 안 내려가고(±5px) 페이지 높이도 안 자랐을 때만(= 더 로드 안 됨).
-    // 가상스크롤 로딩 중 잠깐 멈춤을 '바닥'으로 오판하지 않게 — 높이 증가 여부를 함께 본다.
     const atBottom = window.scrollY <= prevY + 5 && newHeight <= prevHeight + 5 && prevY > 200
     return { generalPaths: paths, atBottom }
   }
@@ -149,10 +215,21 @@
     ;(async () => {
       try {
         switch (action) {
-          case 'samba_review_getPageInfo':
-            sendResponse({ generalPaths: getGeneralReviewPaths() }); break
-          case 'samba_review_scrollAndCollect':
-            sendResponse(await scrollAndCollect()); break
+          case 'samba_review_getPageInfo': {
+            const api = await collectNextApiPage()
+            const paths = api.paths.length ? api.paths : getDomReviewPaths()
+            sendResponse({ generalPaths: paths, apiDone: api.done })
+            break
+          }
+          case 'samba_review_scrollAndCollect': {
+            if (!_apiDone) {
+              const api = await collectNextApiPage()
+              sendResponse({ generalPaths: api.paths, atBottom: api.done })
+            } else {
+              sendResponse(await scrollAndCollect())
+            }
+            break
+          }
           case 'samba_review_fillAndSubmit':
             sendResponse(await fillAndSubmit()); break
           default:

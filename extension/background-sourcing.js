@@ -732,7 +732,11 @@ const _REVIEW_META = {
   musinsa_review: {
     mode: 'navigate',
     listUrl: 'https://www.musinsa.com/mypage/myreview',
-    buildWriteUrl: path => `https://www.musinsa.com${path}?channelSource=musinsa`,
+    buildWriteUrl: path => {
+      const sep = path.includes('?') ? '&' : '?'
+      const sourceParam = path.includes('channelSource=') ? '' : `${sep}channelSource=musinsa`
+      return `https://www.musinsa.com${path}${sourceParam}`
+    },
     site: 'MUSINSA',
     // 작성 가능한 후기가 상품권·구매확정대기 항목들 뒤에 깊숙이 있어, 매 작성마다 맨 위로
     // 리셋하면(refresh) 8번 스크롤하고 포기해 영영 못 닿는다. → 리스트 스크롤 위치 유지(리셋 X) +
