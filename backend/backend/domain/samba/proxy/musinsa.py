@@ -424,9 +424,7 @@ class MusinsaClient:
                 # product_pre_point=None(실패) → auth 값(True) 유지
             remaining = display_benefit_price
             pre_discount = 0
-            # 적립금 사용불가(isRestictedUsePoint) 상품은 선할인 실현 불가 →
-            # point_usage(392줄)와 동일 게이트로 차감 제외 (issue #363 역마진 fix)
-            if is_pre_point and not is_point_restricted:
+            if is_pre_point:
                 grade_point = (
                     self._floor_to_10(remaining * grade_save_point_rate / 100)
                     if grade_save_point_rate > 0
@@ -445,7 +443,7 @@ class MusinsaClient:
             # 선할인은 remaining(=display_benefit_price)에 의존하므로 동일 로직 재적용
             display_benefit_price_excl_held = benefit_base - grade_discount
             pre_discount_excl = 0
-            if is_pre_point and not is_point_restricted:
+            if is_pre_point:
                 grade_point_excl = (
                     self._floor_to_10(
                         display_benefit_price_excl_held * grade_save_point_rate / 100
