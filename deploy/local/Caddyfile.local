@@ -33,13 +33,10 @@
         }
     }
 
+    # 활성 헬스체크 금지 — 단일워커 이벤트루프가 오토튠 bulk 중 2분+ 블로킹되는데
+    # 헬스체크 서킷브레이커가 이를 "죽음"으로 판정해 전 요청 503 차단 (2026-07-06 장애).
+    # GCP Caddy처럼 차단 없이 대기시키는 게 맞음.
     reverse_proxy wireguard:8080 {
-        health_uri /api/v1/health
-        health_interval 5s
-        health_timeout 10s
-        fail_duration 30s
-        max_fails 10
-        unhealthy_status 5xx
         transport http {
             dial_timeout 10s
             response_header_timeout 600s
