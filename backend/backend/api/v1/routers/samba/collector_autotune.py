@@ -4927,6 +4927,16 @@ async def auto_start_if_enabled():
                 ev.set()
                 _pc_cycle_count[_dev] = 0
                 _pc_restart_count[_dev] = 0
+                # hung site loop 취소 — 남아있으면 새 코디가 "이미 실행중"으로 보고 재spawn 스킵 (이슈 #576)
+                _stale = _pc_site_tasks.get(_dev) or {}
+                for _stale_t in list(_stale.values()):
+                    if not _stale_t.done():
+                        _stale_t.cancel()
+                _pc_site_tasks[_dev] = {}
+                _pc_site_cycle_counts[_dev] = {}
+                _pc_site_last_ticks[_dev] = {}
+                _pc_site_empty_hits[_dev] = {}
+                _pc_site_heartbeats[_dev] = {}
                 _pc_main_task[_dev] = asyncio.create_task(
                     _autotune_loop(_dev),
                     name=f"autotune-main-{_dev[:8]}",

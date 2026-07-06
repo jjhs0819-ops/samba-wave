@@ -574,7 +574,11 @@ async def _pc_sync_loop() -> None:
         _pc_last_seen,
         _pc_main_task,
         _pc_restart_count,
+        _pc_site_cycle_counts,
+        _pc_site_empty_hits,
         _pc_site_heartbeats,
+        _pc_site_last_ticks,
+        _pc_site_tasks,
         persist_pc_last_seen_to_db,
         sync_pc_allowed_sites_from_db,
     )
@@ -639,6 +643,16 @@ async def _pc_sync_loop() -> None:
                             )
                             _zmain.cancel()
                             _pc_main_task.pop(_edev, None)
+                            # hung site loop 취소 — 남아있으면 새 코디가 "이미 실행중"으로 보고 재spawn 스킵 (이슈 #576)
+                            _stale_sites = _pc_site_tasks.get(_edev) or {}
+                            for _stale_t in list(_stale_sites.values()):
+                                if not _stale_t.done():
+                                    _stale_t.cancel()
+                            _pc_site_tasks[_edev] = {}
+                            _pc_site_cycle_counts[_edev] = {}
+                            _pc_site_last_ticks[_edev] = {}
+                            _pc_site_empty_hits[_edev] = {}
+                            _pc_site_heartbeats[_edev] = {}
                             # event 는 set 유지 — 아래 spawn 으로 폴스루해 새 코디 교체.
                         else:
                             continue
