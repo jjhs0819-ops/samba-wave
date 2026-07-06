@@ -323,6 +323,13 @@ class MusinsaClient:
             # 무신사 신규 "최저가 도전"/이벤트 할인 — salePrice 에는 미반영, extraDiscountAmount 에 별도 차감액
             # finalPrice = salePrice - extraDiscountAmount - couponPrice 일체 적용된 최종 노출가
             # 우리는 쿠폰 분은 _fetch_coupons 에서 별도 계산하므로 extraDiscountAmount 만 차감 (이중 차감 방지)
+            # 쿠폰 API 기준가 — 무신사 쿠폰 적용판정은 extraDiscountAmount 차감 "전"
+            # salePrice 기준. 차감 후 가격으로 호출하면 쿠폰 0건 반환 (이슈 #584)
+            _coupon_base_price = (
+                raw_sale
+                if (raw_sale > 0 and (normal_p == 0 or raw_sale <= normal_p))
+                else (normal_p or raw_sale)
+            )
             extra_disc = gp.get("extraDiscountAmount", 0) or 0
             if raw_sale > 0 and extra_disc > 0:
                 raw_sale = max(0, raw_sale - extra_disc)
@@ -347,7 +354,7 @@ class MusinsaClient:
                 client,
                 goods_no,
                 d,
-                s_price,
+                _coupon_base_price,  # extra 차감 전 기준가 — 차감 후면 쿠폰 미매칭 (이슈 #584)
                 0,  # 초기값 0 고정 — goodsPrice.couponPrice 미사용
             )
             # 인증 의심: 쿠키 보유 + couponPrice 있는데 쿠폰 응답이 0건이면

@@ -776,7 +776,7 @@ async def _find_collected_product_by_market_product_no(
         from backend.core.sql_safe import escape_like
 
         sql = sa_text(
-            "SELECT id, source_site, site_product_id, name, images "
+            "SELECT id, source_site, site_product_id, name, images, market_product_nos "
             "FROM samba_collected_product "
             "WHERE market_product_nos::text LIKE :pattern ESCAPE '\\' "
             "LIMIT 1"
@@ -785,7 +785,33 @@ async def _find_collected_product_by_market_product_no(
         result = await session.execute(sql, {"pattern": f"%{safe}%"})
         row = result.fetchone()
         if row:
-            pid, source_site, site_product_id, name, images = row
+            _pid, _site, _spid, _name, _imgs, _mpnos = row
+            # __claiming__<epoch> 임시 마커 내부 숫자에만 걸린 가짜 매칭 배제 (이슈 #579)
+            # — 실제 번호 값 중 하나에 검색값이 포함될 때만 인정
+            _needle = str(market_product_no)
+
+            def _real_vals(_m):
+                for _v in (_m or {}).values() if isinstance(_m, dict) else []:
+                    if isinstance(_v, dict):
+                        yield from (str(x) for x in _v.values() if x)
+                    elif isinstance(_v, list):
+                        # {account}_sites 리스트 — 기존 ::text LIKE 매칭 범위 유지
+                        yield from (str(x) for x in _v if x)
+                    elif _v:
+                        yield str(_v)
+
+            if any(
+                _needle in _rv
+                for _rv in _real_vals(_mpnos)
+                if not _rv.startswith("__claiming__")
+            ):
+                pid, source_site, site_product_id, name, images = (
+                    _pid,
+                    _site,
+                    _spid,
+                    _name,
+                    _imgs,
+                )
 
     # ── 2차: product_name 끝 site_product_id로 fallback 매칭 ──
     if pid is None and product_name:
@@ -2008,7 +2034,9 @@ async def _do_sync_cs_from_markets(
                         # 그룹전송 시 dict 형태({"originProductNo": ..., "smartstoreChannelProductNo": ...})
                         if isinstance(v, dict):
                             for inner_v in v.values():
-                                if inner_v:
+                                if inner_v and not str(inner_v).startswith(
+                                    "__claiming__"
+                                ):
                                     mpn_map[str(inner_v)] = (
                                         pid,
                                         site,
@@ -2016,7 +2044,8 @@ async def _do_sync_cs_from_markets(
                                         imgs,
                                         mpnos,
                                     )
-                        else:
+                        # __claiming__ 등록중 임시 마커 제외 (이슈 #579)
+                        elif not str(v).startswith("__claiming__"):
                             mpn_map[str(v)] = (pid, site, spid, imgs, mpnos)
 
             sourcing_urls = {

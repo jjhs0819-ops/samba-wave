@@ -100,6 +100,9 @@ def _index_mpn_row(_row, by_global: dict, by_account: dict, sourcing_urls: dict)
             if not _sub_v:
                 continue
             _key = str(_sub_v)
+            # __claiming__<epoch> 등록중 임시 마커 — 실제 상품번호 아님 (이슈 #579)
+            if _key.startswith("__claiming__"):
+                continue
             # 글로벌 인덱스 — 충돌 감지 (다른 cp가 같은 키 차지 시 ambiguous)
             _existing_global = by_global.get(_key)
             if not _existing_global:
@@ -2675,6 +2678,9 @@ async def backfill_product_links(
     _mpn_conflicts: set[str] = set()
 
     def _put(_key: str, _cpid: str) -> None:
+        # __claiming__<epoch> 등록중 임시 마커 — 실제 상품번호 아님 (이슈 #579)
+        if _key.startswith("__claiming__"):
+            return
         _prev = mpn_map.get(_key)
         if _prev is not None and _prev != _cpid:
             _mpn_conflicts.add(_key)

@@ -67,6 +67,18 @@ def is_account_full_error(err: str | None) -> bool:
     return False
 
 
+def real_market_no(value):
+    """market_product_nos 값에서 실제 마켓 상품번호만 반환.
+
+    coupang/lotteon 신규등록 중복방지가 `__claiming__<epoch>` 임시 마커를
+    같은 필드에 CAS 기록하는데(#562), 크래시로 마커가 잔류하면 읽기 경로가
+    이를 실제 번호로 오인해 오삭제/오매칭 위험 (이슈 #579). 마커면 None.
+    """
+    if isinstance(value, str) and value.startswith("__claiming__"):
+        return None
+    return value
+
+
 def _resolve_margin_rate(cost: float, pricing: dict) -> float:
     """원가 기반 범위 마진율 반환. useRangeMargin이면 해당 구간 rate 사용."""
     if pricing.get("useRangeMargin") and pricing.get("rangeMargins"):
@@ -602,8 +614,8 @@ class SambaShipmentService:
             deleted_nos = []
             for p in products:
                 market_nos = p.market_product_nos or {}
-                existing_no = market_nos.get(account_id)
-                origin_no = market_nos.get(f"{account_id}_origin")
+                existing_no = real_market_no(market_nos.get(account_id))
+                origin_no = real_market_no(market_nos.get(f"{account_id}_origin"))
                 delete_no = origin_no or existing_no
                 if delete_no:
                     try:
@@ -1066,10 +1078,11 @@ class SambaShipmentService:
 
         def _acct_already_registered(_aid: str) -> bool:
             # 계정별 스킵과 동일한 키 규칙 (smartstore _origin, gmarket/auction _master)
-            if _existing_nos_map.get(_aid):
+            # __claiming__ 잔류 마커는 미등록 취급 — 등록으로 오인하면 영구 유령 (이슈 #579)
+            if real_market_no(_existing_nos_map.get(_aid)):
                 return True
             for _suf in ("_origin", "_master"):
-                if _existing_nos_map.get(f"{_aid}{_suf}"):
+                if real_market_no(_existing_nos_map.get(f"{_aid}{_suf}")):
                     return True
             return False
 

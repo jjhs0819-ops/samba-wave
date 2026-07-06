@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -261,7 +262,12 @@ class LotteonClient:
             resp = await _do(self._get_client())
 
         try:
-            data = resp.json()
+            # 대형 응답(등록상품 전체조회 등 수 MB)의 동기 json 파싱이 이벤트루프를
+            # 수십 초~2분 점유해 전체 API 무응답 유발 — 스레드로 격리 (이슈 #583)
+            if len(resp.content) > 512 * 1024:
+                data = await asyncio.to_thread(resp.json)
+            else:
+                data = resp.json()
         except Exception:
             data = {"raw": resp.text}
 
@@ -887,7 +893,6 @@ class LotteonClient:
           - orderStatusList 미전송 및 빈 배열 전송 시 0건 → 명시 필수, 전체 상태 포함
           - 파서: 빈 list 필드는 건너뛰고 다음 키 확인 (orderItems:[] → orderList 확인)
         """
-        import asyncio
         from datetime import timedelta
 
         now = now_kst()
@@ -1598,7 +1603,6 @@ class LotteonClient:
 
         API 제약: 조회 기간 1일 초과 불가 → 하루씩 병렬 조회 (동시 5건 제한).
         """
-        import asyncio
 
         KST = timezone(timedelta(hours=9))
         now = datetime.now(KST)
@@ -1665,7 +1669,6 @@ class LotteonClient:
         get_orders() 병합 + 기존 주문 상태 갱신 두 용도로 사용.
         getSROrderList가 제외하는 상품준비(12) 이후 주문을 여기서 수집.
         """
-        import asyncio
 
         KST = timezone(timedelta(hours=9))
         now = datetime.now(KST)

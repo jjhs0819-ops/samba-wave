@@ -281,7 +281,11 @@ current_pc_owner: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 # 소싱처별 품절 서킷브레이커 (사이트 단위 글로벌 — 모든 PC 공유)
-SOLDOUT_BREAK_THRESHOLD = 10  # 연속 품절 N개 → 해당 소싱처 중단
+# 대형 카탈로그의 정상 품절 클러스터(단종/시즌오프 연속 등장)가 10을 쉽게 넘겨
+# 오작동 반복 → env화 + 상향. mass-glitch(전량 품절 오검출)만 잡는 게 목적 (이슈 #585)
+SOLDOUT_BREAK_THRESHOLD = int(
+    os.getenv("AUTOTUNE_SOLDOUT_BREAK_THRESHOLD", "30")
+)  # 연속 품절 N개 → 해당 소싱처 중단
 _site_consecutive_soldout: dict[str, int] = {}  # {소싱처: 연속 품절 수}
 _site_breaker_tripped: dict[str, bool] = {}  # {소싱처: 중단 여부}
 
