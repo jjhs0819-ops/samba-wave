@@ -1477,6 +1477,30 @@ async def delete_coupang_orphan(
 # ----------------------------------------------------------------------
 
 
+def _scoped_mapping_clause(account_ids: list[str]):
+    """대상 계정의 매핑(market_product_nos)/등록 플래그(registered_accounts) 흔적이
+    있는 행만 고르는 WHERE 절 — 유령정리 계열의 전체 테이블 로드 제거용.
+
+    jsonb_typeof 가드로 깨진 형태(스칼라/리스트 mpn, 스칼라 regs)에서도 에러 없이
+    동작한다 (과거 mpn 리스트 파손 행 실사례 있음).
+    """
+    from sqlalchemy import text as _sa_text
+
+    conds = []
+    params: dict[str, str] = {}
+    for i, aid in enumerate(account_ids):
+        conds.append(
+            f"(jsonb_typeof(market_product_nos::jsonb) = 'object'"
+            f" AND (market_product_nos::jsonb ? :ghk{i}"
+            f" OR market_product_nos::jsonb ? :ghko{i}))"
+            f" OR (jsonb_typeof(registered_accounts::jsonb) = 'array'"
+            f" AND registered_accounts::jsonb ? :ghk{i})"
+        )
+        params[f"ghk{i}"] = aid
+        params[f"ghko{i}"] = f"{aid}_origin"
+    return _sa_text("(" + " OR ".join(conds) + ")").bindparams(**params)
+
+
 @router.post("/elevenst/cleanup-orphans-v2")
 async def cleanup_elevenst_orphans_v2(
     body: CleanupOrphansRequest = CleanupOrphansRequest(),
@@ -1485,14 +1509,20 @@ async def cleanup_elevenst_orphans_v2(
     max_delete: int = Query(
         50, ge=0, le=100000, description="한 번에 처리할 최대 orphan 수"
     ),
+    clear_stale: bool = Query(
+        False,
+        description="stale(DB에만 있는 매핑) DB 정리 여부 — 목록 조회 부분실패 시 "
+        "정상 매핑 오삭제 위험이 있어 기본 OFF",
+    ),
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
     """11번가 유령상품 양방향 동기화 (스마트스토어 패턴).
 
-    - 11번가 selStatCd=103(판매중)만 enumerate
+    - 11번가 전체 상태 enumerate 후 판매중(103)만 orphan 판정에 사용
     - orphan: 11번가 판매중인데 DB 매핑 없음 → delete_product(=stopdisplay)
-    - stale : DB 매핑은 있는데 11번가 판매중 목록에 없음 → DB 정리
+    - stale : DB 매핑은 있는데 11번가 전체 목록(품절/중지 포함)에 없음 →
+      clear_stale=true 일 때만 DB 정리 (기본 OFF — 오삭제 사고 방지)
 
     sellerPrdCd(=samba product.id)도 함께 수집해 DB id 매칭 보강.
     """
@@ -1520,7 +1550,34 @@ async def cleanup_elevenst_orphans_v2(
     prod_q = select(SambaCollectedProduct)
     if body.product_ids:
         prod_q = prod_q.where(SambaCollectedProduct.id.in_(body.product_ids))
+    else:
+        # 전체 테이블 로드 금지 — 대상 계정의 매핑/등록 흔적이 있는 행만 조회.
+        # 전 행 ORM 로드는 상품 수만 단위에서 수 분이 걸려 gateway 504/DB idle
+        # 타임아웃으로 "데이터베이스 에러"가 나던 원인 (2026-07-06 실측 468s→504).
+        prod_q = prod_q.where(_scoped_mapping_clause([a.id for a in accounts]))
     all_db_products = (await session.execute(prod_q)).scalars().all()
+    # ORM 객체 → 평문 데이터로 선추출. 아래 commit 으로 트랜잭션을 닫은 뒤에도
+    # expire 된 ORM 속성에 접근하지 않도록 한다.
+    db_products_data = [
+        {
+            "id": str(p.id),
+            "style_code": str(p.style_code or ""),
+            "name": p.name or "",
+            "market_product_nos": (
+                dict(p.market_product_nos)
+                if isinstance(p.market_product_nos, dict)
+                else {}
+            ),
+            "registered_accounts": list(p.registered_accounts or [])
+            if isinstance(p.registered_accounts, list)
+            else [],
+        }
+        for p in all_db_products
+    ]
+    # 마켓 API 페이징(계정당 수십초~수분) 동안 트랜잭션을 잡고 있으면 DB 의
+    # idle_in_transaction_session_timeout(120s)에 커넥션이 끊긴다 — 읽기가 끝난
+    # 시점에 트랜잭션을 닫는다 (이후 쓰기는 새 트랜잭션에서 수행).
+    await session.commit()
 
     per_account: list[dict] = []
     total_market = 0
@@ -1547,8 +1604,8 @@ async def cleanup_elevenst_orphans_v2(
         # DB → prdNo 매핑 (이 계정용)
         account_db_prdnos: set[str] = set()
         db_prdno_map: dict[str, dict] = {}
-        for p in all_db_products:
-            nos = p.market_product_nos or {}
+        for p in db_products_data:
+            nos = p["market_product_nos"]
             v = nos.get(account.id)
             prd_no = ""
             if isinstance(v, str):
@@ -1558,16 +1615,19 @@ async def cleanup_elevenst_orphans_v2(
             if prd_no:
                 account_db_prdnos.add(prd_no)
                 db_prdno_map[prd_no] = {
-                    "db_id": str(p.id),
-                    "style_code": str(p.style_code or ""),
+                    "db_id": p["id"],
+                    "style_code": p["style_code"],
                     "mapped_prdno": prd_no,
-                    "product_name": (p.name or "")[:80],
+                    "product_name": p["name"][:80],
                 }
 
         client = ElevenstClient(api_key)
         try:
+            # 전체 상태 조회 — 판매중(103)만 조회하면 품절/전시중지 매핑이 전부
+            # stale 로 오판된다 (오토튠 품절 전환 상품 등). orphan 판정은 아래에서
+            # 판매중만 분리해 사용.
             market_items = await client.list_seller_products(
-                sel_stat_cd="103", page_size=500
+                sel_stat_cd="", page_size=500
             )
         except ElevenstRateLimitError as e:
             per_account.append(
@@ -1588,7 +1648,8 @@ async def cleanup_elevenst_orphans_v2(
             )
             continue
 
-        market_prdnos: set[str] = set()
+        market_prdnos: set[str] = set()  # 판매중(103)만 — orphan 판정용
+        market_all_prdnos: set[str] = set()  # 전체 상태 — stale 판정용
         market_info: dict[str, dict] = {}
         # sellerPrdCd(=samba product.id) 기반 보강 매핑
         seller_code_to_prdno: dict[str, str] = {}
@@ -1596,8 +1657,10 @@ async def cleanup_elevenst_orphans_v2(
             pn = it.get("prd_no") or ""
             if not pn:
                 continue
-            market_prdnos.add(pn)
-            market_info[pn] = it
+            market_all_prdnos.add(pn)
+            if str(it.get("sel_stat_cd") or "") == "103":
+                market_prdnos.add(pn)
+                market_info[pn] = it
             sc = (it.get("seller_code") or "").strip()
             if sc:
                 seller_code_to_prdno[sc] = pn
@@ -1607,17 +1670,18 @@ async def cleanup_elevenst_orphans_v2(
         # sellerPrdCd가 우리 DB product.id 와 일치하면 → 그 prdNo는 우리 것
         # (registered_accounts에 이 account 가 들어있는 경우만 인정)
         recovered_in_db: set[str] = set()
-        for p in all_db_products:
-            regs = p.registered_accounts or []
-            if account.id not in regs:
+        for p in db_products_data:
+            if account.id not in p["registered_accounts"]:
                 continue
-            pn = seller_code_to_prdno.get(str(p.id))
+            pn = seller_code_to_prdno.get(p["id"])
             if pn:
                 account_db_prdnos.add(pn)
                 recovered_in_db.add(pn)
 
         orphan_prdnos = market_prdnos - account_db_prdnos
-        stale_prdnos = account_db_prdnos - market_prdnos
+        # stale 은 품절/중지 포함 전체 목록 기준 — 판매중 목록만으로 판정하면
+        # 품절 전환 상품이 대량 오판된다 (실측: 계정당 수백~1,300건).
+        stale_prdnos = account_db_prdnos - market_all_prdnos
 
         orphans: list[dict] = []
         for pn in orphan_prdnos:
@@ -1673,38 +1737,52 @@ async def cleanup_elevenst_orphans_v2(
                     await asyncio.sleep(0.4)
                 total_deleted += len(deleted_here)
 
-            if stale_db:
-                db_ids_to_clear = [s["db_id"] for s in stale_db if s.get("db_id")]
-                if db_ids_to_clear:
-                    clear_q = select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id.in_(db_ids_to_clear)
+            # stale DB 정리 — clear_stale 옵트인일 때만.
+            # 목록 조회가 페이징 도중 조용히 끊기면 정상 매핑이 대량 stale 오판되어
+            # 무조건 클리어 시 등록기록이 소실된다 (2026-07-06 1,159건 실사고).
+            if stale_db and clear_stale:
+                # 조회 부실 가드 — 마켓 전체 조회수가 DB 매핑수의 절반 미만이면
+                # 부분실패 가능성이 높으므로 정리를 건너뛴다.
+                if len(market_all_prdnos) < len(account_db_prdnos) // 2:
+                    logger.warning(
+                        f"[11번가 유령정리v2] {account.id} 마켓 조회 부실 의심 "
+                        f"(조회 {len(market_all_prdnos)} < 매핑 {len(account_db_prdnos)}/2) "
+                        f"— stale 정리 스킵"
                     )
-                    for prod in (await session.execute(clear_q)).scalars().all():
-                        nos = dict(prod.market_product_nos or {})
-                        changed = False
-                        for k in (account.id, f"{account.id}_origin"):
-                            if k in nos:
-                                nos.pop(k, None)
-                                changed = True
-                        if changed:
-                            prod.market_product_nos = nos
-                            flag_modified(prod, "market_product_nos")
-                        regs = list(prod.registered_accounts or [])
-                        if account.id in regs:
-                            prod.registered_accounts = [
-                                a for a in regs if a != account.id
-                            ]
-                            flag_modified(prod, "registered_accounts")
-                            changed = True
-                        if changed:
-                            session.add(prod)
-                            stale_cleared.append(str(prod.id))
-                    if stale_cleared:
-                        await session.commit()
-                        total_stale_cleared += len(stale_cleared)
-                        logger.info(
-                            f"[11번가 유령정리v2] {account.id} stale DB 정리 {len(stale_cleared)}건"
+                else:
+                    db_ids_to_clear = [
+                        s["db_id"] for s in stale_db if s.get("db_id")
+                    ]
+                    if db_ids_to_clear:
+                        clear_q = select(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id.in_(db_ids_to_clear)
                         )
+                        for prod in (await session.execute(clear_q)).scalars().all():
+                            nos = dict(prod.market_product_nos or {})
+                            changed = False
+                            for k in (account.id, f"{account.id}_origin"):
+                                if k in nos:
+                                    nos.pop(k, None)
+                                    changed = True
+                            if changed:
+                                prod.market_product_nos = nos
+                                flag_modified(prod, "market_product_nos")
+                            regs = list(prod.registered_accounts or [])
+                            if account.id in regs:
+                                prod.registered_accounts = [
+                                    a for a in regs if a != account.id
+                                ]
+                                flag_modified(prod, "registered_accounts")
+                                changed = True
+                            if changed:
+                                session.add(prod)
+                                stale_cleared.append(str(prod.id))
+                        if stale_cleared:
+                            await session.commit()
+                            total_stale_cleared += len(stale_cleared)
+                            logger.info(
+                                f"[11번가 유령정리v2] {account.id} stale DB 정리 {len(stale_cleared)}건"
+                            )
 
         per_account.append(
             {
@@ -1748,13 +1826,19 @@ async def cleanup_lotteon_orphans(
     max_delete: int = Query(
         50, ge=0, le=100000, description="한 번에 처리할 최대 orphan 수"
     ),
+    clear_stale: bool = Query(
+        False,
+        description="stale(DB에만 있는 매핑) DB 정리 여부 — 목록 조회 부분실패 시 "
+        "정상 매핑 오삭제 위험이 있어 기본 OFF",
+    ),
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
     """롯데ON 유령상품 양방향 동기화.
 
     - orphan: 롯데ON 판매중인데 DB 매핑 없음 → change_status(slStatCd=END)
-    - stale : DB 매핑은 있는데 롯데ON 목록에 없음 → DB 정리
+    - stale : DB 매핑은 있는데 롯데ON 전체 목록(END/SOUT 포함)에 없음 →
+      clear_stale=true 일 때만 DB 정리 (기본 OFF — 오삭제 사고 방지)
     """
     import json as _json
 
@@ -1778,7 +1862,29 @@ async def cleanup_lotteon_orphans(
     prod_q = select(SambaCollectedProduct)
     if body.product_ids:
         prod_q = prod_q.where(SambaCollectedProduct.id.in_(body.product_ids))
+    else:
+        # 전체 테이블 로드 금지 — 대상 계정의 매핑/등록 흔적이 있는 행만 조회.
+        # 전 행 ORM 로드는 상품 수만 단위에서 수 분이 걸려 gateway 504/DB idle
+        # 타임아웃으로 "데이터베이스 에러"가 나던 원인 (2026-07-03 실측 538s→502).
+        prod_q = prod_q.where(_scoped_mapping_clause([a.id for a in accounts]))
     all_db_products = (await session.execute(prod_q)).scalars().all()
+    # ORM 객체 → 평문 데이터 선추출 (commit 후 expire 속성 접근 방지)
+    db_products_data = [
+        {
+            "id": str(p.id),
+            "style_code": str(p.style_code or ""),
+            "name": p.name or "",
+            "market_product_nos": (
+                dict(p.market_product_nos)
+                if isinstance(p.market_product_nos, dict)
+                else {}
+            ),
+        }
+        for p in all_db_products
+    ]
+    # 마켓 API 페이징(대형 계정 160+페이지, 수 분) 동안 트랜잭션 유지 시 DB 의
+    # idle_in_transaction_session_timeout(120s)에 커넥션이 끊긴다 — 여기서 닫는다.
+    await session.commit()
 
     per_account: list[dict] = []
     total_market = 0
@@ -1814,8 +1920,8 @@ async def cleanup_lotteon_orphans(
         # DB → spdNo 매핑
         account_db_spds: set[str] = set()
         db_spd_map: dict[str, dict] = {}
-        for p in all_db_products:
-            nos = p.market_product_nos or {}
+        for p in db_products_data:
+            nos = p["market_product_nos"]
             v = nos.get(account.id) or nos.get(f"{account.id}_origin")
             spd = ""
             if isinstance(v, str):
@@ -1825,16 +1931,17 @@ async def cleanup_lotteon_orphans(
             if spd:
                 account_db_spds.add(spd)
                 db_spd_map[spd] = {
-                    "db_id": str(p.id),
-                    "style_code": str(p.style_code or ""),
+                    "db_id": p["id"],
+                    "style_code": p["style_code"],
                     "mapped_spd": spd,
-                    "product_name": (p.name or "")[:80],
+                    "product_name": p["name"][:80],
                 }
 
         client = LotteonClient(api_key)
         # trGrpCd/trNo 획득 (필수) — 누락 시 list INVALID_INPUT
         await client.test_auth()
-        market_spds: set[str] = set()
+        market_spds: set[str] = set()  # 판매중 계열 — orphan 판정용
+        market_all_spds: set[str] = set()  # END/SOUT 포함 전체 — stale 판정용
         market_info: dict[str, dict] = {}
         page = 1
         error_msg: Optional[str] = None
@@ -1859,7 +1966,9 @@ async def cleanup_lotteon_orphans(
                 if not spd:
                     continue
                 stat = str(it.get("slStatCd") or "").strip().upper()
+                market_all_spds.add(spd)
                 # END/SOUT 상태는 이미 죽은 상품 — orphan 판정 제외
+                # (stale 판정에는 포함 — 품절 매핑이 stale 로 오판되던 원인)
                 if stat in ("END", "SOUT", "DELETED"):
                     continue
                 market_spds.add(spd)
@@ -1889,7 +1998,9 @@ async def cleanup_lotteon_orphans(
         total_market += len(market_spds)
 
         orphan_spds = market_spds - account_db_spds
-        stale_spds = account_db_spds - market_spds
+        # stale 은 END/SOUT 포함 전체 목록 기준 — 판매중 목록만으로 판정하면
+        # 품절/판매종료 매핑이 대량 오판된다 (실측: 계정당 수백~1,300건).
+        stale_spds = account_db_spds - market_all_spds
 
         orphans = [market_info[s] for s in orphan_spds if s in market_info]
         stale_db = [db_spd_map[s] for s in stale_spds if s in db_spd_map]
@@ -1938,38 +2049,51 @@ async def cleanup_lotteon_orphans(
                     await asyncio.sleep(0.5)
                 total_deleted += len(deleted_here)
 
-            if stale_db:
-                db_ids_to_clear = [s["db_id"] for s in stale_db if s.get("db_id")]
-                if db_ids_to_clear:
-                    clear_q = select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id.in_(db_ids_to_clear)
+            # stale DB 정리 — clear_stale 옵트인일 때만 (기본 OFF).
+            # 목록 조회가 페이징 도중 조용히 끊기면 정상 매핑이 대량 stale 오판되어
+            # 무조건 클리어 시 등록기록이 소실된다 (11번가 1,159건 실사고와 동일 구조).
+            if stale_db and clear_stale:
+                # 조회 부실 가드 — 마켓 전체 조회수가 DB 매핑수의 절반 미만이면 스킵
+                if len(market_all_spds) < len(account_db_spds) // 2:
+                    logger.warning(
+                        f"[롯데ON 유령정리] {account.id} 마켓 조회 부실 의심 "
+                        f"(조회 {len(market_all_spds)} < 매핑 {len(account_db_spds)}/2) "
+                        f"— stale 정리 스킵"
                     )
-                    for prod in (await session.execute(clear_q)).scalars().all():
-                        nos = dict(prod.market_product_nos or {})
-                        changed = False
-                        for k in (account.id, f"{account.id}_origin"):
-                            if k in nos:
-                                nos.pop(k, None)
-                                changed = True
-                        if changed:
-                            prod.market_product_nos = nos
-                            flag_modified(prod, "market_product_nos")
-                        regs = list(prod.registered_accounts or [])
-                        if account.id in regs:
-                            prod.registered_accounts = [
-                                a for a in regs if a != account.id
-                            ]
-                            flag_modified(prod, "registered_accounts")
-                            changed = True
-                        if changed:
-                            session.add(prod)
-                            stale_cleared.append(str(prod.id))
-                    if stale_cleared:
-                        await session.commit()
-                        total_stale_cleared += len(stale_cleared)
-                        logger.info(
-                            f"[롯데ON 유령정리] {account.id} stale DB 정리 {len(stale_cleared)}건"
+                else:
+                    db_ids_to_clear = [
+                        s["db_id"] for s in stale_db if s.get("db_id")
+                    ]
+                    if db_ids_to_clear:
+                        clear_q = select(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id.in_(db_ids_to_clear)
                         )
+                        for prod in (await session.execute(clear_q)).scalars().all():
+                            nos = dict(prod.market_product_nos or {})
+                            changed = False
+                            for k in (account.id, f"{account.id}_origin"):
+                                if k in nos:
+                                    nos.pop(k, None)
+                                    changed = True
+                            if changed:
+                                prod.market_product_nos = nos
+                                flag_modified(prod, "market_product_nos")
+                            regs = list(prod.registered_accounts or [])
+                            if account.id in regs:
+                                prod.registered_accounts = [
+                                    a for a in regs if a != account.id
+                                ]
+                                flag_modified(prod, "registered_accounts")
+                                changed = True
+                            if changed:
+                                session.add(prod)
+                                stale_cleared.append(str(prod.id))
+                        if stale_cleared:
+                            await session.commit()
+                            total_stale_cleared += len(stale_cleared)
+                            logger.info(
+                                f"[롯데ON 유령정리] {account.id} stale DB 정리 {len(stale_cleared)}건"
+                            )
 
         per_account.append(
             {
