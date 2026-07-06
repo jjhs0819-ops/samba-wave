@@ -49,6 +49,16 @@ def _is_shoes_category(category_id: str) -> bool:
     return category_id in _SHOES_CATEGORY_IDS
 
 
+# 트레이딩카드(포켓몬 TCG 등) 카테고리 — condition="NEW" 사용 불가, 실사용 검증 완료된 카테고리만 등록
+# 183454: Collectible Card Game Singles
+_TCG_CARD_CATEGORY_IDS = {"183454"}
+
+
+def _is_tcg_card_category(category_id: str) -> bool:
+    """트레이딩카드 싱글 카테고리인지 확인."""
+    return category_id in _TCG_CARD_CATEGORY_IDS
+
+
 def _category_looks_like_shoes(product: dict) -> bool:
     """수집 카테고리 이름에 '신발/화/부츠' 등 신발 키워드가 포함되어 있는지."""
     cat = product.get("category") or ""
@@ -816,6 +826,14 @@ class EbayClient:
                 }
             },
         }
+
+        # 트레이딩카드 싱글(183454 등)은 condition="NEW" 등록 자체가 거부됨(카테고리 정책상 신품 카드 구분 없음)
+        # "Ungraded" + Card Condition="Near mint or better"로 고정 — 실제 등록 테스트로 검증된 조합
+        if _is_tcg_card_category(category_id):
+            inventory_item["condition"] = "USED_VERY_GOOD"
+            inventory_item["conditionDescriptors"] = [
+                {"name": "40001", "values": ["400010"]}
+            ]
 
         # Offer 포맷 (정책 ID는 kwargs 또는 계정 creds에서 전달)
         listing_policies: dict[str, str] = {}
