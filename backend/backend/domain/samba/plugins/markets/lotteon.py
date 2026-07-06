@@ -1360,6 +1360,18 @@ class LotteonPlugin(MarketPlugin):
                                 keys.append(size)
                         return keys
 
+                    # 단일상품(옵션 없음) 가드 — 옵션 매칭이 원천 불가능하므로
+                    # 아래 "매칭 실패 → stkQty=0 강제" 분기로 떨어지면 재고가
+                    # 영구 0 고착(마켓 품절)된다. 등록 경로(transform_product의
+                    # 옵션 없는 단품 분기)와 동일 정책으로 상품 단위 재고를 준다.
+                    _is_single_item = not new_options
+                    _single_sold = bool(product.get("is_sold_out"))
+                    _single_stock = (
+                        0
+                        if _single_sold
+                        else (_max_stock_per_opt if _max_stock_per_opt > 0 else 999)
+                    )
+
                     # 옵션명 → (stock, isSoldOut) 매핑 + 옵션명 → 소싱처가격 매핑 — 양방향 키 등록
                     # 옵션별 추가금(#324): 등록 경로(transform_product)와 동일하게
                     # slPrc = new_price + max(opt.price - _diff_base, 0) 로 차등 반영.
@@ -1419,7 +1431,10 @@ class LotteonPlugin(MarketPlugin):
                                 }
                             )
                         # 재고 업데이트 (양방향 키 매칭)
-                        if _matched_key:
+                        if _is_single_item:
+                            # 단일상품 — 단품(보통 1개)에 상품 단위 재고 적용
+                            stk = _single_stock
+                        elif _matched_key:
                             raw_s, sold = opt_info_map[_matched_key]
                             stk = _apply_stock_cap(raw_s, sold)
                         else:
@@ -2452,7 +2467,19 @@ class LotteonPlugin(MarketPlugin):
                                     _stk_dp[0] if _stk_dp else _old_itm.get("stkQty", 0)
                                 )
                             else:
-                                _stk = 0
+                                # 옵션 없는 단일상품 단품 — 0 강제 시 수정할 때마다
+                                # 품절 고착되는 버그. transform 결과의 단일 단품
+                                # stkQty(등록 정책과 동일)를 그대로 사용한다.
+                                _single_new = [
+                                    n
+                                    for n in _saved_itm_lst
+                                    if not (n.get("itmOptLst") or [])
+                                ]
+                                _stk = (
+                                    _single_new[0].get("stkQty", 0)
+                                    if _single_new
+                                    else _old_itm.get("stkQty", 0)
+                                )
                             _itm_stk_lst.append(
                                 {
                                     "sitmNo": str(_sitm_no),
