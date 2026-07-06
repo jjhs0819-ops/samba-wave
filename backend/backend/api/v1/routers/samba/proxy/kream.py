@@ -633,6 +633,30 @@ async def snkrdunk_compare_all_public(
         ORDER BY site_product_id
     """)
     result = await session.exec(sql)  # type: ignore[arg-type]
+
+    # 검수 등록여부 — 갱신(_kream_ask_adjust)이 매 사이클 저장하는 실시간 크림 입찰 목록.
+    # 낡은 입찰엑셀 수동 업로드를 대체 → 등록여부가 즉각 정확해진다.
+    # kream_live_asks 테이블이 아직 없으면(첫 갱신 전) 전부 미등록으로 처리.
+    registered_set: set[str] = set()
+    try:
+        reg_res = await session.exec(
+            text("SELECT DISTINCT product_id FROM kream_live_asks")  # type: ignore[arg-type]
+        )
+        registered_set = {row[0] for row in reg_res}
+    except Exception:
+        registered_set = set()
+
+    # 크림 누적거래수(total_sales) — 검수 등록가능 판별용. 갱신/리스톡이 저장.
+    # 카드팩/박스·유희왕·원피스는 거래 1건↑ 있어야 등록가능(포켓몬 개별카드는 무관).
+    trade_counts: dict[str, int] = {}
+    try:
+        tc_res = await session.exec(
+            text("SELECT product_id, total_sales FROM kream_trade_counts")  # type: ignore[arg-type]
+        )
+        trade_counts = {row[0]: int(row[1] or 0) for row in tc_res}
+    except Exception:
+        trade_counts = {}
+
     items = []
     for r in result.mappings():
         d = dict(r)
@@ -643,6 +667,10 @@ async def snkrdunk_compare_all_public(
         d["model_no"] = d["kream_style_code"]
         d["kream_name"] = d["kream_name_ko"]
         d["cat"] = (1 if has_stock else 2) if matched else (3 if has_stock else 4)
+        # DB 실시간 등록여부 (크림에 입찰 존재)
+        d["registered"] = bool(d["kream_id"]) and d["kream_id"] in registered_set
+        # 크림 누적거래수 (없으면 -1 = 미수집 → 프론트가 KREAM_TRADES fallback)
+        d["trade_count"] = trade_counts.get(d["kream_id"], -1) if d["kream_id"] else -1
         items.append(d)
     return {"total": len(items), "items": items}
 
