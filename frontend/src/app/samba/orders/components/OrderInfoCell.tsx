@@ -44,6 +44,7 @@ interface Props {
   handleTracking: (order: SambaOrder) => void
   loadOrders: () => void | Promise<void>
   productMemo?: string // 상품메모(#535) — 상품관리 memo live-join
+  snkrProductNo?: string // 스니덩크 상품번호 — 크림 주문에 소싱처번호 표시(클릭복사)
 }
 
 export default function OrderInfoCell(props: Props) {
@@ -54,8 +55,14 @@ export default function OrderInfoCell(props: Props) {
     customerAddress, renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
-    openUrlModal, handleTracking, loadOrders, productMemo,
+    openUrlModal, handleTracking, loadOrders, productMemo, snkrProductNo,
   } = props
+
+  // 크림 주문 판별 — 상품주문번호 옆에 크림/스니덩크 상품번호 표시용
+  const isKreamOrder = String(o.source_site || '').toUpperCase().includes('KREAM')
+    || String(o.sales_channel_alias || '').toUpperCase().includes('KREAM')
+  // 크림 상품번호 = product_id (숫자 형태만, http URL은 제외)
+  const kreamProductNo = (o.product_id && !o.product_id.startsWith('http')) ? o.product_id : ''
 
   const handleCopyCustomerMemo = async () => {
     const text = (o.customer_note || '').trim()
@@ -185,7 +192,7 @@ export default function OrderInfoCell(props: Props) {
             <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? c.accentBg : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? c.warn : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? c.warn : c.textSub, cursor: 'pointer' }}>KAKAO</button>
           </div>
           <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.25rem', fontSize: '0.75rem' }}>
-            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText((o.order_number || '').split(':')[0], '상품주문번호', { fontFamily: 'monospace' })}{o.claim_order_number ? (<>{' '}<span style={{ color: c.textSub }}>반품 </span>{renderCopyableText((o.claim_order_number || '').split(':')[0], '반품주문번호', { fontFamily: 'monospace' })}</>) : null}</div>
+            <div><span style={{ color: c.textSub }}>상품주문번호 </span>{renderCopyableText((o.order_number || '').split(':')[0], '상품주문번호', { fontFamily: 'monospace' })}{o.claim_order_number ? (<>{' '}<span style={{ color: c.textSub }}>반품 </span>{renderCopyableText((o.claim_order_number || '').split(':')[0], '반품주문번호', { fontFamily: 'monospace' })}</>) : null}{isKreamOrder && kreamProductNo ? (<>{' '}<span style={{ color: c.textSub }}>크림 </span>{renderCopyableText(kreamProductNo, '크림상품번호', { fontFamily: 'monospace' })}</>) : null}{isKreamOrder && snkrProductNo ? (<>{' '}<span style={{ color: c.textSub }}>스니덩크 </span>{renderCopyableText(snkrProductNo, '스니덩크상품번호', { fontFamily: 'monospace' })}</>) : null}</div>
             {o.shipment_id && (
               <div><span style={{ color: c.textSub }}>주문번호 </span>{renderCopyableText(o.shipment_id, '주문번호', { fontFamily: 'monospace', color: c.textSub })}</div>
             )}

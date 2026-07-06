@@ -44,6 +44,7 @@ interface OrdersTableProps {
   activeActions: Record<string, string | null>
   collectedProductCosts: Record<string, number>
   collectedProductSourceSites: Record<string, string>
+  collectedProductSnkrNos: Record<string, string> // 스니덩크 상품번호(크림 주문 소싱처번호 표시)
   productMemos: Record<string, string> // 상품메모(#535)
 
   // 부가 상태
@@ -104,6 +105,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     activeActions,
     collectedProductCosts,
     collectedProductSourceSites,
+    collectedProductSnkrNos,
     productMemos,
     refreshLog, setRefreshLog,
     sentFlags, siteAliasMap, sourcingAccounts,
@@ -183,6 +185,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                   sentFlags={sentFlags}
                   siteAliasMap={siteAliasMap}
                   actualSourceSite={o.collected_product_id ? (collectedProductSourceSites[o.collected_product_id] || '') : ''}
+                  snkrProductNo={o.collected_product_id ? (collectedProductSnkrNos[o.collected_product_id] || '') : ''}
                   productMemo={o.collected_product_id ? (productMemos[o.collected_product_id] || '') : ''}
                   activeActions={activeActions}
                   setPriceHistoryProduct={setPriceHistoryProduct}

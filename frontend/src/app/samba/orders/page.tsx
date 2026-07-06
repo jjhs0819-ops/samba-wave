@@ -103,6 +103,8 @@ export default function OrdersPage() {
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
   const [collectedProductSourceSites, setCollectedProductSourceSites] = useState<Record<string, string>>({})
+  // 스니덩크 상품번호(site_product_id) — 크림 주문에 소싱처 상품번호 표시용 (collected_product_id → 스니덩크번호)
+  const [collectedProductSnkrNos, setCollectedProductSnkrNos] = useState<Record<string, string>>({})
   const [productMemos, setProductMemos] = useState<Record<string, string>>({}) // 상품메모(#535)
 
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
@@ -273,6 +275,7 @@ export default function OrdersPage() {
     if (ids.length === 0) {
       setCollectedProductCosts({})
       setCollectedProductSourceSites({})
+      setCollectedProductSnkrNos({})
       return
     }
     let cancelled = false
@@ -282,16 +285,21 @@ export default function OrdersPage() {
         if (cancelled) return
         const next: Record<string, number> = {}
         const nextSourceSites: Record<string, string> = {}
+        const nextSnkrNos: Record<string, string> = {}
         for (const row of rows) {
           next[row.id] = row.cost ?? row.sale_price ?? row.original_price ?? 0
           if (row.source_site) nextSourceSites[row.id] = row.source_site
+          // 스니덩크 상품번호(site_product_id) — 크림 주문 소싱처번호 표시용
+          if (row.site_product_id) nextSnkrNos[row.id] = String(row.site_product_id)
         }
         setCollectedProductCosts(next)
         setCollectedProductSourceSites(nextSourceSites)
+        setCollectedProductSnkrNos(nextSnkrNos)
       } catch {
         if (!cancelled) {
           setCollectedProductCosts({})
           setCollectedProductSourceSites({})
+          setCollectedProductSnkrNos({})
         }
       }
     })()
@@ -984,6 +992,7 @@ export default function OrdersPage() {
         activeActions={activeActions}
         collectedProductCosts={collectedProductCosts}
         collectedProductSourceSites={collectedProductSourceSites}
+        collectedProductSnkrNos={collectedProductSnkrNos}
         productMemos={productMemos}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
