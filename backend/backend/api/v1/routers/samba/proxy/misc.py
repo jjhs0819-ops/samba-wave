@@ -978,6 +978,75 @@ async def hmall_auth_test(
 
 
 # ═══════════════════════════════════════════════
+# eBay 인증 테스트
+# ═══════════════════════════════════════════════
+
+
+@router.post("/ebay/auth-test")
+async def ebay_auth_test(
+    body: Optional[dict] = None,
+    account_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """이베이 OAuth 인증 테스트 — refresh_token으로 access_token 발급 시도.
+
+    범용 market_auth_test(/market/auth-test/{market_key})는 폐기된 samba_settings
+    store_* 키만 확인해 eBay(samba_market_account 전용)는 항상 실패로 나오던 문제 수정.
+    """
+    from sqlalchemy import text as _eb_text
+
+    from backend.domain.samba.proxy.ebay import EbayApiError, EbayClient
+
+    client_id = (body or {}).get("clientId", "") or (body or {}).get("client_id", "")
+    client_secret = (body or {}).get("clientSecret", "") or (body or {}).get(
+        "client_secret", ""
+    )
+    dev_id = (body or {}).get("devId", "") or (body or {}).get("dev_id", "")
+    refresh_token = (body or {}).get("oauthToken", "") or (body or {}).get(
+        "refresh_token", ""
+    )
+
+    # 마스킹값(폼에서 안 건드린 password 필드)이면 DB에서 실제값 조회
+    if account_id and (not client_secret or not refresh_token or not client_id):
+        row = (
+            await session.exec(
+                _eb_text(
+                    "SELECT api_key, api_secret, oauth_refresh_token, additional_fields "
+                    "FROM samba_market_account WHERE id = :aid"
+                ),
+                params={"aid": account_id},
+            )
+        ).first()
+        if row:
+            af = row[3] if isinstance(row[3], dict) else {}
+            client_id = client_id or af.get("clientId") or row[0] or ""
+            client_secret = client_secret or af.get("clientSecret") or row[1] or ""
+            dev_id = dev_id or af.get("devId", "")
+            refresh_token = refresh_token or af.get("oauthToken") or row[2] or ""
+
+    if not client_id or not client_secret or not refresh_token:
+        return {
+            "success": False,
+            "message": "App ID, Cert ID, OAuth Refresh Token이 모두 필요합니다.",
+        }
+
+    try:
+        client = EbayClient(
+            app_id=client_id,
+            dev_id=dev_id,
+            cert_id=client_secret,
+            refresh_token=refresh_token,
+        )
+        await client._get_access_token()
+        return {"success": True, "message": "eBay 연결 성공 — OAuth 인증 확인됨"}
+    except EbayApiError as e:
+        return {"success": False, "message": f"eBay 인증 실패: {e}"}
+    except Exception as e:
+        logger.warning(f"[eBay] auth-test 오류: {e}")
+        return {"success": False, "message": f"인증 테스트 오류: {e}"}
+
+
+# ═══════════════════════════════════════════════
 # 통합 마켓 인증 테스트 (범용)
 # ═══════════════════════════════════════════════
 

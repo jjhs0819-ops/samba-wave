@@ -1742,6 +1742,10 @@ export const proxyApi = {
   marketAuthTest: (marketKey: string) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/market/auth-test/${marketKey}`, { method: 'POST' }),
+  ebayAuthTest: (payload?: { clientId?: string; clientSecret?: string; devId?: string; oauthToken?: string; account_id?: string }) =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/ebay/auth-test${payload?.account_id ? `?account_id=${payload.account_id}` : ''}`,
+      { method: 'POST', body: JSON.stringify(payload || {}) }),
   poisonAuthTest: (payload?: { app_key?: string; app_secret?: string }) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/poison/auth-test`, { method: 'POST', body: JSON.stringify(payload || {}) }),

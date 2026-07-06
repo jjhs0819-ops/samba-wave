@@ -428,6 +428,14 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
           app_key: appKey,
           app_secret: appSecret,
         })
+      } else if (marketKey === 'ebay') {
+        result = await proxyApi.ebayAuthTest({
+          clientId: String(safeData.clientId || ''),
+          clientSecret: String(safeData.clientSecret || ''),
+          devId: String(safeData.devId || ''),
+          oauthToken: String(safeData.oauthToken || ''),
+          account_id: editingAccountId || undefined,
+        })
       } else {
         result = await proxyApi.marketAuthTest(marketKey)
       }
