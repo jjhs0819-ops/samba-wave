@@ -2486,6 +2486,14 @@ class SambaShipmentService:
         #   채워줄 때까지(때로는 1시간+) 비어있어, 테트리스 sync가 같은 상품을
         #   '미등록'으로 오판해 헛걸음 잡을 반복 생성했음 → 'skipped(이미 등록됨, 변동 없음)' 로그 발생.
         merged_reg = list(_row_reg)
+        # 이번 그룹의 변경분(delta)만 별도 추적 — market_product_nos/registered_accounts도
+        # DB write 시점엔 in-memory snapshot(_row_mpn/_row_reg) 기준 full-replace가 아니라
+        # 이 delta를 atomic JSONB merge/remove로 적용한다 (이슈 #588 — 동시 전송 그룹 간
+        # race condition으로 서로의 market_product_nos/registered_accounts 덮어써 소실되던 버그).
+        nos_add: dict[str, str] = {}
+        nos_clear: set[str] = set()
+        reg_add: set[str] = set()
+        reg_remove: set[str] = set()
         # lsd_updates: 이번 그룹에서 처리한 계정들의 last_sent_data 변경분만 수집
         # (전체 snapshot 덮어쓰기 → 동시 실행 그룹 간 race condition 발생하므로 계정별 atomic merge로 변경)
         _prev_lsd = _row_lsd
@@ -2504,11 +2512,18 @@ class SambaShipmentService:
             # 404 초기화 — B칸과 A칸에서 동시 제거
             for key in ar.get("clear_nos", []):
                 merged_nos.pop(key, None)
+                nos_clear.add(key)
+                nos_add.pop(key, None)
                 if key == aid and aid in merged_reg:
                     merged_reg.remove(aid)
+                    reg_remove.add(aid)
+                    reg_add.discard(aid)
             # 상품번호 병합 — B칸에 account_id 키가 채워지면 A칸도 동기화
             _new_nos = ar.get("product_nos", {}) or {}
             merged_nos.update(_new_nos)
+            for _nk, _nv in _new_nos.items():
+                nos_add[_nk] = _nv
+                nos_clear.discard(_nk)
             # 수정 모드(is_update) 성공도 A칸 backfill 대상에 포함:
             # 마켓이 수정 응답에 상품번호를 안 돌려주면(예: lottehome) product_nos가
             # 비어 _new_nos.get(aid)=None → A칸 미반영 → 테트리스가 '미등록' 오판으로
@@ -2526,6 +2541,8 @@ class SambaShipmentService:
                 and aid not in merged_reg
             ):
                 merged_reg.append(aid)
+                reg_add.add(aid)
+                reg_remove.discard(aid)
             # last_sent_data 변경분 수집 (atomic merge용)
             if ar.get("sent_snapshot"):
                 # 전송 성공 — sent_snapshot(sent_at 포함, failed_at 없음)으로 교체
@@ -2550,19 +2567,50 @@ class SambaShipmentService:
                 _existing.pop("failed_at", None)
                 lsd_updates[aid] = _existing
 
-        # DB 업데이트 ①: market_product_nos + registered_accounts
-        try:
-            await product_repo.update_async(
-                product_id,
-                market_product_nos=merged_nos or None,
-                registered_accounts=merged_reg or None,
-            )
-        except Exception as _db_e:
-            logger.warning(f"[전송] DB 업데이트 실패: {_db_e}")
+        # DB 업데이트 ①: market_product_nos + registered_accounts — 계정별 atomic
+        # add/remove로 적용 (이슈 #588 — in-memory snapshot 기준 full-replace가
+        # 동시 전송 그룹 간 race condition으로 서로의 갱신분을 덮어써 소실시키던 버그 수정).
+        # 변경분이 전혀 없으면(nos_add/nos_clear/reg_add/reg_remove 전부 빈 상태) 스킵.
+        if nos_add or nos_clear or reg_add or reg_remove:
             try:
-                await self.session.rollback()
-            except Exception:
-                pass
+                import json as _mpn_j  # noqa: F811
+                from sqlalchemy import text as _mpn_sa_text  # noqa: F811
+
+                await self.session.execute(
+                    _mpn_sa_text(
+                        "UPDATE samba_collected_product SET"
+                        "  market_product_nos = ("
+                        "    (CASE WHEN jsonb_typeof(market_product_nos) = 'object'"
+                        "          THEN market_product_nos ELSE '{}'::jsonb END)"
+                        "    - CAST(:nos_clear AS text[])"
+                        "  ) || CAST(:nos_add AS jsonb),"
+                        "  registered_accounts = COALESCE(("
+                        "    SELECT jsonb_agg(DISTINCT val) FROM jsonb_array_elements_text("
+                        "      (COALESCE(registered_accounts, '[]'::jsonb)"
+                        "        - CAST(:reg_remove AS text[]))"
+                        "      || CAST(:reg_add AS jsonb)"
+                        "    ) AS val"
+                        "  ), '[]'::jsonb),"
+                        "  updated_at = NOW()"
+                        " WHERE id = CAST(:pid AS text)"
+                    ),
+                    {
+                        "nos_clear": list(nos_clear),
+                        "nos_add": _mpn_j.dumps(nos_add),
+                        "reg_remove": list(reg_remove),
+                        "reg_add": _mpn_j.dumps(list(reg_add)),
+                        "pid": product_id,
+                    },
+                )
+                await self.session.commit()
+            except Exception as _db_e:
+                logger.warning(
+                    f"[전송] market_product_nos/registered_accounts atomic 갱신 실패: {_db_e}"
+                )
+                try:
+                    await self.session.rollback()
+                except Exception:
+                    pass
 
         # DB 업데이트 ②: last_sent_data — 계정별 atomic JSONB merge (race condition 방지)
         # json 컬럼이므로 CAST AS jsonb 후 :: 연산자 적용, 결과를 ::json으로 저장
