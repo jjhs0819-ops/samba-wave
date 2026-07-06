@@ -79,6 +79,52 @@ class ElevenstPlugin(MarketPlugin):
     policy_key = "11번가"
     required_fields = ["name", "sale_price"]
 
+    async def _persist_prd_no_immediately(
+        self, product_id: str, account_id: str, prd_no: str
+    ) -> None:
+        """등록 성공 직후 prdNo 매핑을 별도 세션으로 즉시 커밋 (coupang 동일 패턴).
+
+        worker 의 최종 writeback 은 전송 파이프라인 후반에 일어나므로, 그 사이
+        백엔드 크래시/재시작·잡 타임아웃이 나면 마켓엔 등록됐는데 DB 기록이 없는
+        유령이 생긴다 (2026-07-06 등록수 불일치 전면정리의 근본 원인).
+        여기서 fresh session 으로 먼저 박아두면 그 창이 닫힌다.
+        worker writeback 과는 같은 값 merge 라 멱등 — 무해.
+        """
+        if not (product_id and account_id and prd_no):
+            return
+        try:
+            from sqlalchemy import text as _st_text
+
+            from backend.db.orm import get_write_session as _st_gws
+
+            async with _st_gws() as _s:
+                await _s.execute(
+                    _st_text(
+                        "UPDATE samba_collected_product SET "
+                        "  market_product_nos = CASE "
+                        "    WHEN market_product_nos IS NOT NULL "
+                        "         AND jsonb_typeof(market_product_nos) = 'object' "
+                        "      THEN market_product_nos "
+                        "    ELSE '{}'::jsonb END "
+                        "    || jsonb_build_object(CAST(:acct AS text), to_jsonb(CAST(:no AS text))), "
+                        "  registered_accounts = CASE "
+                        "    WHEN registered_accounts IS NOT NULL "
+                        "         AND jsonb_typeof(registered_accounts) = 'array' "
+                        "         AND registered_accounts @> jsonb_build_array(CAST(:acct AS text)) "
+                        "      THEN registered_accounts "
+                        "    WHEN registered_accounts IS NOT NULL "
+                        "         AND jsonb_typeof(registered_accounts) = 'array' "
+                        "      THEN registered_accounts || jsonb_build_array(CAST(:acct AS text)) "
+                        "    ELSE jsonb_build_array(CAST(:acct AS text)) "
+                        "  END "
+                        "WHERE id = CAST(:pid AS text)"
+                    ),
+                    {"acct": account_id, "no": prd_no, "pid": product_id},
+                )
+                await _s.commit()
+        except Exception as _e:
+            logger.warning(f"[11번가] 등록 후 즉시기록 실패(worker 기록에 위임): {_e}")
+
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         """상품 데이터 → 11번가 XML 포맷 변환.
 
@@ -540,6 +586,12 @@ class ElevenstPlugin(MarketPlugin):
                                 f"[11번가] 중복등록 방지 — sellerPrdCd={_seller_code} "
                                 f"이미 존재(prdNo={_exist_prd}, 상태={_dup.get('sel_stat_cd')}) → 기존 연결"
                             )
+                            # 재연결 매핑도 즉시 커밋 — 유령 회수 시점을 앞당김
+                            await self._persist_prd_no_immediately(
+                                _seller_code,
+                                str(getattr(account, "id", "") or ""),
+                                _exist_prd,
+                            )
                             return {
                                 "success": True,
                                 "product_no": _exist_prd,
@@ -567,6 +619,13 @@ class ElevenstPlugin(MarketPlugin):
                         "data": result,
                     }
                 logger.info(f"[11번가] 신규 등록 완료 — product_no={prd_no}")
+                # 등록 성공 즉시 매핑 커밋 — worker writeback 전에 크래시/타임아웃이
+                # 나도 유령(마켓 등록 O, DB 기록 X)이 생기지 않도록 (coupang/lotteon 패턴)
+                await self._persist_prd_no_immediately(
+                    str(product.get("id") or ""),
+                    str(getattr(account, "id", "") or ""),
+                    str(prd_no),
+                )
                 return {
                     "success": True,
                     "product_no": prd_no,
