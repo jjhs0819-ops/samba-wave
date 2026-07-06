@@ -5084,8 +5084,73 @@ async def autotune_refresh_one(body: RefreshOneRequest):
             # cost는 changed 여부와 무관하게 항상 반영 (혜택가 단독 변경 대응)
             if r.new_cost is not None:
                 updates["cost"] = r.new_cost
+
+            # price_changed_at 박제 — _on_result(collector_autotune.py:1786-1796) 와 동일.
+            # warm/hot 분류 기준이라 변동 사이클이 인식하도록 보장.
+            if (
+                r.changed
+                or r.stock_changed
+                or (
+                    r.new_cost is not None
+                    and r.new_cost != (getattr(product, "cost", None) or 0)
+                )
+            ):
+                updates["price_changed_at"] = now
+            # sale_price 변동 시 이전 가격 박제 — UI 가격변동이력 노출
+            if r.changed and r.new_sale_price is not None:
+                _old_sale = product.sale_price or 0
+                _new_sale = r.new_sale_price or 0
+                if _new_sale != _old_sale:
+                    updates["price_before_change"] = _old_sale
+
             await repo.update_async(product.id, **updates)
             await session.commit()
+
+            # transmit 잡 발행 — 변동 있고 마켓 등록된 상품만
+            # Why: refresh-one 후 즉시 마켓 가격 동기화 보장. _site_autotune_loop 의 다음
+            #       사이클까지 기다리면 사이트당 분/시간 단위 지연 (LOTTEON proxy 612 차단 시
+            #       사이클 자체가 stuck → 영구 stale).
+            if r.changed and not r.error:
+                try:
+                    _reg = product.registered_accounts or []
+                    _market_nos = product.market_product_nos or {}
+                    if _reg and _market_nos and _market_nos not in ({}, "null"):
+                        from backend.domain.samba.job.repository import (
+                            SambaJobRepository,
+                        )
+
+                        _job_repo = SambaJobRepository(session)
+                        _job = await _job_repo.create_async(
+                            tenant_id=getattr(product, "tenant_id", None),
+                            job_type="transmit",
+                            payload={
+                                "product_ids": [product.id],
+                                "update_items": ["price", "stock"],
+                                "target_account_ids": list(_reg),
+                                "source_site": (
+                                    getattr(product, "source_site", "") or ""
+                                ),
+                                "brand_name": getattr(product, "brand", "") or "",
+                                "source_sites": [
+                                    getattr(product, "source_site", "") or ""
+                                ],
+                                "brands": [getattr(product, "brand", "") or ""],
+                                "skip_unchanged": False,
+                                "skip_policy_account_filter": True,
+                                "origin": "autotune_refresh_one",
+                            },
+                        )
+                        logger.info(
+                            "[autotune.refresh_one] transmit 잡 발행 pid=%s job=%s",
+                            product.id,
+                            getattr(_job, "id", "?"),
+                        )
+                except Exception as _tx_err:
+                    logger.warning(
+                        "[autotune.refresh_one] transmit 잡 발행 실패 pid=%s err=%s",
+                        product.id,
+                        _tx_err,
+                    )
         elif r and r.error:
             detail_text = r.error[:80]
 
