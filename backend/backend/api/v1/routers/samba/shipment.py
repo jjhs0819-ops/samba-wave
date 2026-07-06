@@ -152,11 +152,12 @@ async def cleanup_smartstore_orphans(
         defer(SambaCollectedProduct.images),
         defer(SambaCollectedProduct.extra_data),
     )
-    if body.product_ids:
-        # 화면 필터 결과로 분석 범위 한정
-        prod_query = prod_query.where(SambaCollectedProduct.id.in_(body.product_ids))
-    elif tenant_ids:
-        # 호환: 필터 없으면 tenant 전체 (멀티테넌시 도입 전 NULL 포함)
+    # 고아(Naver 삭제) 판정 기준은 **항상 전체 카탈로그**여야 한다.
+    # 화면 필터(product_ids)로 좁힌 부분집합과 비교하면 필터 밖의 정상
+    # 등록상품이 "DB에 없음"으로 오판돼 Naver에서 실삭제되는 사고가 난다.
+    # → 전체를 한 번 로드하고, 필터는 역고아/재연결(DB 정리) 범위에만 적용.
+    if tenant_ids:
+        # 멀티테넌시 도입 전 NULL 포함
         prod_query = prod_query.where(
             or_(
                 SambaCollectedProduct.tenant_id.in_(tenant_ids),
@@ -165,6 +166,16 @@ async def cleanup_smartstore_orphans(
         )
     prod_result = await session.exec(prod_query)
     all_db_products = prod_result.all()
+    # 화면 필터 — 역고아/재연결 후보를 이 집합으로 한정 (고아 판정엔 미적용)
+    filter_ids: set[str] = {str(i) for i in (body.product_ids or [])}
+
+    # 초기 조회 트랜잭션 즉시 종료 — 이후 네이버 전수 페이징(수십 초~수 분,
+    # 429 백오프 포함)이 idle-in-transaction 상태로 트랜잭션을 물고 있으면
+    # IIT 타임아웃(write 300s, orm.py)/kill_idle_tx(150s)가 연결을 끊어
+    # "Database error" 500으로 전체 실패한다. 커밋으로 tx를 닫으면 연결은
+    # 'idle'(안전)이 되고, 이후 relink/stale 정리는 각자 짧은 tx로 처리된다.
+    # (expire_on_commit=False라 로드된 ORM 객체 속성은 계속 사용 가능)
+    await session.commit()
 
     # 삼바가 등록한 상품 식별용 style_code 집합
     all_style_codes: set[str] = {
@@ -210,7 +221,9 @@ async def cleanup_smartstore_orphans(
                             account_db_nos.add(str(vv))
                             if not origin_no_for_p and kk == "originProductNo":
                                 origin_no_for_p = str(vv)
-            if origin_no_for_p:
+            # 역고아/재연결 후보는 화면 필터 범위로만 한정
+            # (account_db_nos는 전체 카탈로그 기준 — 고아/충돌 판정용)
+            if origin_no_for_p and (not filter_ids or str(p.id) in filter_ids):
                 db_origin_map[origin_no_for_p] = {
                     "db_id": str(p.id),
                     "site_product_id": str(getattr(p, "site_product_id", "") or ""),
@@ -305,9 +318,9 @@ async def cleanup_smartstore_orphans(
         total_naver += len(naver_products)
 
         # Naver 상품의 originProductNo / channelProductNo 전체 집합 (stale 역방향 판정용)
-        # + sellerManagementCode 집합 → DB의 style_code와 매칭해 stale 오판 방지
+        # + sellerManagementCode → 살아있는 상품번호 맵 (역고아 재연결용)
         account_naver_nos: set[str] = set()
-        account_naver_mgmt_codes: set[str] = set()
+        account_naver_mgmt_map: dict[str, dict[str, str]] = {}
         for np in naver_products:
             on = str(
                 np.get("originProductNo")
@@ -316,13 +329,19 @@ async def cleanup_smartstore_orphans(
             )
             if on:
                 account_naver_nos.add(on)
+            first_cn = ""
             for cp in np.get("channelProducts", []):
                 cn = cp.get("channelProductNo")
                 if cn:
                     account_naver_nos.add(str(cn))
+                    if not first_cn:
+                        first_cn = str(cn)
             mgmt = str(np.get("sellerManagementCode") or "")
-            if mgmt:
-                account_naver_mgmt_codes.add(mgmt)
+            if mgmt and on:
+                account_naver_mgmt_map[mgmt] = {
+                    "origin_no": on,
+                    "channel_no": first_cn,
+                }
 
         orphans = []
         for np in naver_products:
@@ -354,17 +373,27 @@ async def cleanup_smartstore_orphans(
 
         total_orphans += len(orphans)
 
-        # DB→Naver 역고아: DB 매핑이 Naver originNo/channelNo 집합에 모두 없고,
-        # 추가로 style_code(=sellerManagementCode)도 Naver에 없을 때만 진짜 역고아.
-        # (originProductNo가 재등록 등으로 바뀐 경우 sellerManagementCode 매칭이 보호)
-        stale_db = []
-        for origin_no, info in db_origin_map.items():
-            if origin_no in account_naver_nos:
-                continue
-            style = info.get("style_code", "")
-            if style and style in account_naver_mgmt_codes:
-                continue
-            stale_db.append(info)
+        # DB→Naver 역고아/재연결 판정 (순수 로직 — ghost_utils 참조):
+        # - 페이지 누락 시 판정 전체 보류 (못 본 페이지 상품을 역고아로 오판 → 정상 매핑 해제 방지)
+        # - originNo는 죽었지만 같은 품번(sellerManagementCode) 상품이 살아있으면
+        #   스킵(방치)이 아니라 재연결 대상으로 분류 → 새 originNo/channelNo로 매핑 갱신
+        from backend.domain.samba.shipment.ghost_utils import judge_smartstore_stale
+
+        stale_skipped = bool(failed_pages)
+        stale_db, relinks, relink_ambiguous = judge_smartstore_stale(
+            db_origin_map,
+            account_naver_nos,
+            account_naver_mgmt_map,
+            pages_incomplete=stale_skipped,
+            # 전체 카탈로그 기준 매핑번호 집합 — 재연결 대상이 이미 다른 상품의
+            # 매핑(주인 있음)이면 재연결 대신 역고아 처리 (#534 이중매핑 방지)
+            claimed_nos=account_db_nos,
+        )
+        if stale_skipped:
+            logger.warning(
+                f"[고아정리] {account.id}: 페이지 누락 {len(failed_pages)}건 — "
+                f"역고아/재연결 판정 보류 (오판 방지)"
+            )
         total_stale_db += len(stale_db)
 
         deleted_here: list[str] = []
@@ -395,6 +424,35 @@ async def cleanup_smartstore_orphans(
                     # 다음 삭제 호출 사이 0.3초 간격 → RPS ≈ 3 (Naver 안전권)
                     await asyncio.sleep(0.3)
                 total_deleted += len(deleted_here)
+
+        # 재연결(relink) — 같은 품번이 Naver에 살아있는 매핑은 새 상품번호로 갱신
+        # (Naver 호출 없음, DB 매핑만 수정. 등록표시는 유지된다.)
+        relinked: list[str] = []
+        if not dry_run and relinks:
+            from sqlalchemy.orm.attributes import flag_modified as _fm_relink
+
+            relink_by_db_id = {r["db_id"]: r for r in relinks if r.get("db_id")}
+            if relink_by_db_id:
+                relink_q = select(SambaCollectedProduct).where(
+                    SambaCollectedProduct.id.in_(list(relink_by_db_id))
+                )
+                relink_result = await session.exec(relink_q)
+                for prod in relink_result.all():
+                    r = relink_by_db_id[str(prod.id)]
+                    nos = dict(prod.market_product_nos or {})
+                    nos[f"{account.id}_origin"] = r["new_origin_no"]
+                    # bare 키는 채널번호 우선 (등록 저장 포맷과 동일 — service.py 참조)
+                    nos[account.id] = r["new_channel_no"] or r["new_origin_no"]
+                    prod.market_product_nos = nos
+                    _fm_relink(prod, "market_product_nos")
+                    session.add(prod)
+                    relinked.append(str(prod.id))
+                if relinked:
+                    await session.commit()
+                    logger.info(
+                        f"[고아정리] {account.id}: 역고아 재연결 {len(relinked)}건 "
+                        f"(originNo 갱신)"
+                    )
 
         # 역고아(stale_db) 정리 — Naver 호출 없이 DB의 해당 계정 매핑만 제거
         # market_product_nos[account.id] / market_product_nos[f"{account.id}_origin"] 삭제 +
@@ -443,6 +501,12 @@ async def cleanup_smartstore_orphans(
                 "stale_db_count": len(stale_db),
                 "stale_db": stale_db[:50],
                 "stale_cleared": stale_cleared,
+                "stale_skipped": stale_skipped,
+                "relink_count": len(relinks),
+                "relinks": relinks[:50],
+                "relinked": relinked,
+                "relink_ambiguous_count": len(relink_ambiguous),
+                "relink_ambiguous": relink_ambiguous[:50],
                 "deleted": deleted_here,
                 "failed": failed,
                 "failed_pages": failed_pages,
@@ -459,6 +523,8 @@ async def cleanup_smartstore_orphans(
         "total_stale_cleared": sum(
             len(a.get("stale_cleared") or []) for a in per_account
         ),
+        "total_relinks": sum(a.get("relink_count") or 0 for a in per_account),
+        "total_relinked": sum(len(a.get("relinked") or []) for a in per_account),
         "total_naver": total_naver,
         "total_orphans": total_orphans,
         "total_deleted": total_deleted,

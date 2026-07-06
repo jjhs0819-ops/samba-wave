@@ -1041,6 +1041,7 @@ export default function ProductsPage() {
         `Naver 등록 상품: ${fmt(res.total_naver)}개`,
         `Naver→DB 고아: ${fmt(res.total_orphans)}개 (Naver엔 있는데 DB 매핑 없음)`,
         `DB→Naver 역고아: ${fmt(staleCount)}개 (DB엔 판매중인데 Naver에 없음)`,
+        ...((res.total_relinks ?? 0) > 0 ? [`재연결 대상: ${fmt(res.total_relinks!)}개 (같은 품번이 Naver에 살아있음 → 상품번호 갱신)`] : []),
         '',
       ]
       for (const a of res.accounts) {
@@ -1051,9 +1052,11 @@ export default function ProductsPage() {
         const failedPages = a.failed_pages ?? []
         const totalP = a.total_pages ?? 0
         const fpSuffix = failedPages.length > 0
-          ? ` ⚠ 페이지 누락 ${fmt(failedPages.length)}/${fmt(totalP)}`
+          ? ` ⚠ 페이지 누락 ${fmt(failedPages.length)}/${fmt(totalP)}${a.stale_skipped ? ' — 역고아 판정 보류(오판 방지, 재실행 필요)' : ''}`
           : ''
-        logs.push(`[${a.account_id}] Naver ${fmt(a.naver_count ?? 0)}개 / 고아 ${fmt(a.orphan_count ?? 0)}개 / 역고아 ${fmt(a.stale_db_count ?? 0)}개${fpSuffix}`)
+        const relinkSuffix = (a.relink_count ?? 0) > 0 ? ` / 재연결 ${fmt(a.relink_count!)}개` : ''
+        const ambigSuffix = (a.relink_ambiguous_count ?? 0) > 0 ? ` / 재연결 보류 ${fmt(a.relink_ambiguous_count!)}개(품번 중복 — 수동 확인 필요)` : ''
+        logs.push(`[${a.account_id}] Naver ${fmt(a.naver_count ?? 0)}개 / 고아 ${fmt(a.orphan_count ?? 0)}개 / 역고아 ${fmt(a.stale_db_count ?? 0)}개${relinkSuffix}${ambigSuffix}${fpSuffix}`)
         for (const o of (a.orphans ?? []).slice(0, 30)) {
           logs.push(`  [고아] ${o.origin_no}  ${o.name}`)
         }
@@ -1071,7 +1074,8 @@ export default function ProductsPage() {
       setAiJobLogs(logs)
       setAiJobDone(true)
 
-      if (res.total_orphans === 0 && staleCount === 0) {
+      const relinkN = res.total_relinks ?? 0
+      if (res.total_orphans === 0 && staleCount === 0 && relinkN === 0) {
         logs.push('', '고아/역고아 상품이 없습니다.')
         setAiJobLogs([...logs])
         return
@@ -1081,7 +1085,8 @@ export default function ProductsPage() {
       const estSec = Math.ceil(totalToDelete * 0.4)
       const staleN = res.total_stale_db ?? 0
       const staleMsg = staleN > 0 ? `\n+ 역고아 ${fmt(staleN)}개 DB 매핑 자동 정리 (Naver 호출 없음)` : ''
-      if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)${staleMsg}`)) {
+      const relinkMsg = relinkN > 0 ? `\n+ 재연결 ${fmt(relinkN)}개 상품번호 갱신 (같은 품번이 Naver에 살아있음)` : ''
+      if (!await showConfirm(`고아 상품 ${fmt(totalToDelete)}개를 전부 삭제하시겠습니까?\n(예상 소요 ${fmt(estSec)}초 — 호출당 0.3초 throttle + 429 재시도)${staleMsg}${relinkMsg}`)) {
         logs.push('', '삭제 취소됨.')
         setAiJobLogs([...logs])
         return
@@ -1095,6 +1100,9 @@ export default function ProductsPage() {
       logs.push(`고아 삭제 완료: ${fmt(del.total_deleted)}개`)
       if ((del.total_stale_cleared ?? 0) > 0) {
         logs.push(`역고아 DB 매핑 정리: ${fmt(del.total_stale_cleared!)}개`)
+      }
+      if ((del.total_relinked ?? 0) > 0) {
+        logs.push(`재연결(상품번호 갱신): ${fmt(del.total_relinked!)}개`)
       }
       for (const a of del.accounts) {
         if (a.failed && a.failed.length > 0) {

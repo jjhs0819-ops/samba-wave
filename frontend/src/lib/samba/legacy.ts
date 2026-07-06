@@ -1326,6 +1326,8 @@ export const shipmentApi = {
       total_orphans: number
       total_stale_db: number
       total_stale_cleared?: number
+      total_relinks?: number
+      total_relinked?: number
       total_deleted: number
       max_delete: number
       accounts: {
@@ -1336,6 +1338,12 @@ export const shipmentApi = {
         stale_db_count?: number
         stale_db?: { db_id: string; site_product_id?: string; style_code: string; mapped_origin_no: string; product_name: string }[]
         stale_cleared?: string[]
+        stale_skipped?: boolean
+        relink_count?: number
+        relinks?: { db_id: string; style_code: string; mapped_origin_no: string; new_origin_no: string; new_channel_no?: string; product_name: string }[]
+        relinked?: string[]
+        relink_ambiguous_count?: number
+        relink_ambiguous?: { db_id: string; style_code: string; mapped_origin_no: string; product_name: string }[]
         deleted?: string[]
         failed?: { origin_no: string; error: string }[]
         failed_pages?: number[]
