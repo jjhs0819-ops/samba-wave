@@ -760,14 +760,17 @@ class AuctionPlugin(MarketPlugin):
             async with get_write_session() as fresh_session:
                 policy_repo = SambaPolicyRepository(fresh_session)
                 policy = await policy_repo.get_async(policy_id)
-            if policy:
-                pr = policy.pricing or {}
-                mp = (policy.market_policies or {}).get("옥션", {})
-                shipping = int(mp.get("shippingCost") or pr.get("shippingCost") or 0)
-                if shipping > 0:
-                    product["_delivery_fee_type"] = "PAID"
-                    product["_delivery_base_fee"] = shipping
-                if mp.get("maxStock"):
-                    product["_max_stock"] = mp["maxStock"]
+                # 세션 안에서 접근 — 세션 종료 후 detached attribute 접근 방지 (이슈 #581)
+                if policy:
+                    pr = policy.pricing or {}
+                    mp = (policy.market_policies or {}).get("옥션", {})
+                    shipping = int(
+                        mp.get("shippingCost") or pr.get("shippingCost") or 0
+                    )
+                    if shipping > 0:
+                        product["_delivery_fee_type"] = "PAID"
+                        product["_delivery_base_fee"] = shipping
+                    if mp.get("maxStock"):
+                        product["_max_stock"] = mp["maxStock"]
 
         return product

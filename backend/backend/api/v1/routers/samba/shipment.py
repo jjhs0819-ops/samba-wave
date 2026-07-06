@@ -1750,9 +1750,7 @@ async def cleanup_elevenst_orphans_v2(
                         f"— stale 정리 스킵"
                     )
                 else:
-                    db_ids_to_clear = [
-                        s["db_id"] for s in stale_db if s.get("db_id")
-                    ]
+                    db_ids_to_clear = [s["db_id"] for s in stale_db if s.get("db_id")]
                     if db_ids_to_clear:
                         clear_q = select(SambaCollectedProduct).where(
                             SambaCollectedProduct.id.in_(db_ids_to_clear)
@@ -2061,9 +2059,7 @@ async def cleanup_lotteon_orphans(
                         f"— stale 정리 스킵"
                     )
                 else:
-                    db_ids_to_clear = [
-                        s["db_id"] for s in stale_db if s.get("db_id")
-                    ]
+                    db_ids_to_clear = [s["db_id"] for s in stale_db if s.get("db_id")]
                     if db_ids_to_clear:
                         clear_q = select(SambaCollectedProduct).where(
                             SambaCollectedProduct.id.in_(db_ids_to_clear)
