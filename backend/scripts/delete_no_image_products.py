@@ -29,12 +29,14 @@ async def main(execute: bool = False):
 
     try:
         # 1) 대표이미지 누락: images IS NULL 또는 빈 배열
+        # lock_delete=True(삭제 잠금) 상품은 절대 제외 — 크림 매칭 등 중요 상품 보호(2026-07-08)
         count_row = await conn.fetchrow(
             """
             SELECT COUNT(*) AS cnt
             FROM samba_collected_product
-            WHERE images IS NULL
-               OR json_array_length(images) = 0
+            WHERE (images IS NULL
+               OR json_array_length(images) = 0)
+              AND COALESCE(lock_delete, false) = false
             """
         )
         count_no_img = count_row["cnt"]
@@ -49,6 +51,7 @@ async def main(execute: bool = False):
               AND images IS NOT NULL
               AND json_array_length(images) > 0
               AND images->>0 NOT LIKE '%sitem.ssgcdn.com%'
+              AND COALESCE(lock_delete, false) = false
             """
         )
         count_bad_img = count_row2["cnt"]
@@ -68,8 +71,9 @@ async def main(execute: bool = False):
             deleted1 = await conn.execute(
                 """
                 DELETE FROM samba_collected_product
-                WHERE images IS NULL
-                   OR json_array_length(images) = 0
+                WHERE (images IS NULL
+                   OR json_array_length(images) = 0)
+                  AND COALESCE(lock_delete, false) = false
                 """
             )
             print(f"대표이미지 누락 삭제 완료: {deleted1}")
@@ -82,6 +86,7 @@ async def main(execute: bool = False):
                   AND images IS NOT NULL
                   AND json_array_length(images) > 0
                   AND images->>0 NOT LIKE '%sitem.ssgcdn.com%'
+                  AND COALESCE(lock_delete, false) = false
                 """
             )
             print(f"SSG 비상품 이미지 삭제 완료: {deleted2}")

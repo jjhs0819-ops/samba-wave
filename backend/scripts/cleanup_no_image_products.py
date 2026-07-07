@@ -51,6 +51,7 @@ async def main() -> None:
             WHERE (images IS NULL OR images = '[]'::jsonb)
               AND registered_accounts IS NOT NULL
               AND jsonb_array_length(registered_accounts) > 0
+              AND COALESCE(lock_delete, false) = false
             ORDER BY created_at
             """
         )

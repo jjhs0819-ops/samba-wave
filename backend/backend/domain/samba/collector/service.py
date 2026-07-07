@@ -732,6 +732,10 @@ class SambaCollectorService:
         return result
 
     async def delete_collected_product(self, product_id: str) -> bool:
+        # lock_delete=True(삭제 잠금) 상품은 단건 삭제도 차단(2026-07-08)
+        product = await self.product_repo.get_async(product_id)
+        if product and getattr(product, "lock_delete", False):
+            return False
         return await self.product_repo.delete_async(product_id)
 
     async def bulk_delete_collected_products(self, product_ids: list[str]) -> int:

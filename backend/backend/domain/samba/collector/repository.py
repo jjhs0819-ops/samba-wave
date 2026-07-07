@@ -23,11 +23,18 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         super().__init__(session, SambaCollectedProduct)
 
     async def bulk_delete(self, ids: list[str]) -> int:
-        """Delete products through the ORM path so single/bulk behavior matches."""
+        """Delete products through the ORM path so single/bulk behavior matches.
+
+        lock_delete=True(삭제 잠금) 상품은 절대 삭제 안 함 — 크림 매칭 등 보호 대상
+        상품이 이미지없음 정리 스크립트/UI 일괄삭제로 함께 지워지던 사고 방지(2026-07-08).
+        """
         if not ids:
             return 0
 
-        stmt = select(SambaCollectedProduct).where(SambaCollectedProduct.id.in_(ids))
+        stmt = select(SambaCollectedProduct).where(
+            SambaCollectedProduct.id.in_(ids),
+            SambaCollectedProduct.lock_delete.is_(False),
+        )
         result = await self.session.execute(stmt)
         products = list(result.scalars().all())
         for product in products:
