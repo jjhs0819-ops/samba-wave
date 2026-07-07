@@ -545,7 +545,7 @@ class SSGPlugin(MarketPlugin):
                     return "관련 법 및 소비자분쟁해결 규정에 따름"
                 return _fb
 
-            for _mng_attempt in range(8):
+            for _mng_attempt in range(20):
                 _retry_data = result.get("data", {}) if isinstance(result, dict) else {}
                 _retry_res = (
                     _retry_data.get("result", {}) if isinstance(_retry_data, dict) else {}
@@ -623,7 +623,7 @@ class SSGPlugin(MarketPlugin):
                     )
                     break
                 logger.warning(
-                    f"[SSG] 고시 self-heal 재시도({_mng_attempt + 1}/8): "
+                    f"[SSG] 고시 self-heal 재시도({_mng_attempt + 1}/20): "
                     f"drop={product.get('_ssg_notice_drop_props')} "
                     f"add={[a.get('itemMngPropId') for a in (product.get('_ssg_notice_add_attrs') or [])]}"
                 )
