@@ -1360,4 +1360,29 @@ def build_ssg_notice(
         if _drop_ids:
             attrs = [a for a in attrs if a.get("itemMngPropId") not in _drop_ids]
 
+    # 카테고리가 요구하는 필수 고시항목 자동 보충 — 재시도 self-heal 경로가 '누락' 감지 시 주입.
+    # 입력 형식: list[{"itemMngPropId": "0000000075", "itemMngCntt": "..."}]
+    _add_raw = product.get("_ssg_notice_add_attrs")
+    if _add_raw and isinstance(_add_raw, list):
+        _drop_now = product.get("_ssg_notice_drop_props") or []
+        if isinstance(_drop_now, str):
+            _drop_now = {
+                s.strip() for s in _drop_now.replace(" ", ",").split(",") if s.strip()
+            }
+        else:
+            _drop_now = {str(x).strip() for x in _drop_now if str(x).strip()}
+        _have = {a.get("itemMngPropId") for a in attrs}
+        for _a in _add_raw:
+            if not isinstance(_a, dict):
+                continue
+            _pid = str(_a.get("itemMngPropId") or "").strip()
+            if _pid and _pid not in _have and _pid not in _drop_now:
+                attrs.append(
+                    {
+                        "itemMngPropId": _pid,
+                        "itemMngCntt": str(_a.get("itemMngCntt") or "상세페이지 참조"),
+                    }
+                )
+                _have.add(_pid)
+
     return cls_id, attrs
