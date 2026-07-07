@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from . import (
     ai_tags,
     ai_tools,
+    bunjang,
     cafe24_oauth,
     config,
     esmplus,
@@ -60,6 +61,9 @@ musinsa_extension_router = musinsa.extension_router
 # snkrdunk 매칭 수정 전용 라우터 (인증 불필요, 로컬 검수 도구용) — app_factory.py에서 별도 등록
 snkrdunk_public_router = kream.snkrdunk_public_router
 
+# 번개장터 확장앱 검색큐 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
+bunjang_queue_router = bunjang.bunjang_queue_router
+
 __all__ = [
     "router",
     "sourcing_queue_router",
@@ -67,6 +71,7 @@ __all__ = [
     "bg_worker_router",
     "musinsa_extension_router",
     "snkrdunk_public_router",
+    "bunjang_queue_router",
     "_get_setting",
     "_set_setting",
 ]

@@ -387,6 +387,7 @@ async function getMusinsaCookies() {
 
 
 importScripts('background-kream.js')
+importScripts('background-bunjang.js')
 importScripts('background-autologin.js')
 importScripts('recipe-cache.js')
 importScripts('recipe-executor.js')

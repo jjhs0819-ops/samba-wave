@@ -538,7 +538,8 @@ async function runFocusPoll() {
     if (Date.now() < pollPausedUntil) break
     // KREAM/AI소싱 폴링 비활성화
     const hadSourcing = await pollSourcingOnce()
-    if (hadSourcing) {
+    const hadBunjang = await pollBunjangSearchOnce()
+    if (hadSourcing || hadBunjang) {
       emptyCount = 0
     } else {
       emptyCount++
@@ -579,8 +580,10 @@ async function runPollCycle() {
     if (Date.now() < pollPausedUntil) return  // login 트리거로 pause 걸렸으면 즉시 종료
   }
   // KREAM(pollCollectOnce, pollSearchOnce), AI소싱(pollAiSourcingOnce) 폴링 비활성화 — 401 오류 방지
+  // 번개장터 검색큐는 인증 불필요 라우터 사용 — 위 401 문제 없음, 폴링 활성.
   const hadSourcing = await pollSourcingOnce()
-  if (hadSourcing) {
+  const hadBunjang = await pollBunjangSearchOnce()
+  if (hadSourcing || hadBunjang) {
     // 잡 있음 → 1초 버스트 폴링 보장 + 카운터 리셋
     emptyPollCount = 0
     ensureQuickPoll()

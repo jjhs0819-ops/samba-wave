@@ -203,6 +203,7 @@ const SOURCE_URL_MAP: Record<string, string> = {
   NIKE: 'https://www.nike.com/kr/t/{id}',
   ADIDAS: 'https://www.adidas.co.kr/{id}.html',
   SNKRDUNK: 'https://snkrdunk.com/apparels/{id}',
+  BUNJANG: 'https://m.bunjang.co.kr/products/{id}',
 }
 
 function getSourceUrl(p: { source_url?: string; source_site: string; site_product_id?: string; video_url?: string | null }): string {

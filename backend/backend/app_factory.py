@@ -47,6 +47,7 @@ from backend.api.v1.routers.samba.policy import router as samba_policy_router
 from backend.api.v1.routers.samba.product import router as samba_product_router
 from backend.api.v1.routers.samba.proxy import (
     bg_worker_router as samba_bg_worker_router,
+    bunjang_queue_router as samba_bunjang_queue_router,
     cafe24_oauth_router as samba_cafe24_oauth_router,
     musinsa_extension_router as samba_musinsa_extension_router,
     router as samba_proxy_router,
@@ -215,6 +216,7 @@ def create_application() -> FastAPI:
     # snkrdunk 매칭 수정 (인증 불필요 — 로컬 검수 도구 전용)
     app.include_router(samba_snkrdunk_public_router, prefix="/api/v1/samba/proxy")
     app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
+    app.include_router(samba_bunjang_queue_router, prefix="/api/v1/samba")
     # 카페24 OAuth 콜백은 외부 서버 리다이렉트라 JWT 헤더 불가 → 별도 라우터로 JWT 예외
     app.include_router(samba_cafe24_oauth_router, prefix="/api/v1/samba")
     app.include_router(samba_bg_worker_router, prefix="/api/v1/samba")

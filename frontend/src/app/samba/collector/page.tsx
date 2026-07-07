@@ -63,6 +63,10 @@ export default function CollectorPage() {
     maxDiscount: true,
   })
 
+  // 번개장터: 판매자 신뢰도 필터 (체크박스 아닌 숫자 입력)
+  const [bunjangMinSellerRating, setBunjangMinSellerRating] = useState(0)
+  const [bunjangMinSellerSales, setBunjangMinSellerSales] = useState(0)
+
   // 무신사 브랜드 선택 모달
   const [brandSearchResults, setBrandSearchResults] = useState<Array<{ brandCode: string; brandName: string }>>([])
   const [showMusinsaBrandModal, setShowMusinsaBrandModal] = useState(false)
@@ -582,6 +586,10 @@ export default function CollectorPage() {
           load={load}
           loadTree={loadTree}
           addLog={addLog}
+          bunjangMinSellerRating={bunjangMinSellerRating}
+          setBunjangMinSellerRating={setBunjangMinSellerRating}
+          bunjangMinSellerSales={bunjangMinSellerSales}
+          setBunjangMinSellerSales={setBunjangMinSellerSales}
         />
 
         <CollectorStatusPanel

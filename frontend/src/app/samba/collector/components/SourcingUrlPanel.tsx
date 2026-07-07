@@ -75,6 +75,12 @@ interface SourcingUrlPanelProps {
   load: () => void
   loadTree: () => void
   addLog: (msg: string) => void
+
+  // 번개장터 판매자 신뢰도 필터 (인풋박스)
+  bunjangMinSellerRating: number
+  setBunjangMinSellerRating: Dispatch<SetStateAction<number>>
+  bunjangMinSellerSales: number
+  setBunjangMinSellerSales: Dispatch<SetStateAction<number>>
 }
 
 export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
@@ -99,6 +105,8 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
     setBrandModalSelected,
     collecting, setCollecting,
     handleCreateGroup, load, loadTree, addLog,
+    bunjangMinSellerRating, setBunjangMinSellerRating,
+    bunjangMinSellerSales, setBunjangMinSellerSales,
   } = props
 
   return (
@@ -173,6 +181,35 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               ))}
             </div>
           )}
+          {selectedSite === 'BUNJANG' && (
+            <div style={{ display: 'flex', gap: '14px', paddingLeft: '4px', alignItems: 'center' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ fontSize: '0.78rem', color: c.textSub }}>판매자 평점 이상</span>
+                <input
+                  type='number' min={0} max={5} step={0.1}
+                  value={bunjangMinSellerRating}
+                  onChange={(e) => setBunjangMinSellerRating(Number(e.target.value) || 0)}
+                  style={{
+                    width: '64px', padding: '0.3rem 0.5rem', fontSize: '0.78rem',
+                    background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text,
+                  }}
+                />
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <span style={{ fontSize: '0.78rem', color: c.textSub }}>거래건수 이상</span>
+                <input
+                  type='number' min={0} step={1}
+                  value={bunjangMinSellerSales}
+                  onChange={(e) => setBunjangMinSellerSales(Number(e.target.value) || 0)}
+                  style={{
+                    width: '64px', padding: '0.3rem 0.5rem', fontSize: '0.78rem',
+                    background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text,
+                  }}
+                />
+              </label>
+              <span style={{ fontSize: '0.7rem', color: c.textMuted }}>광고상품은 자동 제외됩니다</span>
+            </div>
+          )}
         </div>
 
         {/* URL 입력 */}
@@ -196,6 +233,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               selectedSite === 'GSShop' ? '키워드 또는 URL (예: 내셔널지오그래픽, https://www.gsshop.com/search?tq=내셔널지오그래픽)' :
               selectedSite === 'ElandMall' ? '키워드 또는 URL (예: 나이키, https://www.elandmall.com/search?kwd=나이키)' :
               selectedSite === 'SSF' ? '키워드 또는 URL (예: 나이키, https://www.ssfshop.com/search?keyword=나이키)' :
+              selectedSite === 'BUNJANG' ? '번개장터 검색 URL (예: https://m.bunjang.co.kr/keywords/포켓몬카드?brandId=["139"])' :
               '키워드 또는 URL을 입력하세요'
             }
             style={{
@@ -412,6 +450,36 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               }}
             >
               1상품수집
+            </button>
+          )}
+          {/* 번개장터 수집 버튼 */}
+          {selectedSite === 'BUNJANG' && (
+            <button
+              onClick={async () => {
+                const url = collectUrl.trim()
+                if (!url) { showAlert('번개장터 검색 URL을 입력하세요'); return }
+                setCollecting(true)
+                addLog(`[번개장터수집] "${url}" 수집 시작... (평점 ${bunjangMinSellerRating}↑, 거래 ${bunjangMinSellerSales}건↑)`)
+                try {
+                  const res = await collectorApi.collectBunjang(url, bunjangMinSellerRating, bunjangMinSellerSales)
+                  addLog(`[번개장터수집] "${res.keyword}" 완료: 신규 ${res.saved}건 (검색 ${res.total_found}건, 중복제외 ${res.skipped_duplicates}건)`)
+                  showAlert('번개장터 수집 완료', 'success')
+                  setCollectUrl('')
+                  load(); loadTree()
+                } catch (e) {
+                  addLog(`[번개장터수집] 실패: ${e instanceof Error ? e.message : '오류'}`)
+                  showAlert(e instanceof Error ? e.message : '수집 실패', 'error')
+                }
+                setCollecting(false)
+              }}
+              disabled={collecting}
+              style={{
+                ...btn('secondary'), ...(collecting ? btnDisabled : null),
+                padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              번개장터 수집
             </button>
           )}
         </div>

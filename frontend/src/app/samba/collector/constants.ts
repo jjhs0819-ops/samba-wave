@@ -11,6 +11,7 @@ export const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'GSShop', label: 'GSShop' },
   { id: 'NAVERSTORE', label: '네이버스토어' },
   { id: 'SNKRDUNK', label: '스니덩크' },
+  { id: 'BUNJANG', label: '번개장터' },
   // 개발예정 (비활성)
   { id: 'DANAWA', label: '다나와', disabled: true },
   { id: 'Adidas', label: 'Adidas', disabled: true },

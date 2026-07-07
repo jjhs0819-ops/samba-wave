@@ -1135,6 +1135,11 @@ export const collectorApi = {
       `${SAMBA_PREFIX}/collector/collect-single-musinsa`,
       { method: 'POST', body: JSON.stringify({ url }) }
     ),
+  collectBunjang: (url: string, minSellerRating: number, minSellerSales: number) =>
+    request<{ keyword: string; filter_id: string; total_found: number; saved: number; skipped_duplicates: number }>(
+      `${SAMBA_PREFIX}/collector/collect-bunjang`,
+      { method: 'POST', body: JSON.stringify({ url, min_seller_rating: minSellerRating, min_seller_sales: minSellerSales }) }
+    ),
 }
 
 // ── Market Accounts ──

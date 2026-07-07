@@ -1655,3 +1655,113 @@ async def collect_single_musinsa(
         "filter_name": filter_name,
         "product": collected,
     }
+
+
+class CollectBunjangRequest(BaseModel):
+    url: str
+    min_seller_rating: float = 0.0
+    min_seller_sales: int = 0
+
+
+@router.post("/collect-bunjang", status_code=201)
+async def collect_bunjang(
+    body: CollectBunjangRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """번개장터 검색 URL(https://m.bunjang.co.kr/keywords/{키워드}?brandId=[...])
+    로 검색 → 광고 제외 + 판매자 평점/거래건수 필터 적용 → DB 저장."""
+    import json as _json
+    from urllib.parse import urlparse, parse_qs, unquote
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct as CPModel
+    from backend.domain.samba.plugins.sourcing.bunjang import BunjangPlugin
+
+    url = body.url.strip()
+    parsed = urlparse(url)
+    match = re.search(r"/keywords/([^/?]+)", parsed.path)
+    if not match:
+        raise HTTPException(400, "번개장터 검색 URL에서 키워드를 찾을 수 없습니다")
+    keyword = unquote(match.group(1))
+
+    qs = parse_qs(parsed.query)
+    brand_id = ""
+    raw_brand_id = qs.get("brandId", [""])[0]
+    if raw_brand_id:
+        try:
+            decoded = _json.loads(raw_brand_id)
+            if isinstance(decoded, list) and decoded:
+                brand_id = str(decoded[0])
+        except (ValueError, TypeError):
+            brand_id = raw_brand_id.strip('[]"')
+
+    svc = _get_services(session)
+
+    search_filter = await svc.create_filter(
+        {
+            "source_site": "BUNJANG",
+            "name": keyword,
+            "keyword": url,
+        }
+    )
+    filter_id = search_filter.id
+
+    plugin = BunjangPlugin()
+    items = await plugin.search(
+        keyword,
+        brand_id=brand_id,
+        min_seller_sales=body.min_seller_sales or None,
+        min_seller_rating=body.min_seller_rating or None,
+        limit=100,
+    )
+
+    if not items:
+        raise HTTPException(502, f"'{keyword}' 검색 결과가 없습니다")
+
+    candidate_ids = [str(item.get("site_product_id") or "") for item in items]
+    existing_stmt = select(CPModel.site_product_id).where(
+        CPModel.source_site == "BUNJANG",
+        CPModel.site_product_id.in_(candidate_ids),  # type: ignore[union-attr]
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing_ids = {row[0] for row in existing_result.all()}
+
+    bulk_items = []
+    for item in items:
+        site_pid = str(item.get("site_product_id") or "")
+        if not site_pid or site_pid in existing_ids:
+            continue
+        bulk_items.append(
+            {
+                "source_site": "BUNJANG",
+                "site_product_id": site_pid,
+                "search_filter_id": filter_id,
+                "source_url": item.get("source_url", ""),
+                "name": item.get("name", ""),
+                "brand": item.get("brand", ""),
+                "original_price": item.get("original_price", 0),
+                "sale_price": item.get("sale_price", 0),
+                "images": item.get("images") or [],
+                "options": item.get("options") or [],
+                "status": "collected",
+                "sale_status": "sold_out" if item.get("is_sold_out") else "in_stock",
+            }
+        )
+
+    created_count = 0
+    if bulk_items:
+        created_count = await svc.bulk_create_products(bulk_items)
+
+    await svc.update_filter(
+        filter_id,
+        {"last_collected_at": datetime.now(timezone.utc)},
+    )
+
+    return {
+        "type": "search",
+        "keyword": keyword,
+        "filter_id": filter_id,
+        "filter_name": keyword,
+        "total_found": len(items),
+        "saved": created_count,
+        "skipped_duplicates": len(items) - created_count,
+    }
