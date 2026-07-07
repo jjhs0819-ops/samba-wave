@@ -92,6 +92,10 @@ _CATEGORY_GROUP: dict[str, str] = {
     "스포츠 슈즈": "shoes",
     "슈즈": "shoes",
     "워킹화": "shoes",
+    "골프화": "shoes",
+    "축구화": "shoes",
+    "풋살화": "shoes",
+    "아쿠아슈즈": "shoes",
     # 가방
     "가방": "bag",
     "백팩": "bag",
@@ -129,6 +133,10 @@ _CATEGORY_GROUP: dict[str, str] = {
     "양말/패션소품": "accessories",
     "기타패션소품": "accessories",
     "필드용품": "accessories",
+    "수영용품": "accessories",
+    "수영모자": "accessories",
+    "물안경": "accessories",
+    "비치볼": "accessories",
     # 데스크/PC 주변 잡화 (마우스패드/키보드 등) — "디지털" 부분매칭으로 electronics에 빠지지 않도록 명시
     "마우스패드": "accessories",
     "마우스": "accessories",
@@ -184,6 +192,7 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     cat1 = (product.get("category1") or "").strip()
     cat2 = (product.get("category2") or "").strip()
     cat3 = (product.get("category3") or "").strip()
+    cat4 = (product.get("category4") or "").strip()
 
     # 의류/신발/가방/잡화는 GS샵 등 품목 필수 마켓에서 정확히 분기되어야 한다.
     # cat1이 "스포츠웨어/슈즈" 같은 복합 카테고리면 cat1 부분키워드 매칭에서 "스포츠"로
@@ -204,12 +213,24 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     if _exact_groups:
         return _exact_groups[0]
 
-    # 2) cat1 정확 매칭
-    if cat1 in _CATEGORY_GROUP:
+    # 2) cat1 정확 매칭 (단, 복합 cat1["스포츠/레저","소품"]은 품목이 cat2/cat3에 있으므로
+    #    여기서 sports로 확정하지 말고 step3의 품목 우선 매칭으로 넘긴다.
+    #    ★"스포츠/레저"가 sports 정확키라 신발/잡화/수영 등이 전부 sports(기타재화)로
+    #    확정돼 SSG 고시 불일치로 실패하던 근본버그.)
+    if cat1 in _CATEGORY_GROUP and cat1 not in ("스포츠/레저", "소품"):
         return _CATEGORY_GROUP[cat1]
 
-    # 3) "스포츠/레저", "소품" 등 복합 cat1: cat2 키워드 부분 매칭 후 etc 폴백
+    # 3) "스포츠/레저", "소품" 등 복합 cat1: 품목 그룹(신발/가방/의류/잡화) 우선 매칭 후
+    #    일반 키워드 매칭, 최종 etc 폴백.
+    #    ★"스포츠" 키워드가 "스포츠신발/스포츠가방"을 sports(→기타재화 0000000035)로
+    #    가로채 SSG 고시분류 불일치(디지털 고시 요구)로 등록실패하던 것 방지(#288 연장).
     if cat1 in ("스포츠/레저", "소품"):
+        for _c in (cat2, cat3, cat4):
+            if not _c:
+                continue
+            for keyword, group in _CATEGORY_GROUP.items():
+                if group in PRIORITY_GROUPS and keyword in _c:
+                    return group
         for keyword, group in _CATEGORY_GROUP.items():
             if cat2 and keyword in cat2:
                 return group
