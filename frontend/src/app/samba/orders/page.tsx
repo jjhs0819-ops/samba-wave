@@ -255,9 +255,13 @@ export default function OrdersPage() {
       options.set(baseSite, formatSiteLabel(baseSite))
     }
 
-    return [...options.entries()]
+    const sorted = [...options.entries()]
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label, 'ko'))
+    // 크림은 항상 맨 위에 노출
+    const kreamIdx = sorted.findIndex(o => o.value === 'KREAM')
+    if (kreamIdx > 0) sorted.unshift(...sorted.splice(kreamIdx, 1))
+    return sorted
   }, [orders, siteAliasMap])
   useEffect(() => { loadOrders() }, [loadOrders])
   useEffect(() => {

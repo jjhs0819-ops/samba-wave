@@ -209,7 +209,7 @@ export default function OrderInfoCell(props: Props) {
             {(o.product_option || showOrderBtns) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginTop: '0.125rem', flexWrap: 'wrap' }}>
                 {o.product_option && (
-                  <span style={{ color: c.warn, fontSize: '0.75rem', fontWeight: 700 }}>[옵션] {o.product_option}</span>
+                  <span style={{ color: /psa\s*9\b/i.test(o.product_option) ? '#fff' : c.warn, fontSize: '0.75rem', fontWeight: 700 }}>[옵션] {o.product_option}</span>
                 )}
                 {showOrderBtns && (
                   <>
