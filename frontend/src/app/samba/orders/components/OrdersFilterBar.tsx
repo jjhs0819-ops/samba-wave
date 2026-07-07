@@ -5,6 +5,7 @@ import { type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { orderApi } from '@/lib/samba/legacy'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
+import { MARKETS } from '@/lib/samba/markets'
 import { inputStyle, fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
@@ -163,7 +164,10 @@ export default function OrdersFilterBar(props: Props) {
             <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, width: '200px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
               <option value="">전체마켓보기</option>
               {(() => {
+                // 마켓 순서를 MARKETS 정식 순서로 정렬 (크림이 이베이 위에 오도록)
+                const marketRank = (t: string) => { const i = MARKETS.findIndex(m => m.id === t); return i < 0 ? 999 : i }
                 const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+                  .sort((a, b) => marketRank(a[0]) - marketRank(b[0]))
                 return marketTypes.flatMap(([type, name]) => [
                   <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
                   ...accounts
@@ -215,7 +219,10 @@ export default function OrdersFilterBar(props: Props) {
           <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체 마켓</option>
             {(() => {
+              // 마켓 순서를 MARKETS 정식 순서로 정렬 (크림이 이베이 위에 오도록)
+              const marketRank = (t: string) => { const i = MARKETS.findIndex(m => m.id === t); return i < 0 ? 999 : i }
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
+                .sort((a, b) => marketRank(a[0]) - marketRank(b[0]))
               return marketTypes.flatMap(([type, name]) => [
                 <option key={`type:${type}`} value={`type:${type}`}>{name}</option>,
                 ...accounts
