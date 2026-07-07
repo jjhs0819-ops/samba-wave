@@ -423,7 +423,13 @@ class FashionPlusClient:
         options: list[dict[str, Any]] = []
         items = data if isinstance(data, list) else [data]
         for group in items:
-            for opt in group.get("options", []):
+            if not isinstance(group, dict):
+                continue
+            raw_opts = group.get("options", [])
+            # API가 {"sub": [...]} 형태로 응답하는 경우 처리
+            if isinstance(raw_opts, dict):
+                raw_opts = raw_opts.get("sub", [])
+            for opt in raw_opts:
                 stock = opt.get("_stock", 0)
                 options.append(
                     {
