@@ -132,6 +132,12 @@ interface MarketPolicyForm {
   // 포이즌(리셀) 전용
   minFeeAmount?: number        // 최소 수수료 (원) — POIZON 건당 최소 15,000원
   ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
+  // KREAM(리셀) 전용
+  kreamMinMarginAmount?: number       // 최소마진금액 (원)
+  kreamCompetitiveMarginRate?: number // 경쟁 최소마진율 (%)
+  kreamNoCompetitionMarginRate?: number // 무경쟁 최소마진율 (%)
+  kreamShippingFeeCard?: number       // 일반배송비(카드, 원)
+  kreamShippingFeeBox?: number        // 추가배송비(박스, 원)
 }
 
 
@@ -1564,7 +1570,7 @@ export default function PoliciesPage() {
                   </label>
                 </div>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && (
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && marketPolicyTab !== 'KREAM' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
                   <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
@@ -1588,7 +1594,35 @@ export default function PoliciesPage() {
                   </div>
                 </>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
+              {/* 크림(리셀) 전용: 최소마진금액/경쟁·무경쟁 최소마진율/배송비 */}
+              {marketPolicyTab === 'KREAM' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소마진금액</span>
+                    <NumInput value={mp.kreamMinMarginAmount ?? 9000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamMinMarginAmount: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>경쟁 최소마진율</span>
+                    <NumInput value={mp.kreamCompetitiveMarginRate ?? 13} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamCompetitiveMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>동일상품 국내입찰 경쟁 있을 때 최소마진금액과 비교해 큰 쪽 적용</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>무경쟁 최소마진율</span>
+                    <NumInput value={mp.kreamNoCompetitionMarginRate ?? 40} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamNoCompetitionMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>1순위·경쟁 없을 때 원가 대비 배수(예: 40 → 원가×1.4)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>일반배송비(카드)</span>
+                    <NumInput value={mp.kreamShippingFeeCard ?? 11000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeCard: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>추가배송비(박스)</span>
+                    <NumInput value={mp.kreamShippingFeeBox ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeBox: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드는 일반배송비만, 박스/카드팩은 일반+추가배송비 합산</span>
+                  </div>
+                </>
+              )}
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && marketPolicyTab !== 'KREAM' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                   <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix={marketPolicyTab === 'eBay' ? '$' : '원'} />
@@ -1598,7 +1632,7 @@ export default function PoliciesPage() {
                 </div>
               )}
               {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑·신세계몰은 자체 블록에서 출고일 표시 */}
-              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
+              {marketPolicyTab !== '플레이오토' && marketPolicyTab !== '스마트스토어' && marketPolicyTab !== '11번가' && marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && marketPolicyTab !== 'KREAM' && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
