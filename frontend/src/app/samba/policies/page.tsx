@@ -1591,7 +1591,10 @@ export default function PoliciesPage() {
               {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
-                  <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                  <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix={marketPolicyTab === 'eBay' ? '$' : '원'} />
+                  {marketPolicyTab === 'eBay' && (
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>$ 단위 — 환율변환된 상품가(USD)에 그대로 가산됩니다</span>
+                  )}
                 </div>
               )}
               {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑·신세계몰은 자체 블록에서 출고일 표시 */}

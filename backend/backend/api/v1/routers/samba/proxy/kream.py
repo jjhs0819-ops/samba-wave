@@ -594,6 +594,8 @@ async def snkrdunk_compare_all_public(
         SELECT
             site_product_id AS snkr_id,
             name AS snkr_name,
+            -- 최근 가격/재고 확인 시각(KST) — restock/갱신이 snkr price·stock 갱신 시 updated_at=NOW()
+            to_char(updated_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS price_checked_at,
             COALESCE(style_code, '') AS style_code,
             COALESCE(extra_data->>'name_ja', '') AS name_ja,
             COALESCE(extra_data->>'name_en', '') AS name_en,

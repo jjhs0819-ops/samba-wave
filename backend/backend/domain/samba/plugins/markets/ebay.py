@@ -357,6 +357,24 @@ class EbayPlugin(MarketPlugin):
                 extras.get("exchangeRate") or settings_creds.get("exchangeRate", 1400)
             )
 
+        # 정책(가격정책) 마켓별 설정의 eBay 배송비($) — 최종 USD 가격에 가산
+        # 정책관리 페이지에서 $ 단위로 입력받음(policy.market_policies["eBay"]["shippingCost"])
+        ebay_shipping_usd = 0.0
+        policy_id = (
+            product.get("applied_policy_id") if isinstance(product, dict) else None
+        )
+        if policy_id and session:
+            try:
+                from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+                policy_repo = SambaPolicyRepository(session)
+                policy = await policy_repo.get_async(policy_id)
+                if policy and policy.market_policies:
+                    ebay_mp = policy.market_policies.get("eBay", {}) or {}
+                    ebay_shipping_usd = float(ebay_mp.get("shippingCost", 0) or 0)
+            except Exception as e:
+                logger.warning("[eBay] 정책 배송비($) 조회 실패: %s", e)
+
         client = EbayClient(
             app_id=app_id,
             dev_id=dev_id,
@@ -473,6 +491,7 @@ class EbayPlugin(MarketPlugin):
             return_policy_id=return_policy_id,
             merchant_location_key=merchant_location_key,
             exchange_rate=exchange_rate,
+            ebay_shipping_usd=ebay_shipping_usd,
         )
 
         try:
