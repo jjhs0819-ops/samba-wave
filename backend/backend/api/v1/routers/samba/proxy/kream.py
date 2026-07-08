@@ -629,7 +629,18 @@ async def snkrdunk_compare_all_public(
                 FROM jsonb_array_elements(options::jsonb) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
-            ), 0) AS psa9_price
+            ), 0) AS psa9_price,
+            -- 신발(스니커즈)용: 사이즈옵션 전체 재고합 + 최저가(카드 PSA칸 없음 대응)
+            COALESCE(extra_data->>'snkr_type', '') AS snkr_type,
+            COALESCE((
+                SELECT SUM(NULLIF(o->>'stock', '')::int)
+                FROM jsonb_array_elements(options::jsonb) o
+            ), 0) AS total_stock,
+            COALESCE((
+                SELECT MIN(NULLIF(o->>'price', '')::numeric)::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE NULLIF(o->>'price', '')::numeric > 0
+            ), 0) AS min_opt_price
         FROM samba_collected_product
         WHERE source_site = 'SNKRDUNK'
         ORDER BY site_product_id
@@ -663,8 +674,15 @@ async def snkrdunk_compare_all_public(
     for r in result.mappings():
         d = dict(r)
         matched = bool(d["kream_id"])
-        # PSA10 없어도 PSA9 재고 있으면 재고 있는 것으로 취급
-        has_stock = (d["psa10_stock"] or 0) > 0 or (d["psa9_stock"] or 0) > 0
+        is_sneaker = d.get("snkr_type") == "sneaker"
+        d["is_sneaker"] = is_sneaker
+        # PSA10 없어도 PSA9 재고 있으면 재고 있는 것으로 취급.
+        # 신발(스니커즈)은 PSA칸이 없으므로 사이즈옵션 전체 재고합으로 판정.
+        has_stock = (
+            (d["psa10_stock"] or 0) > 0
+            or (d["psa9_stock"] or 0) > 0
+            or (is_sneaker and (d["total_stock"] or 0) > 0)
+        )
         d["has_stock"] = has_stock
         d["model_no"] = d["kream_style_code"]
         d["kream_name"] = d["kream_name_ko"]

@@ -1635,9 +1635,9 @@ async def _parse_generic_stub(product: Any) -> RefreshResult:
 
 
 async def _parse_snkrdunk(product: Any) -> RefreshResult:
-    """SNKRDUNK 갱신 — site_product_id로 get_trading_card_detail 재조회(PSA 10 옵션·가격).
+    """SNKRDUNK 갱신 — site_product_id로 get_trading_card_detail 재조회(PSA 9/10 옵션·가격).
 
-    업데이트 버튼/오토튠 갱신 시 최신 PSA 10 최저가·재고를 반영. 리셀 매칭상품은
+    업데이트 버튼/오토튠 갱신 시 최신 PSA 9/10 최저가·재고를 반영. 리셀 매칭상품은
     품절이어도 삭제 안 되게 in_stock 유지(lock_delete 정책과 일관).
     """
     from backend.domain.samba.proxy.snkrdunk import SnkrdunkClient

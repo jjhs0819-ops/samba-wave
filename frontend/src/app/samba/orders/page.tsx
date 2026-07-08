@@ -102,6 +102,8 @@ export default function OrdersPage() {
 
   const [activeActions, setActiveActions] = useState<Record<string, string | null>>({})
   const [collectedProductCosts, setCollectedProductCosts] = useState<Record<string, number>>({})
+  // 옵션별(PSA 9/10 등) 원가 매칭용 — 대표 cost(collectedProductCosts)만 쓰면 옵션 무관하게 같은 값이 표시됨(#PSA등급 오표시)
+  const [collectedProductOptions, setCollectedProductOptions] = useState<Record<string, Array<{ name: string; price: number }>>>({})
   const [collectedProductSourceSites, setCollectedProductSourceSites] = useState<Record<string, string>>({})
   // 스니덩크 상품번호(site_product_id) — 크림 주문에 소싱처 상품번호 표시용 (collected_product_id → 스니덩크번호)
   const [collectedProductSnkrNos, setCollectedProductSnkrNos] = useState<Record<string, string>>({})
@@ -278,6 +280,7 @@ export default function OrdersPage() {
     const ids = collectedProductIdsKey ? collectedProductIdsKey.split(',') : []
     if (ids.length === 0) {
       setCollectedProductCosts({})
+      setCollectedProductOptions({})
       setCollectedProductSourceSites({})
       setCollectedProductSnkrNos({})
       return
@@ -288,20 +291,30 @@ export default function OrdersPage() {
         const rows = await collectorApi.getProductsByIds(ids)
         if (cancelled) return
         const next: Record<string, number> = {}
+        const nextOptions: Record<string, Array<{ name: string; price: number }>> = {}
         const nextSourceSites: Record<string, string> = {}
         const nextSnkrNos: Record<string, string> = {}
         for (const row of rows) {
           next[row.id] = row.cost ?? row.sale_price ?? row.original_price ?? 0
+          if (Array.isArray(row.options)) {
+            nextOptions[row.id] = row.options
+              .filter((op): op is { name: string; price: number } =>
+                typeof op === 'object' && op !== null && 'name' in op && 'price' in op
+                && typeof (op as { name: unknown }).name === 'string'
+                && typeof (op as { price: unknown }).price === 'number')
+          }
           if (row.source_site) nextSourceSites[row.id] = row.source_site
           // 스니덩크 상품번호(site_product_id) — 크림 주문 소싱처번호 표시용
           if (row.site_product_id) nextSnkrNos[row.id] = String(row.site_product_id)
         }
         setCollectedProductCosts(next)
+        setCollectedProductOptions(nextOptions)
         setCollectedProductSourceSites(nextSourceSites)
         setCollectedProductSnkrNos(nextSnkrNos)
       } catch {
         if (!cancelled) {
           setCollectedProductCosts({})
+          setCollectedProductOptions({})
           setCollectedProductSourceSites({})
           setCollectedProductSnkrNos({})
         }
@@ -995,6 +1008,7 @@ export default function OrdersPage() {
         setEditingOrderNumbers={setEditingOrderNumbers}
         activeActions={activeActions}
         collectedProductCosts={collectedProductCosts}
+        collectedProductOptions={collectedProductOptions}
         collectedProductSourceSites={collectedProductSourceSites}
         collectedProductSnkrNos={collectedProductSnkrNos}
         productMemos={productMemos}

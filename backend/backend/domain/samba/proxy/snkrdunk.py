@@ -629,14 +629,17 @@ class SnkrdunkClient:
                     if x.get("isDisplaySold"):
                         continue  # 판매완료 제외(재고만)
                     cond = (x.get("displayShortConditionTitle") or "").strip()
-                    # PSA 10 등급만 수집 — PSA 9/8/raw/BGS/ARS 제외(크로스플랫폼은 PSA10만).
-                    if not re.match(r"PSA\s*10\b", cond.upper().replace(" ", "")):
+                    # PSA 9/10 등급만 수집 — PSA 8/raw/BGS/ARS 제외(크림에서 개별 등급으로 거래되는 건 9·10뿐).
+                    # PSA10 단일 하드코딩 시 PSA9 옵션 자체가 상품 DB에 없어 PSA9 주문 원가가 PSA10가로
+                    # 오표시되는 사고 발생(2026-07-08) — 등급별로 옵션을 분리해야 함.
+                    m = re.match(r"PSA(10|9)\b", cond.upper().replace(" ", ""))
+                    if not m:
                         continue
                     price = x.get("price")
                     if not isinstance(price, (int, float)) or price <= 0:
                         continue
                     price = int(price)
-                    ckey = "PSA 10"
+                    ckey = f"PSA {m.group(1)}"
                     if ckey not in cond_min or price < cond_min[ckey]:
                         cond_min[ckey] = price
                     cond_cnt[ckey] = cond_cnt.get(ckey, 0) + 1

@@ -43,6 +43,7 @@ interface OrdersTableProps {
   setEditingOrderNumbers: Dispatch<SetStateAction<Record<string, string>>>
   activeActions: Record<string, string | null>
   collectedProductCosts: Record<string, number>
+  collectedProductOptions: Record<string, Array<{ name: string; price: number }>>
   collectedProductSourceSites: Record<string, string>
   collectedProductSnkrNos: Record<string, string> // 스니덩크 상품번호(크림 주문 소싱처번호 표시)
   productMemos: Record<string, string> // 상품메모(#535)
@@ -104,6 +105,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     editingOrderNumbers, setEditingOrderNumbers,
     activeActions,
     collectedProductCosts,
+    collectedProductOptions,
     collectedProductSourceSites,
     collectedProductSnkrNos,
     productMemos,
@@ -146,7 +148,14 @@ export default function OrdersTable(props: OrdersTableProps) {
             const liveProfit = calcProfit(o)
             const liveProfitRate = calcProfitRate(o)
             const liveFeeRate = calcFeeRate(o)
-            const displayCost = o.collected_product_id
+            // 옵션(PSA 9/10 등)별 원가 우선 매칭 — 없으면 cp 대표원가로 폴백(#PSA등급 오표시 방지)
+            const matchedOption = o.collected_product_id && o.product_option
+              ? collectedProductOptions[o.collected_product_id]?.find(
+                  op => op.name.replace(/\s+/g, '').toUpperCase() === o.product_option!.replace(/\s+/g, '').toUpperCase())
+              : undefined
+            const displayCost = matchedOption
+              ? matchedOption.price
+              : o.collected_product_id
               ? (collectedProductCosts[o.collected_product_id] ?? o.cost ?? 0)
               : (o.cost ?? 0)
             const activeActionTags = parseActionTags(activeActions[o.id] ?? o.action_tag ?? null)
