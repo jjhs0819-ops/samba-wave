@@ -417,9 +417,7 @@ class AuctionPlugin(MarketPlugin):
                 from backend.domain.samba.proxy.esmplus import esm_total_variants
 
                 if esm_total_variants(samba_options) >= 2:
-                    logger.warning(
-                        f"[옥션] 옵션 빌드 오류(멀티변형) → 미발행: {opt_e}"
-                    )
+                    logger.warning(f"[옥션] 옵션 빌드 오류(멀티변형) → 미발행: {opt_e}")
                     return {
                         "success": False,
                         "message": f"옵션 빌드 오류로 미발행(멀티변형·재전송 필요): {str(opt_e)[:80]}",
