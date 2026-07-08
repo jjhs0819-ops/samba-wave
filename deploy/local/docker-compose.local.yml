@@ -43,6 +43,10 @@ services:
   samba-api:
     build:
       context: ../../backend
+      args:
+        # 확장앱 latest 버전 — deploy-local.ps1이 extension/manifest.json에서 읽어
+        # $env:EXT_VERSION로 주입. 안 넘어오면 빈값 → 백엔드 fallback 상수 사용.
+        EXT_VERSION: ${EXT_VERSION:-}
     restart: unless-stopped
     depends_on:
       postgres:

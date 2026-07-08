@@ -13,6 +13,14 @@ try {
 Pop-Location
 
 Write-Host "[2/4] 이미지 재빌드..." -ForegroundColor Cyan
+# 확장앱 latest 버전 주입 — extension/manifest.json version → build-arg EXT_VERSION
+# → Dockerfile ENV EXTENSION_LATEST_VERSION. 안 하면 백엔드가 fallback 상수를 써서
+# 확장앱 자동업데이트 대상 버전이 어긋난다.
+try {
+  $manifest = Get-Content "..\..\extension\manifest.json" -Raw | ConvertFrom-Json
+  $env:EXT_VERSION = "$($manifest.version)"
+  Write-Host "확장앱 버전 주입: EXT_VERSION=$($env:EXT_VERSION)" -ForegroundColor Cyan
+} catch { Write-Host "manifest 버전 읽기 실패(무시): $_" -ForegroundColor Yellow }
 # build 는 build: 섹션 있는 local.yml 로 (tunnel.yml 은 image: 참조라 'No services to build')
 docker compose --env-file local.env -f docker-compose.local.yml build samba-api
 if ($LASTEXITCODE -ne 0) { throw "빌드 실패" }
