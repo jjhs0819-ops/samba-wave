@@ -138,13 +138,13 @@ export default function OrderInfoCell(props: Props) {
         orderType,
         productOption: o.product_option || '',
         sourcingAccountId: o.sourcing_account_id || '',
-        // gift: 사무실 수령인+전화만 (배송지 고객이 직접 입력)
-        // direct: 고객 주소, kkadaegi: 사무실 주소
-        shippingName: orderType === 'direct' ? (o.customer_name || '') : office.name,
+        // direct/gift: 고객 주소로 배송 (gift는 새 배송지 등록에 사용), kkadaegi: 사무실 주소
+        // 연락처(shippingPhone)는 항상 사무실 전화 고정 — 고객에게 소싱처 알림 안 가게
+        shippingName: orderType === 'kkadaegi' ? office.name : (o.customer_name || ''),
         shippingPhone: office.phone,
-        shippingZipcode: orderType === 'direct' ? (o.customer_postal_code || '') : '',
-        shippingAddress: orderType === 'gift' ? '' : (orderType === 'direct' ? customerAddress.base : office.address),
-        shippingAddressDetail: orderType === 'gift' ? '' : (orderType === 'direct' ? customerAddress.detail : office.address_detail),
+        shippingZipcode: orderType === 'kkadaegi' ? '' : (o.customer_postal_code || ''),
+        shippingAddress: orderType === 'kkadaegi' ? office.address : customerAddress.base,
+        shippingAddressDetail: orderType === 'kkadaegi' ? office.address_detail : customerAddress.detail,
       }
       window.postMessage({ source: 'samba-page', type: 'PLACE_ORDER', payload }, window.location.origin)
     } catch (e) {

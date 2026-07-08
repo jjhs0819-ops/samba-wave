@@ -29,102 +29,107 @@
     // 무신사 새 UI: DropdownTriggerBox 방식 (컬러 선택 후 사이즈 박스가 동적으로 생성됨)
     const hasBoxes = document.querySelector('[data-mds="DropdownTriggerBox"]')
     if (hasBoxes) {
-      for (let i = 0; i < parts.length; i++) {
-        const part = parts[i]
-        await sleep(400)
+      const _ITEM_SELS = [
+        '[data-mds="StaticDropdownMenuItem"]',
+        '[class*="DropdownItemContent__Container"]',
+        '[data-mds="DropdownItem"]',
+        '[role="option"]',
+        '[class*="DropdownItem__Container"]',
+        '[class*="dropdown__item"]',
+        '[class*="DropdownList"] li',
+        '[class*="SelectedOption__SelectOptionItemContainer"]',
+      ]
+      // 품절 판정은 텍스트 "품절"만으로 한다. (aria-disabled/[class*=disabled]는
+      // 무신사가 모든 항목 부모에 달아놔서 재고 있는 M까지 품절로 오판 → 제외)
+      const _isDisabled = (c) => c.textContent.includes('품절')
+      // [핵심] 무신사 새 UI는 박스를 "왼쪽→오른쪽 순서(보통 색상→사이즈)"로 골라야
+      // 다음 박스 목록이 동적 생성된다. 그래서 박스를 DOM 순서대로 하나씩 처리한다.
+      //  - 옵션(part)과 매칭되는 박스 → 해당 옵션 선택
+      //  - 매칭되는 옵션이 없는 박스(예: 옵션에 색상정보 없음) → 첫 재고 항목 자동선택
+      //    (이걸 해야 색상이 정해지고 사이즈 박스가 생성됨)
+      // 기존 버그: 색상 자동선택을 사이즈 선택 뒤에 하다 보니, 사이즈 목록이 아직
+      // 비어있어 "M"을 못 찾고 → 색상만 뒤늦게 자동선택 → 사이즈는 미선택으로 남음.
+      const usedParts = new Set()
 
-        // 현재 존재하는 DropdownTriggerBox 재조회 (동적 생성 대응)
-        const boxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
-        if (boxes.length === 0) break
-
-        // 아직 선택 안 된 박스 우선 — innerText(span 표시) 비어있어야 미선택
-        const targetBox = boxes.find(b => !b.innerText.trim() && !b.querySelector('[data-mds="DropdownTriggerInput"]')?.value?.trim()) || boxes[i] || boxes[boxes.length - 1]
-        const ph = targetBox.querySelector('[data-mds="DropdownTriggerInput"]')?.getAttribute('placeholder') || ''
-
-        // 박스 클릭으로 드롭다운 열기
-        targetBox.click()
-
-        // 드롭다운 항목 polling — sleep(500) 고정 대기 시 이미 닫혀버림(실측 0.8초 내 닫힘)
-        // 100ms 간격 최대 2초 polling으로 열리자마자 잡기
-        const _ITEM_SELS = [
-          '[data-mds="StaticDropdownMenuItem"]',
-          '[class*="DropdownItemContent__Container"]',
-          '[data-mds="DropdownItem"]',
-          '[role="option"]',
-          '[class*="DropdownItem__Container"]',
-          '[class*="dropdown__item"]',
-          '[class*="DropdownList"] li',
-          '[class*="SelectedOption__SelectOptionItemContainer"]',
-        ]
-        let allItems = []
+      const _pollItems = async () => {
+        let items = []
         for (let _pi = 0; _pi < 20; _pi++) {
           await sleep(100)
           for (const sel of _ITEM_SELS) {
             const cands = [...document.querySelectorAll(sel)].filter(
               el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]')
             )
-            if (cands.length > 0) { allItems = cands; break }
+            if (cands.length > 0) { items = cands; break }
             const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
-            if (all.length > 0) { allItems = all; break }
+            if (all.length > 0) { items = all; break }
           }
-          if (allItems.length > 0) break
+          if (items.length > 0) break
         }
-        let matched = false
-        if (allItems.length > 0) {
-          const target = allItems.find(c => {
-            const t = c.textContent.trim()
-            return t === part || t.startsWith(part) || t.toLowerCase().includes(part.toLowerCase())
-          }) || allItems[0]
-          // click()이 PointerEvent보다 안전 — PointerEvent(pointerdown)이 외부클릭으로 감지되어 드롭다운을 닫음
-          const clickEl = target.closest('[class*="SelectedOption__SelectOptionIt"]')
-            || target.closest('[class*="StaticDropdownMenuItem"]')
-            || target
-          clickEl.click()
-          await sleep(600)
-          const isExact = target.textContent.trim() === part
-          console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${isExact ? part : target.textContent.trim()}" 선택`)
-          matched = true
-        }
-        if (!matched) {
-          console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${part}" 항목 못 찾음`)
-        }
+        return items
+      }
+      const _clickItem = (el) => {
+        // click()이 PointerEvent보다 안전 — pointerdown이 외부클릭으로 감지되어 닫힘
+        const clickEl = el.closest('[class*="SelectedOption__SelectOptionIt"]')
+          || el.closest('[class*="StaticDropdownMenuItem"]')
+          || el
+        clickEl.click()
       }
 
-      // 제공된 parts 수 < 전체 박스 수인 경우만 나머지 박스 자동선택
-      // parts 수 >= 박스 수면 이미 모두 지정됨 → 스킵 (이중선택 방지)
-      await sleep(400)
-      const remainingBoxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
-      if (remainingBoxes.length <= parts.length) {
-        // 모든 박스 이미 parts로 지정됨 — 자동선택 불필요
-      } else
-      for (const box of remainingBoxes) {
+      // 박스가 동적 생성되므로 매 회 재조회하며 DOM 순서대로 처리
+      const _MAX_BOXES = 6
+      for (let bi = 0; bi < _MAX_BOXES; bi++) {
+        await sleep(400)
+        const boxes = Array.from(document.querySelectorAll('[data-mds="DropdownTriggerBox"]'))
+        if (bi >= boxes.length) break
+
+        const box = boxes[bi]
         const inp = box.querySelector('[data-mds="DropdownTriggerInput"]')
-        // innerText(span 표시) 우선 확인 — value는 항상 ""인 UI
-        const _boxSelected = box.innerText.trim() || (inp && inp.value && inp.value.trim()) || ''
-        if (!_boxSelected) {
-          const ph = inp.getAttribute('placeholder') || ''
-          box.click()
-          // sleep(500) 고정 대기 → 닫힘 위험, polling으로 대체
-          let _items = []
-          for (let _ri = 0; _ri < 20; _ri++) {
-            await sleep(100)
-            for (const sel of ['[data-mds="StaticDropdownMenuItem"]','[class*="DropdownItemContent__Container"]','[data-mds="DropdownItem"]','[role="option"]','[class*="DropdownList"] li','[class*="SelectedOption__SelectOptionItemContainer"]']) {
-              const cands = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0 && !el.closest('[data-mds="DropdownTriggerBox"]'))
-              if (cands.length > 0) { _items = cands; break }
-              const all = [...document.querySelectorAll(sel)].filter(el => el.offsetHeight > 0)
-              if (all.length > 0) { _items = all; break }
-            }
-            if (_items.length > 0) break
-          }
-          const available = _items.filter(c => !c.closest('[aria-disabled="true"]') && !c.closest('[class*="disabled"]'))
-          const target = available.length > 0 ? available[0] : _items[0]
-          if (target) {
-            const clickEl = target.closest('[class*="SelectedOption__SelectOptionIt"]')
-              || target.closest('[class*="StaticDropdownMenuItem"]')
-              || target
-            clickEl.click()
-            await sleep(500)
-            console.log(`[삼바-주문처리-무신사] 남은 드롭다운[${ph}] 자동선택: ${target.textContent.trim()}`)
+        const ph = inp?.getAttribute('placeholder') || ''
+        // 이미 선택된 박스는 건너뜀 (innerText 우선 — value는 항상 ""인 UI)
+        const already = box.innerText.trim() || (inp && inp.value && inp.value.trim()) || ''
+        if (already) continue
+
+        box.click()
+        const allItems = await _pollItems()
+        if (allItems.length === 0) {
+          document.body.click()
+          await sleep(200)
+          continue
+        }
+
+        // 아직 사용 안 한 옵션 중 이 박스에서 매칭되는 것 찾기 (정확매칭 우선)
+        // includes 오매칭("M"이 "Small"의 m 등)과 첫항목 fallback 제거, 품절 제외
+        let picked = null
+        let pickedPart = ''
+        for (const part of parts) {
+          if (usedParts.has(part)) continue
+          const t =
+            allItems.find(c => !_isDisabled(c) && c.textContent.trim() === part) ||
+            allItems.find(c => !_isDisabled(c) && (
+              c.textContent.trim().startsWith(part + ' ') ||
+              c.textContent.trim().startsWith(part + '(') ||
+              c.textContent.trim().startsWith(part)
+            ))
+          if (t) { picked = t; pickedPart = part; break }
+        }
+
+        if (picked) {
+          _clickItem(picked)
+          usedParts.add(pickedPart)
+          await sleep(600)
+          console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] "${picked.textContent.trim()}" 선택`)
+        } else {
+          // 이 박스에 해당하는 옵션 없음(예: 색상 미지정) → 첫 재고 항목 자동선택
+          // (다음 박스=사이즈 목록을 열어주기 위함). 품절 항목은 제외.
+          const avail = allItems.filter(c => !_isDisabled(c))
+          const fallback = avail.length ? avail[0] : allItems[0]
+          if (fallback) {
+            _clickItem(fallback)
+            await sleep(600)
+            console.log(`[삼바-주문처리-무신사] TriggerBox[${ph}] 자동선택: ${fallback.textContent.trim()}`)
+          } else {
+            document.body.click()
+            await sleep(200)
           }
         }
       }
