@@ -1588,8 +1588,13 @@ class LotteonClient:
     # ------------------------------------------------------------------
 
     def _datetime_range(self, days: int) -> tuple[str, str]:
-        """최근 N일 범위를 yyyymmddHHmmss 형식으로 반환 (최대 30일)."""
-        now = datetime.now(timezone.utc)
+        """최근 N일 범위를 yyyymmddHHmmss 형식으로 반환 (최대 30일).
+
+        롯데ON 클레임 API(getCancellationRequestAndComplateList/exchangeSearch)는
+        srchStrtDttm/srchEndDttm을 KST로 해석하므로 반드시 KST 벽시계 시각으로 전송한다.
+        (UTC로 보내면 srchEndDttm이 9시간 이르게 나가 당일 오후 접수 클레임이 배제됨 — 이슈 #589)
+        """
+        now = now_kst()
         start = now - timedelta(days=min(days, 30))
         fmt = "%Y%m%d%H%M%S"
         return start.strftime(fmt), now.strftime(fmt)
@@ -2052,7 +2057,8 @@ class LotteonClient:
 
         # 3차: SellerDeliveryOrdersSearch(odTypCd=30) — 배송 모듈로 이동한 교환 회수 주문
         try:
-            now = datetime.now(timezone.utc)
+            # KST 벽시계 사용 — 롯데ON 조회창은 KST 해석(#589). UTC로 보내면 당일 오후분 배제.
+            now = now_kst()
             actual_days = min(days, 30)
             for i in range(actual_days):
                 day_end = now - timedelta(days=i)
