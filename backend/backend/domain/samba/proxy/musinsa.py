@@ -1194,6 +1194,14 @@ class MusinsaClient:
                         option_value_no_map[v["no"]] = item.get("no", 0)
 
             # 재고 API
+            #
+            # [이슈 #591] 무신사 봇 감지 등으로 재고 API가 200을 주면서도 data가
+            # 비었거나 meta.result != SUCCESS인 경우가 간헐적으로 발생한다. 과거에는
+            # 이 응답을 조용히 통과시켜 inventory_map이 비고, 모든 옵션이 stock=99
+            # 기본값으로 처리됐다 → 품절 사이즈가 "재고 있음"으로 마켓 전송 → 이행불가
+            # 주문 위험. 따라서 옵션이 존재(all_option_value_nos)하는데 재고 응답이
+            # 정상이 아니면 조용히 넘기지 말고 예외를 던진다. refresher가 이를 잡아
+            # 기존 DB 재고를 보존한다(99로 덮어쓰지 않음).
             inventory_map: dict[int, dict[str, Any]] = {}
             if all_option_value_nos:
                 try:
@@ -1202,35 +1210,54 @@ class MusinsaClient:
                         headers=self._headers({"Content-Type": "application/json"}),
                         json={"optionValueNos": all_option_value_nos},
                     )
-                    if inv_resp.status_code == 200:
-                        inv_json = inv_resp.json()
-                        if (inv_json.get("meta") or {}).get(
-                            "result"
-                        ) == "SUCCESS" and isinstance(inv_json.get("data"), list):
-                            for inv in inv_json["data"]:
-                                opt_item_no = inv.get("productVariantId")
-                                if opt_item_no:
-                                    _dd = inv.get("domesticDelivery") or {}
-                                    # 혼합배송(브랜드배송 redirect): relatedOption에 실제
-                                    # 판매 상품번호(relatedGoodsNo)+재고가 내려옴 (#332).
-                                    # 가격/재고 정정에 사용하므로 보존.
-                                    _ro = inv.get("relatedOption") or {}
-                                    inventory_map[opt_item_no] = {
-                                        "remainQuantity": inv.get("remainQuantity"),
-                                        "outOfStock": inv.get("outOfStock", False),
-                                        "isRedirect": inv.get("isRedirect", False),
-                                        "relatedGoodsNo": (
-                                            str(_ro.get("relatedGoodsNo") or "") or None
-                                        ),
-                                        "relatedOutOfStock": _ro.get("outOfStock"),
-                                        "deliveryType": _dd.get("deliveryType", ""),
-                                        "willReleaseDate": _dd.get(
-                                            "willReleaseDate", ""
-                                        ),
-                                    }
+                    if inv_resp.status_code != 200:
+                        raise RuntimeError(
+                            f"재고 API 비정상 응답 HTTP {inv_resp.status_code}"
+                        )
+                    inv_json = inv_resp.json()
+                    _inv_result = (inv_json.get("meta") or {}).get("result")
+                    _inv_data = inv_json.get("data")
+                    if _inv_result != "SUCCESS" or not isinstance(_inv_data, list):
+                        # meta 실패/data 비정상 → 봇 감지 의심. 로그 남기고 예외로 승격.
+                        raise RuntimeError(
+                            f"재고 API 실패: result={_inv_result}, "
+                            f"data_type={type(_inv_data).__name__}"
+                        )
+                    if _inv_data:
+                        for inv in _inv_data:
+                            opt_item_no = inv.get("productVariantId")
+                            if opt_item_no:
+                                _dd = inv.get("domesticDelivery") or {}
+                                # 혼합배송(브랜드배송 redirect): relatedOption에 실제
+                                # 판매 상품번호(relatedGoodsNo)+재고가 내려옴 (#332).
+                                # 가격/재고 정정에 사용하므로 보존.
+                                _ro = inv.get("relatedOption") or {}
+                                inventory_map[opt_item_no] = {
+                                    "remainQuantity": inv.get("remainQuantity"),
+                                    "outOfStock": inv.get("outOfStock", False),
+                                    "isRedirect": inv.get("isRedirect", False),
+                                    "relatedGoodsNo": (
+                                        str(_ro.get("relatedGoodsNo") or "") or None
+                                    ),
+                                    "relatedOutOfStock": _ro.get("outOfStock"),
+                                    "deliveryType": _dd.get("deliveryType", ""),
+                                    "willReleaseDate": _dd.get("willReleaseDate", ""),
+                                }
                 except Exception as inv_err:
+                    # [이슈 #591] 여기서 조용히 삼키면(무시) inventory_map이 비어
+                    # 모든 옵션이 stock=99로 오수집된다. 반드시 예외를 전파해
+                    # refresher가 기존 재고를 보존하도록 한다.
                     logger.warning(
-                        f"[재고] {goods_no} 재고 API 실패 (무시): {type(inv_err).__name__}: {inv_err}"
+                        f"[재고] {goods_no} 재고 API 실패 → 예외 전파(재고 보존): "
+                        f"{type(inv_err).__name__}: {inv_err}"
+                    )
+                    raise
+
+                # 옵션이 있는데 유효 재고가 하나도 안 잡히면 실패로 간주 (99 오수집 방지)
+                if not inventory_map:
+                    raise RuntimeError(
+                        f"재고 API 응답에 유효 재고 없음 "
+                        f"(옵션 {len(all_option_value_nos)}개 요청, 매칭 0건)"
                     )
 
             # 옵션 정리 — preorder/품절 등 salePrice=0인 경우 normalPrice 폴백
