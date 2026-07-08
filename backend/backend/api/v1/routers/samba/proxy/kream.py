@@ -575,6 +575,12 @@ class SnkrdunkKreamNamePatchRequest(BaseModel):
     kream_name_ko: str
 
 
+class SnkrdunkFixedPricePatchRequest(BaseModel):
+    option: str  # "PSA 10" / "PSA 9"
+    enabled: bool
+    price: int = 0
+
+
 class SnkrdunkKreamNameEnPatchRequest(BaseModel):
     kream_name_en: str
 
@@ -662,6 +668,31 @@ async def snkrdunk_compare_all_public(
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), 0) AS psa9_price,
+            -- 옵션별 고정입찰가(원가무관) 설정 — 검수페이지 표시/체크 복원용
+            COALESCE((
+                SELECT (o->>'fixedEnabled')::boolean
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
+                LIMIT 1
+            ), false) AS psa10_fixed_enabled,
+            COALESCE((
+                SELECT NULLIF(o->>'fixedPrice', '')::numeric::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
+                LIMIT 1
+            ), 0) AS psa10_fixed_price,
+            COALESCE((
+                SELECT (o->>'fixedEnabled')::boolean
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
+                LIMIT 1
+            ), false) AS psa9_fixed_enabled,
+            COALESCE((
+                SELECT NULLIF(o->>'fixedPrice', '')::numeric::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
+                LIMIT 1
+            ), 0) AS psa9_fixed_price,
             -- 신발(스니커즈)용: 사이즈옵션 전체 재고합 + 최저가(카드 PSA칸 없음 대응)
             COALESCE(extra_data->>'snkr_type', '') AS snkr_type,
             -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
@@ -814,9 +845,13 @@ async def snkrdunk_kream_image_public(
     if row.img:
         return {"image": row.img}
     img = ""
+    # KREAM 상품페이지 직접fetch(get_product)는 차단 시 엉뚱한 og:image를 반환(오매칭 이미지
+    # 사고). 검색 API로 style_code(=snkr id) 검색 → id==product_id **정확일치**한 결과의
+    # 이미지만 사용. 일치 결과 없거나 실패면 빈값(틀린 이미지 절대 넣지 않음, 폴백 금지).
     try:
-        info = await KreamClient().get_product(row.pid)
-        imgs = info.get("images") or []
+        results = await KreamClient().search(snkr_id, size=10)
+        match = next((r for r in results if str(r.get("id")) == str(row.pid)), None)
+        imgs = (match.get("images") or []) if match else []
         img = imgs[0] if imgs else ""
     except Exception:
         img = ""
@@ -876,6 +911,37 @@ async def snkrdunk_update_style_code_public(
         WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, style_code=body.style_code))  # type: ignore[arg-type]
+    await session.commit()
+    return {"ok": True}
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/fixed-price")
+async def snkrdunk_update_fixed_price_public(
+    snkr_id: str,
+    body: SnkrdunkFixedPricePatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """옵션별 고정입찰가(원가무관) 설정 — 상품관리 OptionPanel과 동일 필드(fixedEnabled/fixedPrice)를
+    options 배열의 해당 옵션에 병합. 리프레셔가 옵션을 통째로 갱신할 때도 보존됨(refresher.py 참조).
+    """
+    from sqlalchemy import text
+
+    sql = text("""
+        UPDATE samba_collected_product
+        SET options = (
+            SELECT jsonb_agg(
+                CASE WHEN o->>'name' = :opt_name
+                     THEN o || jsonb_build_object('fixedEnabled', :enabled, 'fixedPrice', :price)
+                     ELSE o END)
+            FROM jsonb_array_elements(options::jsonb) o
+        ), updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+    """)
+    await session.exec(
+        sql.bindparams(
+            sid=snkr_id, opt_name=body.option, enabled=body.enabled, price=body.price
+        )  # type: ignore[arg-type]
+    )
     await session.commit()
     return {"ok": True}
 

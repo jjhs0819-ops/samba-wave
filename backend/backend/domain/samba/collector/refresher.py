@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import json
 import os
 from collections import deque
 from contextlib import asynccontextmanager, nullcontext
@@ -1658,6 +1659,25 @@ async def _parse_snkrdunk(product: Any) -> RefreshResult:
     price = float(d.get("sale_price") or 0)
     opts = d.get("options") or []
     imgs = d.get("images") or []
+
+    # 옵션별 고정가(원가 무관 지정가 입찰) 설정은 이 함수가 새로 만드는 opts엔 없음 —
+    # 갱신 때마다 사라지지 않도록 기존 옵션에서 같은 이름을 찾아 이식(2026-07-08).
+    old_opts = getattr(product, "options", None) or []
+    if isinstance(old_opts, str):
+        try:
+            old_opts = json.loads(old_opts)
+        except Exception:
+            old_opts = []
+    fixed_by_name = {
+        o.get("name"): {"fixedEnabled": True, "fixedPrice": o.get("fixedPrice")}
+        for o in old_opts
+        if isinstance(o, dict) and o.get("fixedEnabled") and o.get("fixedPrice")
+    }
+    if fixed_by_name:
+        for o in opts:
+            if isinstance(o, dict) and o.get("name") in fixed_by_name:
+                o.update(fixed_by_name[o["name"]])
+
     return RefreshResult(
         product_id=product.id,
         new_sale_price=price,

@@ -34,6 +34,8 @@ const OptionPanel = React.memo(function OptionPanel({
   // 개별 옵션 가격/재고 편집 상태 (인덱스 → 표시값)
   const [editingPrices, setEditingPrices] = useState<Record<number, string>>({})
   const [editingStocks, setEditingStocks] = useState<Record<number, string>>({})
+  // 고정입찰가(원가무관) 입력값 — 스니덩크/크림 전용(#옵션별고정가)
+  const [editingFixedPrices, setEditingFixedPrices] = useState<Record<number, string>>({})
   const opts = localOpts
   const displayOptionName = useCallback((value: unknown) => {
     const text = String(value ?? '')
@@ -135,6 +137,11 @@ const OptionPanel = React.memo(function OptionPanel({
                     style={{ ...btn('secondary'), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
                   >일괄수정</button>
                 </th>
+                {sourceSite === 'SNKRDUNK' && (
+                  <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
+                    고정입찰가<br /><span style={{ fontSize: '0.7rem', color: c.textSub, fontWeight: 400 }}>(원가무관)</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -259,6 +266,48 @@ const OptionPanel = React.memo(function OptionPanel({
                     <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: c.text }}>
                       {stockDisplay}
                     </td>
+                    {sourceSite === 'SNKRDUNK' && (() => {
+                      const fixedEnabled = o.fixedEnabled === true
+                      const fixedPriceDisplay = editingFixedPrices[idx] ?? (
+                        Number(o.fixedPrice || 0) > 0 ? fmtNum(Number(o.fixedPrice)) : ''
+                      )
+                      return (
+                        <td style={{ padding: '0.5rem', textAlign: 'right', fontSize: '0.875rem', color: c.text, whiteSpace: 'nowrap' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                            <input
+                              type="checkbox"
+                              checked={fixedEnabled}
+                              onChange={(e) => {
+                                const newOpts = [...opts]
+                                newOpts[idx] = { ...newOpts[idx], fixedEnabled: e.target.checked }
+                                saveOptions(newOpts)
+                              }}
+                              style={{ cursor: 'pointer', accentColor: c.primary }}
+                            />
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              disabled={!fixedEnabled}
+                              placeholder="원가무관 입찰가"
+                              value={fixedPriceDisplay}
+                              onChange={(e) => setEditingFixedPrices(prev => ({ ...prev, [idx]: e.target.value }))}
+                              onFocus={(e) => setEditingFixedPrices(prev => ({ ...prev, [idx]: e.target.value.replace(/,/g, '') }))}
+                              onBlur={(e) => {
+                                const v = parseInt(e.target.value.replace(/,/g, ''), 10)
+                                setEditingFixedPrices(prev => ({ ...prev, [idx]: isNaN(v) || v <= 0 ? '' : fmtNum(v) }))
+                                if (!isNaN(v) && v > 0) {
+                                  const newOpts = [...opts]
+                                  newOpts[idx] = { ...newOpts[idx], fixedPrice: v }
+                                  saveOptions(newOpts)
+                                }
+                              }}
+                              style={{ width: '90px', background: fixedEnabled ? c.inputBg : c.border, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', textAlign: 'right', fontSize: '0.875rem', opacity: fixedEnabled ? 1 : 0.5 }}
+                            />
+                            <span>원</span>
+                          </span>
+                        </td>
+                      )
+                    })()}
                   </tr>
                 )
               })}
