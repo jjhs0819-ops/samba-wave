@@ -2643,10 +2643,10 @@ export const storeCareApi = {
   // 마켓 점수·품절률
   listMetrics: () =>
     request<StoreCareMarketMetric[]>(`${SAMBA_PREFIX}/store-care/metrics`),
-  collectMetrics: (markets?: string[]) =>
+  collectMetrics: (markets?: string[], accountId?: string, accountLabel?: string) =>
     request<{ ok: boolean; device_id: string; enqueued: { market_type: string; request_id?: string; error?: string }[] }>(
       `${SAMBA_PREFIX}/store-care/metrics/collect`,
-      { method: 'POST', body: JSON.stringify({ markets: markets ?? null }) }
+      { method: 'POST', body: JSON.stringify({ markets: markets ?? null, account_id: accountId ?? null, account_label: accountLabel ?? null }) }
     ),
   recommendations: () =>
     request<MetricRecommendation[]>(`${SAMBA_PREFIX}/store-care/metrics/recommendations`),

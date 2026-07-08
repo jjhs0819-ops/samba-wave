@@ -77,6 +77,7 @@ export default function StoreCare() {
   const [stats, setStats] = useState({ total: 0, success: 0, failed: 0, total_amount: 0 })
   const [tab, setTab] = useState<'overview' | 'schedule' | 'history' | 'metrics' | 'purchase'>('metrics')
   const [collecting, setCollecting] = useState(false)
+  const [collectingAcc, setCollectingAcc] = useState('') // 계정별 수집 중인 account_id
   const [loading, setLoading] = useState(true)
   // 가구매(M1 — SSG 수동 1건)
   const [purchaseAccounts, setPurchaseAccounts] = useState<SambaSourcingAccount[]>([])
@@ -108,12 +109,10 @@ export default function StoreCare() {
 
   useEffect(() => { load() }, [load])
 
+  // 새로고침 — 계정별 수집은 각 계정 카드의 '수집' 버튼으로. 여기선 최신값 재조회만.
   const runCollect = useCallback(async () => {
     setCollecting(true)
     try {
-      await storeCareApi.collectMetrics().catch(() => {})
-      // 확장앱이 포털을 열어 스크래핑하는 시간 — 잠시 후 재조회
-      await new Promise(r => setTimeout(r, 6000))
       const [mets, rcs] = await Promise.all([
         storeCareApi.listMetrics().catch(() => []),
         storeCareApi.recommendations().catch(() => []),
@@ -122,6 +121,19 @@ export default function StoreCare() {
       setRecs(rcs)
     } finally {
       setCollecting(false)
+    }
+  }, [])
+
+  // 계정별 수집 — 그 계정 셀러센터에 로그인된 상태에서 눌러야 정확함(로그인된 계정 기준 스크랩)
+  const collectOne = useCallback(async (acc: SambaMarketAccount) => {
+    setCollectingAcc(acc.id)
+    try {
+      await storeCareApi.collectMetrics([acc.market_type], acc.id, acc.account_label).catch(() => {})
+      await new Promise(r => setTimeout(r, 6000))
+      const mets = await storeCareApi.listMetrics().catch(() => [])
+      setMetrics(mets)
+    } finally {
+      setCollectingAcc('')
     }
   }, [])
 
@@ -206,6 +218,10 @@ export default function StoreCare() {
       todayAmount: mPurchases.reduce((sum, p) => sum + p.amount, 0),
     }
   })
+
+  // 점수수집 대상 셀러 계정 (SSG/11번가/GS) — 계정별 카드/수집
+  const METRICS_MARKETS = ['ssg', '11st', 'gsshop']
+  const sellerAccounts = accounts.filter(a => METRICS_MARKETS.includes(a.market_type))
 
   return (
     <div style={{ padding: '0' }}>
@@ -415,14 +431,14 @@ export default function StoreCare() {
             <div style={card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
-                  <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: c.text, margin: 0 }}>마켓 점수 · 품절률</h3>
-                  <p style={{ fontSize: '0.72rem', color: c.textSub, marginTop: '4px' }}>파트너/셀러 포털에서 수집 · 확장앱이 설치·로그인된 PC에서 실행됩니다</p>
+                  <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: c.text, margin: 0 }}>마켓 점수 · 품절률 (계정별)</h3>
+                  <p style={{ fontSize: '0.72rem', color: c.textSub, marginTop: '4px' }}>각 계정 셀러센터에 로그인된 상태에서 계정 카드의 &lsquo;수집&rsquo;을 누르면 그 계정 점수가 수집돼요. 확장앱 설치·로그인된 PC에서 실행.</p>
                 </div>
                 <button onClick={runCollect} disabled={collecting} style={{
                   ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px',
                   ...(collecting ? btnDisabled : null),
                 }}>
-                  {collecting ? '수집 중…' : '지금 수집'}
+                  {collecting ? '새로고침…' : '🔄 새로고침'}
                 </button>
               </div>
 
@@ -482,56 +498,71 @@ export default function StoreCare() {
                 </div>
               )}
 
-              {metrics.length === 0 ? (
+              {sellerAccounts.length === 0 ? (
                 <div style={{ padding: '2rem', textAlign: 'center', color: c.textMuted, fontSize: '0.85rem' }}>
-                  아직 수집된 점수가 없습니다. ‘지금 수집’을 눌러주세요.
+                  연결된 SSG/11번가/GS 셀러 계정이 없습니다. 설정 &gt; 마켓계정에서 계정을 추가하세요.
                 </div>
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
-                  {metrics.map(m => (
-                    <div key={m.id} style={{ padding: '14px', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '10px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
-                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[m.market_type] || c.textMuted }} />
-                        <span style={{ fontSize: '0.85rem', fontWeight: 700, color: c.text }}>{m.market_type}</span>
-                        {m.status === 'failed' && <span style={{ fontSize: '0.68rem', color: c.danger }}>수집 실패</span>}
-                        <span style={{ marginLeft: 'auto', fontSize: '0.65rem', color: c.textMuted }}>
-                          {m.collected_at ? new Date(m.collected_at).toLocaleString('ko') : ''}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
-                        <div>
-                          <div style={{ fontSize: '0.65rem', color: c.textSub }}>대표점수</div>
-                          <div style={{ fontSize: '1.3rem', fontWeight: 700, color: c.text }}>{m.score != null ? m.score : '-'}</div>
+                  {sellerAccounts.map(acc => {
+                    const m = metrics.find(x => x.market_type === acc.market_type && (x.account_id || '') === acc.id)
+                    const isC = collectingAcc === acc.id
+                    return (
+                      <div key={acc.id} style={{ padding: '14px', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+                          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: MARKET_COLORS[acc.market_type] || c.textMuted, flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: c.text }}>{MARKET_NAME[acc.market_type] || acc.market_type}</span>
+                          <span style={{ fontSize: '0.74rem', color: c.textSub, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>· {acc.account_label}</span>
+                          <button onClick={() => collectOne(acc)} disabled={isC} style={{ marginLeft: 'auto', fontSize: '0.68rem', padding: '3px 10px', borderRadius: '6px', cursor: isC ? 'default' : 'pointer', border: 'none', background: isC ? c.surfaceAlt : c.primary, color: isC ? c.textSub : '#fff', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                            {isC ? '수집중…' : '수집'}
+                          </button>
                         </div>
-                        <div>
-                          <div style={{ fontSize: '0.65rem', color: c.textSub }}>품절률</div>
-                          <div style={{ fontSize: '1.3rem', fontWeight: 700, color: c.text }}>
-                            {m.soldout_rate != null ? `${m.soldout_rate}%` : '-'}
-                            {m.soldout_rate_prev != null && <span style={{ fontSize: '0.62rem', color: c.textMuted, marginLeft: '4px' }}>(전 {m.soldout_rate_prev}%)</span>}
-                          </div>
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '0.65rem', color: c.textSub }}>패널티</div>
-                          <div style={{ fontSize: '1.3rem', fontWeight: 700, color: m.penalty ? c.danger : c.success }}>{m.penalty != null ? m.penalty : '-'}</div>
-                        </div>
-                      </div>
-                      {m.grade && <div style={{ fontSize: '0.72rem', color: c.text, marginBottom: '6px' }}>등급: {m.grade}</div>}
-                      {m.metrics && Object.keys(m.metrics).length > 0 && (
-                        <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          {Object.entries(m.metrics as Record<string, { value?: number; level?: string }>).map(([k, v]) => (
-                            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
-                              <span style={{ color: c.textSub }}>{k}</span>
-                              <span style={{ color: c.text }}>
-                                {v && typeof v === 'object' ? `${v.value ?? ''}${v.level ? ` · ${v.level}` : ''}` : String(v)}
-                              </span>
+                        {m ? (
+                          <>
+                            {m.status === 'failed' && <div style={{ fontSize: '0.68rem', color: c.danger, marginBottom: '6px' }}>수집 실패</div>}
+                            <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
+                              <div>
+                                <div style={{ fontSize: '0.65rem', color: c.textSub }}>대표점수</div>
+                                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: c.text }}>{m.score != null ? fmtNum(m.score) : '-'}</div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '0.65rem', color: c.textSub }}>품절률</div>
+                                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: c.text }}>
+                                  {m.soldout_rate != null ? `${m.soldout_rate}%` : '-'}
+                                  {m.soldout_rate_prev != null && <span style={{ fontSize: '0.62rem', color: c.textMuted, marginLeft: '4px' }}>(전 {m.soldout_rate_prev}%)</span>}
+                                </div>
+                              </div>
+                              <div>
+                                <div style={{ fontSize: '0.65rem', color: c.textSub }}>패널티</div>
+                                <div style={{ fontSize: '1.3rem', fontWeight: 700, color: m.penalty ? c.danger : c.success }}>{m.penalty != null ? fmtNum(m.penalty) : '-'}</div>
+                              </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                      {m.period_label && <div style={{ fontSize: '0.65rem', color: c.textMuted, marginTop: '8px' }}>평가기간 {m.period_label}</div>}
-                      {m.status === 'failed' && m.error && <div style={{ fontSize: '0.65rem', color: c.danger, marginTop: '6px' }}>{m.error}</div>}
-                    </div>
-                  ))}
+                            {m.grade && <div style={{ fontSize: '0.72rem', color: c.text, marginBottom: '6px' }}>등급: {m.grade}</div>}
+                            {m.metrics && Object.keys(m.metrics).length > 0 && (
+                              <div style={{ borderTop: `1px solid ${c.border}`, paddingTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                {Object.entries(m.metrics as Record<string, { value?: number; level?: string }>).map(([k, v]) => (
+                                  <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.72rem' }}>
+                                    <span style={{ color: c.textSub }}>{k}</span>
+                                    <span style={{ color: c.text }}>
+                                      {v && typeof v === 'object' ? `${v.value ?? ''}${v.level ? ` · ${v.level}` : ''}` : String(v)}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div style={{ fontSize: '0.62rem', color: c.textMuted, marginTop: '8px' }}>
+                              {m.collected_at ? new Date(m.collected_at).toLocaleString('ko') : ''}{m.period_label ? ` · 평가기간 ${m.period_label}` : ''}
+                            </div>
+                            {m.status === 'failed' && m.error && <div style={{ fontSize: '0.62rem', color: c.danger, marginTop: '4px' }}>{m.error}</div>}
+                          </>
+                        ) : (
+                          <div style={{ fontSize: '0.72rem', color: c.textMuted, padding: '10px 0' }}>
+                            아직 수집 안 됨 — 이 계정 셀러센터에 로그인 후 <b style={{ color: c.text }}>수집</b>을 눌러주세요.
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>

@@ -93,16 +93,21 @@ class StoreCareMarketMetricRepository(BaseRepository[StoreCareMarketMetric]):
     async def list_latest_per_market(
         self, tenant_id: str | None = None
     ) -> list[StoreCareMarketMetric]:
-        """마켓별 최신 스냅샷 1건씩 (collected_at 내림차순 dedup)."""
+        """마켓+계정별 최신 스냅샷 1건씩 (collected_at 내림차순 dedup).
+
+        계정별 점수 — 11번가 여러 셀러계정(나디/소경/…) 등 계정마다 1건.
+        account_id 없는(계정미지정) 스냅샷은 market_type 단독 키(빈 계정)로 유지.
+        """
         stmt = select(StoreCareMarketMetric)
         if tenant_id:
             stmt = stmt.where(StoreCareMarketMetric.tenant_id == tenant_id)
         stmt = stmt.order_by(StoreCareMarketMetric.collected_at.desc())
         rows = list((await self.session.execute(stmt)).scalars().all())
-        latest: dict[str, StoreCareMarketMetric] = {}
+        latest: dict[tuple[str, str], StoreCareMarketMetric] = {}
         for r in rows:
-            if r.market_type not in latest:
-                latest[r.market_type] = r
+            key = (r.market_type, r.account_id or "")
+            if key not in latest:
+                latest[key] = r
         return list(latest.values())
 
 

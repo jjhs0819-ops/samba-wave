@@ -147,6 +147,9 @@ async def list_purchases(
 
 class MetricsCollectRequest(BaseModel):
     markets: Optional[list] = None  # None이면 STORE_METRICS_URLS 전체 마켓
+    # 계정별 수집 — 지정 시 결과를 해당 셀러계정으로 라벨(계정별 점수). 로그인된 계정 기준.
+    account_id: Optional[str] = None
+    account_label: Optional[str] = None
 
 
 _OPTION_RANGE_MAX = 100  # 안전장치 — 범위 폭주 방지 (오타로 1~9999 등)
@@ -252,6 +255,8 @@ async def collect_market_metrics(
                 mt,
                 owner_device_id=trigger_device_id,
                 tenant_id=tenant_id,
+                account_id=(body.account_id if body else None) or "",
+                account_label=(body.account_label if body else None) or "",
             )
             enqueued.append({"market_type": mt, "request_id": request_id})
         except Exception as e:  # noqa: BLE001
