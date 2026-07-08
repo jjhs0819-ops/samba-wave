@@ -383,10 +383,15 @@ export default function OrdersTable(props: OrdersTableProps) {
                           if (val === (o.sourcing_order_number ?? '')) return
                           try {
                             // 소싱주문번호 입력 → 상태 '배송대기중'(wait_ship) 자동 전환 (진행된 상태는 역행 안 함)
+                            // status는 PUT /orders/{id}(OrderUpdate DTO)가 받는 필드가 아니라 무시됨 —
+                            // 반드시 전용 PUT /orders/{id}/status(OrderStatusUpdate)로 별도 호출해야 반영됨(2026-07-08).
                             const advanced = ['shipping', 'delivered', 'confirmed', 'cancelled', 'returned', 'cancel_requested', 'return_requested', 'ship_failed']
                             const patch: Partial<SambaOrder> = { sourcing_order_number: val }
-                            if (val && !advanced.includes(o.status)) patch.status = 'wait_ship'
                             await orderApi.update(o.id, patch)
+                            if (val && !advanced.includes(o.status)) {
+                              await orderApi.updateStatus(o.id, 'wait_ship')
+                              patch.status = 'wait_ship'
+                            }
                             patchOrder(o.id, patch)
                           } catch { showAlert('소싱주문번호 저장 실패', 'error') }
                         }}
