@@ -285,6 +285,14 @@ def _opt_cache_set(key: tuple[str, str], value: Any) -> None:
     _opt_cache[key] = (time.monotonic() + _OPT_CACHE_TTL_SEC, value)
 
 
+class ESMOptionLookupError(RuntimeError):
+    """추천옵션 그룹 조회 실패(네트워크/ESM 일시 오류/무효 catCode).
+
+    '카테고리에 그룹 없음'(정상 빈 응답)과 구분한다 — 조회 실패를 빈 리스트로
+    뭉개면 일시 장애가 상품별 '옵션 매핑 실패'로 오진되어 배치 전체가 미발행된다.
+    """
+
+
 class ESMPlusClient:
     """ESM Plus 판매자 API 클라이언트.
 
@@ -715,13 +723,18 @@ class ESMPlusClient:
                 params={"catCode": cat_code},
             )
             groups = result.get("details", []) or []
-            _opt_cache_set(("groups", cat_code), groups)
+            # 빈 리스트는 캐시하지 않음 — ESM 이상응답이 1시간 캐시되면 해당
+            # 카테고리 전 상품이 '그룹 없음'으로 연쇄 미발행된다.
+            if groups:
+                _opt_cache_set(("groups", cat_code), groups)
             return groups
         except Exception as exc:
             logger.warning(
                 f"[{self.cfg['label']}] 추천옵션그룹 조회 실패 cat={cat_code}: {exc}"
             )
-            return []
+            raise ESMOptionLookupError(
+                f"추천옵션그룹 조회 실패(cat={cat_code}): {exc}"
+            ) from exc
 
     async def get_recommended_opt_values(
         self, recommended_opt_no: int | str
@@ -2259,6 +2272,21 @@ def _normalize_samba_option(opt: dict[str, Any]) -> tuple[str, list[dict[str, An
     return name, normalized
 
 
+def esm_total_variants(samba_options: list[dict[str, Any]] | None) -> int:
+    """samba options 의 총 변형(구매자가 고를 선택지) 수.
+
+    멀티변형(2개 이상) 상품은 옵션 없이 등록하면 구매자가 변형을 못 고르므로
+    옵션 빌드 실패 시 미발행 가드(#361) 판단에 사용한다.
+    """
+    if not samba_options:
+        return 0
+    opts = samba_options
+    # flat list(값 나열) → 단일 그룹 구조 (register_esm_options 와 동일 규칙)
+    if not any(o.get("values") for o in opts):
+        opts = [{"name": "옵션", "values": opts}]
+    return sum(len(_normalize_samba_option(o)[1]) for o in opts[:3])
+
+
 async def _resolve_esm_group(
     client: ESMPlusClient,
     cat_code: str,
@@ -2517,72 +2545,83 @@ async def register_esm_options(
 
     # 총 옵션값(변형)수 — 미발행 가드 판단용 (#368 ①).
     # 축수가 아닌 총 변형수 기준: 구매자가 고를 변형이 둘 이상이면 multi_variant.
-    total_variants = sum(
-        len(_normalize_samba_option(o)[1]) for o in samba_options[:opt_count]
-    )
+    total_variants = esm_total_variants(samba_options)
     multi_variant = total_variants >= 2
 
-    if opt_count == 1:
-        opt_type = 1
-        independent, combination = await _build_independent(
-            client, cat_code, samba_options[0], site_key, stock_per_value
-        )
-        if not independent or not independent.get("details"):
-            return {
-                "success": False,
-                "matched": 0,
-                "requested": len(_normalize_samba_option(samba_options[0])[1]),
-                "multi_variant": multi_variant,
-                "message": "매칭된 옵션값 0건 (선택형)",
-            }
-        matched = len(independent["details"])
-        requested = len(_normalize_samba_option(samba_options[0])[1])
-        group_label = independent.get("_group_label")
-        independent.pop("_group_label", None)
-    else:
-        opt_type = opt_count  # 2 또는 3
-        independent = None
-        combination, matched, requested, group_label = await _build_combination(
-            client, cat_code, samba_options[:opt_count], site_key, stock_per_value
-        )
-        if combination and combination.get("details"):
-            # 실제 매칭된 축 수로 opt_type 보정 (스킵된 축 있을 수 있음)
-            actual_axes = combination.pop("_axis_count", opt_count)
-            opt_type = max(2, actual_axes)
-        else:
-            # 조합형 완전 실패 → type=1 (선택형) fallback: 첫 번째로 매칭되는 축 사용
-            logger.warning(
-                f"[ESM] 조합형 실패 → type=1 선택형 fallback 시도 (cat={cat_code})"
-            )
-            combination = None
+    try:
+        if opt_count == 1:
             opt_type = 1
-            independent = None
-            for fallback_opt in samba_options[:opt_count]:
-                fb_ind, _ = await _build_independent(
-                    client, cat_code, fallback_opt, site_key, stock_per_value
-                )
-                if fb_ind and fb_ind.get("details"):
-                    independent = fb_ind
-                    matched = len(fb_ind["details"])
-                    requested = len(_normalize_samba_option(fallback_opt)[1])
-                    group_label = fb_ind.get("_group_label")
-                    fb_ind.pop("_group_label", None)
-                    logger.info(
-                        f"[ESM] type=1 fallback 성공: "
-                        f"opt='{fallback_opt.get('name') or fallback_opt.get('option_name')}' "
-                        f"matched={matched}/{requested}"
-                    )
-                    break
+            independent, combination = await _build_independent(
+                client, cat_code, samba_options[0], site_key, stock_per_value
+            )
             if not independent or not independent.get("details"):
                 return {
                     "success": False,
                     "matched": 0,
-                    "requested": requested,
+                    "requested": len(_normalize_samba_option(samba_options[0])[1]),
                     "multi_variant": multi_variant,
-                    "message": f"조합형 및 선택형 모두 실패 (원본 {opt_count}축)",
+                    "message": "매칭된 옵션값 0건 (선택형)",
                 }
-        if combination:
-            combination.pop("_axis_count", None)
+            matched = len(independent["details"])
+            requested = len(_normalize_samba_option(samba_options[0])[1])
+            group_label = independent.get("_group_label")
+            independent.pop("_group_label", None)
+        else:
+            opt_type = opt_count  # 2 또는 3
+            independent = None
+            combination, matched, requested, group_label = await _build_combination(
+                client, cat_code, samba_options[:opt_count], site_key, stock_per_value
+            )
+            if combination and combination.get("details"):
+                # 실제 매칭된 축 수로 opt_type 보정 (스킵된 축 있을 수 있음)
+                actual_axes = combination.pop("_axis_count", opt_count)
+                opt_type = max(2, actual_axes)
+            else:
+                # 조합형 완전 실패 → type=1 (선택형) fallback: 첫 번째로 매칭되는 축 사용
+                logger.warning(
+                    f"[ESM] 조합형 실패 → type=1 선택형 fallback 시도 (cat={cat_code})"
+                )
+                combination = None
+                opt_type = 1
+                independent = None
+                for fallback_opt in samba_options[:opt_count]:
+                    fb_ind, _ = await _build_independent(
+                        client, cat_code, fallback_opt, site_key, stock_per_value
+                    )
+                    if fb_ind and fb_ind.get("details"):
+                        independent = fb_ind
+                        matched = len(fb_ind["details"])
+                        requested = len(_normalize_samba_option(fallback_opt)[1])
+                        group_label = fb_ind.get("_group_label")
+                        fb_ind.pop("_group_label", None)
+                        logger.info(
+                            f"[ESM] type=1 fallback 성공: "
+                            f"opt='{fallback_opt.get('name') or fallback_opt.get('option_name')}' "
+                            f"matched={matched}/{requested}"
+                        )
+                        break
+                if not independent or not independent.get("details"):
+                    return {
+                        "success": False,
+                        "matched": 0,
+                        "requested": requested,
+                        "multi_variant": multi_variant,
+                        "message": f"조합형 및 선택형 모두 실패 (원본 {opt_count}축)",
+                    }
+            if combination:
+                combination.pop("_axis_count", None)
+    except ESMOptionLookupError as exc:
+        # 그룹 조회 자체가 실패(네트워크/ESM 인증·일시 오류) — '매핑 실패'(상품
+        # 데이터 문제)로 오진하면 정상 상품이 카테고리 문제로 보인다. 원인이 되는
+        # ESM 오류 원문을 메시지에 그대로 노출한다(예: 셀러 미연동 401).
+        return {
+            "success": False,
+            "matched": 0,
+            "requested": total_variants,
+            "multi_variant": multi_variant,
+            "lookup_failed": True,
+            "message": f"ESM 옵션그룹 조회 실패(상품 문제 아님): {str(exc)[:150]}",
+        }
 
     async def _try_set_options(
         payload: dict[str, Any],
@@ -2651,9 +2690,14 @@ async def register_esm_options(
             f"[ESM] type={opt_type} 옵션 등록 실패 ({err_msg}) → type=1 선택형 재시도 (goods={goods_no})"
         )
         for fallback_opt in samba_options[:opt_count]:
-            fb_ind, _ = await _build_independent(
-                client, cat_code, fallback_opt, site_key, stock_per_value
-            )
+            try:
+                fb_ind, _ = await _build_independent(
+                    client, cat_code, fallback_opt, site_key, stock_per_value
+                )
+            except ESMOptionLookupError as fb_exc:
+                # 그룹 조회 일시 실패 — 다음 축도 동일하게 실패하므로 중단
+                logger.warning(f"[ESM] type=1 fallback 그룹조회 실패: {fb_exc}")
+                break
             if not fb_ind or not fb_ind.get("details"):
                 continue
             fb_ind.pop("_group_label", None)

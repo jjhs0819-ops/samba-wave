@@ -388,6 +388,12 @@ class GMarketMarketPlugin(MarketPlugin):
                         f"[지마켓] 옵션 매핑 실패(멀티변형) → 미발행: "
                         f"{_bo.get('message')}"
                     )
+                    # 그룹 조회 실패(인증/네트워크)는 상품 데이터 문제와 구분해 표기
+                    if _bo.get("lookup_failed"):
+                        return {
+                            "success": False,
+                            "message": f"ESM 조회실패로 미발행(멀티변형): {str(_bo.get('message', ''))[:150]}",
+                        }
                     return {
                         "success": False,
                         "message": f"옵션 매핑 실패로 미발행(멀티변형): {str(_bo.get('message', ''))[:80]}",
@@ -396,7 +402,17 @@ class GMarketMarketPlugin(MarketPlugin):
                     # 단일변형(선택지 1개) — 옵션없이 등록 허용
                     opt_msg = f" [옵션 매핑실패·단일변형 옵션없이 등록: {str(_bo.get('message', ''))[:60]}]"
             except Exception as opt_e:
-                # 빌드 자체 예외 — 안전하게 옵션없이 등록 진행
+                # 빌드 자체 예외 — 멀티변형이면 옵션없는 등록이 더 위험(#361) → 미발행
+                from backend.domain.samba.proxy.esmplus import esm_total_variants
+
+                if esm_total_variants(samba_options) >= 2:
+                    logger.warning(
+                        f"[지마켓] 옵션 빌드 오류(멀티변형) → 미발행: {opt_e}"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"옵션 빌드 오류로 미발행(멀티변형·재전송 필요): {str(opt_e)[:80]}",
+                    }
                 logger.warning(f"[지마켓] 옵션 인라인 빌드 오류: {opt_e}")
                 opt_msg = f" [옵션 빌드 오류: {str(opt_e)[:60]}]"
         elif samba_options and not cat_code:
@@ -505,6 +521,11 @@ class GMarketMarketPlugin(MarketPlugin):
                     logger.warning(
                         f"[지마켓] 옵션 매핑 실패(멀티변형) → 수정 차단: {_bo.get('message')}"
                     )
+                    if _bo.get("lookup_failed"):
+                        return {
+                            "success": False,
+                            "message": f"ESM 조회실패로 수정 차단(멀티변형): {str(_bo.get('message', ''))[:150]}",
+                        }
                     return {
                         "success": False,
                         "message": f"옵션 매핑 실패로 수정 차단(멀티변형): {str(_bo.get('message', ''))[:80]}",
@@ -512,6 +533,18 @@ class GMarketMarketPlugin(MarketPlugin):
                 else:
                     opt_msg = f" [옵션 매핑실패·단일변형 옵션없이 수정: {str(_bo.get('message', ''))[:60]}]"
             except Exception as opt_e:
+                # 빌드 자체 예외 — 멀티변형이면 옵션 미동봉 PUT이 기존 옵션을
+                # 전체교체로 소멸시킴(#394) → 수정 차단
+                from backend.domain.samba.proxy.esmplus import esm_total_variants
+
+                if esm_total_variants(samba_options) >= 2:
+                    logger.warning(
+                        f"[지마켓] 옵션 빌드 오류(멀티변형) → 수정 차단: {opt_e}"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"옵션 빌드 오류로 수정 차단(멀티변형·재전송 필요): {str(opt_e)[:80]}",
+                    }
                 logger.warning(f"[지마켓] 옵션 인라인 빌드 오류(수정): {opt_e}")
                 opt_msg = f" [옵션 빌드 오류: {str(opt_e)[:60]}]"
 

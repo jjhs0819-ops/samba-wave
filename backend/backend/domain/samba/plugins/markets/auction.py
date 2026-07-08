@@ -263,6 +263,24 @@ class AuctionPlugin(MarketPlugin):
                 }
             logger.warning(f"[옥션] 이미지 미러링 오류 — 차단 URL 없어 원본 유지: {e}")
 
+        # 옥션 전용 중복 이미지 제거 — 미러 URL이 콘텐츠 주소(같은 사진=같은 파일)라
+        # 대표와 동일한 상세컷이 추가이미지로 남으면 ESM이 "기본사진1과 동일한 이미지
+        # 중복 등록 불가"(F001000)로 등록 자체를 거부한다(지마켓은 허용). 무신사는
+        # 대표=상세 첫 컷인 상품이 흔해 옥션 등록이 대부분 이 검사에 걸렸다.
+        _imgs_final = product_copy.get("images") or []
+        _seen_imgs: set = set()
+        _deduped_imgs: list = []
+        for _u in _imgs_final:
+            if _u in _seen_imgs:
+                continue
+            _seen_imgs.add(_u)
+            _deduped_imgs.append(_u)
+        if len(_deduped_imgs) != len(_imgs_final):
+            logger.info(
+                f"[옥션] 대표와 동일 콘텐츠 이미지 {len(_imgs_final) - len(_deduped_imgs)}개 제거"
+            )
+            product_copy["images"] = _deduped_imgs
+
         # 상세 HTML 프로토콜 보정 + lazy loading 삽입
         detail_html = product_copy.get("detail_html", "")
         if detail_html:
@@ -381,6 +399,12 @@ class AuctionPlugin(MarketPlugin):
                     logger.warning(
                         f"[옥션] 옵션 매핑 실패(멀티변형) → 미발행: {_bo.get('message')}"
                     )
+                    # 그룹 조회 실패(인증/네트워크)는 상품 데이터 문제와 구분해 표기
+                    if _bo.get("lookup_failed"):
+                        return {
+                            "success": False,
+                            "message": f"ESM 조회실패로 미발행(멀티변형): {str(_bo.get('message', ''))[:150]}",
+                        }
                     return {
                         "success": False,
                         "message": f"옵션 매핑 실패로 미발행(멀티변형): {str(_bo.get('message', ''))[:80]}",
@@ -389,6 +413,17 @@ class AuctionPlugin(MarketPlugin):
                     # 단일변형(선택지 1개) — 옵션없이 등록 허용
                     opt_msg = f" [옵션 매핑실패·단일변형 옵션없이 등록: {str(_bo.get('message', ''))[:60]}]"
             except Exception as opt_e:
+                # 빌드 자체 예외 — 멀티변형이면 옵션없는 등록이 더 위험(#361) → 미발행
+                from backend.domain.samba.proxy.esmplus import esm_total_variants
+
+                if esm_total_variants(samba_options) >= 2:
+                    logger.warning(
+                        f"[옥션] 옵션 빌드 오류(멀티변형) → 미발행: {opt_e}"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"옵션 빌드 오류로 미발행(멀티변형·재전송 필요): {str(opt_e)[:80]}",
+                    }
                 logger.warning(f"[옥션] 옵션 인라인 빌드 오류: {opt_e}")
                 opt_msg = f" [옵션 빌드 오류: {str(opt_e)[:60]}]"
         elif samba_options and not cat_code:
@@ -497,6 +532,11 @@ class AuctionPlugin(MarketPlugin):
                     logger.warning(
                         f"[옥션] 옵션 매핑 실패(멀티변형) → 수정 차단: {_bo.get('message')}"
                     )
+                    if _bo.get("lookup_failed"):
+                        return {
+                            "success": False,
+                            "message": f"ESM 조회실패로 수정 차단(멀티변형): {str(_bo.get('message', ''))[:150]}",
+                        }
                     return {
                         "success": False,
                         "message": f"옵션 매핑 실패로 수정 차단(멀티변형): {str(_bo.get('message', ''))[:80]}",
@@ -504,6 +544,18 @@ class AuctionPlugin(MarketPlugin):
                 else:
                     opt_msg = f" [옵션 매핑실패·단일변형 옵션없이 수정: {str(_bo.get('message', ''))[:60]}]"
             except Exception as opt_e:
+                # 빌드 자체 예외 — 멀티변형이면 옵션 미동봉 PUT이 기존 옵션을
+                # 전체교체로 소멸시킴(#394) → 수정 차단
+                from backend.domain.samba.proxy.esmplus import esm_total_variants
+
+                if esm_total_variants(samba_options) >= 2:
+                    logger.warning(
+                        f"[옥션] 옵션 빌드 오류(멀티변형) → 수정 차단: {opt_e}"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"옵션 빌드 오류로 수정 차단(멀티변형·재전송 필요): {str(opt_e)[:80]}",
+                    }
                 logger.warning(f"[옥션] 옵션 인라인 빌드 오류(수정): {opt_e}")
                 opt_msg = f" [옵션 빌드 오류: {str(opt_e)[:60]}]"
 
