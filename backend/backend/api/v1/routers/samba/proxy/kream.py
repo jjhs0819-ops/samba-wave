@@ -615,7 +615,12 @@ async def snkrdunk_compare_all_public(
     카테고리는 DB 실시간 기준:
     1=PSA10재고O+크림매칭 / 2=재고X+매칭 / 3=재고O+미매칭 / 4=재고X+미매칭
     """
+    import json
+    import re as _re
+
     from sqlalchemy import text
+
+    _re_cm = _re.compile(r"([\d.]+)")
 
     sql = text("""
         SELECT
@@ -659,6 +664,9 @@ async def snkrdunk_compare_all_public(
             ), 0) AS psa9_price,
             -- 신발(스니커즈)용: 사이즈옵션 전체 재고합 + 최저가(카드 PSA칸 없음 대응)
             COALESCE(extra_data->>'snkr_type', '') AS snkr_type,
+            -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
+            CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN options ELSE NULL END AS size_options,
+            COALESCE(extra_data->>'currency', '') AS currency,
             COALESCE((
                 SELECT SUM(NULLIF(o->>'stock', '')::int)
                 FROM jsonb_array_elements(options::jsonb) o
@@ -703,6 +711,33 @@ async def snkrdunk_compare_all_public(
         matched = bool(d["kream_id"])
         is_sneaker = d.get("snkr_type") == "sneaker"
         d["is_sneaker"] = is_sneaker
+        # 신발 사이즈옵션 파싱(재고>0만, 사이즈 오름차순) — 프론트 사이즈별 표시용
+        if is_sneaker and d.get("size_options"):
+
+            def _cm(name: str) -> float:
+                m = _re_cm.search(name or "")
+                return float(m.group(1)) if m else 9999.0
+
+            try:
+                raw_opts = d["size_options"]
+                if isinstance(raw_opts, str):
+                    raw_opts = json.loads(raw_opts)
+                d["size_options"] = sorted(
+                    (
+                        {
+                            "name": o.get("name", ""),
+                            "price": int(o.get("price") or 0),
+                            "stock": int(o.get("stock") or 0),
+                        }
+                        for o in raw_opts
+                        if int(o.get("stock") or 0) > 0
+                    ),
+                    key=lambda x: _cm(x["name"]),
+                )
+            except Exception:
+                d["size_options"] = []
+        else:
+            d["size_options"] = []
         # PSA10 없어도 PSA9 재고 있으면 재고 있는 것으로 취급.
         # 신발(스니커즈)은 PSA칸이 없으므로 사이즈옵션 전체 재고합으로 판정.
         has_stock = (
@@ -750,6 +785,54 @@ async def snkrdunk_update_verify_public(
     )
     await session.commit()
     return {"ok": True}
+
+
+@snkrdunk_public_router.get("/kream/snkrdunk-compare/{snkr_id}/kream-image")
+async def snkrdunk_kream_image_public(
+    snkr_id: str,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """검수페이지가 보는 상품의 크림 이미지를 1건 실시간 조회+캐시.
+
+    KREAM은 대량 fetch를 차단하므로, 화면에 뜬 상품 1개만 그때그때 가져와
+    resell_matches.kream.image 에 저장(자가치유). 이미 있으면 즉시 반환.
+    """
+    from sqlalchemy import text
+
+    row = (
+        await session.exec(
+            text("""
+                SELECT resell_matches->'kream'->>'product_id' AS pid,
+                       resell_matches->'kream'->>'image' AS img
+                FROM samba_collected_product
+                WHERE source_site='SNKRDUNK' AND site_product_id = :sid
+            """).bindparams(sid=snkr_id)  # type: ignore[arg-type]
+        )
+    ).first()
+    if not row or not row.pid:
+        return {"image": ""}
+    if row.img:
+        return {"image": row.img}
+    img = ""
+    try:
+        info = await KreamClient().get_product(row.pid)
+        imgs = info.get("images") or []
+        img = imgs[0] if imgs else ""
+    except Exception:
+        img = ""
+    if img:
+        await session.exec(
+            text("""
+                UPDATE samba_collected_product
+                SET resell_matches = jsonb_set(
+                    COALESCE(resell_matches, '{}'::jsonb), '{kream,image}',
+                    to_jsonb(CAST(:img AS text))
+                ), updated_at = NOW()
+                WHERE source_site='SNKRDUNK' AND site_product_id = :sid
+            """).bindparams(img=img, sid=snkr_id)  # type: ignore[arg-type]
+        )
+        await session.commit()
+    return {"image": img}
 
 
 @snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
