@@ -7,6 +7,7 @@ from fastapi.responses import Response
 
 from backend.core.rate_limit import RATE_LOGIN, RATE_SET_COOKIE, limiter
 from pydantic import BaseModel
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
@@ -576,6 +577,32 @@ class SnkrdunkKreamNamePatchRequest(BaseModel):
 
 class SnkrdunkKreamNameEnPatchRequest(BaseModel):
     kream_name_en: str
+
+
+# 인증 없는 퍼블릭 버전 (로컬 크림 입찰/리스톡 스크립트 — samba_tools/kream/*.py — 가 사이클마다 조회)
+@snkrdunk_public_router.get("/kream/margin-policy")
+async def get_kream_margin_policy_public(
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """정책관리 KREAM 탭 설정값 조회 (인증 불필요).
+
+    market_policies(JSON)에 'KREAM' 키가 있는 첫 정책을 사용 — 정책이 여러 개여도
+    크림은 계정 단위로 정책 하나만 운용한다는 전제(2026-07-08).
+    """
+    from backend.domain.samba.policy.model import SambaPolicy
+
+    result = await session.execute(select(SambaPolicy.market_policies))
+    for (mp,) in result.all():
+        if isinstance(mp, dict) and isinstance(mp.get("KREAM"), dict):
+            k = mp["KREAM"]
+            return {
+                "min_margin_amount": k.get("kreamMinMarginAmount", 9000),
+                "competitive_margin_rate": k.get("kreamCompetitiveMarginRate", 13),
+                "no_competition_margin_rate": k.get("kreamNoCompetitionMarginRate", 40),
+                "shipping_fee_card": k.get("kreamShippingFeeCard", 11000),
+                "shipping_fee_box": k.get("kreamShippingFeeBox", 8000),
+            }
+    raise HTTPException(status_code=404, detail="KREAM 정책 설정 없음")
 
 
 # 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
