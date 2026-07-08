@@ -1797,10 +1797,13 @@ class LotteonClient:
                 )
                 reason_code = mapped
             else:
+                # 미인식 코드 기본값은 135(고객변심, 셀러 무페널티)로 안전하게 폴백.
+                # 과거 기본값 111(품절)은 셀러 귀책 페널티라, 사유 불명확 취소에
+                # 가장 위험한 선택이었다(#592).
                 logger.warning(
-                    f"[롯데ON][판매자취소] 알 수 없는 사유코드 '{reason_code}', 기본값 111(품절) 사용"
+                    f"[롯데ON][판매자취소] 알 수 없는 사유코드 '{reason_code}', 기본값 135(고객변심) 사용"
                 )
-                reason_code = "111"
+                reason_code = "135"
         payload = {
             "odNo": od_no,
             "itemList": [

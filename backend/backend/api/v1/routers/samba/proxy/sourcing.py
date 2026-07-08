@@ -676,7 +676,9 @@ async def _lotteon_approve_or_direct_cancel(client, ord_row) -> tuple[bool, str]
         # 마켓 측 고객 취소요청 없음(또는 매칭 누락) → 판매자가 직접 취소
         success, message = await client.seller_cancel_order(
             od_no=candidates[-1] if candidates else raw,
-            reason_code="CC11",  # 고객변심
+            # 고객 취소요청 기반 → 135(고객변심, 셀러 무페널티). "CC11"은 매핑에
+            # 없어 기본값 111(품절)로 폴백돼 셀러가 부당 품절 페널티를 받던 버그(#592).
+            reason_code="135",
             reason_text="고객 취소요청",
             od_seq=int(ord_row.od_seq or 1),
             proc_seq=int(ord_row.proc_seq or 1),
