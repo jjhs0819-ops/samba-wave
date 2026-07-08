@@ -368,7 +368,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           color: o.status === 'ship_failed' ? c.danger : inputStyle.color,
                         }}
                       >
-                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'arrived', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: c.danger } : {}}>{v.label}</option>)}
+                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: c.danger } : {}}>{v.label}</option>)}
                       </select>
                       <input
                         type="text"
