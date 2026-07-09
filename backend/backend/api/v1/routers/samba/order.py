@@ -1988,13 +1988,64 @@ async def sync_order_tracking_bulk(
         except Exception:
             pass
 
-    return await enqueue_pending_orders(
-        tenant_id=tenant_id,
-        limit=limit,
-        days=days,
-        force=force,
-        owner_device_id=_owner or None,
-    )
+    # [방어] 송장수집이 락/슬로우쿼리로 hang → 프론트 "Failed to fetch"로 원인 숨던 문제.
+    # 무한 hang·좀비 방지의 근본 상한은 enqueue_pending_orders 내부 DB 레벨 타임아웃
+    # (lock/statement_timeout)에서 보장한다 — 초과 시 Postgres가 abort → 트랜잭션 rollback +
+    # 연결 반납(리소스 정리 보장). asyncio.wait_for 는 취소돼도 DB 리소스 해제를 보장하지 못해
+    # (좀비 트랜잭션 위험) 사용하지 않는다. 여기서는 그 예외를 잡아 실제 원인을 정상 응답과
+    # 동일한 dict 구조로 반환한다(재시도 가능 여부는 메시지로 명시).
+    from sqlalchemy.exc import DBAPIError
+
+    # 재시도 가능 SQLSTATE만 좁혀서 처리: 57014=statement_timeout(query canceled),
+    # 55P03=lock_timeout(lock not available). 그 외 DB 오류(문법/제약/연결 등)는 재시도 대상 아님.
+    _RETRYABLE_SQLSTATES = ("57014", "55P03")
+    try:
+        return await enqueue_pending_orders(
+            tenant_id=tenant_id,
+            limit=limit,
+            days=days,
+            force=force,
+            owner_device_id=_owner or None,
+        )
+    except DBAPIError as _db_exc:
+        _orig = getattr(_db_exc, "orig", None)
+        _sqlstate = getattr(_orig, "sqlstate", None) or getattr(_orig, "pgcode", None)
+        if _sqlstate in _RETRYABLE_SQLSTATES:
+            # DB 레벨 타임아웃(statement/lock) 초과 = 락 경합/슬로우쿼리. 컨텍스트 매니저가
+            # 이미 rollback + 연결 반납 → 잠시 후 재시도 가능.
+            logger.warning(
+                f"[송장수집] DB 타임아웃/락(SQLSTATE {_sqlstate}) — 재시도 가능: "
+                f"{_orig or _db_exc}"
+            )
+            return {
+                "success": False,
+                "queued": 0,
+                "skipped": 0,
+                "errors": [
+                    "송장수집 DB 타임아웃(락 경합/슬로우쿼리) — 잠시 후 다시 시도하세요."
+                ],
+                "job_ids": [],
+            }
+        # 재시도 대상 아닌 DB 오류 — 원인 로깅 후 일반 실패로 분리(타임아웃으로 오분류 금지).
+        logger.exception("[송장수집] DB 오류(재시도 대상 아님)")
+        return {
+            "success": False,
+            "queued": 0,
+            "skipped": 0,
+            "errors": [
+                f"송장수집 DB 오류(SQLSTATE {_sqlstate or '?'}): {_orig or _db_exc}"
+            ],
+            "job_ids": [],
+        }
+    except Exception as _exc:  # noqa: BLE001
+        logger.exception("[송장수집] 예기치 못한 실패")
+        return {
+            "success": False,
+            "queued": 0,
+            "skipped": 0,
+            "errors": [f"송장수집 실패(재시도 전 서버 로그 확인 권장): {_exc}"],
+            "job_ids": [],
+        }
 
 
 @router.get("/tracking-sync/owner-device")

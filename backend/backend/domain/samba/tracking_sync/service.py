@@ -41,6 +41,20 @@ from backend.utils.logger import logger
 _UTC = timezone.utc
 
 
+async def _apply_session_timeouts(session) -> None:
+    """이 세션(트랜잭션)에 lock/statement 타임아웃을 걸어 송장수집 경로 hang·좀비를 막는다.
+
+    get_write_session()은 autobegin — 첫 execute 시 트랜잭션이 열리고 SET LOCAL은 그
+    트랜잭션(이후 모든 문)·commit까지 유지된다. 초과 시 Postgres가 쿼리를 abort → 예외 →
+    async with 컨텍스트가 rollback + 연결 반납(리소스 정리 보장, 좀비 없음).
+    리셋 UPDATE뿐 아니라 대량 조회 SELECT·enqueue_for_order 루프 등 경로 내 모든 세션에 적용.
+    """
+    from sqlalchemy import text as _t
+
+    await session.execute(_t("SET LOCAL lock_timeout = '10s'"))
+    await session.execute(_t("SET LOCAL statement_timeout = '15s'"))
+
+
 # 소싱처 배송조회 URL 빌더 — 확장앱 content-script와 셀렉터 짝꿍
 # overlink-invoice-extension config.js 검증값 이식 (2026-05-13)
 def build_tracking_url(site: str, sourcing_order_number: str) -> str:
@@ -299,6 +313,7 @@ async def enqueue_for_order(
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     async with get_write_session() as session:
+        await _apply_session_timeouts(session)
         order = await session.get(SambaOrder, order_id)
         if not order:
             return {"success": False, "error": "주문을 찾을 수 없습니다"}
@@ -489,6 +504,7 @@ async def enqueue_return_for_order(
     from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
     async with get_write_session() as session:
+        await _apply_session_timeouts(session)
         order = await session.get(SambaOrder, order_id)
         if not order:
             return {"success": False, "error": "주문을 찾을 수 없습니다"}
@@ -621,6 +637,7 @@ async def enqueue_pending_orders(
     """
     # 전담 송장 PC 1회 해석 → 루프에서 enqueue_for_order 마다 설정 재조회(N회) 방지.
     async with get_write_session() as _own_sess:
+        await _apply_session_timeouts(_own_sess)
         _resolved_owner = await _resolve_tracking_owner(_own_sess, owner_device_id)
     queued = 0
     skipped = 0
@@ -637,33 +654,35 @@ async def enqueue_pending_orders(
 
         async with get_write_session() as _reset_session:
             _now = datetime.now(_UTC)
-            # 1) sourcing_job: 옛 tracking pending 모두 expired (확장앱 폴링 큐 비우기)
-            _src_res = await _reset_session.execute(
-                _text(
-                    "UPDATE samba_sourcing_job SET status='expired', "
-                    "completed_at=:now, error='새 batch 시작으로 만료' "
-                    "WHERE job_type='tracking' AND status='pending'"
-                ),
-                {"now": _now},
-            )
-            # 2) tracking_sync_job: 옛 PENDING/DISPATCHED 모두 CANCELLED
-            _tsj_res = await _reset_session.execute(
-                _text(
-                    "UPDATE samba_tracking_sync_job SET status=:cancelled, "
-                    "last_error='새 batch 시작으로 취소', updated_at=:now "
-                    "WHERE status IN (:pending, :dispatched)"
-                ),
-                {
-                    "cancelled": STATUS_CANCELLED,
-                    "pending": STATUS_PENDING,
-                    "dispatched": STATUS_DISPATCHED,
-                    "now": _now,
-                },
-            )
+            # [방어] 락/슬로우쿼리 무한 대기 + 좀비 트랜잭션 차단(공통 helper). 두 UPDATE를
+            # 단일 CTE 문으로 합쳐 statement_timeout 하나로 '둘 다' 상한 안에 들도록 보장한다.
+            await _apply_session_timeouts(_reset_session)
+            _reset_row = (
+                await _reset_session.execute(
+                    _text(
+                        "WITH src AS ("
+                        " UPDATE samba_sourcing_job SET status='expired',"
+                        " completed_at=:now, error='새 batch 시작으로 만료'"
+                        " WHERE job_type='tracking' AND status='pending' RETURNING 1"
+                        "), tsj AS ("
+                        " UPDATE samba_tracking_sync_job SET status=:cancelled,"
+                        " last_error='새 batch 시작으로 취소', updated_at=:now"
+                        " WHERE status IN (:pending, :dispatched) RETURNING 1"
+                        ") SELECT (SELECT count(*) FROM src) AS src_c,"
+                        " (SELECT count(*) FROM tsj) AS tsj_c"
+                    ),
+                    {
+                        "cancelled": STATUS_CANCELLED,
+                        "pending": STATUS_PENDING,
+                        "dispatched": STATUS_DISPATCHED,
+                        "now": _now,
+                    },
+                )
+            ).one()
             await _reset_session.commit()
             logger.info(
-                f"[송장동기화] 큐 리셋: sourcing_job expired={_src_res.rowcount} "
-                f"tracking_sync_job cancelled={_tsj_res.rowcount}"
+                f"[송장동기화] 큐 리셋: sourcing_job expired={_reset_row.src_c} "
+                f"tracking_sync_job cancelled={_reset_row.tsj_c}"
             )
 
     # KST 캘린더 N일 (오늘 포함, 즉 days=7 → 오늘 + 이전 6일)
@@ -675,6 +694,7 @@ async def enqueue_pending_orders(
     until = _end_kst.astimezone(_UTC)
 
     async with get_write_session() as session:
+        await _apply_session_timeouts(session)
         from sqlalchemy import func
 
         # action_tag(csv) 에 'kkadaegi' 토큰이 들어 있으면 송장 추출 대상에서 제외.
@@ -744,6 +764,7 @@ async def enqueue_pending_orders(
     from sqlalchemy import text as _brk_text
 
     async with get_write_session() as _brk_session:
+        await _apply_session_timeouts(_brk_session)
         _brk_rows = (
             await _brk_session.execute(
                 _brk_text(
