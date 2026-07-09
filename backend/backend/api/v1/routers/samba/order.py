@@ -11512,9 +11512,19 @@ def _parse_playauto_order(
     # 배송사고 방지용(문앞/공동현관 출입번호 등). 실제 필드명 확인되면 단순화.
     _pa_note = ""
     for _cand in (
-        "ShipMsg", "DlvMsg", "DeliveryMsg", "OrderMsg", "GiftMsg",
-        "Msg", "Memo", "Message", "ShippingMessage", "DeliveryMessage",
-        "ShipMessage", "OrderMemo", "DlvMemo",
+        "ShipMsg",
+        "DlvMsg",
+        "DeliveryMsg",
+        "OrderMsg",
+        "GiftMsg",
+        "Msg",
+        "Memo",
+        "Message",
+        "ShippingMessage",
+        "DeliveryMessage",
+        "ShipMessage",
+        "OrderMemo",
+        "DlvMemo",
     ):
         _cv = ro.get(_cand)
         if isinstance(_cv, str) and _cv.strip():
@@ -11522,16 +11532,29 @@ def _parse_playauto_order(
             break
     if not _pa_note:
         _NOTE_HINTS = (
-            "놓아", "출입번호", "부재", "경비", "문 앞", "문앞", "배송전",
-            "직접 받", "안심번호", "파손", "취급주의", "부탁드립니다",
-            "요청드립니다", "요청합니다",
+            "놓아",
+            "출입번호",
+            "부재",
+            "경비",
+            "문 앞",
+            "문앞",
+            "배송전",
+            "직접 받",
+            "안심번호",
+            "파손",
+            "취급주의",
+            "부탁드립니다",
+            "요청드립니다",
+            "요청합니다",
         )
         _SKIP_KEYS = {"ProdName", "RecipientName", "OrderName", "SiteName", "ProdCode"}
         for _k, _v in ro.items():
             if _k in _SKIP_KEYS:
                 continue
-            if isinstance(_v, str) and 2 <= len(_v.strip()) <= 200 and any(
-                h in _v for h in _NOTE_HINTS
+            if (
+                isinstance(_v, str)
+                and 2 <= len(_v.strip()) <= 200
+                and any(h in _v for h in _NOTE_HINTS)
             ):
                 _pa_note = _v.strip()
                 logger.info(f"[플레이오토 배송메시지] 휴리스틱 포착 필드='{_k}'")

@@ -840,7 +840,9 @@ class LotteHomeClient:
         url = self.base_url + "searchStockList.lotte"
         qs = self._build_query({"subscriptionId": cert_key})
         try:
-            target = re.escape((goods_nm or "").strip().encode("euc-kr", errors="replace"))
+            target = re.escape(
+                (goods_nm or "").strip().encode("euc-kr", errors="replace")
+            )
         except LookupError:
             return ""
         if not target:

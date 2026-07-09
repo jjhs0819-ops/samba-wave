@@ -191,12 +191,16 @@ async def _mark_reg_lost(product_id: str, account_id: str) -> None:
 
         async with get_write_session() as s:
             row = (
-                await s.execute(
-                    _sel(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == product_id
+                (
+                    await s.execute(
+                        _sel(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id == product_id
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if row is None:
                 return
             nos = dict(row.market_product_nos or {})
@@ -224,12 +228,16 @@ async def _clear_reg_lost(product_id: str, account_id: str) -> None:
 
         async with get_write_session() as s:
             row = (
-                await s.execute(
-                    _sel(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == product_id
+                (
+                    await s.execute(
+                        _sel(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id == product_id
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if row is None:
                 return
             nos = dict(row.market_product_nos or {})
@@ -260,12 +268,16 @@ async def _persist_goods_no_immediately(
 
         async with get_write_session() as s:
             row = (
-                await s.execute(
-                    _sel(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == product_id
+                (
+                    await s.execute(
+                        _sel(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id == product_id
+                        )
                     )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if row is None:
                 return
             nos = dict(row.market_product_nos or {})
