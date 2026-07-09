@@ -136,8 +136,9 @@ interface MarketPolicyForm {
   kreamMinMarginAmount?: number       // 최소마진금액 (원)
   kreamCompetitiveMarginRate?: number // 경쟁 최소마진율 (%)
   kreamNoCompetitionMarginRate?: number // 무경쟁 최소마진율 (%)
-  kreamShippingFeeCard?: number       // 일반배송비(카드, 원)
-  kreamShippingFeeBox?: number        // 추가배송비(박스, 원)
+  kreamShippingFeeCard?: number       // 스니덩크배송비(카드, 엔)
+  kreamShippingFeeBox?: number        // 스니덩크배송비(박스, 엔)
+  kreamForwardingFee?: number         // 배대지비용(원)
 }
 
 
@@ -1612,13 +1613,18 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>1순위·경쟁 없을 때 원가 대비 배수(예: 40 → 원가×1.4)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>일반배송비(카드)</span>
-                    <NumInput value={mp.kreamShippingFeeCard ?? 11000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeCard: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(카드)</span>
+                    <NumInput value={mp.kreamShippingFeeCard ?? 300} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeCard: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="엔" />
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>추가배송비(박스)</span>
-                    <NumInput value={mp.kreamShippingFeeBox ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeBox: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드는 일반배송비만, 박스/카드팩은 일반+추가배송비 합산</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(박스)</span>
+                    <NumInput value={mp.kreamShippingFeeBox ?? 900} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeBox: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="엔" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크→배대지 일본내 배송비(엔). 카드 300엔 / 박스·카드팩 900엔</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배대지비용</span>
+                    <NumInput value={mp.kreamForwardingFee ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamForwardingFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>배대지→한국 배송비(원). 원가에 별도 가산. 원가=(snkr엔+배송엔)×환율+배대지</span>
                   </div>
                 </>
               )}

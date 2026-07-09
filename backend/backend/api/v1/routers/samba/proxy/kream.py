@@ -605,8 +605,11 @@ async def get_kream_margin_policy_public(
                 "min_margin_amount": k.get("kreamMinMarginAmount", 9000),
                 "competitive_margin_rate": k.get("kreamCompetitiveMarginRate", 13),
                 "no_competition_margin_rate": k.get("kreamNoCompetitionMarginRate", 40),
-                "shipping_fee_card": k.get("kreamShippingFeeCard", 11000),
-                "shipping_fee_box": k.get("kreamShippingFeeBox", 8000),
+                # 배송비는 엔화(스니덩크 판매자→배대지). 카드 300엔 / 박스 900엔.
+                "shipping_fee_card": k.get("kreamShippingFeeCard", 300),
+                "shipping_fee_box": k.get("kreamShippingFeeBox", 900),
+                # 배대지비용(원, 배대지→한국). 원가에 별도 가산.
+                "forwarding_fee": k.get("kreamForwardingFee", 8000),
             }
     raise HTTPException(status_code=404, detail="KREAM 정책 설정 없음")
 
