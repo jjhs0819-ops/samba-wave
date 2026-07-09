@@ -692,6 +692,10 @@ async def snkrdunk_compare_all_public(
             COALESCE(resell_matches->'kream'->>'image', '') AS kream_image,
             COALESCE(resell_matches->'kream'->>'style_code', '') AS kream_style_code,
             (COALESCE(resell_matches->'kream'->>'verified', '') = 'true') AS verified,
+            -- 이상감지 승인(리스톡 허용) — 사용자가 검수페이지에서 확인 후 체크
+            (COALESCE(resell_matches->'kream'->>'anomaly_ok', '') = 'true') AS anomaly_ok,
+            -- 이상감지 차단됨 — 봇이 저가위험으로 등록/갱신 막은 상품(검수페이지 필터용)
+            (COALESCE(resell_matches->'kream'->>'anomaly_flagged', '') = 'true') AS anomaly_flagged,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
                 FROM jsonb_array_elements(options::jsonb) o
@@ -746,15 +750,17 @@ async def snkrdunk_compare_all_public(
             -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
             CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN options ELSE NULL END AS size_options,
             COALESCE(extra_data->>'currency', '') AS currency,
-            COALESCE((
+            -- SUM/MIN 서브쿼리는 신발(스니커즈)만 계산 — 카드 2.5만행 전체에 돌리면
+            -- /all 이 29초로 느려져 페이지 로드마다 DB 부하(2026-07-09 성능 회귀 수정).
+            CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN COALESCE((
                 SELECT SUM(NULLIF(o->>'stock', '')::int)
                 FROM jsonb_array_elements(options::jsonb) o
-            ), 0) AS total_stock,
-            COALESCE((
+            ), 0) ELSE 0 END AS total_stock,
+            CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN COALESCE((
                 SELECT MIN(NULLIF(o->>'price', '')::numeric)::int
                 FROM jsonb_array_elements(options::jsonb) o
                 WHERE NULLIF(o->>'price', '')::numeric > 0
-            ), 0) AS min_opt_price
+            ), 0) ELSE 0 END AS min_opt_price
         FROM samba_collected_product
         WHERE source_site = 'SNKRDUNK'
         ORDER BY site_product_id
@@ -840,6 +846,10 @@ class SnkrdunkVerifyPatchRequest(BaseModel):
     verified: bool
 
 
+class SnkrdunkAnomalyOkPatchRequest(BaseModel):
+    anomaly_ok: bool
+
+
 @snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/verify")
 async def snkrdunk_update_verify_public(
     snkr_id: str,
@@ -862,6 +872,48 @@ async def snkrdunk_update_verify_public(
     await session.exec(  # type: ignore[arg-type]
         sql.bindparams(sid=snkr_id, verified="true" if body.verified else "false")
     )
+    await session.commit()
+    return {"ok": True}
+
+
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/anomaly-ok")
+async def snkrdunk_update_anomaly_ok_public(
+    snkr_id: str,
+    body: SnkrdunkAnomalyOkPatchRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """이상감지 승인(리스톡 허용) 플래그 저장 (인증 불필요).
+
+    사용자가 검수페이지에서 이상감지 상품 확인 후 체크 → resell_matches.kream.anomaly_ok=true.
+    봇(_kream_restock_register / _kream_ask_adjust)이 이 플래그를 읽어 이상감지 가드를
+    통과시킴 → 동적가격(시세 추종) 그대로 등록·갱신. (고정가 아님)
+    """
+    from sqlalchemy import text
+
+    if body.anomaly_ok:
+        # 승인 → anomaly_ok=true + anomaly_flagged=false(차단해제, 필터에서 제거)
+        sql = text("""
+            UPDATE samba_collected_product
+            SET resell_matches = jsonb_set(
+                jsonb_set(
+                    COALESCE(resell_matches, '{}'::jsonb),
+                    '{kream,anomaly_ok}', 'true'::jsonb, true
+                ),
+                '{kream,anomaly_flagged}', 'false'::jsonb, true
+            ), updated_at = NOW()
+            WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        """)
+    else:
+        # 승인 취소 → anomaly_ok=false (flagged는 봇이 다시 판단)
+        sql = text("""
+            UPDATE samba_collected_product
+            SET resell_matches = jsonb_set(
+                COALESCE(resell_matches, '{}'::jsonb),
+                '{kream,anomaly_ok}', 'false'::jsonb, true
+            ), updated_at = NOW()
+            WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        """)
+    await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
     await session.commit()
     return {"ok": True}
 
