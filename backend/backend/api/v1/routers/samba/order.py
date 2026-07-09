@@ -662,6 +662,14 @@ async def _build_order_filters(
             )
         elif search_category == "sourcing_order_number":
             filters.append(SambaOrder.sourcing_order_number.ilike(lower_q, escape="\\"))
+        elif search_category == "tracking_number":
+            # 국내송장(tracking_number) + 해외송장(overseas_tracking_number, 크림) 모두 매칭
+            filters.append(
+                or_(
+                    SambaOrder.tracking_number.ilike(lower_q, escape="\\"),
+                    SambaOrder.overseas_tracking_number.ilike(lower_q, escape="\\"),
+                )
+            )
         else:
             # 고객명(수령인) + 주문자명 모두 매칭 — 선물하기 등 수령인≠주문자 케이스 대응
             filters.append(
