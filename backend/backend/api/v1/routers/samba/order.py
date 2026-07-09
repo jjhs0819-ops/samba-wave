@@ -3375,21 +3375,50 @@ async def approve_cancel(
         if not api_key:
             raise HTTPException(status_code=400, detail="11번가 API 키 없음")
 
+        client = ElevenstClient(api_key)
         return_repo = SambaReturnRepository(session)
         existing_returns = await return_repo.filter_by_async(order_id=order_id)
         ret = existing_returns[0] if existing_returns else None
         clm_req_seq = (ret.clm_req_seq if ret else None) or ""
         ord_prd_seq = (ret.ord_prd_seq if ret else None) or ""
+        confirm_ord_no = order.order_number
+
+        # 미수집(반품동기화 잡 미실행 또는 방금 취소요청 접수) 시 → 11번가 취소요청 목록을
+        # 라이브 조회해 이 주문을 매칭, 클레임번호(ordPrdCnSeq)·주문순번을 즉시 확보한다.
+        # 동기화를 기다리지 않고 취소요청 들어오자마자 바로 승인 가능하게 함.
+        if not clm_req_seq or not ord_prd_seq:
+            from datetime import datetime as _dt, timedelta as _td
+
+            _fmt = "%Y%m%d%H%M"
+            _now = _dt.now()
+            try:
+                _cancel_items = await client.get_cancel_requests(
+                    (_now - _td(days=30)).strftime(_fmt), _now.strftime(_fmt)
+                )
+            except Exception as _le:  # noqa: BLE001
+                _cancel_items = []
+                logger.warning(f"[취소승인][11번가] 라이브 취소목록 조회 실패: {_le}")
+            for _it in _cancel_items:
+                _onum = _it.get("ordPrdNo", "") or _it.get("ordNo", "")
+                if _onum and str(_onum) == str(order.order_number):
+                    clm_req_seq = _it.get("ordPrdCnSeq", "") or clm_req_seq
+                    ord_prd_seq = _it.get("ordPrdSeq", "") or ord_prd_seq
+                    confirm_ord_no = _it.get("ordNo", "") or order.order_number
+                    logger.info(
+                        "[취소승인][11번가] 라이브 조회로 클레임정보 확보: "
+                        f"ordPrdCnSeq={clm_req_seq} ordPrdSeq={ord_prd_seq}"
+                    )
+                    break
 
         if not clm_req_seq or not ord_prd_seq:
             raise HTTPException(
                 status_code=400,
-                detail="11번가 취소 클레임 정보 없음 (clm_req_seq 또는 ord_prd_seq 미수집)",
+                detail="11번가 취소 클레임 정보 없음 — 라이브 조회에도 취소요청이 "
+                "없습니다 (이미 처리됐거나 취소요청 미접수)",
             )
 
-        client = ElevenstClient(api_key)
         try:
-            await client.confirm_cancel(clm_req_seq, order.order_number, ord_prd_seq)
+            await client.confirm_cancel(clm_req_seq, confirm_ord_no, ord_prd_seq)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"취소승인 실패: {e}")
 
@@ -3487,14 +3516,53 @@ async def approve_cancel(
             )
             return {"ok": True, "message": "쿠팡 즉시취소 완료 (상태 동기화)"}
 
-        # 1) 상품준비중 단계 출고중지 승인 경로 — receiptId 필수
-        if not order.cancel_receipt_id:
+        # 1) 상품준비중 단계 출고중지 승인 경로 — receiptId 필수.
+        #    미수집 시 라이브로 취소·반품 요청 목록을 조회해 이 주문(orderId=shipment_id)의
+        #    receiptId·releaseStatus를 즉시 확보한다(CANCEL=배송전취소 우선). 동기화를 기다리지
+        #    않고 취소요청 들어오자마자 바로 승인 가능하게 함.
+        _receipt_id = order.cancel_receipt_id
+        _release_status = order.cancel_release_status
+        if not _receipt_id:
+            _target_oid = str(order.shipment_id or order.ext_order_number or "")
+            try:
+                _cr_items = await client.get_cancel_and_return_requests(days=30)
+            except Exception as _le:  # noqa: BLE001
+                _cr_items = []
+                logger.warning(
+                    f"[취소승인][쿠팡] 라이브 취소·반품 목록 조회 실패: {_le}"
+                )
+            _matched = None
+            for _cr in _cr_items or []:
+                if not isinstance(_cr, dict):
+                    continue
+                if _target_oid and str(_cr.get("orderId", "") or "") == _target_oid:
+                    # CANCEL(배송전 취소) 우선 — 이미 매칭된 게 CANCEL이 아니면 교체
+                    if _matched is None or (
+                        (_cr.get("receiptType") or "").upper() == "CANCEL"
+                        and (_matched.get("receiptType") or "").upper() != "CANCEL"
+                    ):
+                        _matched = _cr
+            if _matched:
+                try:
+                    _receipt_id = int(_matched.get("receiptId"))
+                except (TypeError, ValueError):
+                    _receipt_id = None
+                _rit = _matched.get("returnItems") or []
+                if isinstance(_rit, list) and _rit and isinstance(_rit[0], dict):
+                    _release_status = _rit[0].get("releaseStatus") or _release_status
+                logger.info(
+                    f"[취소승인][쿠팡] 라이브 조회로 receiptId={_receipt_id} "
+                    f"releaseStatus={_release_status} 확보 (orderId={_target_oid})"
+                )
+
+        if not _receipt_id:
             raise HTTPException(
                 status_code=400,
-                detail="쿠팡 취소 receiptId 미수집 — 주문 동기화 후 다시 시도",
+                detail="쿠팡 취소 receiptId 미수집 — 라이브 조회에도 취소요청이 "
+                "없습니다 (이미 처리됐거나 취소요청 미접수)",
             )
 
-        rls = (order.cancel_release_status or "").upper()
+        rls = (_release_status or "").upper()
         if rls == "A":
             raise HTTPException(
                 status_code=400,
@@ -3512,7 +3580,7 @@ async def approve_cancel(
         cancel_count = int(order.quantity or 1)
         try:
             await client.stopped_shipment(
-                receipt_id=int(order.cancel_receipt_id),
+                receipt_id=int(_receipt_id),
                 cancel_count=cancel_count,
             )
         except CoupangApiError as e:
@@ -3526,7 +3594,7 @@ async def approve_cancel(
         )
         logger.info(
             f"[취소승인] 쿠팡 {order.order_number} stoppedShipment 완료 "
-            f"(receiptId={order.cancel_receipt_id}, count={cancel_count})"
+            f"(receiptId={_receipt_id}, count={cancel_count})"
         )
         return {"ok": True, "message": "쿠팡 취소승인 완료 (출고중지)"}
 
