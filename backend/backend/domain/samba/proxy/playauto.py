@@ -624,114 +624,106 @@ _SIIL_CODE_MAP: dict[str, str] = {
 def _build_siil_entry(product: dict, data: dict) -> dict:
     """상품 카테고리에 맞는 품목정보고시 엔트리를 생성한다.
 
-    GS샵 등은 품목정보가 의류/구두·신발/가방/패션잡화/기타재화 중 하나로
-    정확히 분류되어야 등록 가능하다. category1 기반으로 code를 판별하고
-    data 필드는 수집값(소재/색상/치수/원산지/제조사/AS) + [상세설명참조]로 채운다.
+    EMP 품목정보고시는 code별로 고정 필드 레이아웃을 가진다 — 2026-07-09 EMP 웹 실측 확정:
+      01 의류(13필드):   1 제품소재 · 2 기능성여부(Y/N) · 3 색상 · 4 치수 · 5 제조자 ·
+                        6 수입품여부(Y/N) · 7 수입자 · 8 제조국 · 9 세탁방법 ·
+                        10 취급시주의 · 11 제조연월 · 12 품질보증기준 · 13 AS전화
+      02 구두/신발(12):  1 주소재 · 2 운동화여부(Y/N) · 3 색상 · 4 발길이 · 5 굽높이 ·
+                        6 제조자 · 7 수입품여부(Y/N) · 8 수입자 · 9 제조국 ·
+                        10 취급시주의 · 11 품질보증기준 · 12 AS전화
+      03 가방(10):       1 종류 · 2 소재 · 3 색상 · 4 크기 · 5 제조자 · 6 수입품여부(Y/N) ·
+                        7 제조국 · 8 취급시주의 · 9 품질보증기준 · 10 AS전화
+      04 패션잡화(10):   1 종류 · 2 소재 · 3 치수 · 4 제조자 · 5 수입품여부(Y/N) ·
+                        6 수입자 · 7 제조국 · 8 취급시주의 · 9 품질보증기준 · 10 AS전화
 
-    주의: EMP SiilData의 data1~data24 각 필드 의미는 code별로 다르지만,
-    playauto 공식 스펙(openapi.json)에는 위치별 매핑이 명시되어 있지 않고
-    외부 가이드 페이지에서만 안내된다. 의류/신발/가방/잡화는 롯데ON·스마트스토어의
-    품목정보고시 표준 필드 순서(소재-색상-치수-제조자-제조국-취급-제조년월-보증-AS)를 참고한다.
+    누락(빈 값)은 마켓이 거부하므로 각 코드의 유효 위치를 "상세페이지 참조"로 베이스 채운다.
+    수입품여부/기능성여부/운동화여부는 N 디폴트. 제조국은 수집 원산지의 국가명을 채운다.
     """
     from backend.domain.samba.proxy.notice_utils import detect_notice_group
 
     group = detect_notice_group(product)
+
+    # 오분류 방어: 카테고리가 의류/기타로 잡혀도 상품명이 명확한 가방/신발이면 교정.
+    # (실측: 노스페이스 힙색·슬링백 등이 code 01 의류로 등록되던 문제)
+    name = str(product.get("name", ""))
+    _BAG_KW = (
+        "힙색", "슬링백", "크로스백", "숄더백", "백팩", "토트백", "메신저백",
+        "더플백", "에코백", "버킷백", "파우치", "보스턴백", "웨이스트백", "복대백",
+    )
+    _SHOE_KW = ("운동화", "스니커즈", "구두", "샌들", "부츠", "로퍼", "슬리퍼", "워커")
+    if group != "bag" and any(k in name for k in _BAG_KW):
+        group = "bag"
+    elif group != "shoes" and any(k in name for k in _SHOE_KW):
+        group = "shoes"
+
     code = _SIIL_CODE_MAP.get(group, "35")
 
-    fallback = "[상세설명참조]"
-    as_phone = (product.get("_as_phone", "") or "").strip() or fallback
-    raw_origin = (product.get("origin") or "").strip()
-    siil_origin = (
-        raw_origin if raw_origin and raw_origin not in ("기타", "국내") else fallback
-    )
-    maker = data.get("Maker", "") or product.get("brand", "") or fallback
+    # 수집값이 없거나 판별 불가한 칸은 "상세페이지 참조"로 채운다(사용자 지정 기본값).
+    fallback = "상세페이지 참조"
+
+    # ── 공통 값 준비 ────────────────────────────────
     material = (product.get("material") or "").strip() or fallback
     # 플레이오토 품목정보 소재는 1글자만 등록 시 에러 — 한 글자면 "X 소재" 형태로 보정
     if material != fallback and len(material) == 1:
         material = f"{material} 소재"
     color = (product.get("color") or "").strip() or fallback
+    maker = data.get("Maker", "") or product.get("brand", "") or fallback
     care = (
         product.get("care_instructions") or product.get("careInstructions") or ""
     ).strip() or fallback
-    is_imported_y = "Y" if data.get("MadeIn", "").startswith("해외") else "N"
     quality = (
         product.get("quality_guarantee") or product.get("qualityGuarantee") or ""
     ).strip() or "관련 법 및 소비자 분쟁해결 규정에 따름"
+    as_phone = (product.get("_as_phone", "") or "").strip() or fallback
+
+    # 제조국(국가명) 추출 — "해외=아시아=인도네시아"→인도네시아, "기타=베트남"→베트남, "국내…"→대한민국.
+    # 끝 조각(도시명)을 국가로 오인하지 않도록 "국내" 접두를 먼저 처리.
+    made_in = data.get("MadeIn", "") or ""
+    raw_origin = (product.get("origin") or "").strip()
+    _DOMESTIC = ("한국", "대한민국", "국내")
+    if made_in.startswith("국내") or raw_origin in _DOMESTIC:
+        made_country = "대한민국"
+    else:
+        seg = made_in.split("=")[-1].strip() if "=" in made_in else made_in.strip()
+        country = seg or raw_origin
+        made_country = country if (country and country not in ("기타", "해외")) else fallback
+    # 수입품여부는 전부 N으로 디폴트(사용자 지정). 수입자는 상세페이지 참조.
+    is_imported = "N"
+    importer = fallback
+
+    # ── code별 위치 매핑 (실측 레이아웃) ────────────────
+    if code == "01":  # 의류 (13)
+        fields = {
+            1: material, 2: "N", 3: color, 4: fallback, 5: maker,
+            6: is_imported, 7: importer, 8: made_country, 9: care,
+            10: care, 11: fallback, 12: quality, 13: as_phone,
+        }
+    elif code == "02":  # 구두/신발 (12)
+        fields = {
+            1: material, 2: "N", 3: color, 4: fallback, 5: fallback,
+            6: maker, 7: is_imported, 8: importer, 9: made_country,
+            10: care, 11: quality, 12: as_phone,
+        }
+    elif code == "03":  # 가방 (10)
+        fields = {
+            1: fallback, 2: material, 3: color, 4: fallback, 5: maker,
+            6: is_imported, 7: made_country, 8: care, 9: quality, 10: as_phone,
+        }
+    elif code == "04":  # 패션잡화 (10, 색상 없음·치수 있음)
+        fields = {
+            1: fallback, 2: material, 3: fallback, 4: maker, 5: is_imported,
+            6: importer, 7: made_country, 8: care, 9: quality, 10: as_phone,
+        }
+    else:  # 35 기타재화 — 호출측에서 등록 차단(raise), 최소값만 채움
+        fields = {
+            1: str(product.get("name", ""))[:100] or fallback,
+            2: data.get("Model", fallback), 3: fallback, 4: made_country,
+            5: maker, 6: is_imported, 7: maker, 8: as_phone,
+        }
 
     entry: dict[str, str] = {"code": code}
-
-    # 누락 방지: 모든 의류/신발/가방/잡화 코드는 data1~data20을 fallback으로 베이스 채움.
-    # 플레이오토 EMP는 code별 필요한 위치만 사용하므로 초과 키는 무시되고, 누락(빈 값)만 차단.
-    # GS샵 등 품목정보 필수 마켓에서 (01)/(02)/(03)/(04) 누락 거부 대응.
-    if code in ("01", "02", "03", "04"):
-        for i in range(1, 21):
-            entry[f"data{i}"] = fallback
-
-    if code == "01":
-        # 의류: 소재/색상/치수/제조자/제조국/세탁방법/제조년월/품질보증/AS
-        entry.update(
-            {
-                "data1": material,
-                "data2": color,
-                "data4": maker,
-                "data5": siil_origin,
-                "data6": care,
-                "data8": quality,
-                "data9": as_phone,
-            }
-        )
-    elif code == "02":
-        # 구두/신발: 소재(겉/안감)/색상/치수/제조자/제조국/취급시주의/제조년월/품질보증/AS
-        entry.update(
-            {
-                "data1": material,
-                "data2": color,
-                "data4": maker,
-                "data5": siil_origin,
-                "data6": care,
-                "data8": quality,
-                "data9": as_phone,
-            }
-        )
-    elif code == "03":
-        # 가방: 종류/소재/색상/크기/제조자/제조국/취급시주의/제조년월/품질보증/AS
-        entry.update(
-            {
-                "data2": material,
-                "data3": color,
-                "data5": maker,
-                "data6": siil_origin,
-                "data7": care,
-                "data9": quality,
-                "data10": as_phone,
-            }
-        )
-    elif code == "04":
-        # 패션잡화: 종류/소재/치수/제조자/제조국/취급시주의/제조년월/품질보증/AS
-        entry.update(
-            {
-                "data2": material,
-                "data4": maker,
-                "data5": siil_origin,
-                "data6": care,
-                "data8": quality,
-                "data9": as_phone,
-            }
-        )
-    else:
-        # 35 기타재화: 품명/모델/제조자/제조국/수입여부/제조자/AS — 기존 매핑 유지
-        entry.update(
-            {
-                "data1": str(product.get("name", ""))[:100] or fallback,
-                "data2": data.get("Model", fallback),
-                "data3": fallback,
-                "data4": siil_origin,
-                "data5": maker,
-                "data6": is_imported_y,
-                "data7": maker,
-                "data8": as_phone,
-            }
-        )
+    for i, v in fields.items():
+        entry[f"data{i}"] = v if (v is not None and str(v) != "") else fallback
 
     return entry
 
