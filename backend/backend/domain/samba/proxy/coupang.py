@@ -1833,6 +1833,34 @@ class CoupangClient:
         result = await self._call_api("GET", path)
         return result
 
+    async def get_ordersheets_by_order_id(
+        self,
+        order_id: int | str,
+    ) -> list[dict[str, Any]]:
+        """발주서 단건 조회 — 주문번호(orderId) 기준 (#599).
+
+        취소·반품 receipt(returnRequests)는 orderId 만 주고 shipmentBoxId 가 없다.
+        배송완료로 종결돼 get_orders 기간창(raw_orders) 밖으로 빠진 주문은 매칭 대상이
+        없어 취소·반품이 버려지던(배송완료 고착) 문제를 해소하기 위해, orderId 로 발주서를
+        되살린다.
+
+        쿠팡 Wing API (실측 확정 2026-07-09):
+          GET /v2/.../vendors/{vendorId}/{orderId}/ordersheets   ← orderId 는 경로 앞
+          (`/ordersheets/{orderId}` 형태는 404 — 사용 금지)
+        응답 data = list — 주문의 배송박스(shipmentBoxId)별 발주서.
+        """
+        path = (
+            f"/v2/providers/openapi/apis/api/v5/vendors/{self.vendor_id}/"
+            f"{order_id}/ordersheets"
+        )
+        result = await self._call_api("GET", path)
+        data = result.get("data") if isinstance(result, dict) else None
+        if isinstance(data, list):
+            return [d for d in data if isinstance(d, dict)]
+        if isinstance(data, dict):
+            return [data]
+        return []
+
     async def get_exchange_requests(
         self,
         days: int = 7,

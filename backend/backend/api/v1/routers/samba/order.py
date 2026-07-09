@@ -6602,6 +6602,53 @@ async def sync_orders_from_markets(
                             f"[주문동기화] {label}: 쿠팡 취소·반품 조회 실패 — {cre}"
                         )
 
+                    # [#599] orphan 취소·반품 receipt 되살리기 — 배송완료 고착 해소.
+                    #   receipt 는 orderId 만 있고 shipmentBoxId 가 없다. 배송완료로 종결돼
+                    #   get_orders 기간창(raw_orders)에서 빠진 주문은 매칭 대상이 없어 취소·반품
+                    #   신호가 버려졌다(#599 증상2). cancel_map 의 orderId 중 raw_orders 에 없는
+                    #   것을 orderId 발주서 단건 조회로 되살려 raw_orders 에 추가 → 아래 매칭 루프가
+                    #   자동으로 cancel_info 를 붙여 파싱한다.
+                    try:
+                        _raw_oids: set[int] = set()
+                        for _ro in raw_orders:
+                            _o = _ro.get("orderId")
+                            if _o is not None:
+                                try:
+                                    _raw_oids.add(int(_o))
+                                except (TypeError, ValueError):
+                                    pass
+                        _orphan_oids = {k[0] for k in cancel_map.keys()} - _raw_oids
+                        _ORPHAN_CAP = 50  # 폭주 가드 (쿠팡 API rate limit 보호)
+                        _orphan_list = list(_orphan_oids)
+                        if len(_orphan_list) > _ORPHAN_CAP:
+                            logger.warning(
+                                f"[주문동기화] 쿠팡({label}): orphan 취소·반품 "
+                                f"{len(_orphan_list)}건 중 {_ORPHAN_CAP}건만 재조회 "
+                                f"(나머지 {len(_orphan_list) - _ORPHAN_CAP}건은 다음 sync)"
+                            )
+                        _recovered = 0
+                        for _oid in _orphan_list[:_ORPHAN_CAP]:
+                            try:
+                                _sheets = await client.get_ordersheets_by_order_id(_oid)
+                            except Exception as _re:
+                                logger.warning(
+                                    f"[주문동기화] 쿠팡({label}): "
+                                    f"orphan orderId={_oid} 재조회 실패 — {_re}"
+                                )
+                                continue
+                            for _sheet in _sheets:
+                                raw_orders.append(_sheet)
+                                _recovered += 1
+                        if _recovered:
+                            logger.info(
+                                f"[주문동기화] 쿠팡({label}): "
+                                f"orphan 취소·반품 주문 {_recovered}건 재조회 복원"
+                            )
+                    except Exception as orphan_err:
+                        logger.warning(
+                            f"[주문동기화] {label}: orphan 재조회 단계 실패 — {orphan_err}"
+                        )
+
                     # ACCEPT(결제완료) + 취소·반품 머지 없음 → 자동 발주확인 대상
                     unconfirmed_box_ids: list[int] = []
                     for ro in raw_orders:
@@ -9718,6 +9765,27 @@ async def sync_orders_from_markets(
                             logger.info(
                                 f"[주문동기화] 취소 상태 보호: {order_data.get('order_number')} "
                                 f"{existing.shipping_status} → {new_ship_status} 차단"
+                            )
+                        elif new_ship_status in (
+                            "반품요청",
+                            "반품완료",
+                            "반품거부",
+                        ) and existing.shipping_status in (
+                            "송장전송완료",
+                            "국내배송중",
+                            "배송완료",
+                            "구매확정",
+                        ):
+                            # [#599] 배송완료 종결 주문에 반품 접수 — 반품이 최신 진실.
+                            #   배송 후 반품(쿠팡 releaseStatus=Y/A)은 정상 흐름인데, 기존엔
+                            #   배송완료→반품 허용 분기가 없어 반품 신호가 무시돼 '배송완료'로
+                            #   고착됐다(증상2). 종결 상태를 반품으로 갱신 허용.
+                            #   (취소요청→배송완료 차단은 9657 분기가, 취소 종결→반품 차단은
+                            #    9706 분기가 각각 그대로 담당 — 여기는 배송 진행/완료→반품만)
+                            update_fields["shipping_status"] = new_ship_status
+                            logger.info(
+                                f"[주문동기화] 배송완료→반품 전이: {order_data.get('order_number')} "
+                                f"{existing.shipping_status} → {new_ship_status} (반품 접수)"
                             )
                         elif (
                             new_ship_status in ("반품요청", "반품완료", "반품거부")

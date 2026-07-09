@@ -183,15 +183,19 @@ export function useOrderActions(args: Args) {
     openTrackingModal(order)
   }
 
-  const toggleAction = async (orderId: string, actionKey: string) => {
-    const currentTags = parseActionTags(activeActions[orderId])
+  const toggleAction = async (orderId: string, actionKey: string, currentActionTag?: string | null) => {
+    // 로컬 상태가 없으면(이번 세션에 미조작) 서버값(o.action_tag)을 기준으로 삼아야
+    // 서버에서 이미 활성인 태그도 재클릭 시 정상 해제됨. 로컬이 ''(해제됨)면 '' 유지.
+    const currentTags = parseActionTags(activeActions[orderId] ?? currentActionTag)
     const nextTags = currentTags.includes(actionKey)
       ? currentTags.filter(tag => tag !== actionKey)
       : [...currentTags, actionKey]
     const newVal = serializeActionTags(nextTags)
-    setActiveActions(prev => ({ ...prev, [orderId]: newVal || null }))
+    // 해제 시 null 대신 ''로 저장 — null이면 표시 로직(활성태그 ?? o.action_tag)이
+    // 스테일 서버값으로 폴백해 해제 후에도 계속 활성으로 보임.
+    setActiveActions(prev => ({ ...prev, [orderId]: newVal }))
     try {
-      await orderApi.update(orderId, { action_tag: newVal || '' })
+      await orderApi.update(orderId, { action_tag: newVal })
     } catch { /* ignore */ }
   }
 

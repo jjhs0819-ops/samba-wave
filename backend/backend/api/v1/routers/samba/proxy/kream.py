@@ -696,6 +696,8 @@ async def snkrdunk_compare_all_public(
             (COALESCE(resell_matches->'kream'->>'anomaly_ok', '') = 'true') AS anomaly_ok,
             -- 이상감지 차단됨 — 봇이 저가위험으로 등록/갱신 막은 상품(검수페이지 필터용)
             (COALESCE(resell_matches->'kream'->>'anomaly_flagged', '') = 'true') AS anomaly_flagged,
+            -- 이상감지 원인(검수페이지 매입가 아래 표시): "옵션 등록가 X < 시세 Y의 70%"
+            COALESCE(resell_matches->'kream'->>'anomaly_reason', '') AS anomaly_reason,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
                 FROM jsonb_array_elements(options::jsonb) o
@@ -891,15 +893,18 @@ async def snkrdunk_update_anomaly_ok_public(
     from sqlalchemy import text
 
     if body.anomaly_ok:
-        # 승인 → anomaly_ok=true + anomaly_flagged=false(차단해제, 필터에서 제거)
+        # 승인 → anomaly_ok=true + anomaly_flagged=false(차단해제) + 원인문구 제거
         sql = text("""
             UPDATE samba_collected_product
             SET resell_matches = jsonb_set(
                 jsonb_set(
-                    COALESCE(resell_matches, '{}'::jsonb),
-                    '{kream,anomaly_ok}', 'true'::jsonb, true
+                    jsonb_set(
+                        COALESCE(resell_matches, '{}'::jsonb),
+                        '{kream,anomaly_ok}', 'true'::jsonb, true
+                    ),
+                    '{kream,anomaly_flagged}', 'false'::jsonb, true
                 ),
-                '{kream,anomaly_flagged}', 'false'::jsonb, true
+                '{kream,anomaly_reason}', '""'::jsonb, true
             ), updated_at = NOW()
             WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
         """)

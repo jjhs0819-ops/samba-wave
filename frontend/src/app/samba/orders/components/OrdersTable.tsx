@@ -91,7 +91,7 @@ interface OrdersTableProps {
   handleStatusChange: (id: string, status: string) => void | Promise<void>
   handleCostSave: (id: string) => void | Promise<void>
   handleShipFeeSave: (id: string) => void | Promise<void>
-  toggleAction: (orderId: string, actionKey: string) => void | Promise<void>
+  toggleAction: (orderId: string, actionKey: string, currentActionTag?: string | null) => void | Promise<void>
 }
 
 export default function OrdersTable(props: OrdersTableProps) {
@@ -341,7 +341,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                       return (
                         <button
                           key={actionBtn.key}
-                          onClick={() => toggleAction(o.id, actionBtn.key)}
+                          onClick={() => toggleAction(o.id, actionBtn.key, o.action_tag)}
                           style={{
                             fontSize: '0.68rem', padding: '0.125rem 0',
                             background: isActive ? actionBtn.activeColor : '#5a5a5a',
