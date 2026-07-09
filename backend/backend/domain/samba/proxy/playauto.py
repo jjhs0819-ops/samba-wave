@@ -647,8 +647,20 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
     # (실측: 노스페이스 힙색·슬링백 등이 code 01 의류로 등록되던 문제)
     name = str(product.get("name", ""))
     _BAG_KW = (
-        "힙색", "슬링백", "크로스백", "숄더백", "백팩", "토트백", "메신저백",
-        "더플백", "에코백", "버킷백", "파우치", "보스턴백", "웨이스트백", "복대백",
+        "힙색",
+        "슬링백",
+        "크로스백",
+        "숄더백",
+        "백팩",
+        "토트백",
+        "메신저백",
+        "더플백",
+        "에코백",
+        "버킷백",
+        "파우치",
+        "보스턴백",
+        "웨이스트백",
+        "복대백",
     )
     _SHOE_KW = ("운동화", "스니커즈", "구두", "샌들", "부츠", "로퍼", "슬리퍼", "워커")
     if group != "bag" and any(k in name for k in _BAG_KW):
@@ -686,7 +698,9 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
     else:
         seg = made_in.split("=")[-1].strip() if "=" in made_in else made_in.strip()
         country = seg or raw_origin
-        made_country = country if (country and country not in ("기타", "해외")) else fallback
+        made_country = (
+            country if (country and country not in ("기타", "해외")) else fallback
+        )
     # 수입품여부는 전부 N으로 디폴트(사용자 지정). 수입자는 상세페이지 참조.
     is_imported = "N"
     importer = fallback
@@ -694,31 +708,71 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
     # ── code별 위치 매핑 (실측 레이아웃) ────────────────
     if code == "01":  # 의류 (13)
         fields = {
-            1: material, 2: "N", 3: color, 4: fallback, 5: maker,
-            6: is_imported, 7: importer, 8: made_country, 9: care,
-            10: care, 11: fallback, 12: quality, 13: as_phone,
+            1: material,
+            2: "N",
+            3: color,
+            4: fallback,
+            5: maker,
+            6: is_imported,
+            7: importer,
+            8: made_country,
+            9: care,
+            10: care,
+            11: fallback,
+            12: quality,
+            13: as_phone,
         }
     elif code == "02":  # 구두/신발 (12)
         fields = {
-            1: material, 2: "N", 3: color, 4: fallback, 5: fallback,
-            6: maker, 7: is_imported, 8: importer, 9: made_country,
-            10: care, 11: quality, 12: as_phone,
+            1: material,
+            2: "N",
+            3: color,
+            4: fallback,
+            5: fallback,
+            6: maker,
+            7: is_imported,
+            8: importer,
+            9: made_country,
+            10: care,
+            11: quality,
+            12: as_phone,
         }
     elif code == "03":  # 가방 (10)
         fields = {
-            1: fallback, 2: material, 3: color, 4: fallback, 5: maker,
-            6: is_imported, 7: made_country, 8: care, 9: quality, 10: as_phone,
+            1: fallback,
+            2: material,
+            3: color,
+            4: fallback,
+            5: maker,
+            6: is_imported,
+            7: made_country,
+            8: care,
+            9: quality,
+            10: as_phone,
         }
     elif code == "04":  # 패션잡화 (10, 색상 없음·치수 있음)
         fields = {
-            1: fallback, 2: material, 3: fallback, 4: maker, 5: is_imported,
-            6: importer, 7: made_country, 8: care, 9: quality, 10: as_phone,
+            1: fallback,
+            2: material,
+            3: fallback,
+            4: maker,
+            5: is_imported,
+            6: importer,
+            7: made_country,
+            8: care,
+            9: quality,
+            10: as_phone,
         }
     else:  # 35 기타재화 — 호출측에서 등록 차단(raise), 최소값만 채움
         fields = {
             1: str(product.get("name", ""))[:100] or fallback,
-            2: data.get("Model", fallback), 3: fallback, 4: made_country,
-            5: maker, 6: is_imported, 7: maker, 8: as_phone,
+            2: data.get("Model", fallback),
+            3: fallback,
+            4: made_country,
+            5: maker,
+            6: is_imported,
+            7: maker,
+            8: as_phone,
         }
 
     entry: dict[str, str] = {"code": code}
