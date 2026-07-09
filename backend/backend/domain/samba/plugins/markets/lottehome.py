@@ -172,6 +172,123 @@ async def _recheck_own_goods_no(session, product: dict[str, Any], account) -> st
         return ""
 
 
+async def _mark_reg_lost(product_id: str, account_id: str) -> None:
+    """등록 응답유실(타임아웃) 마커 기록 — 재전송 시 발급번호 역조회 회수 트리거.
+
+    롯데는 발급을 완료했는데 응답만 유실된 경우, 다음 재전송이 신규 발급을
+    하면 중복 goods_no(유령상품)가 된다. 마커를 남겨 재전송 경로가 먼저
+    find_goods_no_by_name 으로 기발급 번호를 회수하도록 한다. best-effort.
+    """
+    if not product_id or not account_id:
+        return
+    try:
+        from sqlmodel import select as _sel
+
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        from datetime import datetime, timezone
+
+        async with get_write_session() as s:
+            row = (
+                await s.execute(
+                    _sel(SambaCollectedProduct).where(
+                        SambaCollectedProduct.id == product_id
+                    )
+                )
+            ).scalars().first()
+            if row is None:
+                return
+            nos = dict(row.market_product_nos or {})
+            nos[f"{account_id}_reg_lost"] = datetime.now(tz=timezone.utc).isoformat()
+            row.market_product_nos = nos
+            s.add(row)
+            await s.commit()
+    except Exception as e:
+        logger.warning(f"[롯데홈쇼핑][번호유실] 마커 기록 실패(무시): {e}")
+
+
+async def _clear_reg_lost(product_id: str, account_id: str) -> None:
+    """유실마커 해제 — 발급이 확실히 안 된 명시적 실패 경로에서 호출.
+
+    마커가 남으면 다음 재전송이 불필요한 전량 역조회(수십 초)를 하므로,
+    '발급 없음'이 확실할 때는 지워서 바로 신규 등록을 타게 한다. best-effort.
+    """
+    if not product_id or not account_id:
+        return
+    try:
+        from sqlmodel import select as _sel
+
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        async with get_write_session() as s:
+            row = (
+                await s.execute(
+                    _sel(SambaCollectedProduct).where(
+                        SambaCollectedProduct.id == product_id
+                    )
+                )
+            ).scalars().first()
+            if row is None:
+                return
+            nos = dict(row.market_product_nos or {})
+            if nos.pop(f"{account_id}_reg_lost", None) is not None:
+                row.market_product_nos = nos
+                s.add(row)
+                await s.commit()
+    except Exception as e:
+        logger.warning(f"[롯데홈쇼핑][번호유실] 마커 해제 실패(무시): {e}")
+
+
+async def _persist_goods_no_immediately(
+    product_id: str, account_id: str, goods_no: str
+) -> None:
+    """발급 직후 단명세션 즉시저장 (쿠팡/#582 패턴).
+
+    메인 세션의 후속 로직(이미지/이름 갱신 등)이 롤백·크래시해도 발급번호는
+    이미 커밋돼 있어 번호유실→중복발급을 차단한다. 실패 시 메인세션 저장이
+    폴백이므로 예외는 삼킨다.
+    """
+    if not (product_id and account_id and goods_no):
+        return
+    try:
+        from sqlmodel import select as _sel
+
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.collector.model import SambaCollectedProduct
+
+        async with get_write_session() as s:
+            row = (
+                await s.execute(
+                    _sel(SambaCollectedProduct).where(
+                        SambaCollectedProduct.id == product_id
+                    )
+                )
+            ).scalars().first()
+            if row is None:
+                return
+            nos = dict(row.market_product_nos or {})
+            nos[account_id] = goods_no
+            nos.pop(f"{account_id}_reg_lost", None)
+            row.market_product_nos = nos
+            regs = list(row.registered_accounts or [])
+            if account_id not in regs:
+                regs.append(account_id)
+                row.registered_accounts = regs
+            s.add(row)
+            await s.commit()
+            logger.info(
+                f"[롯데홈쇼핑][즉시저장] goods_no={goods_no} product={product_id} "
+                f"단명세션 커밋 완료"
+            )
+    except Exception as e:
+        logger.error(
+            f"[롯데홈쇼핑][즉시저장] 실패(메인세션 저장 폴백): "
+            f"product={product_id} goods_no={goods_no} err={e}"
+        )
+
+
 def _transform_for_lottehome(
     product: dict[str, Any],
     category_id: str,
@@ -1100,6 +1217,22 @@ class LotteHomePlugin(MarketPlugin):
             # 같은 style 다른 cp 행(#365 + 다른 product_id race)
             if not _reuse_no:
                 _reuse_no = await _find_reusable_goods_no(session, product, account)
+        # ── 번호유실 회수: 직전 등록이 타임아웃/응답유실이었으면(_reg_lost 마커)
+        # 롯데홈에 이미 발급된 리스팅이 있을 수 있다 → 신규 발급 전에 상품명
+        # 완전일치 역조회로 기발급 번호를 채택(중복 goods_no 발급 차단).
+        _recovered_no = ""
+        if not _reuse_no:
+            _nos_now = dict(product.get("market_product_nos") or {})
+            if account and _nos_now.get(f"{account.id}_reg_lost"):
+                try:
+                    _recovered_no = await client.find_goods_no_by_name(
+                        goods_data.get("goods_nm", "")
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[롯데홈쇼핑][번호회수] 역조회 실패(무시, 신규등록 진행): {e}"
+                    )
+
         if _reuse_no:
             goods_no = _reuse_no
             result = {"data": {"_reused_goods_no": _reuse_no}}
@@ -1107,8 +1240,47 @@ class LotteHomePlugin(MarketPlugin):
                 f"[롯데홈쇼핑][중복방지] style 동일 기존 goods_no={goods_no} 공유 "
                 f"— 신규등록 스킵(중복 발급 차단)"
             )
+        elif _recovered_no:
+            goods_no = _recovered_no
+            result = {"data": {"_recovered_goods_no": _recovered_no}}
+            logger.info(
+                f"[롯데홈쇼핑][번호회수] 응답유실됐던 기발급 goods_no={goods_no} "
+                f"역조회 채택 — 신규등록 스킵(중복 발급 차단)"
+            )
         else:
-            result = await client.register_goods(goods_data)
+            import httpx as _httpx
+
+            from backend.domain.samba.proxy.lottehome import (
+                LotteApiError as _RegLotteApiError,
+            )
+
+            _pid_str = str(product.get("id") or "")
+            _acc_str = account.id if account else ""
+            # 선(先)마커: 등록 호출 '도중' 프로세스 크래시/재시작까지 커버.
+            # 성공(즉시저장)·명시적 실패(발급 없음 확실) 시 해제되고,
+            # 타임아웃/크래시 시엔 남아서 다음 재전송이 역조회 회수를 탄다.
+            await _mark_reg_lost(_pid_str, _acc_str)
+            try:
+                result = await client.register_goods(goods_data)
+            except (_httpx.TimeoutException, _httpx.TransportError) as e:
+                # 롯데가 발급을 완료했을 수 있는 상태 — 마커 유지.
+                logger.error(
+                    "[롯데홈쇼핑][번호유실] 등록 응답 유실(%s) — 마커 유지. "
+                    "재전송 시 기발급 번호 자동회수 시도. product=%s",
+                    type(e).__name__,
+                    product.get("id"),
+                )
+                return {
+                    "success": False,
+                    "message": (
+                        "롯데홈쇼핑 등록 응답 유실(타임아웃) — 발급 여부 미확인. "
+                        "재전송하면 기발급 번호를 자동 회수합니다."
+                    ),
+                }
+            except _RegLotteApiError:
+                # 명시적 에러 응답 = 발급 안 됨 확실 → 마커 해제 후 그대로 전파
+                await _clear_reg_lost(_pid_str, _acc_str)
+                raise
             # 진단: 응답 raw XML 전체 로그 — 이미지 거부 메시지 있는지 확인용
             logger.info(
                 f"[롯데홈쇼핑 진단/RES] rawXml={result.get('rawXml', '')[:4000]}"
@@ -1127,6 +1299,8 @@ class LotteHomePlugin(MarketPlugin):
                     goods_no = str(g_result.get("goods_no", "")).strip()
                 else:
                     # Result != "1" (Result=2 실패 등) → false success 차단
+                    # 명시적 실패 = 발급 없음 확실 → 선마커 해제
+                    await _clear_reg_lost(_pid_str, _acc_str)
                     logger.error(
                         "[롯데홈쇼핑][#480] 등록 응답 Result=%r (≠1) — 실패 처리. "
                         "product=%s rawXml=%s",
@@ -1149,6 +1323,13 @@ class LotteHomePlugin(MarketPlugin):
                     product.get("id"),
                     str(result.get("rawXml", ""))[:500],
                 )
+
+        # 발급 직후 단명세션 즉시저장(#582 패턴) — 아래 메인세션 저장이
+        # 롤백/크래시해도 번호는 이미 커밋돼 유실→중복발급이 안 생긴다.
+        if goods_no and account:
+            await _persist_goods_no_immediately(
+                str(product.get("id") or ""), account.id, goods_no
+            )
 
         # DB에 등록 정보 저장 (registered_accounts, market_product_nos)
         if goods_no and account:
@@ -1173,6 +1354,7 @@ class LotteHomePlugin(MarketPlugin):
                     # market_product_nos 업데이트
                     market_nos = dict(collected.market_product_nos or {})
                     market_nos[account.id] = goods_no
+                    market_nos.pop(f"{account.id}_reg_lost", None)  # 유실마커 해제
                     # skipMdApproval=True면 승인대기 마킹 생략
                     _extra = getattr(account, "additional_fields", None) or {}
                     if not _extra.get("skipMdApproval"):

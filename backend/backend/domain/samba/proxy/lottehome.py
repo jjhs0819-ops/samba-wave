@@ -334,8 +334,14 @@ class LotteHomeClient:
         endpoint: str,
         method: str = "POST",
         params: Optional[dict[str, Any]] = None,
+        timeout_s: Optional[float] = None,
     ) -> dict[str, Any]:
-        """롯데홈쇼핑 API 공통 호출 (EUC-KR 인코딩)."""
+        """롯데홈쇼핑 API 공통 호출 (EUC-KR 인코딩).
+
+        timeout_s: 호출별 read 타임아웃 오버라이드. 등록(registApiGoodsInfo)처럼
+        서버 처리가 긴 API가 기본값에 잘리면 "발급은 됐는데 응답만 유실"이 돼
+        중복 goods_no 발급(유령상품)의 주원인이 된다.
+        """
         params = params or {}
         url = self.base_url + endpoint
         headers = {
@@ -344,7 +350,9 @@ class LotteHomeClient:
             "Accept-Charset": "euc-kr",
         }
 
-        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
+        timeout = httpx.Timeout(
+            timeout_s or settings.http_timeout_default, connect=10.0
+        )
         client_kwargs: dict[str, Any] = {"timeout": timeout}
         if self.proxy_url:
             client_kwargs["proxy"] = self.proxy_url
@@ -378,6 +386,7 @@ class LotteHomeClient:
         endpoint: str,
         method: str = "POST",
         params: Optional[dict[str, Any]] = None,
+        timeout_s: Optional[float] = None,
     ) -> dict[str, Any]:
         """인증키 오류([0001]/[5001] + 인증 메시지) 시 자동 재인증 후 1회 재시도.
 
@@ -386,7 +395,7 @@ class LotteHomeClient:
         메시지에 "인증" 키워드가 있을 때만 재인증으로 분류한다.
         """
         try:
-            return await self._call_api(endpoint, method, params)
+            return await self._call_api(endpoint, method, params, timeout_s=timeout_s)
         except LotteApiError as e:
             msg = (e.lotte_msg or "").lower()
             is_auth = e.code in ("5001", "9001") or (
@@ -403,7 +412,9 @@ class LotteHomeClient:
                 new_key = await self._ensure_auth(force=True)
                 if params and "subscriptionId" in params:
                     params = {**params, "subscriptionId": new_key}
-                return await self._call_api(endpoint, method, params)
+                return await self._call_api(
+                    endpoint, method, params, timeout_s=timeout_s
+                )
             # 0001 이지만 인증 외 사유면 그대로 raise → 호출자에게 정확한 원인 노출
             if e.code == "0001":
                 logger.warning(
@@ -801,13 +812,66 @@ class LotteHomeClient:
     # ------------------------------------------------------------------
 
     async def register_goods(self, goods_data: dict[str, Any]) -> dict[str, Any]:
-        """신규상품등록."""
+        """신규상품등록.
+
+        타임아웃 180s 고정 — 기본 타임아웃에 잘리면 롯데는 발급을 완료했는데
+        우리는 실패로 알고 재시도 → goods_no 중복 발급(유령상품 15,745건 실측 주범).
+        """
         cert_key = await self._ensure_auth()
         return await self._call_api_auto_retry(
             "registApiGoodsInfo.lotte",
             "POST",
             {"subscriptionId": cert_key, **goods_data},
+            timeout_s=180.0,
         )
+
+    async def find_goods_no_by_name(
+        self, goods_nm: str, timeout_s: float = 420.0
+    ) -> str:
+        """상품명 완전일치로 롯데홈 실등록 goods_no 역조회 (번호유실 회수용).
+
+        searchStockList 전량 덤프(실측 106MB/86s)를 스트리밍 수신하며 EUC-KR
+        바이트 수준에서 <GoodsNm> CDATA 완전일치를 찾는다. 판매진행(10) 리스팅
+        발견 즉시 반환, 없으면 다른 상태의 첫 매칭, 그것도 없으면 "".
+
+        등록 타임아웃(_reg_lost 마커) 재전송 경로에서만 호출 — 평시 비용 0.
+        """
+        cert_key = await self._ensure_auth()
+        url = self.base_url + "searchStockList.lotte"
+        qs = self._build_query({"subscriptionId": cert_key})
+        try:
+            target = re.escape((goods_nm or "").strip().encode("euc-kr", errors="replace"))
+        except LookupError:
+            return ""
+        if not target:
+            return ""
+        pat = re.compile(
+            rb"<GoodNo>(\d+)</GoodNo><GoodsNm><!\[CDATA\["
+            + target
+            + rb"\]\]></GoodsNm>.*?<SaleStatCd>(\d+)</SaleStatCd>",
+            re.S,
+        )
+        found_any = ""
+        timeout = httpx.Timeout(timeout_s, connect=10.0)
+        client_kwargs: dict[str, Any] = {"timeout": timeout}
+        if self.proxy_url:
+            client_kwargs["proxy"] = self.proxy_url
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            async with client.stream("GET", f"{url}?{qs}") as resp:
+                if resp.status_code != 200:
+                    return ""
+                tail = b""
+                async for chunk in resp.aiter_bytes(1024 * 512):
+                    buf = tail + chunk
+                    for m in pat.finditer(buf):
+                        gno = m.group(1).decode()
+                        if m.group(2) == b"10":
+                            return gno
+                        if not found_any:
+                            found_any = gno
+                    # 행이 청크 경계에 걸릴 수 있음 — 상품명 길이+여유만큼 이월
+                    tail = buf[-4096:]
+        return found_any
 
     async def update_new_goods(
         self, goods_req_no: str, goods_data: dict[str, Any]
