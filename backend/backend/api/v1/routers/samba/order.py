@@ -10608,12 +10608,44 @@ def _parse_coupang_order(
     receipt_type = (
         ((cancel_info or {}).get("receiptType") or "").upper() if cancel_info else ""
     )
-    if receipt_type == "CANCEL":
-        market_order_status = "취소요청"
-        internal_status = "cancel_requested"
+    # [#599] 취소/반품 판정 — receiptType 단독 판단 금지.
+    #   쿠팡 returnRequests v6 는 출고중지 취소(상품준비중 고객취소)도
+    #   receiptType=RETURN 으로 내려줌. 출고 여부(releaseStatus)가 권위 신호:
+    #     Y=출고완료(진짜 반품) / S=출고중지 / N=미출고.
+    #   RETURN 이라도 releaseStatus∈{S,N}(미출고) 또는 releaseStopStatus '출고중지'
+    #   표기면 실제로는 '취소'. (SSG classify_ssg_completion 의 shpmtQty 판정과 동일 철학)
+    #   receiptStatus 로 요청/완료 구분 — 실측 RETURNS_COMPLETED → 완료.
+    _ci = cancel_info or {}
+    _release_status = ""
+    _ci_return_items = _ci.get("returnItems") or []
+    if (
+        isinstance(_ci_return_items, list)
+        and _ci_return_items
+        and isinstance(_ci_return_items[0], dict)
+    ):
+        _release_status = (_ci_return_items[0].get("releaseStatus") or "").upper()
+    _release_stop = _ci.get("releaseStopStatus") or ""
+    _receipt_status = (_ci.get("receiptStatus") or "").upper()
+    _is_completed = "COMPLETED" in _receipt_status
+    # RETURN 인데 미출고(S/N) 또는 출고중지 표기 → 취소로 재분류
+    _return_is_actually_cancel = receipt_type == "RETURN" and (
+        _release_status in ("S", "N") or "출고중지" in _release_stop
+    )
+
+    if receipt_type == "CANCEL" or _return_is_actually_cancel:
+        if _is_completed:
+            market_order_status = "취소완료"
+            internal_status = "cancelled"
+        else:
+            market_order_status = "취소요청"
+            internal_status = "cancel_requested"
     elif receipt_type == "RETURN":
-        market_order_status = "반품요청"
-        internal_status = "return_requested"
+        if _is_completed:
+            market_order_status = "반품완료"
+            internal_status = "returned"
+        else:
+            market_order_status = "반품요청"
+            internal_status = "return_requested"
     else:
         market_order_status = market_status_map.get(coupang_status, coupang_status)
         internal_status = status_map.get(coupang_status, "pending")
