@@ -1770,7 +1770,8 @@ class LotteonClient:
     async def seller_cancel_order(
         self,
         od_no: str,
-        reason_code: str = "111",
+        # 기본값 135=고객변심(구매자귀책, 셀러 무페널티). 111=품절은 판매자귀책 지뢰(#592).
+        reason_code: str = "135",
         reason_text: str = "",
         od_seq: int = 1,
         proc_seq: int = 1,

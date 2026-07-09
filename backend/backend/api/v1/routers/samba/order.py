@@ -3758,9 +3758,10 @@ async def sourcing_cancel_order(
 
 
 class SellerCancelBody(BaseModel):
-    reason_code: str = (
-        "111"  # 111=품절, 132=가격오등록, 133=리셀러, 135=고객변심, 137=택배불가
-    )
+    # 기본값 135=판매자취소(고객변심)=구매자귀책(셀러 무페널티). 사유 미지정 시 안전값.
+    # 롯데ON clmRsnCd표: 111=판매자취소(판매자)=판매자귀책 페널티 → 기본값으로 위험(#592).
+    # (111=품절 132=가격오등록 133=리셀러 135=고객변심 137=택배불가)
+    reason_code: str = "135"
     reason_text: Optional[str] = None
 
 
