@@ -96,6 +96,7 @@ class NaverStoreSourcingClient(NaverStoreListMixin, NaverStoreDetailMixin):
             )
             result = await session.execute(stmt)
             account = result.scalar_one_or_none()
+            session.expunge_all()  # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
 
         cookies = ""
         if account and account.additional_fields:

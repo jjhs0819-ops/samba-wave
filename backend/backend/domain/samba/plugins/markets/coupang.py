@@ -170,6 +170,21 @@ class CoupangPlugin(MarketPlugin):
                     (o.get("name", "") or o.get("size", "") or ""): o.get("stock", 999)
                     for o in new_options
                 }
+                # 옵션별 추가금액(add_price) 맵 — 등록경로(_build_item)와 동일 산식.
+                # add_price 필드 우선, 없으면 옵션 price - 최저가로 추출.
+                _opt_prices = [
+                    int(o.get("price", 0) or 0) for o in new_options if o.get("price")
+                ]
+                _base_opt_price = min(_opt_prices) if _opt_prices else 0
+                opt_add_price_map: dict[str, int] = {}
+                for o in new_options:
+                    _oname = o.get("name", "") or o.get("size", "") or ""
+                    _add = int(o.get("add_price", 0) or 0)
+                    if not _add and _base_opt_price:
+                        _this_price = int(o.get("price", 0) or 0)
+                        if _this_price > _base_opt_price:
+                            _add = _this_price - _base_opt_price
+                    opt_add_price_map[_oname] = _add
 
                 # vendorItemId 단위 부분 endpoint(/prices, /quantities)로 호출.
                 # 일시 504/타임아웃은 _call_with_retry 가 흡수(2~3회 재시도).
@@ -182,17 +197,20 @@ class CoupangPlugin(MarketPlugin):
                         skipped += 1
                         continue
 
-                    # 가격: 변경 시만 호출
-                    if new_price > 0 and item.get("salePrice") != new_price:
+                    # 가격: 옵션별 add_price 반영 후 변경 시만 호출
+                    item_name = item.get("itemName", "")
+                    target_price = (
+                        (new_price + opt_add_price_map.get(item_name, 0)) // 10 * 10
+                    )
+                    if target_price > 0 and item.get("salePrice") != target_price:
                         await _call_with_retry(
-                            lambda vid=vendor_item_id: client.update_item_price(
-                                vid, new_price
+                            lambda vid=vendor_item_id, p=target_price: (
+                                client.update_item_price(vid, p)
                             )
                         )
                         price_updates += 1
 
                     # 재고: 옵션명 매칭 후 변경 시만 호출
-                    item_name = item.get("itemName", "")
                     if item_name in opt_stock_map:
                         stk = opt_stock_map[item_name]
                     elif new_options:

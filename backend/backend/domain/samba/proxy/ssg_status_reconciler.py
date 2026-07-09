@@ -204,6 +204,8 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
             .limit(MAX_CHECK_PER_ACCOUNT)
         )
         products = (await session.execute(prod_q)).scalars().all()
+        # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
+        session.expunge_all()
 
     targets: list[dict[str, str]] = []
     for p in products:

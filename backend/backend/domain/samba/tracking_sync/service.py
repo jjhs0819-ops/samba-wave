@@ -1369,6 +1369,8 @@ async def _dispatch_playauto_invoice(order, job) -> dict[str, Any]:
 
     async with get_write_session() as acc_session:
         account = await acc_session.get(SambaMarketAccount, order.channel_id)
+        # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
+        acc_session.expunge_all()
     if not account:
         return {"ok": False, "error": "플레이오토 마켓 계정 조회 실패"}
     pa_extras = account.additional_fields or {}

@@ -278,6 +278,10 @@ class SambaReturnService:
 
         async with get_write_session() as session:
             order = await session.get(SambaOrder, ret.order_id)
+            if order:
+                session.expunge(
+                    order
+                )  # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
 
         if not order:
             return {"ok": False, "error": "연결 주문 없음"}

@@ -33,6 +33,7 @@ async def rebuild_exported_rules() -> dict:
         async with get_write_session() as session:
             result = await session.execute(select(SambaCategoryMapping))
             rows = result.scalars().all()
+            session.expunge_all()  # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
 
         exported: dict[tuple[str, str], dict[str, str]] = {}
         skipped = 0

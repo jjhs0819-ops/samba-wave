@@ -1675,6 +1675,7 @@ async def _soldout_cleanup_loop() -> None:
                 )
                 result = await session.exec(stmt)
                 products = result.all()
+                session.expunge_all()  # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
 
             if not products:
                 continue
@@ -1696,6 +1697,7 @@ async def _soldout_cleanup_loop() -> None:
                     acc_result = await session.exec(acc_stmt)
                     for a in acc_result.all():
                         acc_cache[a.id] = a
+                    session.expunge_all()  # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
 
             # 상품별 마켓 삭제 시도
             for sp in products:

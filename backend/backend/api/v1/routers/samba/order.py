@@ -2258,6 +2258,8 @@ async def list_tracking_sync_jobs_by_ids(body: dict) -> dict:
             )
         )
         raw_rows = (await session.execute(stmt)).all()
+        # 세션 종료 후 밖에서 컬럼 접근 — detach 방지 (#597)
+        session.expunge_all()
 
     counts: dict[str, int] = {}
     items = []

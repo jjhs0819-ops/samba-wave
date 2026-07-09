@@ -611,6 +611,54 @@ async def get_kream_margin_policy_public(
     raise HTTPException(status_code=404, detail="KREAM 정책 설정 없음")
 
 
+# 카드 이미지 여백 제거용 bbox 캐시 (url → dict). 검수페이지가 카드만 잘라 붙여 비교하도록 지원.
+_IMG_BBOX_CACHE: dict[str, dict[str, Any]] = {}
+
+
+@snkrdunk_public_router.get("/kream/image-bbox")
+async def get_image_bbox_public(url: str) -> dict[str, Any]:
+    """이미지에서 '카드 실제 영역'(투명/단색 여백 제외)의 bounding box 계산 (인증 불필요).
+
+    검수페이지가 이 bbox로 카드만 확대·정렬해 두 이미지를 여백 없이 맞닿게 표시한다.
+    서버는 CORS 제약이 없어 픽셀 접근 가능(브라우저 canvas는 크로스오리진 차단).
+    반환: {x,y,w,h,iw,ih} (원본 픽셀 기준). 실패 시 전체 영역 반환.
+    """
+    if url in _IMG_BBOX_CACHE:
+        return _IMG_BBOX_CACHE[url]
+
+    import io as _io
+
+    import httpx
+    from PIL import Image, ImageChops
+
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            r.raise_for_status()
+            im = Image.open(_io.BytesIO(r.content))
+        iw, ih = im.size
+        bbox = None
+        if im.mode in ("RGBA", "LA") or (im.mode == "P" and "transparency" in im.info):
+            # 투명 배경 → 알파 채널로 내용 영역 계산
+            alpha = im.convert("RGBA").getchannel("A")
+            bbox = alpha.getbbox()
+        if bbox is None:
+            # 불투명 → 좌상단 코너색을 배경으로 보고 차이나는 영역 계산
+            rgb = im.convert("RGB")
+            bg = Image.new("RGB", rgb.size, rgb.getpixel((0, 0)))
+            diff = ImageChops.difference(rgb, bg)
+            bbox = diff.getbbox()
+        if not bbox:
+            bbox = (0, 0, iw, ih)
+        x0, y0, x1, y1 = bbox
+        out = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0, "iw": iw, "ih": ih}
+    except Exception as e:
+        logger.warning(f"[image-bbox] 실패({url[:60]}): {e}")
+        out = {"x": 0, "y": 0, "w": 0, "h": 0, "iw": 0, "ih": 0, "error": True}
+    _IMG_BBOX_CACHE[url] = out
+    return out
+
+
 # 인증 없는 퍼블릭 버전 (로컬 전용 HTML 검수 도구용)
 @snkrdunk_public_router.get("/kream/snkrdunk-compare/all")
 async def snkrdunk_compare_all_public(
