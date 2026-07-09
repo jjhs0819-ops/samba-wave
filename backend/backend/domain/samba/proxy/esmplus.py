@@ -2513,6 +2513,7 @@ async def register_esm_options(
     site: str = "gmarket",
     stock_per_value: int = 99,
     build_only: bool = False,
+    stock_cap: int = 0,
 ) -> dict[str, Any]:
     """samba options → ESM 추천옵션 매핑 + 등록.
 
@@ -2539,6 +2540,35 @@ async def register_esm_options(
     # collected_product.options: [{"name":"S","stock":2}, ...] 형태는 "values" 키 없음
     if not any(o.get("values") for o in samba_options):
         samba_options = [{"name": "옵션", "values": samba_options}]
+
+    # stock_cap(계정 '재고수량') — 옵션별 재고 상한. 롯데온과 동일 의미
+    # (lotteon/api_client.py: "_stock_quantity: 양수면 옵션별 상한(cap)으로만 동작").
+    # ESM 만 cap 미적용이라 수집 재고(무신사 99 등)가 그대로 등록되던 문제 수정.
+    # 0/미설정이면 기존대로 실재고 사용. 품절(0)은 그대로 보존.
+    if stock_cap and stock_cap > 0:
+        import copy as _copy
+
+        samba_options = _copy.deepcopy(samba_options)
+        stock_per_value = min(stock_per_value, stock_cap)
+        for _grp in samba_options:
+            if not isinstance(_grp, dict):
+                continue
+            _csm = _grp.get("_combo_stock_map")
+            if isinstance(_csm, dict):
+                for _ci in _csm.values():
+                    if isinstance(_ci, dict):
+                        try:
+                            if int(_ci.get("stock") or 0) > stock_cap:
+                                _ci["stock"] = stock_cap
+                        except (TypeError, ValueError):
+                            pass
+            for _val in _grp.get("values") or []:
+                if isinstance(_val, dict):
+                    try:
+                        if int(_val.get("stock") or 0) > stock_cap:
+                            _val["stock"] = stock_cap
+                    except (TypeError, ValueError):
+                        pass
 
     site_key = ESMPlusClient.SITE_CONFIG[site]["siteKey"]
     opt_count = min(len(samba_options), 3)
@@ -2811,6 +2841,7 @@ async def update_existing_freetext_stock(
     samba_options: list[dict[str, Any]],
     *,
     site: str = "gmarket",
+    stock_cap: int = 0,
 ) -> dict[str, Any]:
     """register_esm_options 실패(매칭 0) + 이미 자유입력 옵션으로 등록된 상품의 재고 갱신.
 
@@ -2852,6 +2883,9 @@ async def update_existing_freetext_stock(
         return {"success": False, "message": "자유입력 옵션 아님 — fallback 미적용"}
 
     stock_map = _ft_build_stock_map(samba_options)
+    # stock_cap(계정 '재고수량') — 옵션별 재고 상한 (register_esm_options 와 동일 의미)
+    if stock_cap and stock_cap > 0:
+        stock_map = {k: (min(q, stock_cap), sold) for k, (q, sold) in stock_map.items()}
 
     matched = 0
     sold_out_count = 0

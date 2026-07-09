@@ -336,6 +336,7 @@ class GMarketMarketPlugin(MarketPlugin):
                 pending_images,
                 samba_options=samba_options,
                 cat_code=category_id,
+                stock_cap=int(product_copy.get("_stock_quantity") or 0),
             )
         else:
             return await self._register_product(
@@ -344,6 +345,7 @@ class GMarketMarketPlugin(MarketPlugin):
                 pending_images,
                 samba_options=samba_options,
                 cat_code=category_id,
+                stock_cap=int(product_copy.get("_stock_quantity") or 0),
             )
 
     async def _register_product(
@@ -353,6 +355,7 @@ class GMarketMarketPlugin(MarketPlugin):
         pending_images: dict | None,
         samba_options: list[dict] | None = None,
         cat_code: str = "",
+        stock_cap: int = 0,
     ) -> dict[str, Any]:
         """신규 상품 등록 + 옵션/이미지 후처리.
 
@@ -373,6 +376,7 @@ class GMarketMarketPlugin(MarketPlugin):
                     samba_options,
                     site="gmarket",
                     build_only=True,
+                    stock_cap=stock_cap,
                 )
                 if _bo.get("success") and _bo.get("payload"):
                     data.setdefault("itemAddtionalInfo", {})["recommendedOpts"] = _bo[
@@ -485,6 +489,7 @@ class GMarketMarketPlugin(MarketPlugin):
         pending_images: dict | None,
         samba_options: list[dict] | None = None,
         cat_code: str = "",
+        stock_cap: int = 0,
     ) -> dict[str, Any]:
         """기존 상품 수정."""
         from backend.domain.samba.proxy.esmplus import resolve_esm_master_goods_no
@@ -509,6 +514,7 @@ class GMarketMarketPlugin(MarketPlugin):
                     samba_options,
                     site="gmarket",
                     build_only=True,
+                    stock_cap=stock_cap,
                 )
                 if _bo.get("success") and _bo.get("payload"):
                     update_data.setdefault("itemAddtionalInfo", {})[
@@ -681,8 +687,9 @@ class GMarketMarketPlugin(MarketPlugin):
                 # 옵션 자유입력화(recommendedOptValueNo=0) 이후 대다수가 자유입력이라
                 # 구조 보존 갱신(GET+재고 PUT)이 가능 → 옵션깎임/단일옵션화 위험과
                 # 불필요한 전체재등록 부하를 피한다.
+                _cap = int(product.get("_stock_quantity") or 0)
                 fb = await update_existing_freetext_stock(
-                    client, master_no, options, site="gmarket"
+                    client, master_no, options, site="gmarket", stock_cap=_cap
                 )
                 if fb.get("success"):
                     opt_msg = (
@@ -697,7 +704,12 @@ class GMarketMarketPlugin(MarketPlugin):
                         options, product.get("option_group_names") or []
                     )
                     opt_result = await register_esm_options(
-                        client, master_no, cat_code, samba_options, site="gmarket"
+                        client,
+                        master_no,
+                        cat_code,
+                        samba_options,
+                        site="gmarket",
+                        stock_cap=_cap,
                     )
                     if opt_result.get("success"):
                         opt_msg = (
