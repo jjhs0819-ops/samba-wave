@@ -8,7 +8,7 @@ import {
   type SambaMarketAccount,
   type SambaSearchFilter,
 } from '@/lib/samba/api/commerce'
-import { API_BASE } from '@/lib/samba/api/shared'
+import { API_BASE, SAMBA_PREFIX, fetchWithAuth } from '@/lib/samba/api/shared'
 import { type SambaNameRule, type SambaDetailTemplate } from '@/lib/samba/api/support'
 import { showAlert } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
@@ -668,7 +668,7 @@ const ProductCard = React.memo(function ProductCard({
 
   // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
-    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string; name_ko?: string }>
+    const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string; name_ko?: string; anomaly_ok?: boolean; anomaly_flagged?: boolean; anomaly_reason?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
       { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
       { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
@@ -684,10 +684,42 @@ const ProductCard = React.memo(function ProductCard({
         conf: m?.confidence,
         style_code: m?.style_code,
         name_ko: m?.name_ko,
+        anomalyFlagged: !!m?.anomaly_flagged,
+        anomalyReason: m?.anomaly_reason || '',
         price: r.price, calcStr: r.calcStr,
       }
     })
   }, [p.resell_matches, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
+
+  // 크림 이상감지 승인 — 검수페이지와 동일 DB 필드(resell_matches.kream.anomaly_ok) 토글.
+  // 승인=이상감지 우회(동적가격 등록/갱신). 검수페이지 체크와 양방향 연동됨.
+  const [anomalyOk, setAnomalyOk] = useState<boolean>(
+    !!(p.resell_matches?.kream as { anomaly_ok?: boolean } | undefined)?.anomaly_ok,
+  )
+  const [anomalyBusy, setAnomalyBusy] = useState(false)
+  const toggleAnomalyOk = useCallback(async () => {
+    const sid = p.site_product_id
+    if (!sid || anomalyBusy) return
+    const next = !anomalyOk
+    setAnomalyBusy(true)
+    setAnomalyOk(next) // 낙관적 반영
+    try {
+      const res = await fetchWithAuth(
+        `${SAMBA_PREFIX}/proxy/kream/snkrdunk-compare/${sid}/anomaly-ok`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ anomaly_ok: next }),
+        },
+      )
+      if (!res.ok) throw new Error('save failed')
+    } catch {
+      setAnomalyOk(!next) // 롤백
+      showAlert('승인 저장 실패')
+    } finally {
+      setAnomalyBusy(false)
+    }
+  }, [p.site_product_id, anomalyOk, anomalyBusy])
 
   const tdLabel: React.CSSProperties = { padding: '6px 8px', color: c.textSub, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }
   const tdVal: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'middle' }
@@ -1880,6 +1912,18 @@ const ProductCard = React.memo(function ProductCard({
                         <span style={{ fontSize: '0.68rem', color: c.textSub }}>{rr.name_ko}</span>
                       )}
                       <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{rr.calcStr}</span>
+                      {/* 크림 이상감지 승인 — 검수페이지 승인버튼과 동일 DB필드 양방향 연동 */}
+                      {rr.key === 'kream' && rr.id && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', marginTop: '3px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '0.72rem', fontWeight: 600, color: anomalyOk ? c.success : c.textSub, cursor: anomalyBusy ? 'wait' : 'pointer' }}>
+                            <input type="checkbox" checked={anomalyOk} disabled={anomalyBusy} onChange={toggleAnomalyOk} style={{ cursor: anomalyBusy ? 'wait' : 'pointer' }} />
+                            이상감지 승인 (리스톡 허용)
+                          </label>
+                          {rr.anomalyFlagged && !anomalyOk && rr.anomalyReason && (
+                            <span style={{ fontSize: '0.68rem', lineHeight: 1.4, color: '#fca5a5', background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.5)', borderRadius: '5px', padding: '4px 7px' }}>⚠ {rr.anomalyReason}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </td>
                 </tr>
