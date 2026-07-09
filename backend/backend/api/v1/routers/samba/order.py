@@ -4012,7 +4012,9 @@ async def seller_cancel(
 
     elif account.market_type == "11st":
         # 11번가 판매불가처리 (재고부족 등 판매자 주도 취소)
-        # 사유코드 10(고객변심) 고정 — 신용점수 차감 회피
+        # 사유코드 20(구매의사 없어짐, 구매자 귀책) 고정 — 신용점수 차감 회피.
+        # 기존 코드 10은 셀러오피스 사유 목록에 없는 폐기 코드로, 11번가 화면에
+        # "타사이트 상품주문"으로 표기되던 버그 (2026-07-09 셀러오피스 실측 교정).
         # 운영 가이드: 고객 동의 후 진행
         from backend.domain.samba.proxy.elevenst import (
             ElevenstApiError,
@@ -4036,7 +4038,7 @@ async def seller_cancel(
             await client.reject_order(
                 ord_no=order.order_number,
                 ord_prd_seq=order.ord_prd_seq,
-                ord_cn_rsn_cd="10",  # 고객변심
+                ord_cn_rsn_cd="20",  # 구매의사 없어짐 (구매자 귀책)
                 ord_cn_dtls_rsn="구매자 요청으로 취소 처리",
             )
         except ElevenstApiError as e:
@@ -4053,7 +4055,7 @@ async def seller_cancel(
             {"shipping_status": "취소완료", "status": "cancelled"},
         )
         logger.info(
-            f"[판매자취소] 11번가 {order.order_number} 판매불가처리 완료 (사유=10/고객변심)"
+            f"[판매자취소] 11번가 {order.order_number} 판매불가처리 완료 (사유=20/구매의사 없어짐)"
         )
         return {"ok": True, "message": "11번가 판매불가처리 완료"}
 
