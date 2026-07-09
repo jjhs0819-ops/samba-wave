@@ -164,7 +164,10 @@
   //  · 연락처는 사무실 전화(shippingPhone) 고정값 사용
   const _visBtns = (root) => [...root.querySelectorAll('button')].filter(b => b.offsetHeight > 0)
   async function fillGiftRecipient(opts) {
-    const { name, phone, zipcode, address, detail } = opts || {}
+    const { name: _rawName, phone, zipcode, address, detail } = opts || {}
+    // 마켓 고객명 마스킹(*) → o 치환 (예: "한*동"→"한o동"). 롯데온 수령인칸이 * 거부.
+    // 입력·저장·매칭 전 구간에서 동일한 정제 이름을 쓰도록 여기서 한 번만 처리.
+    const name = String(_rawName || '').replace(/\*/g, 'o')
     if (!name) return
     await sleep(1000)
 
@@ -259,6 +262,7 @@
     console.log(`[삼바-롯데온] 8) 우편번호찾기 클릭: ${!!zipBtn}`)
 
     // 9. "주소 검색" 다이얼로그: 검색어 입력 → 검색 → 첫 결과 선택
+    let addrApplied = false  // 9-3 "사용"으로 전체주소 적용+검색창 닫힘 성공 여부
     const searchDlg = [...document.querySelectorAll('[role="dialog"], .v--modal-box')]
       .filter(d => d.offsetHeight > 0)
       .find(d => d.textContent.includes('주소 검색') || d.querySelector('input[placeholder*="올림픽로"]'))
@@ -277,12 +281,35 @@
         const resLis = [...searchDlg.querySelectorAll('li')].filter(e => e.offsetHeight > 0 && e.textContent.trim().length > 5)
         console.log(`[삼바-롯데온-진단] 주소검색 결과 li ${resLis.length}개: ` +
           resLis.slice(0, 6).map(e => `"${e.textContent.trim().slice(0, 28)}"`).join(' | '))
-        // 첫 유효 결과(숫자 포함 = 도로명주소) 선택
+        // 첫 유효 결과(숫자 포함 = 도로명주소) — 아코디언이라 클릭하면 "펼쳐지며"
+        // 그 안에 [상세주소 입력칸 + "사용" 버튼]이 나타남. 펼침→상세입력→사용 순.
         const firstResult = resLis.find(li => /\d/.test(li.textContent)) || resLis[0]
         if (firstResult) {
-          firstResult.click()
-          await sleep(1500)
-          console.log(`[삼바-롯데온] 9) 주소결과 선택: "${firstResult.textContent.trim().slice(0, 30)}"`)
+          // 9-1. 결과 클릭 → 아코디언 펼침
+          const expandEl = firstResult.querySelector('a, [class*="accordion__tri"], [class*="listTitle"], button') || firstResult
+          for (const type of ['mouseover', 'mousedown', 'mouseup', 'click']) {
+            expandEl.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
+          }
+          await sleep(1300)
+
+          // 9-2. 펼쳐진 검색창의 상세주소 칸에 동/호(detail) 입력
+          const dtlInput = searchDlg.querySelector('input[placeholder*="상세주소"]') ||
+            [...searchDlg.querySelectorAll('input[type="text"]')].find(i => i.offsetHeight > 0 && !i.readOnly && !i.value.trim())
+          if (dtlInput && detail && detail.trim()) {
+            setVal(dtlInput, detail.trim())
+            console.log(`[삼바-롯데온] 9-2) 상세주소 입력(검색창): "${detail.trim()}"`)
+          } else {
+            console.log(`[삼바-롯데온] 9-2) 상세주소 입력칸=${!!dtlInput} detail="${detail || ''}"`)
+          }
+          await sleep(400)
+
+          // 9-3. "사용" 버튼 → 전체 주소 적용 + 검색창 닫힘
+          const useBtn = _visBtns(searchDlg).find(b => /^사용$|^적용$|^확인$/.test(b.textContent.trim()))
+          if (useBtn) { useBtn.click(); await sleep(1600) }
+          const closed = ![...document.querySelectorAll('[role="dialog"], .v--modal-box')]
+            .some(d => d.offsetHeight > 0 && /주소 검색/.test(d.textContent))
+          addrApplied = !!useBtn && closed
+          console.log(`[삼바-롯데온] 9-3) 사용버튼=${!!useBtn} | 검색창 닫힘=${closed}`)
         } else {
           console.log(`[삼바-롯데온] 9) 주소검색 결과 없음 (검색어="${address.trim()}")`)
         }
@@ -293,16 +320,19 @@
       console.log(`[삼바-롯데온] 9) 주소검색 다이얼로그 못 찾음`)
     }
 
-    // 10. 상세주소 입력 — 등록 폼의 빈 text input 중 마지막 (기본주소 다음 칸)
+    // 10. (안전망) 9단계 "사용"이 실패(검색창 미닫힘)했을 때만 등록 폼 상세주소칸 보완.
+    //     9단계 성공 시에는 이미 전체주소 적용됐으므로 이중입력 방지 위해 스킵.
     await sleep(500)
     const regForm = [...document.querySelectorAll('[role="dialog"], .v--modal-box')].filter(d => d.offsetHeight > 0)
       .find(d => _visBtns(d).some(b => b.textContent.includes('우편번호 찾기'))) || form
-    if (detail && detail.trim()) {
-      const detailInput = regForm.querySelector('input[placeholder*="상세"]') ||
-        [...regForm.querySelectorAll('input[type="text"]')]
-          .filter(i => i.offsetHeight > 0 && !i.readOnly && !i.value.trim()).pop()
-      if (detailInput) { setVal(detailInput, detail.trim()); console.log(`[삼바-롯데온] 10) 상세주소 입력: "${detail.trim()}"`) }
-      else console.log(`[삼바-롯데온] 10) 상세주소 입력칸 못 찾음`)
+    if (!addrApplied && detail && detail.trim()) {
+      const detailInput = regForm.querySelector('input[placeholder*="상세"]')
+      if (detailInput && !detailInput.value.trim()) {
+        setVal(detailInput, detail.trim())
+        console.log(`[삼바-롯데온] 10) (9단계 실패 보완) 상세주소 입력: "${detail.trim()}"`)
+      }
+    } else if (addrApplied) {
+      console.log(`[삼바-롯데온] 10) 스킵 (9단계에서 전체주소 이미 적용됨)`)
     }
 
     // 11. (필수) 개인정보 동의 체크 — 저장 버튼 활성화 조건
@@ -320,11 +350,55 @@
     if (saveBtn && !saveBtn.disabled) { saveBtn.click(); await sleep(2000) }
     console.log(`[삼바-롯데온] 11) 저장 클릭: ${!!saveBtn} (disabled=${saveBtn?.disabled})`)
 
-    // 저장 후 배송지 관리 모달로 복귀 → "선택완료"
-    const doneModal = document.querySelector('[role="dialog"], .v--modal-box')
+    // 저장 후 배송지 관리 모달로 복귀 → 방금 등록한 배송지 라디오 선택 → 선택완료
+    await sleep(800)
+    const doneModal = [...document.querySelectorAll('[role="dialog"], .v--modal-box')].filter(d => d.offsetHeight > 0).pop()
     if (doneModal) {
+      // 방금 등록한 주소 라디오 선택
+      // [수정] 리뷰 반영 — 자식요소 수(*.length) 정렬은 UI 변경에 취약 → 제거.
+      //   대신 "라디오의 카드(이름 포함 & 라디오 정확히 1개인 최소 조상)" + 텍스트 안정매칭
+      //   (이름+도로명+상세 모두 일치)으로 우리 주소만 특정하고, 동일주소 중복 시 가장
+      //   최근 등록분(목록상 마지막)을 선택해 "최신 저장 주소"를 보장한다.
+      const _norm = (s) => (s || '').replace(/\s/g, '')
+      const nameK = _norm(name)
+      const addrK = _norm((address || '').split(/\s+/).slice(-2).join(''))  // 도로명 끝 2단어(예: 올림픽로99)
+      const dtlK = _norm(detail).slice(0, 6)                                 // 상세 앞부분(예: 118-30)
+      // 라디오의 "카드": 이름 포함 & 라디오 정확히 1개인 최소 조상 (공용 컨테이너 회피)
+      const _cardOf = (r) => {
+        let anc = r.parentElement
+        for (let up = 0; up < 8 && anc; up++, anc = anc.parentElement) {
+          if (_norm(anc.textContent).includes(nameK) && anc.querySelectorAll('input[type="radio"]').length === 1) return anc
+        }
+        return null
+      }
+      const radios = [...doneModal.querySelectorAll('input[type="radio"]')]
+      console.log(`[삼바-롯데온-진단] 배송지 라디오 ${radios.length}개`)
+      // 이름+도로명+상세 모두 일치(우리가 방금 저장한 주소)
+      let matches = radios.filter(r => {
+        const c = _cardOf(r); if (!c) return false
+        const t = _norm(c.textContent)
+        return t.includes(nameK) && (!addrK || t.includes(addrK)) && (!dtlK || t.includes(dtlK))
+      })
+      // 폴백: 이름+도로명만 일치
+      if (!matches.length) matches = radios.filter(r => {
+        const c = _cardOf(r); return c && _norm(c.textContent).includes(nameK) && addrK && _norm(c.textContent).includes(addrK)
+      })
+      const picked = matches.length ? matches[matches.length - 1] : null  // 최신(마지막 등록분)
+      const card = picked ? _cardOf(picked) : null
+      console.log(`[삼바-롯데온-진단] 매칭 라디오 ${matches.length}개, 선택=${!!picked}, 카드="${(card?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30)}"`)
+      if (picked && !picked.checked) {
+        const lbl = picked.id ? doneModal.querySelector(`label[for="${picked.id}"]`) : null
+        ;(lbl || picked.closest('label') || card || picked).click()
+        await sleep(500)
+        if (!picked.checked) { picked.click(); await sleep(400) }
+      }
+      console.log(`[삼바-롯데온] 12) 배송지 라디오 선택: ${!!picked} (checked=${picked?.checked})`)
+
+      // 선택완료
+      await sleep(400)
       const doneBtn = _visBtns(doneModal).find(b => b.textContent.includes('선택완료') || b.textContent.includes('선택 완료'))
-      if (doneBtn && !doneBtn.disabled) { doneBtn.click(); await sleep(1500); console.log(`[삼바-롯데온] 12) 선택완료 클릭`) }
+      if (doneBtn && !doneBtn.disabled) { doneBtn.click(); await sleep(1500); console.log(`[삼바-롯데온] 13) 선택완료 클릭`) }
+      else console.log(`[삼바-롯데온] 13) 선택완료 버튼=${!!doneBtn} disabled=${doneBtn?.disabled}`)
     }
     await sleep(300)
   }
@@ -343,6 +417,67 @@
         if (t === '적용' || t === '확인') { btn.click(); await sleep(1000); break }
       }
     }
+  }
+
+  // ── 상품페이지: "혜택변경" 눌러 혜택가 패널 펼치고 최대 할인 중복쿠폰 적용 ──
+  // 실측 UI: "나의 혜택가" 옆 "혜택변경 ▼" 클릭 → 패널 펼침 → 중복쿠폰 체크박스
+  // (10% 중복쿠폰이 보통 자동 체크). 할인액 가장 큰 중복쿠폰이 체크되도록 보장.
+  async function receiveCoupons() {
+    await sleep(700)
+    const _inNav = (el) => el.closest('header, nav, .header, [class*="gnb"], [class*="nav"], [class*="menu"], [class*="footer"]')
+
+    // "혜택변경" 버튼으로 혜택가/쿠폰 패널 펼치기
+    const changeBtn = [...document.querySelectorAll('button, a')]
+      .find(b => b.offsetHeight > 0 && !_inNav(b) && /혜택변경/.test(b.textContent) && b.textContent.replace(/\s/g, '').length <= 6)
+    if (!changeBtn) { console.log('[삼바-롯데온] 혜택변경 버튼 없음 — 쿠폰 스킵'); return }
+    changeBtn.click()
+    await sleep(1100)
+    console.log('[삼바-롯데온] 혜택변경(혜택가 패널) 펼침')
+
+    // [진단] 펼쳐진 패널의 쿠폰/할인 체크박스 덤프
+    const _box = (c) => c.closest('li, label, dd, div')
+    const chks = [...document.querySelectorAll('input[type="checkbox"]')].filter(c => {
+      const b = _box(c); return b && /쿠폰|즉시할인/.test(b.textContent) && !/동의|음성/.test(b.textContent)
+    })
+    console.log(`[삼바-롯데온-진단] 쿠폰 체크박스 ${chks.length}개: ` +
+      chks.slice(0, 12).map(c => `{chk=${c.checked} "${(_box(c)?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 22)}"}`).join(' | '))
+
+    // 중복쿠폰: [수정] %/원 혼합 점수는 오계산(역마진) 위험 → 실제 "할인액(원)"만으로 비교.
+    //   각 중복쿠폰은 -7,410원 처럼 원 할인액을 표기하므로 그 값이 큰 것을 선택한다.
+    //   (원 표기가 없으면 0으로 취급 → 잘못 선택 방지)
+    const _discountWon = (t) => {
+      const m = (t.match(/-?\s*([\d,]{2,})\s*원/) || [])[1]
+      return m ? parseInt(m.replace(/,/g, ''), 10) : 0
+    }
+    const dupChks = chks.filter(c => /중복쿠폰/.test(_box(c)?.textContent || ''))
+    if (dupChks.length) {
+      dupChks.sort((a, b) => _discountWon(_box(b)?.textContent || '') - _discountWon(_box(a)?.textContent || ''))
+      const best = dupChks[0]
+      const bestWon = _discountWon(_box(best)?.textContent || '')
+      if (!best.checked) {
+        const lbl = best.id ? document.querySelector(`label[for="${best.id}"]`) : null
+        ;(lbl || best.closest('label') || best).click()
+        await sleep(800)
+        if (!best.checked) { best.click(); await sleep(500) }
+      }
+      console.log(`[삼바-롯데온] 최대 중복쿠폰 체크: ${best.checked} 할인액=${bestWon}원 ("${(_box(best)?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 22)}")`)
+    } else {
+      console.log('[삼바-롯데온] 중복쿠폰 없음(스킵)')
+    }
+
+    // 카카오페이 머니 즉시할인은 결제수단 제약(카카오페이 결제 필요)이라 자동체크돼도 해제
+    await sleep(400)
+    const kakaoChk = [...document.querySelectorAll('input[type="checkbox"]')].find(c => {
+      const b = _box(c); return b && /카카오페이\s*머니/.test(b.textContent) && !/동의/.test(b.textContent)
+    })
+    if (kakaoChk && kakaoChk.checked) {
+      const lbl = kakaoChk.id ? document.querySelector(`label[for="${kakaoChk.id}"]`) : null
+      ;(lbl || kakaoChk.closest('label') || kakaoChk).click()
+      await sleep(700)
+      if (kakaoChk.checked) { kakaoChk.click(); await sleep(400) }
+    }
+    console.log(`[삼바-롯데온] 카카오페이머니 해제: ${kakaoChk ? (!kakaoChk.checked ? '완료' : '실패') : '항목없음'}`)
+    await sleep(300)
   }
 
   // ── 실구매가 계산 ──
@@ -365,7 +500,8 @@
         const isOrderForm = /lotteon\.com\/(p\/)?order/.test(window.location.href)
         console.log(`[삼바-롯데온] 시작 opt=${productOption} | type=${orderType} | 주문서=${isOrderForm} | url=${window.location.href}`)
         if (!isOrderForm) {
-          // 상품 페이지: 옵션 선택 + 구매/선물 버튼 클릭
+          // 상품 페이지: 받을 수 있는 쿠폰 발급 → 옵션 선택 + 구매/선물 버튼 클릭
+          await receiveCoupons()
           if (productOption) {
             const optOk = await selectOption(productOption)
             console.log(`[삼바-롯데온] 옵션선택 시도 완료: ${optOk}`)

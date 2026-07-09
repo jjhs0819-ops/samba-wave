@@ -131,6 +131,9 @@ export default function OrderInfoCell(props: Props) {
       if (!officeRes.ok) { showAlert('설정 > 사무실 배송정보를 먼저 입력해주세요', 'error'); return }
       const office = await officeRes.json() as { name: string; phone: string; address: string; address_detail: string }
       if (!office.phone) { showAlert('설정 > 사무실 배송정보에 전화번호를 입력해주세요', 'error'); return }
+      // 마켓 주문 고객명은 개인정보 마스킹(*)이 포함됨(예: "한*동", "변성*").
+      // 소싱처 수령인칸에 * 를 그대로 넣으면 입력 거부되므로 o 로 치환.
+      const _cleanName = (s: string) => (s || '').replace(/\*/g, 'o')
       const payload = {
         orderId: o.id,
         sourceSite: _srcSite,
@@ -140,7 +143,7 @@ export default function OrderInfoCell(props: Props) {
         sourcingAccountId: o.sourcing_account_id || '',
         // direct/gift: 고객 주소로 배송 (gift는 새 배송지 등록에 사용), kkadaegi: 사무실 주소
         // 연락처(shippingPhone)는 항상 사무실 전화 고정 — 고객에게 소싱처 알림 안 가게
-        shippingName: orderType === 'kkadaegi' ? office.name : (o.customer_name || ''),
+        shippingName: orderType === 'kkadaegi' ? office.name : _cleanName(o.customer_name || ''),
         shippingPhone: office.phone,
         shippingZipcode: orderType === 'kkadaegi' ? '' : (o.customer_postal_code || ''),
         shippingAddress: orderType === 'kkadaegi' ? office.address : customerAddress.base,
