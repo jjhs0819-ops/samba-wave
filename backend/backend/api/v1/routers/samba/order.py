@@ -11436,6 +11436,37 @@ def _parse_playauto_order(
                     _addr_base = _m.group(1).strip()
                     _addr_detail = _m.group(2).strip()
 
+    # ── 배송메시지(customer_note) ──
+    # 플레이오토 EMP 응답의 배송메시지 필드명이 공개문서에 없어 불명확.
+    # (a) 알려진 후보 키 우선 → (b) 값 휴리스틱(배송메시지 특유 문구)으로 포착.
+    # 배송사고 방지용(문앞/공동현관 출입번호 등). 실제 필드명 확인되면 단순화.
+    _pa_note = ""
+    for _cand in (
+        "ShipMsg", "DlvMsg", "DeliveryMsg", "OrderMsg", "GiftMsg",
+        "Msg", "Memo", "Message", "ShippingMessage", "DeliveryMessage",
+        "ShipMessage", "OrderMemo", "DlvMemo",
+    ):
+        _cv = ro.get(_cand)
+        if isinstance(_cv, str) and _cv.strip():
+            _pa_note = _cv.strip()
+            break
+    if not _pa_note:
+        _NOTE_HINTS = (
+            "놓아", "출입번호", "부재", "경비", "문 앞", "문앞", "배송전",
+            "직접 받", "안심번호", "파손", "취급주의", "부탁드립니다",
+            "요청드립니다", "요청합니다",
+        )
+        _SKIP_KEYS = {"ProdName", "RecipientName", "OrderName", "SiteName", "ProdCode"}
+        for _k, _v in ro.items():
+            if _k in _SKIP_KEYS:
+                continue
+            if isinstance(_v, str) and 2 <= len(_v.strip()) <= 200 and any(
+                h in _v for h in _NOTE_HINTS
+            ):
+                _pa_note = _v.strip()
+                logger.info(f"[플레이오토 배송메시지] 휴리스틱 포착 필드='{_k}'")
+                break
+
     return {
         "order_number": ro.get("OrderCode", ""),
         "shipment_id": str(ro.get("Number", "")),
@@ -11459,6 +11490,8 @@ def _parse_playauto_order(
         "customer_address_detail": _addr_detail,
         # 우편번호 — 화면 확인용 (복사 버튼 분리). 플레이오토 EMP는 RecipientZipCode 필드 사용.
         "customer_postal_code": str(ro.get("RecipientZipCode") or "").strip() or None,
+        # 배송메시지 — 다른 마켓처럼 customer_note 매핑 (위 _pa_note 참고). 직배주문 시 소싱처 주문서에 입력.
+        "customer_note": _pa_note,
         "quantity": quantity,
         "sale_price": sale_price,
         "cost": 0,
