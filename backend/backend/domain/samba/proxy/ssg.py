@@ -363,16 +363,15 @@ class SSGClient:
         logger.debug(f"[SSG] updateItem XML (itemId={item_id}):\n{xml_body[:2000]}")
         result = await self._call_api_xml("POST", "/item/0.4/updateItem.ssg", xml_body)
 
-        # 가격 인상 감지: SSG가 '새 대표가 vs 기존 옵션최저가'를 먼저 검증하므로
-        # 대표가 인상 시 오류 → 1단계로 대표가만 기존 옵션가로 낮춰 검증 통과 후 옵션가 올리기
-        # → 2단계에서 새 대표가 + 새 옵션가로 전체 업데이트
+        # 가격 인상/하락 감지: SSG가 '새 대표가 vs 현재 DB 옵션최저가'를 검증.
+        # - 가격 인상: 대표가를 기존 옵션가로 맞춘 뒤 옵션가 올리기 → 2단계에서 새 대표가
+        # - 가격 하락: 옵션가를 먼저 낮추고(salesPrcInfos 없이) → 2단계에서 새 대표가
         desc = result.get("result", {}).get("resultDesc", "") or ""
         m = _re.search(r"옵션최저가격\s*([\d,]+)원", desc)
         if not m:
             m = _re.search(r"옵션판매가[는은]\s*([\d,]+)원", desc)
         if m and product_data.get("salesPrcInfos"):
             cur_min = int(m.group(1).replace(",", ""))
-            logger.info(f"[SSG] 가격 인상 감지 → 1단계: 대표가={cur_min}원으로 맞추기")
 
             def _patch_sell(prc_wrap, new_sell):
                 w = _copy.deepcopy(prc_wrap)
@@ -383,23 +382,35 @@ class SSGClient:
                     p["sellprc"] = new_sell
                 return w
 
-            # 1단계: 대표가만 기존 옵션가로 맞추기 (uitems 제외 — 가격 조정만 목적)
-            step1_data = {
-                "itemId": item_id,
-                "salesPrcInfos": _patch_sell(product_data["salesPrcInfos"], cur_min),
-            }
+            # 새 대표가 추출 (가격 인상/하락 분기)
+            _prc_items = product_data["salesPrcInfos"].get("uitemPrc", [])
+            if isinstance(_prc_items, dict):
+                _prc_items = [_prc_items]
+            new_sell = _prc_items[0].get("sellprc", cur_min) if _prc_items else cur_min
+
+            # 인상/하락 공통: 1단계에서 uitemPluralPrcs 옵션가를 cur_min으로 맞춰서
+            # SSG DB 옵션최저가를 cur_min으로 갱신 → 2단계에서 대표가+옵션가 new_sell로
+            direction = "하락" if new_sell < cur_min else "인상"
+            logger.info(
+                f"[SSG] 가격 {direction}(신가={new_sell} vs 구가={cur_min})"
+                f" → 1단계: uitemPluralPrcs 옵션가={cur_min}으로 맞추기"
+            )
+            step1_data: dict[str, Any] = {"itemId": item_id}
             if product_data.get("uitemPluralPrcs"):
-                step1_data["uitemPluralPrcs"] = product_data["uitemPluralPrcs"]
+                step1_data["uitemPluralPrcs"] = _patch_sell(
+                    product_data["uitemPluralPrcs"], cur_min
+                )
+
             xml_step1 = '<?xml version="1.0" encoding="UTF-8"?>' + self._to_xml(
                 step1_data, "updateItem"
             )
             r1 = await self._call_api_xml("POST", "/item/0.4/updateItem.ssg", xml_step1)
             r1_code = r1.get("result", {}).get("resultCode")
             logger.info(
-                f"[SSG] updateItem 1단계(대표가={cur_min}) resultCode={r1_code}"
+                f"[SSG] updateItem 1단계 resultCode={r1_code}"
             )
             await _asyncio.sleep(1.5)
-            # 2단계: 원래 데이터(새 대표가)로 재시도 — 이제 옵션가도 올라갔으므로 통과
+            # 2단계: 원래 데이터(새 대표가+옵션가)로 재시도
             result = await self._call_api_xml(
                 "POST", "/item/0.4/updateItem.ssg", xml_body
             )

@@ -217,8 +217,14 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     #    여기서 sports로 확정하지 말고 step3의 품목 우선 매칭으로 넘긴다.
     #    ★"스포츠/레저"가 sports 정확키라 신발/잡화/수영 등이 전부 sports(기타재화)로
     #    확정돼 SSG 고시 불일치로 실패하던 근본버그.)
+    # 활동(sports) 그룹은 물리 상품(신발/의류)을 디지털 고시로 오분류시키는 원인이므로
+    # 여기서 확정하지 않고 상품명/브랜드 힌트(step 6)로 넘겨 품목을 특정한다.
+    _sports_fallback = False
     if cat1 in _CATEGORY_GROUP and cat1 not in ("스포츠/레저", "소품"):
-        return _CATEGORY_GROUP[cat1]
+        _g1 = _CATEGORY_GROUP[cat1]
+        if _g1 != "sports":
+            return _g1
+        _sports_fallback = True
 
     # 3) "스포츠/레저", "소품" 등 복합 cat1: 품목 그룹(신발/가방/의류/잡화) 우선 매칭 후
     #    일반 키워드 매칭, 최종 etc 폴백.
@@ -250,6 +256,10 @@ def detect_notice_group(product: dict[str, Any]) -> str:
             return group
     for keyword, group in _CATEGORY_GROUP.items():
         if keyword in cat1:
+            # 활동(sports) 매칭은 확정하지 않고 상품명/브랜드 힌트로 품목을 먼저 특정.
+            if group == "sports":
+                _sports_fallback = True
+                continue
             return group
 
     # category (전체 경로) 에서도 시도
@@ -369,6 +379,10 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     if brand in shoe_brands:
         return "shoes"
 
+    # 활동(스포츠/아웃도어) 카테고리였으나 품목 특정 실패 → sports(=의류 고시로 매핑됨).
+    # etc(0000000035, 기타재화 디지털 고시)로 빠지면 SSG 등록 영구실패하므로 방지.
+    if _sports_fallback:
+        return "sports"
     return "etc"
 
 
@@ -1185,6 +1199,11 @@ _SSG_NOTICE_TYPE_MAP: dict[str, str] = {
     "food": "0000000006",
     "electronics": "0000000007",
     "etc": "0000000035",
+    # 활동(스포츠/아웃도어) 카테고리만 있고 품목을 특정 못한 물리 패션상품.
+    # etc(0000000035, 기타재화)로 빠지면 SSG가 디지털 고시(0000000157 상품제공방식
+    # CD/다운로드/스트리밍)를 요구해 신발/의류가 영구 등록실패 → self-heal도 불가.
+    # 의류 고시(0000000001)로 매핑해 물리 상품 고시를 태워 등록 통과시킨다.
+    "sports": "0000000001",
 }
 
 
@@ -1301,7 +1320,11 @@ def build_ssg_notice(
     group = _group_map.get(_pol_group) or detect_notice_group(product)
     cls_id = _SSG_NOTICE_TYPE_MAP.get(group, "0000000035")
 
-    if group == "wear":
+    # sports = 활동 카테고리만 있고 품목 특정 실패한 물리 패션상품.
+    # _SSG_NOTICE_TYPE_MAP에서 wear(0000000001) 고시분류로 매핑되므로 attrs도 wear와
+    # 동일하게 구성해야 한다. else(etc) 블록으로 빠지면 수입여부=N(국내산) 하드코딩과
+    # 실제 제조국(해외)이 충돌해 "제조국 국내/해외 vs 수입여부" 거부.
+    if group in ("wear", "sports"):
         attrs: list[dict[str, str]] = [
             {"itemMngPropId": "0000000001", "itemMngCntt": material},
             {"itemMngPropId": "0000000002", "itemMngCntt": color},
