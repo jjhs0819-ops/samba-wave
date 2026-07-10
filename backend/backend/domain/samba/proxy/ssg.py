@@ -311,6 +311,52 @@ class SSGClient:
                 f"[SSG] uitemId 조회 실패 — tempUitemId로 전송 (옵션가 미반영 위험): {_e}"
             )
 
+        # ★위치 기반 매핑 교정 — 옵션명으로 정확 매칭.
+        # sales-status는 옵션명이 없어 위치(1,2,3)로만 매핑하는데, DB 옵션 순서와
+        # SSG 등록 옵션 순서가 다르면 재고/가격이 '반대 사이즈'에 들어가는 치명 버그
+        # (예: DB[W8,W5] vs SSG[W5,W8] → W8 재고가 W5에, W5 재고가 W8에).
+        # get_item_detail의 옵션명(uitemOptnNm1)으로 tempUitemId→uitemId를 바로잡는다.
+        def _norm_opt(_s: str) -> str:
+            return "".join(str(_s).split()).lower()
+
+        try:
+            _detail = await self.get_item_detail(item_id)
+            _ssg_name_to_uid: dict[str, str] = {}
+
+            def _collect(o: Any) -> None:
+                if isinstance(o, dict):
+                    _nm = o.get("uitemOptnNm1")
+                    _uid = o.get("uitemId")
+                    if _nm and _uid:
+                        _ssg_name_to_uid.setdefault(_norm_opt(_nm), str(_uid).strip())
+                    for _v in o.values():
+                        _collect(_v)
+                elif isinstance(o, list):
+                    for _v in o:
+                        _collect(_v)
+
+            _collect(_detail.get("result", _detail))
+            _uw = product_data.get("uitems")
+            _ul = (_uw.get("uitem") if isinstance(_uw, dict) else None) or []
+            if isinstance(_ul, dict):
+                _ul = [_ul]
+            _fixed = 0
+            for _u in _ul:
+                _t = str(_u.get("tempUitemId", "")).strip()
+                _nm = _norm_opt(_u.get("uitemOptnNm1", ""))
+                if _t and _nm and _nm in _ssg_name_to_uid:
+                    _correct = _ssg_name_to_uid[_nm]
+                    if uitem_id_map.get(_t) != _correct:
+                        _fixed += 1
+                    uitem_id_map[_t] = _correct
+            if _fixed:
+                logger.info(
+                    f"[SSG] 옵션명 기반 uitemId 교정 {_fixed}개 "
+                    f"(위치매핑 오류→반대옵션 재고 방지)"
+                )
+        except Exception as _e:
+            logger.warning(f"[SSG] 옵션명 매핑 조회 실패(위치매핑 유지): {_e}")
+
         def _replace_temp_ids_in_prices(data: dict) -> dict:
             """tempUitemId를 실제 uitemId로 교체 (uitemPluralPrcs + uitems 모두).
 
