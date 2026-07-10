@@ -340,6 +340,7 @@ class AuctionPlugin(MarketPlugin):
             product.get("options") or [],
             product.get("option_group_names") or [],
         )
+        _stock_cap = int(product_copy.get("_stock_quantity") or 0)
         if existing_no:
             return await self._update_product(
                 client,
@@ -348,17 +349,67 @@ class AuctionPlugin(MarketPlugin):
                 pending_images,
                 samba_options=samba_options,
                 cat_code=category_id,
-                stock_cap=int(product_copy.get("_stock_quantity") or 0),
+                stock_cap=_stock_cap,
             )
-        else:
-            return await self._register_product(
-                client,
-                data,
-                pending_images,
-                samba_options=samba_options,
-                cat_code=category_id,
-                stock_cap=int(product_copy.get("_stock_quantity") or 0),
-            )
+
+        # 신규 등록 — 원자적 선점 락으로 중복 CREATE 차단 (타임아웃/동시전송 대비).
+        # 선점 중 기존 번호가 확인되면 수정 경로로 전환한다. (base._claim_registration_slot)
+        import asyncio as _aio
+        import time as _tm
+
+        _pid = str(product.get("id") or "").strip()
+        _aid = str(getattr(account, "id", "") or "")
+        _claim_val = f"{self._CLAIM_PREFIX}{int(_tm.time())}"
+        _claim_owned = False
+        if _pid and _aid:
+            _st, _cv = await self._claim_registration_slot(_pid, _aid, _claim_val)
+            _dl = _tm.monotonic() + 60
+            while _st == "pending" and _tm.monotonic() < _dl:
+                await _aio.sleep(3.0)
+                _st, _cv = await self._claim_registration_slot(_pid, _aid, _claim_val)
+            if _st == "owned":
+                _claim_owned = True
+            elif _st == "exists" and _cv:
+                logger.warning(
+                    f"[옥션] 선점 — 이미 등록번호 존재 product={_pid} no={_cv} → 수정 전환"
+                )
+                return await self._update_product(
+                    client,
+                    _cv,
+                    data,
+                    pending_images,
+                    samba_options=samba_options,
+                    cat_code=category_id,
+                    stock_cap=_stock_cap,
+                )
+            elif _st in ("pending", "stale"):
+                if _st == "stale":
+                    _claim_owned = await self._cas_claim(_pid, _aid, _cv, _claim_val)
+                if not _claim_owned:
+                    return {
+                        "success": False,
+                        "message": "동시 전송 감지 — 다른 전송이 같은 상품을 등록 중입니다. 재전송하세요.",
+                    }
+            else:
+                _claim_owned = True  # fail-open
+
+        _reg = await self._register_product(
+            client,
+            data,
+            pending_images,
+            samba_options=samba_options,
+            cat_code=category_id,
+            stock_cap=_stock_cap,
+        )
+        # 성공 → __claiming__ 를 실제 번호로 즉시 교체 / 실패 → 선점 해제
+        if _claim_owned and _pid and _aid:
+            if _reg.get("success"):
+                _no = str((_reg.get("data") or {}).get("sellerProductId") or "").strip()
+                if _no:
+                    await self._persist_product_no_immediately(_pid, _aid, _no)
+            else:
+                await self._release_registration_claim(_pid, _aid, _claim_val)
+        return _reg
 
     async def _register_product(
         self,

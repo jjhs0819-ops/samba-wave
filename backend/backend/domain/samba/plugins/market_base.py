@@ -15,6 +15,162 @@ class MarketPlugin(ABC):
     policy_key: str  # "스마트스토어"
     required_fields: list[str] = ["name", "sale_price"]
 
+    # ── 신규등록 원자 선점(claim) — 동시전송/타임아웃 시 중복 CREATE 차단 ──
+    # market_product_nos[account]에 __claiming__<epoch> 표식을 원자 기록해 직렬화.
+    # 쿠팡/롯데온은 자체 구현을 갖고, ESM(옥션/G마켓)은 이 base 버전을 사용한다.
+    _CLAIM_PREFIX = "__claiming__"
+    _CLAIM_STALE_SECONDS = 900
+
+    async def _claim_registration_slot(
+        self, product_id: str, account_id: str, claim_val: str
+    ) -> tuple[str, str]:
+        """등록 슬롯 원자 선점 — 동시 이중등록 차단 (쿠팡/롯데온 동일 패턴).
+
+        반환 (status, value):
+          owned   — 이 실행이 선점 성공(등록 진행). value=claim_val
+          exists  — 이미 실제 마켓상품번호 매핑 존재. value=번호
+          pending — 다른 실행이 등록 중(신선한 선점). value=상대 선점값
+          stale   — 방치된 선점(비정상 종료 흔적). value=옛 선점값
+        조회/선점 실패 시 ("owned", claim_val) — fail-open, 등록을 막지 않는다.
+        """
+        try:
+            from sqlalchemy import text as _t
+            from backend.db.orm import get_write_session as _gws
+
+            async with _gws() as _s:
+                _r = await _s.execute(
+                    _t(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = jsonb_set("
+                        "  CASE WHEN market_product_nos IS NOT NULL "
+                        "        AND jsonb_typeof(market_product_nos) = 'object' "
+                        "       THEN market_product_nos ELSE '{}'::jsonb END, "
+                        "  ARRAY[:acct]::text[], to_jsonb(CAST(:val AS text)), true) "
+                        "WHERE id = :pid AND (market_product_nos IS NULL "
+                        "  OR jsonb_typeof(market_product_nos) <> 'object' "
+                        "  OR NOT jsonb_exists(market_product_nos, :acct)) "
+                        "RETURNING id"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": claim_val},
+                )
+                _won = _r.first() is not None
+                _v = None
+                if not _won:
+                    _v = (
+                        await _s.execute(
+                            _t(
+                                "SELECT market_product_nos ->> :acct "
+                                "FROM samba_collected_product WHERE id = :pid"
+                            ),
+                            {"pid": product_id, "acct": account_id},
+                        )
+                    ).scalar()
+                await _s.commit()
+            if _won:
+                return ("owned", claim_val)
+            _vs = str(_v or "").strip()
+            if not _vs:
+                return ("owned", claim_val)
+            if _vs.startswith(self._CLAIM_PREFIX):
+                import time as _tm
+
+                try:
+                    _ts = int(_vs[len(self._CLAIM_PREFIX):])
+                except Exception:
+                    _ts = 0
+                if _tm.time() - _ts > self._CLAIM_STALE_SECONDS:
+                    return ("stale", _vs)
+                return ("pending", _vs)
+            if _vs.startswith("{"):
+                return ("owned", claim_val)
+            return ("exists", _vs)
+        except Exception as _e:
+            logger.warning(f"[{self.market_type}] 등록 선점 조회 실패(무시, 등록 진행): {_e}")
+            return ("owned", claim_val)
+
+    async def _cas_claim(
+        self, product_id: str, account_id: str, old_val: str, new_val: str
+    ) -> bool:
+        """방치된 선점값 원자 교체(compare-and-swap). 성공 시 True."""
+        try:
+            from sqlalchemy import text as _t
+            from backend.db.orm import get_write_session as _gws
+
+            async with _gws() as _s:
+                _r = await _s.execute(
+                    _t(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = jsonb_set(market_product_nos, "
+                        "  ARRAY[:acct]::text[], to_jsonb(CAST(:val AS text)), true) "
+                        "WHERE id = :pid AND market_product_nos ->> :acct = :old "
+                        "RETURNING id"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": new_val, "old": old_val},
+                )
+                _won = _r.first() is not None
+                await _s.commit()
+            return _won
+        except Exception as _e:
+            logger.warning(f"[{self.market_type}] 선점 교체 실패(무시): {_e}")
+            return False
+
+    async def _release_registration_claim(
+        self, product_id: str, account_id: str, claim_val: str
+    ) -> None:
+        """등록 실패 시 선점 표식 제거 — 아직 내 선점값일 때만(CAS)."""
+        if not (product_id and account_id):
+            return
+        try:
+            from sqlalchemy import text as _t
+            from backend.db.orm import get_write_session as _gws
+
+            async with _gws() as _s:
+                await _s.execute(
+                    _t(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = market_product_nos - :acct "
+                        "WHERE id = :pid AND market_product_nos ->> :acct = :val"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": claim_val},
+                )
+                await _s.commit()
+        except Exception as _e:
+            logger.warning(f"[{self.market_type}] 등록 선점 해제 실패(무시): {_e}")
+
+    async def _persist_product_no_immediately(
+        self, product_id: str, account_id: str, market_no: str
+    ) -> None:
+        """등록 성공 직후 __claiming__ 표식을 실제 마켓번호로 교체 (fresh session).
+
+        대기 중인 동일 (상품,계정) 등록 잡이 3초 폴링에서 실제 번호를 즉시 확인하도록
+        별도 세션으로 즉시 커밋. worker 측 최종 writeback 과 멱등(같은 값) — 무해.
+        """
+        if not (product_id and account_id and market_no):
+            return
+        try:
+            from sqlalchemy import text as _t
+            from backend.db.orm import get_write_session as _gws
+
+            async with _gws() as _s:
+                await _s.execute(
+                    _t(
+                        "UPDATE samba_collected_product SET "
+                        "  market_product_nos = COALESCE(market_product_nos, '{}'::jsonb) "
+                        "    || jsonb_build_object(CAST(:acct AS text), to_jsonb(CAST(:no AS text))), "
+                        "  registered_accounts = CASE "
+                        "    WHEN registered_accounts @> jsonb_build_array(CAST(:acct AS text)) "
+                        "      THEN registered_accounts "
+                        "    ELSE COALESCE(registered_accounts, '[]'::jsonb) "
+                        "      || jsonb_build_array(CAST(:acct AS text)) "
+                        "  END "
+                        "WHERE id = CAST(:pid AS text)"
+                    ),
+                    {"acct": account_id, "no": market_no, "pid": product_id},
+                )
+                await _s.commit()
+        except Exception as _e:
+            logger.warning(f"[{self.market_type}] 등록 후 즉시기록 실패(worker 기록에 위임): {_e}")
+
     async def handle(
         self, session, product: dict, category_id: str, account, existing_no: str = ""
     ) -> dict[str, Any]:
