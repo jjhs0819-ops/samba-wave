@@ -129,7 +129,9 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
-    command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
+    # protocol http2 강제 — QUIC(UDP 7844)가 집 네트워크에서 handshake timeout 반복
+    # (error 1033 flapping)이라 TCP(http2)로 고정해 터널 안정화.
+    command: ["tunnel", "--no-autoupdate", "run", "--protocol", "http2", "--token", "${CLOUDFLARE_TUNNEL_TOKEN}"]
     networks: [samba-local]
     depends_on:
       caddy:
