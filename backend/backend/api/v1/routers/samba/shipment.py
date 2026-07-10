@@ -100,6 +100,112 @@ async def emergency_clear(admin: str = Depends(require_admin)):
     return {"ok": True, "message": "비상정지 해제"}
 
 
+@router.post("/esm/cleanup-orphans")
+async def cleanup_esm_orphans(
+    account_id: str = Query(..., description="정리할 ESM(옥션/G마켓) 계정 id"),
+    dry_run: bool = Query(True, description="true면 개수/목록만, false면 실제 판매중지+삭제"),
+    max_delete: int = Query(
+        100, ge=0, le=100000, description="한 번에 삭제할 최대 개수"
+    ),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """ESM(옥션/G마켓) 유령(중복) 상품 정리 — 계정 스코프 한정.
+
+    ESM 마켓에 등록됐지만 DB `market_product_nos`가 추적하지 않는 goodsNo =
+    유령/중복 등록분. 전송 타임아웃(ESM 등록됐으나 삼바는 실패처리 → 번호
+    미저장) + 재전송/오토튠 반복으로 같은 상품이 중복 등록될 때 쌓인다.
+
+    반드시 account_id 로 특정 계정만 좁혀 실행한다(다른 계정 정상등록 오삭제
+    방지). 최초 dry_run=true 로 개수 확인 후 dry_run=false 로 삭제.
+    삭제는 판매중지 → delete 2단계(ESM은 판매중 직접 삭제 불가).
+
+    ⚠ 이 계정에 삼바 외 경로(수동/타툴)로 올린 정상 등록이 있으면 그것도
+    유령으로 잡혀 삭제되므로, 계정이 삼바 전용일 때만 사용한다.
+    """
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.esmplus_ghost_reconciler import (
+        _build_esm_client,
+        _fetch_db_tracked_nos,
+        _scan_market_goods,
+        _stop_and_delete,
+    )
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type not in ("auction", "gmarket"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"ESM(옥션/G마켓) 계정이 아닙니다: {acc.market_type}",
+        )
+
+    acc_dict = {
+        "id": acc.id,
+        "account_label": acc.account_label,
+        "seller_id": acc.seller_id,
+        "additional_fields": acc.additional_fields or {},
+        "market_type": acc.market_type,
+    }
+    # DB 추적 번호 먼저 조회 후 트랜잭션 종료 — 이후 ESM 전수 페이징(수십 초)이
+    # idle-in-transaction 으로 커넥션을 물지 않도록.
+    tracked = await _fetch_db_tracked_nos(account_id)
+    await session.commit()
+
+    client = await _build_esm_client(acc_dict)
+    if not client:
+        raise HTTPException(
+            status_code=400, detail="ESM 자격증명/셀러ID 없음 — 계정 설정 확인"
+        )
+
+    market_goods = await _scan_market_goods(client)
+    orphans = sorted(market_goods - tracked)
+
+    label = f"{acc.market_type}/{acc.seller_id}"
+    result: dict[str, Any] = {
+        "account_id": account_id,
+        "account_label": label,
+        "market_total": len(market_goods),
+        "db_tracked": len(tracked),
+        "orphans": len(orphans),
+        "dry_run": dry_run,
+        "orphan_sample": orphans[:20],
+    }
+    if dry_run or not orphans:
+        result["message"] = (
+            f"[{label}] ESM {len(market_goods)}개 중 삼바추적 {len(tracked)}개, "
+            f"유령/중복 {len(orphans)}개 (dry_run — 삭제 안 함)"
+        )
+        return result
+
+    deleted: list[str] = []
+    failed: list[str] = []
+    for gno in orphans[:max_delete]:
+        r = await _stop_and_delete(client, gno)
+        if r == "deleted":
+            deleted.append(gno)
+        else:
+            failed.append(f"{gno}:{r}")
+    result["deleted"] = len(deleted)
+    result["delete_failed"] = len(failed)
+    result["failed_sample"] = failed[:10]
+    result["message"] = (
+        f"[{label}] 유령 {len(orphans)}개 중 {len(deleted)}개 삭제완료, "
+        f"실패 {len(failed)}개 (최대 {max_delete}개 처리)"
+    )
+    logger.info(f"[esm_cleanup] {result['message']}")
+    return result
+
+
 class CleanupOrphansRequest(BaseModel):
     # 화면 필터로 좁혀진 product_id 목록 — 비어있으면 tenant 전체 (호환)
     product_ids: Optional[list[str]] = None
