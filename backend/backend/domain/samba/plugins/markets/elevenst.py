@@ -79,6 +79,144 @@ class ElevenstPlugin(MarketPlugin):
     policy_key = "11번가"
     required_fields = ["name", "sale_price"]
 
+    # 등록 선점(claim) 표식 — market_product_nos[account]에 임시 저장되는 값.
+    # 실제 prdNo가 영속되면 덮어써지고, 실패 시 해제(CAS)된다. 비정상 종료로
+    # 남은 표식은 STALE_SECONDS 경과 후 무시(강제 선점 가능). coupang/lotteon 동일 패턴.
+    _CLAIM_PREFIX = "__claiming__"
+    _CLAIM_STALE_SECONDS = 900
+
+    async def _claim_registration_slot(
+        self, product_id: str, account_id: str, claim_val: str
+    ) -> tuple[str, str]:
+        """등록 슬롯 원자 선점 — 동시 이중등록 차단 (coupang.py 동일 패턴).
+
+        sellerPrdCd 사전조회 가드는 동시 실행 2개가 둘 다 '미등록'으로 조회한 뒤
+        같은 초에 등록하는 경쟁(TOCTOU)을 못 막는다 (2026-07-10 소경 11번가
+        중복 리스팅 217건 사고). DB 원자 UPDATE로 선점한 실행만 등록한다.
+
+        반환 (status, value):
+          owned   — 이 실행이 선점 성공(등록 진행). value=claim_val
+          exists  — 이미 실제 prdNo 매핑 존재. value=prdNo
+          pending — 다른 실행이 등록 중(신선한 선점). value=상대 선점값
+          stale   — 방치된 선점(비정상 종료 흔적). value=옛 선점값
+        조회/선점 실패 시 ("owned", claim_val) — fail-open, 등록을 막지 않는다.
+        """
+        try:
+            from sqlalchemy import text as _cl_text
+
+            from backend.db.orm import get_write_session as _cl_gws
+
+            async with _cl_gws() as _s:
+                _r = await _s.execute(
+                    _cl_text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = jsonb_set("
+                        "  CASE WHEN market_product_nos IS NOT NULL "
+                        "        AND jsonb_typeof(market_product_nos) = 'object' "
+                        "       THEN market_product_nos ELSE '{}'::jsonb END, "
+                        "  ARRAY[:acct]::text[], to_jsonb(CAST(:val AS text)), true) "
+                        "WHERE id = :pid AND (market_product_nos IS NULL "
+                        "  OR jsonb_typeof(market_product_nos) <> 'object' "
+                        "  OR NOT jsonb_exists(market_product_nos, :acct)) "
+                        "RETURNING id"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": claim_val},
+                )
+                _won = _r.first() is not None
+                _v = None
+                if not _won:
+                    _v = (
+                        await _s.execute(
+                            _cl_text(
+                                "SELECT market_product_nos ->> :acct "
+                                "FROM samba_collected_product WHERE id = :pid"
+                            ),
+                            {"pid": product_id, "acct": account_id},
+                        )
+                    ).scalar()
+                await _s.commit()
+            if _won:
+                return ("owned", claim_val)
+            _vs = str(_v or "").strip()
+            if not _vs:
+                return ("owned", claim_val)
+            if _vs.startswith(self._CLAIM_PREFIX):
+                import time as _cl_t
+
+                try:
+                    _ts = int(_vs[len(self._CLAIM_PREFIX) :])
+                except Exception:
+                    _ts = 0
+                if _cl_t.time() - _ts > self._CLAIM_STALE_SECONDS:
+                    return ("stale", _vs)
+                return ("pending", _vs)
+            if _vs.startswith("{"):
+                return ("owned", claim_val)
+            return ("exists", _vs)
+        except Exception as _e:
+            logger.warning(f"[11번가] 등록 선점 조회 실패(무시, 등록 진행): {_e}")
+            return ("owned", claim_val)
+
+    async def _cas_claim(
+        self, product_id: str, account_id: str, old_val: str, new_val: str
+    ) -> bool:
+        """방치된 선점값 원자 교체(compare-and-swap). 성공 시 True."""
+        try:
+            from sqlalchemy import text as _cl_text
+
+            from backend.db.orm import get_write_session as _cl_gws
+
+            async with _cl_gws() as _s:
+                _r = await _s.execute(
+                    _cl_text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = jsonb_set(market_product_nos, "
+                        "  ARRAY[:acct]::text[], to_jsonb(CAST(:val AS text)), true) "
+                        "WHERE id = :pid AND market_product_nos ->> :acct = :old "
+                        "RETURNING id"
+                    ),
+                    {
+                        "pid": product_id,
+                        "acct": account_id,
+                        "val": new_val,
+                        "old": old_val,
+                    },
+                )
+                _won = _r.first() is not None
+                await _s.commit()
+            return _won
+        except Exception as _e:
+            logger.warning(f"[11번가] 선점 교체 실패(무시): {_e}")
+            return False
+
+    async def _release_registration_claim(
+        self, product_id: str, account_id: str, claim_val: str
+    ) -> None:
+        """등록 실패 시 선점 표식 제거 — 아직 내 선점값일 때만(CAS).
+
+        실제 prdNo로 이미 교체된 뒤에는 값 불일치로 no-op — 성공 경로에서
+        호출돼도 무해하다.
+        """
+        if not (product_id and account_id):
+            return
+        try:
+            from sqlalchemy import text as _cl_text
+
+            from backend.db.orm import get_write_session as _cl_gws
+
+            async with _cl_gws() as _s:
+                await _s.execute(
+                    _cl_text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = market_product_nos - :acct "
+                        "WHERE id = :pid AND market_product_nos ->> :acct = :val"
+                    ),
+                    {"pid": product_id, "acct": account_id, "val": claim_val},
+                )
+                await _s.commit()
+        except Exception as _e:
+            logger.warning(f"[11번가] 등록 선점 해제 실패(무시): {_e}")
+
     async def _persist_prd_no_immediately(
         self, product_id: str, account_id: str, prd_no: str
     ) -> None:
@@ -466,6 +604,13 @@ class ElevenstPlugin(MarketPlugin):
             ElevenstRateLimitError,
         )
 
+        # 등록 선점 상태 — 신규등록 분기에서 채워지고, 실패 시 except 블록에서
+        # 해제(CAS)에 사용된다. 수정 경로에서는 그대로 비어 있어 해제가 no-op.
+        _claim_pid = ""
+        _claim_acct = ""
+        _claim_val = ""
+        _claim_owned = False
+
         try:
             if existing_no:
                 # 수정 PUT 시 dispCtgrNo 제거 — 카테고리매핑 변경으로 보낸 코드가 등록 카테고리와
@@ -568,6 +713,66 @@ class ElevenstPlugin(MarketPlugin):
                             "[11번가] 품번 중복 게이트 조회 실패 — 등록 진행: %s", _sd_e
                         )
 
+                # ── 등록 슬롯 선점 — 동시 이중등록 차단 (coupang/lotteon 패턴) ──
+                # 아래 sellerPrdCd 사전조회는 동시 실행 2개가 둘 다 '미등록'으로
+                # 조회한 뒤 같은 초에 등록하는 경쟁(TOCTOU)을 못 막는다.
+                # DB 원자 UPDATE 선점에 이긴 실행만 등록하고, 진 실행은 이긴 쪽
+                # prdNo를 3초 폴링으로 기다려 채택한다.
+                import asyncio as _cl_aio
+                import time as _cl_time
+
+                _claim_pid = str(product.get("id") or "").strip()
+                _claim_acct = str(getattr(account, "id", "") or "")
+                _claim_val = f"{self._CLAIM_PREFIX}{int(_cl_time.time())}"
+                _claim_owned = False
+                if _claim_pid and _claim_acct:
+                    _c_status, _c_val = await self._claim_registration_slot(
+                        _claim_pid, _claim_acct, _claim_val
+                    )
+                    _c_deadline = _cl_time.monotonic() + 60
+                    while (
+                        _c_status == "pending"
+                        and _cl_time.monotonic() < _c_deadline
+                    ):
+                        await _cl_aio.sleep(3.0)
+                        _c_status, _c_val = await self._claim_registration_slot(
+                            _claim_pid, _claim_acct, _claim_val
+                        )
+                    if _c_status == "owned":
+                        _claim_owned = True
+                    elif _c_status == "exists" and _c_val:
+                        logger.warning(
+                            f"[11번가] 등록 선점 — 다른 실행이 이미 등록함 "
+                            f"product={_claim_pid} account={_claim_acct} "
+                            f"prdNo={_c_val} → 기존 연결"
+                        )
+                        return {
+                            "success": True,
+                            "product_no": str(_c_val),
+                            "message": "11번가 기등록 상품 재연결 (선점 중복차단)",
+                            "data": {"prdNo": str(_c_val)},
+                            "_already_registered": True,
+                        }
+                    elif _c_status == "pending":
+                        return {
+                            "success": False,
+                            "message": "동시 전송 감지 — 다른 전송이 같은 상품을 "
+                            "등록 중입니다. 이전 전송 완료 후 재전송하세요.",
+                        }
+                    elif _c_status == "stale":
+                        _claim_owned = await self._cas_claim(
+                            _claim_pid, _claim_acct, _c_val, _claim_val
+                        )
+                        if not _claim_owned:
+                            return {
+                                "success": False,
+                                "message": "동시 전송 감지 — 다른 전송이 같은 "
+                                "상품을 등록 중입니다. 이전 전송 완료 후 "
+                                "재전송하세요.",
+                            }
+                    else:
+                        _claim_owned = True  # fail-open: 선점 실패 시 등록 진행
+
                 # 중복등록 방지(유령 차단): 등록 전 sellerPrdCd(=samba product.id)로
                 # 11번가 기존 등록 여부 확인. DB 매핑이 유실돼 existing_no가 비어도
                 # 11번가에 이미 있으면 재등록(중복 생성) 대신 기존 prdNo를 채택한다.
@@ -612,6 +817,11 @@ class ElevenstPlugin(MarketPlugin):
                     logger.warning(
                         f"[11번가] 신규 등록 후 prdNo 미수신 — result keys={list(result.keys()) if isinstance(result, dict) else type(result)}"
                     )
+                    # 선점 표식 제거 — 다음 재전송이 정상 등록 진행하도록
+                    if _claim_owned:
+                        await self._release_registration_claim(
+                            _claim_pid, _claim_acct, _claim_val
+                        )
                     return {
                         "success": False,
                         "product_no": "",
@@ -633,6 +843,11 @@ class ElevenstPlugin(MarketPlugin):
                     "data": result,
                 }
         except ElevenstRateLimitError:
+            # 선점 해제 — worker 재시도가 15분 stale 대기에 막히지 않도록
+            if _claim_owned:
+                await self._release_registration_claim(
+                    _claim_pid, _claim_acct, _claim_val
+                )
             raise  # worker까지 전파시켜 Rate Limit 동적 감소 동작하도록
         except ElevenstApiError as e:
             err = str(e)
@@ -709,6 +924,10 @@ class ElevenstPlugin(MarketPlugin):
                             "message": f"11번가 수정 실패 (prdNo 재동기화 후 재시도 실패): {_e}",
                         }
             if "해외 쇼핑 카테고리" in err:
+                if _claim_owned:
+                    await self._release_registration_claim(
+                        _claim_pid, _claim_acct, _claim_val
+                    )
                 return {
                     "success": False,
                     "message": f"카테고리 오류: 코드 {cat_code}가 해외쇼핑 카테고리입니다. 카테고리매핑에서 국내 카테고리 코드로 수정해주세요.",
@@ -729,6 +948,10 @@ class ElevenstPlugin(MarketPlugin):
                     _r3 = await client.register_product(_xml_no_tmpl)
                     _prd3 = _r3.get("prd_no") or _r3.get("data", {}).get("prdNo", "")
                     if not _prd3:
+                        if _claim_owned:
+                            await self._release_registration_claim(
+                                _claim_pid, _claim_acct, _claim_val
+                            )
                         return {
                             "success": False,
                             "product_no": "",
@@ -737,6 +960,12 @@ class ElevenstPlugin(MarketPlugin):
                     logger.info(
                         f"[11번가] 신규 등록 성공 (발송마감 템플릿 제외) — product_no={_prd3}"
                     )
+                    # 즉시 매핑 커밋 — 선점 표식을 실제 prdNo로 교체 (본경로와 동일)
+                    await self._persist_prd_no_immediately(
+                        str(product.get("id") or ""),
+                        str(getattr(account, "id", "") or ""),
+                        str(_prd3),
+                    )
                     return {
                         "success": True,
                         "product_no": _prd3,
@@ -744,8 +973,16 @@ class ElevenstPlugin(MarketPlugin):
                         "data": _r3,
                     }
                 except Exception as _e3:
+                    if _claim_owned:
+                        await self._release_registration_claim(
+                            _claim_pid, _claim_acct, _claim_val
+                        )
                     return {
                         "success": False,
                         "message": f"11번가 등록 실패 (발송마감 템플릿 제외 재시도도 실패): {_e3}",
                     }
+            if _claim_owned:
+                await self._release_registration_claim(
+                    _claim_pid, _claim_acct, _claim_val
+                )
             return {"success": False, "message": f"11번가 등록 실패: {err}"}
