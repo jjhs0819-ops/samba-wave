@@ -1331,15 +1331,33 @@ class ImageTransformService:
                         self._mirror_memo[memo_key] = url
                         return url, None, False
 
-                    # 쿠팡 최소사이즈 검증(500x500) 대응 — 비율 유지하며 LANCZOS 업스케일
-                    if need_upscale:
-                        ratio = float(min_dim) / float(min(w, h))
-                        new_w = max(int(round(w * ratio)), min_dim)
-                        new_h = max(int(round(h * ratio)), min_dim)
-                        img = img.resize((new_w, new_h), Image.LANCZOS)
-
+                    # 픽셀 규격 보정 — 긴 변 max_dim 이하 + (strict 모드) 짧은 변 min_dim
+                    # 이상을 동시 보장. 순서가 중요: 다운스케일을 먼저 해야 극단 비율에서
+                    # 업스케일→다운스케일 왕복이 상쇄돼 원본으로 되돌아가는 버그가 없다.
+                    # 1) 긴 변이 max_dim 초과면 비율 유지 다운스케일
                     if max(img.size) > max_dim:
                         img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+                    # 2) strict 모드(min_dim>0)에서 짧은 변이 min_dim 미달이면 보정
+                    #    (쿠팡 500x500 / ESM 옥션 600x600 최소 규격 대응)
+                    if min_dim > 0 and min(img.size) < min_dim:
+                        w2, h2 = img.size
+                        ratio = float(min_dim) / float(min(w2, h2))
+                        up_w = max(int(round(w2 * ratio)), min_dim)
+                        up_h = max(int(round(h2 * ratio)), min_dim)
+                        if max(up_w, up_h) <= max_dim:
+                            # 일반: 비율 업스케일로 min·max 동시 충족 (예: 500x600 → 600x720)
+                            img = img.resize((up_w, up_h), Image.LANCZOS)
+                        else:
+                            # 극단 비율(예: 36x1500): 업스케일하면 긴 변이 max_dim 초과 →
+                            # 짧은 변만 흰색 여백으로 패딩해 min_dim 확보(내용 왜곡 없음).
+                            # 기존엔 업스케일↔다운스케일 왕복이 상쇄돼 원본(36x1500)으로
+                            # 되돌아가, 옥션이 "600x600 이상" 규격 위반으로 상품 전체를
+                            # 등록 거부하던 버그를 방지한다.
+                            pad_w = max(w2, min_dim)
+                            pad_h = max(h2, min_dim)
+                            canvas = Image.new("RGB", (pad_w, pad_h), (255, 255, 255))
+                            canvas.paste(img, ((pad_w - w2) // 2, (pad_h - h2) // 2))
+                            img = canvas
 
                     out = io.BytesIO()
                     # 품질 단계적 하향: 85 → 70 → 55 까지 시도
