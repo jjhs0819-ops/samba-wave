@@ -357,6 +357,46 @@ class SSGClient:
 
         product_data = _replace_temp_ids_in_prices(product_data)
 
+        # SSG 등록 옵션 전체를 대표가와 동일 가격으로 커버 (DB 옵션 축소 대응).
+        # 패플이 품절 사이즈를 옵션에서 제거하면 DB 옵션 수 < SSG 등록 옵션 수가 되어,
+        # 재전송이 일부 옵션만 새 가격으로 갱신 → 나머지 옵션이 옛 가격으로 남는다.
+        # 그러면 SSG의 '대표가격 == 옵션최저가' 제약 위반 → updateItem 전체 거부
+        # (가격+재고 모두 미반영). SSG 모든 uitemId를 대표가로 통일해 등식을 만족시킨다.
+        if uitem_id_map and isinstance(product_data.get("salesPrcInfos"), dict):
+            _sp = product_data["salesPrcInfos"].get("uitemPrc", [])
+            if isinstance(_sp, dict):
+                _sp = [_sp]
+            if _sp:
+                _base = _sp[0]
+                _plural = product_data.get("uitemPluralPrcs")
+                if not isinstance(_plural, dict):
+                    _plural = {"uitemPrc": []}
+                    product_data["uitemPluralPrcs"] = _plural
+                _items = _plural.get("uitemPrc")
+                if isinstance(_items, dict):
+                    _items = [_items]
+                elif not isinstance(_items, list):
+                    _items = []
+                _plural["uitemPrc"] = _items
+                _present = {str(it.get("uitemId", "")).strip() for it in _items}
+                _added = 0
+                for _uid in uitem_id_map.values():
+                    if _uid and _uid not in _present:
+                        _items.append(
+                            {
+                                "splprc": _base.get("splprc"),
+                                "sellprc": _base.get("sellprc"),
+                                "mrgrt": _base.get("mrgrt"),
+                                "uitemId": _uid,
+                            }
+                        )
+                        _added += 1
+                if _added:
+                    logger.info(
+                        f"[SSG] 옵션 커버 보강: SSG {len(uitem_id_map)}개 옵션 중 "
+                        f"누락 {_added}개를 대표가={_base.get('sellprc')}로 통일"
+                    )
+
         xml_body = '<?xml version="1.0" encoding="UTF-8"?>' + self._to_xml(
             product_data, "updateItem"
         )
@@ -388,17 +428,20 @@ class SSGClient:
                 _prc_items = [_prc_items]
             new_sell = _prc_items[0].get("sellprc", cur_min) if _prc_items else cur_min
 
-            # 인상/하락 공통: 1단계에서 uitemPluralPrcs 옵션가를 cur_min으로 맞춰서
-            # SSG DB 옵션최저가를 cur_min으로 갱신 → 2단계에서 대표가+옵션가 new_sell로
+            # SSG는 '대표가격 == 저장된 옵션최저가'를 강제한다. 대표가+옵션가를 한 번에
+            # 바꾸면 새 대표가를 '기존' 저장된 옵션최저가와 비교해 거부(resultCode 99).
+            # 해결: 1단계에서 salesPrcInfos(대표가) 없이 uitemPluralPrcs(옵션가)만 new_sell로
+            # 먼저 반영해 저장된 옵션최저가를 new_sell로 올린 뒤(대표가 검증 미발동),
+            # 2단계에서 대표가=new_sell 전송 → 저장된 옵션(new_sell)과 일치해 통과.
             direction = "하락" if new_sell < cur_min else "인상"
             logger.info(
                 f"[SSG] 가격 {direction}(신가={new_sell} vs 구가={cur_min})"
-                f" → 1단계: uitemPluralPrcs 옵션가={cur_min}으로 맞추기"
+                f" → 1단계: uitemPluralPrcs 옵션가={new_sell}으로 먼저 반영"
             )
             step1_data: dict[str, Any] = {"itemId": item_id}
             if product_data.get("uitemPluralPrcs"):
                 step1_data["uitemPluralPrcs"] = _patch_sell(
-                    product_data["uitemPluralPrcs"], cur_min
+                    product_data["uitemPluralPrcs"], new_sell
                 )
 
             xml_step1 = '<?xml version="1.0" encoding="UTF-8"?>' + self._to_xml(
