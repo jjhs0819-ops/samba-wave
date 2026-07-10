@@ -130,8 +130,10 @@ class FashionPlusPlugin(SourcingPlugin):
 
         stock_changed = False
         is_sold_out = False
+        _soldout_via_html = False
         if html_sold_out:
             is_sold_out = True
+            _soldout_via_html = True
         elif opts_fetched and not new_options:
             # 옵션 fetch 성공 + 옵션 0개 = 완전품절 (fetch 실패와 구분)
             is_sold_out = True
@@ -140,6 +142,40 @@ class FashionPlusPlugin(SourcingPlugin):
                 (o.get("isSoldOut", False) or (o.get("stock", 0) or 0) == 0)
                 for o in new_options
             )
+
+        # ── 품절 오탐 방어(재확인) ──
+        # 옵션 API 가 일시적으로 빈/불완전 응답을 주면, 재고가 있는 상품이 '완전품절'로
+        # 오판된다. 오토튠은 품절을 확정으로 보고 상품+마켓 리스팅을 영구 삭제하므로,
+        # 한 번의 일시적 오탐이 살아있는 상품을 지워버리고 유령 주문을 유발한다(실사고).
+        # HTML 의 명시적 품절 플래그(isSoldout)가 아닌 '옵션 기반' 품절 판정만,
+        # 옵션을 1회 더 재조회해서 재고가 확인되면 in_stock 으로 정정한다. (자가치유)
+        if is_sold_out and not _soldout_via_html:
+            recheck = None
+            try:
+                recheck = await client.fetch_options(site_product_id)
+            except Exception as _rc_e:
+                # 차단(RateLimit)은 상위 재시도에 위임 — 오판 삭제 방지
+                if type(_rc_e).__name__ == "RateLimitError":
+                    raise
+                logger.warning(
+                    f"[FashionPlus] 품절 재확인 실패(기존 품절 유지): "
+                    f"{site_product_id} - {_rc_e}"
+                )
+            if recheck:
+                _instock = [
+                    o
+                    for o in recheck
+                    if isinstance(o, dict)
+                    and not (o.get("isSoldOut", False) or (o.get("stock", 0) or 0) == 0)
+                ]
+                if _instock:
+                    logger.warning(
+                        f"[FashionPlus] 품절 재확인=재고있음({len(_instock)}옵션) → "
+                        f"품절 취소(오탐 방어): {site_product_id}"
+                    )
+                    new_options = recheck
+                    is_sold_out = False
+
         new_sale_status = "sold_out" if is_sold_out else "in_stock"
         if new_sale_status != getattr(product, "sale_status", "in_stock"):
             stock_changed = True
