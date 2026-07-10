@@ -104,24 +104,34 @@ async def emergency_clear(admin: str = Depends(require_admin)):
 async def cleanup_esm_orphans(
     account_id: str = Query(..., description="정리할 ESM(옥션/G마켓) 계정 id"),
     dry_run: bool = Query(True, description="true면 개수/목록만, false면 실제 판매중지+삭제"),
+    wipe_all: bool = Query(
+        False,
+        description="true면 삼바 추적분까지 포함해 계정 전체 삭제(초기화) + 삼바 추적 제거",
+    ),
     max_delete: int = Query(
         100, ge=0, le=100000, description="한 번에 삭제할 최대 개수"
     ),
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
-    """ESM(옥션/G마켓) 유령(중복) 상품 정리 — 계정 스코프 한정.
+    """ESM(옥션/G마켓) 유령/중복 상품 정리 — 계정 스코프 한정.
 
-    ESM 마켓에 등록됐지만 DB `market_product_nos`가 추적하지 않는 goodsNo =
-    유령/중복 등록분. 전송 타임아웃(ESM 등록됐으나 삼바는 실패처리 → 번호
-    미저장) + 재전송/오토튠 반복으로 같은 상품이 중복 등록될 때 쌓인다.
+    기본(wipe_all=false): DB `market_product_nos`가 추적 안 하는 goodsNo(=유령/중복
+    등록분)만 삭제. 전송 타임아웃(ESM 등록됐으나 삼바 실패처리→번호 미저장)+재전송/
+    오토튠 반복으로 쌓인 중복을 정리한다. 삼바 추적 정상분은 보존.
 
-    반드시 account_id 로 특정 계정만 좁혀 실행한다(다른 계정 정상등록 오삭제
-    방지). 최초 dry_run=true 로 개수 확인 후 dry_run=false 로 삭제.
+    전체삭제(wipe_all=true): 삼바 추적분 포함 계정의 ESM 등록 전체를 삭제하고,
+    삼바 쪽 추적(market_product_nos/registered_accounts)에서도 이 계정을 제거한다.
+    "계정 초기화 후 fresh 재전송" 용도. ⚠ 되돌릴 수 없다.
+
+    반드시 account_id 로 특정 계정만 좁혀 실행한다(다른 계정 오삭제 방지).
+    최초 dry_run=true 로 개수 확인 후 dry_run=false 로 삭제.
     삭제는 판매중지 → delete 2단계(ESM은 판매중 직접 삭제 불가).
+    삭제량이 많으면 HTTP는 524(타임아웃)나도 서버는 끝까지 처리하며, max_delete
+    배치로 나눠 반복 호출한다.
 
     ⚠ 이 계정에 삼바 외 경로(수동/타툴)로 올린 정상 등록이 있으면 그것도
-    유령으로 잡혀 삭제되므로, 계정이 삼바 전용일 때만 사용한다.
+    삭제되므로, 계정이 삼바 전용일 때만 사용한다.
     """
     from sqlmodel import select
 
@@ -169,38 +179,64 @@ async def cleanup_esm_orphans(
 
     market_goods = await _scan_market_goods(client)
     orphans = sorted(market_goods - tracked)
+    targets = sorted(market_goods) if wipe_all else orphans
 
     label = f"{acc.market_type}/{acc.seller_id}"
+    mode = "전체삭제(wipe)" if wipe_all else "유령정리"
     result: dict[str, Any] = {
         "account_id": account_id,
         "account_label": label,
+        "mode": mode,
         "market_total": len(market_goods),
         "db_tracked": len(tracked),
         "orphans": len(orphans),
+        "delete_target": len(targets),
         "dry_run": dry_run,
-        "orphan_sample": orphans[:20],
+        "target_sample": targets[:20],
     }
-    if dry_run or not orphans:
+    if dry_run or not targets:
         result["message"] = (
-            f"[{label}] ESM {len(market_goods)}개 중 삼바추적 {len(tracked)}개, "
-            f"유령/중복 {len(orphans)}개 (dry_run — 삭제 안 함)"
+            f"[{label}] {mode} — ESM {len(market_goods)}개, 삼바추적 {len(tracked)}개, "
+            f"삭제대상 {len(targets)}개 (dry_run — 삭제 안 함)"
         )
         return result
 
     deleted: list[str] = []
     failed: list[str] = []
-    for gno in orphans[:max_delete]:
+    for gno in targets[:max_delete]:
         r = await _stop_and_delete(client, gno)
         if r == "deleted":
             deleted.append(gno)
         else:
             failed.append(f"{gno}:{r}")
+
+    # 전체삭제 모드 + 이번 호출로 남은 대상을 모두 처리(배치 마지막)했으면,
+    # 삼바 추적(market_product_nos/registered_accounts)에서도 이 계정 제거 →
+    # 재전송 시 fresh CREATE 되도록 초기화.
+    reset_rows = 0
+    if wipe_all and len(targets) <= max_delete:
+        from sqlalchemy import text as _t
+
+        _rr = await session.execute(
+            _t(
+                "UPDATE samba_collected_product "
+                "SET market_product_nos = market_product_nos - :acct, "
+                "    registered_accounts = "
+                "        COALESCE(registered_accounts, '[]'::jsonb) - :acct "
+                "WHERE market_product_nos ? :acct"
+            ),
+            {"acct": account_id},
+        )
+        reset_rows = _rr.rowcount or 0
+        await session.commit()
+
     result["deleted"] = len(deleted)
     result["delete_failed"] = len(failed)
     result["failed_sample"] = failed[:10]
+    result["samba_tracking_reset_rows"] = reset_rows
     result["message"] = (
-        f"[{label}] 유령 {len(orphans)}개 중 {len(deleted)}개 삭제완료, "
-        f"실패 {len(failed)}개 (최대 {max_delete}개 처리)"
+        f"[{label}] {mode} — 대상 {len(targets)}개 중 {len(deleted)}개 삭제완료, "
+        f"실패 {len(failed)}개, 삼바추적 정리 {reset_rows}행 (최대 {max_delete}개 처리)"
     )
     logger.info(f"[esm_cleanup] {result['message']}")
     return result
