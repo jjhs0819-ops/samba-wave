@@ -552,7 +552,8 @@ async def ghost_summary(
             'lotteon_ghost_detected',
             'elevenst_missing_prdno_detected',
             'smartstore_ghost_detected',
-            'coupang_ghost_detected'
+            'coupang_ghost_detected',
+            'lottehome_ghost_detected'
         )
           AND created_at >= NOW() - (:h || ' hours')::interval
         ORDER BY created_at DESC

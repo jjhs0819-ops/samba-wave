@@ -1631,6 +1631,22 @@ async def _start_smartstore_ghost_reconciler() -> None:
     )
 
 
+_lottehome_ghost_reconciler_task: asyncio.Task | None = None
+
+
+async def _start_lottehome_ghost_reconciler() -> None:
+    """롯데홈쇼핑 유령상품 일일 자동 감지 잡 — 24시간 주기."""
+    global _lottehome_ghost_reconciler_task
+    from backend.domain.samba.proxy.lottehome_ghost_reconciler import (
+        ghost_reconciler_loop,
+    )
+
+    _lottehome_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 롯데홈쇼핑 유령상품 reconciler 시작"
+    )
+
+
 _coupang_ghost_reconciler_task: asyncio.Task | None = None
 _esmplus_ghost_reconciler_task: asyncio.Task | None = None
 _soldout_cleanup_task: asyncio.Task | None = None
@@ -2044,6 +2060,7 @@ async def lifespan(app: FastAPI):
         await _start_smartstore_ghost_reconciler()
         await _start_coupang_ghost_reconciler()
         await _start_esmplus_ghost_reconciler()
+        await _start_lottehome_ghost_reconciler()
         await _start_tracking_dispatch_sweep()
         await _start_soldout_cleanup()
         worker_runtime = WorkerRuntime(
