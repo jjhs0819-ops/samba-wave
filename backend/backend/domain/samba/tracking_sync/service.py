@@ -752,6 +752,10 @@ async def enqueue_pending_orders(
         if tenant_id:
             stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
         orders = (await session.execute(stmt)).scalars().all()
+        # [세션 분리 방지] 세션 밖 루프에서 order ORM 속성 접근 시 DetachedInstanceError
+        # (expire_on_commit로 세션 종료 후 refresh 불가) 발생 → 큐 적재 0건 회귀의 원인.
+        # 필요한 값(id, 소싱계정)을 세션 안에서 평문으로 미리 뽑아 루프에서 사용한다.
+        order_specs = [(o.id, (o.sourcing_account_id or "").strip()) for o in orders]
 
     # ── 계정 단위 로그인-실패 서킷브레이커 ──
     # 잠긴 소싱처 계정(예: SSG 보안잠금)으로 매 사이클 수백 주문이 재큐잉되면
@@ -792,14 +796,13 @@ async def enqueue_pending_orders(
             f"{sorted(_login_broken_accounts)}"
         )
 
-    for order in orders:
-        _oacc = (order.sourcing_account_id or "").strip()
+    for _o_id, _oacc in order_specs:
         if _oacc and _oacc in _login_broken_accounts:
             skipped += 1
             continue
         try:
             res = await enqueue_for_order(
-                order.id, force=force, owner_device_id=_resolved_owner
+                _o_id, force=force, owner_device_id=_resolved_owner
             )
             jid = res.get("jobId")
             if jid:
@@ -809,9 +812,9 @@ async def enqueue_pending_orders(
             elif res.get("success"):
                 queued += 1
             else:
-                errors.append(f"{order.id}: {res.get('error')}")
+                errors.append(f"{_o_id}: {res.get('error')}")
         except Exception as exc:
-            errors.append(f"{order.id}: {exc}")
+            errors.append(f"{_o_id}: {exc}")
 
     logger.info(
         f"[송장동기화] 일괄 적재 결과: queued={queued} skipped={skipped} "
