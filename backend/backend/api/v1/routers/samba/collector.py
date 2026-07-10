@@ -2442,25 +2442,37 @@ async def bulk_reset_registration(
         .all()
     )
 
+    # 계정 관련 키 전부 매칭: `{aid}` 정확일치 + `{aid}_*` 접미사(ESM _master/_site,
+    # 스마트스토어 _pid/_vid, _origin 등). 기존엔 aid/_origin 만 pop 해 ESM 의
+    # _master/_site 가 잔존 → "삼바가 여전히 등록됐다고 추적" + 재전송이 삭제된
+    # 리스팅을 UPDATE 시도해 실패하던 버그.
+    def _belongs(key: str) -> bool:
+        return any(key == aid or key.startswith(f"{aid}_") for aid in remove_set)
+
     reset = 0
     for product in rows:
         regs = list(product.registered_accounts or [])
         remaining = [aid for aid in regs if aid not in remove_set]
-        if len(remaining) == len(regs):
-            continue  # 변경 없음
-        product.registered_accounts = remaining or None
 
         nos = dict(product.market_product_nos or {})
-        for aid in remove_set:
-            nos.pop(aid, None)
-            nos.pop(f"{aid}_origin", None)
-        product.market_product_nos = nos or None
+        new_nos = {k: v for k, v in nos.items() if not _belongs(k)}
 
         # last_sent_data도 동일하게 정리 (issue #206 유령 등록상품 방지)
         sent = dict(product.last_sent_data or {})
-        for aid in remove_set:
-            sent.pop(aid, None)
-        product.last_sent_data = sent or None
+        new_sent = {k: v for k, v in sent.items() if not _belongs(k)}
+
+        # registered_accounts 뿐 아니라 market_product_nos/last_sent_data 중 하나라도
+        # 바뀌면 반영 — nanol06 처럼 registered_accounts 엔 없고 _master/_site 로만
+        # 추적되는 계정도 제거되도록 (기존 registered_accounts 게이트는 이를 스킵함).
+        if (
+            len(remaining) == len(regs)
+            and len(new_nos) == len(nos)
+            and len(new_sent) == len(sent)
+        ):
+            continue  # 변경 없음
+        product.registered_accounts = remaining or None
+        product.market_product_nos = new_nos or None
+        product.last_sent_data = new_sent or None
 
         if not remaining:
             product.status = "collected"
