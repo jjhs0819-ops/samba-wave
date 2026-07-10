@@ -642,8 +642,40 @@ class PlayAutoPlugin(MarketPlugin):
         client = PlayAutoClient(api_key)
         try:
             # 1단계: 재고 0으로 설정 (마켓 등록 전 상품은 soldout 불가이므로 선행 필요)
+            #
+            # EMP PATCH /prods 는 Price 와 Count 를 항상 함께 요구한다. Count 만 보내면
+            # EMP 가 요청을 거부해 재고가 내려가지 않고, 삼바에서 삭제된 뒤에도 마켓에
+            # 재고가 살아있는 "유령"이 발생한다(2026-07 대량 유령 정리의 근본 원인).
+            # → 현재 상품을 조회해 Price(및 옵션)를 확보한 뒤 Price+Count(+Opts) 로 전송.
             try:
-                await client.update_product([{"MasterCode": product_no, "Count": "0"}])
+                zero_payload: dict[str, Any] = {"MasterCode": product_no, "Count": "0"}
+                try:
+                    detail = await client.get_product(product_no)
+                    if isinstance(detail, dict):
+                        zero_payload["Price"] = str(detail.get("Price") or "0")
+                        opts = detail.get("Opts")
+                        if isinstance(opts, list) and opts:
+                            zeroed_opts = []
+                            for opt in opts:
+                                if isinstance(opt, dict):
+                                    zo = dict(opt)
+                                    zo["stock"] = "0"
+                                    zo["soldout"] = "1"
+                                    zeroed_opts.append(zo)
+                            if zeroed_opts:
+                                zero_payload["Opts"] = zeroed_opts
+                                if detail.get("OptSelectType"):
+                                    zero_payload["OptSelectType"] = detail[
+                                        "OptSelectType"
+                                    ]
+                except Exception as lookup_err:
+                    logger.warning(
+                        f"[플레이오토] 재고0 전 상품조회 실패(Price=0으로 진행): "
+                        f"{product_no} - {lookup_err}"
+                    )
+                    zero_payload.setdefault("Price", "0")
+                # UseNoEditSlave 기본(False) → 슬레이브(마켓별 상품)에도 재고0 전파
+                await client.update_product([zero_payload])
                 logger.info(f"[플레이오토] 재고 0 처리 완료: {product_no}")
             except Exception as e:
                 logger.warning(

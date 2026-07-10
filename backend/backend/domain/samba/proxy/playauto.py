@@ -228,9 +228,17 @@ class PlayAutoClient:
         return result if isinstance(result, list) else [result]
 
     async def get_product(self, master_code: str) -> dict:
-        """상품 한건 조회 (GET /prods)."""
-        url = f"{EMP_BASE_URL}/prods"
-        return await self._call_api("GET", url, params={"MasterCode": master_code})
+        """상품 한건 조회 (GET /prods/{MasterCode}).
+
+        EMP 단건 조회는 경로 파라미터 형식만 유효하다. 쿼리스트링
+        (`/prods?MasterCode=`)은 EMP 라우터가 404를 반환한다(실측 2026-07).
+        응답이 리스트로 오면 첫 항목을 반환한다.
+        """
+        url = f"{EMP_BASE_URL}/prods/{master_code}"
+        result = await self._call_api("GET", url)
+        if isinstance(result, list):
+            return result[0] if result else {}
+        return result
 
     async def get_products(self, my_cate_name: str = "") -> list[dict]:
         """상품 다중 조회 (GET /prods/info/lookupProd)."""
