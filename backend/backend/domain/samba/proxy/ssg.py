@@ -397,6 +397,33 @@ class SSGClient:
                         f"누락 {_added}개를 대표가={_base.get('sellprc')}로 통일"
                     )
 
+        # 소싱처에서 품절돼 DB 옵션에서 빠진 옵션을 SSG에서도 재고 0(품절)로 내린다.
+        # (원주문링크=C7만인데 판매링크=C7+C8 → 업데이트로 SSG C8도 품절 처리해 일치시킴)
+        # uitems에 남아있는 uitemId = DB 실제 옵션, uitem_id_map의 나머지 = 빠진 옵션.
+        if uitem_id_map:
+            _uitems_wrap = product_data.get("uitems")
+            if not isinstance(_uitems_wrap, dict):
+                _uitems_wrap = {"uitem": []}
+                product_data["uitems"] = _uitems_wrap
+            _ui = _uitems_wrap.get("uitem")
+            if isinstance(_ui, dict):
+                _ui = [_ui]
+            elif not isinstance(_ui, list):
+                _ui = []
+            _uitems_wrap["uitem"] = _ui
+            _ui_present = {str(u.get("uitemId", "")).strip() for u in _ui}
+            _soldout = 0
+            for _uid in uitem_id_map.values():
+                if _uid and _uid not in _ui_present:
+                    _ui.append(
+                        {"uitemId": _uid, "baseInvQty": 0, "useYn": "N"}
+                    )
+                    _soldout += 1
+            if _soldout:
+                logger.info(
+                    f"[SSG] 품절옵션 정리: DB에서 빠진 {_soldout}개 옵션을 재고0·미사용 처리"
+                )
+
         xml_body = '<?xml version="1.0" encoding="UTF-8"?>' + self._to_xml(
             product_data, "updateItem"
         )
