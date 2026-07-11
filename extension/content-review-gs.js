@@ -42,12 +42,11 @@
       const key = `${m[1]}-${m[2]}-${m[3]}`
       if (seen.has(key)) return
       seen.add(key)
-      const tr = a.closest('tr')
-      let hasReturnBtn = false
-      if (tr) {
-        hasReturnBtn = [...tr.querySelectorAll('a, button')].some(el => el.textContent.trim() === '반품교환신청')
-      }
-      if (hasReturnBtn) return // 구매확정 안 된 항목 스킵
+      // '리뷰쓰기'(goWriteReview) 링크는 GS가 리뷰 가능한(배송완료) 항목에만 노출하므로
+      // 링크 존재 자체가 작성 가능 신호다. 과거엔 같은 행의 '반품교환신청' 버튼으로
+      // "구매확정 전"이라 판단해 스킵했으나, GS는 배송완료 상품에 반품교환신청과
+      // 리뷰쓰기를 함께 노출한다. 그 스킵이 리뷰 가능한 항목을 전부 걸러 '작성 0건'을
+      // 유발하므로 제거한다. (실제 GS 주문목록: 링크 20개 = 반품교환신청 20개 = 전부 스킵됨)
       const writeUrl = `https://www.gsshop.com/knownew/estimate/estimateWrite.gs?save_root=myreview&prdid=${m[1]}&order_num=${m[2]}&lineNum=${m[3]}&onemmRevwYn=N`
       items.push(writeUrl)
     })
