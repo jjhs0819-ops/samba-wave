@@ -485,6 +485,177 @@ class DetailClientMixin:
             logger.debug(f"[LOTTEON] option/mapping 실패: {spd_no} — {e}")
         return None
 
+    def _build_benefit_body(
+        self,
+        basic: dict[str, Any],
+        spd_no: str,
+        sitm_no: str,
+        sl_prc: int,
+        py_mns_excp_lst: Optional[list[str]] = None,
+        discount_apply_product_list: Optional[list[dict[str, Any]]] = None,
+        price: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """benefits API 요청 바디 생성. 재계산(쿠폰발급 후 재호출) 시 타임스탬프 재생성 위해 분리.
+
+        마진율(sfcoPdMrgnRt 등)은 basicInfo가 아니라 priceInfo에 실려 온다 — 실측
+        확인(2026-07-10). basicInfo만 읽으면 0으로 떨어져 제휴할인/즉시할인이
+        통째로 계산에서 빠진다(note 함정③과 동일 증상).
+        """
+        _price = price or {}
+        return {
+            "spdNo": spd_no,
+            "sitmNo": sitm_no,
+            "slPrc": sl_prc,
+            "slQty": 1,
+            "trGrpCd": str(basic.get("trGrpCd", "") or "LE"),
+            "trNo": str(basic.get("trNo", "") or ""),
+            "lrtrNo": str(basic.get("lrtrNo", "") or ""),
+            "brdNo": str(basic.get("brdNo", "") or ""),
+            "scatNo": str(basic.get("scatNo", "") or ""),
+            "strCd": str(basic.get("strCd", "") or ""),
+            # 채널 정보 — PC 웹 고정값 (basicInfo에 없을 수 있음)
+            "chCsfCd": str(basic.get("chCsfCd", "") or "PA"),
+            "chDtlNo": str(basic.get("chDtlNo", "") or "1025188"),
+            "chNo": str(basic.get("chNo", "") or "100994"),
+            "chTypCd": str(basic.get("chTypCd", "") or "PA07"),
+            "ctrtTypCd": str(basic.get("ctrtTypCd", "") or "A"),
+            "afflPdMrgnRt": _price.get("afflMrgnRt", basic.get("afflPdMrgnRt")),
+            "afflPdLwstMrgnRt": _price.get(
+                "afflLwstMrgnRt", basic.get("afflPdLwstMrgnRt")
+            ),
+            "sfcoPdMrgnRt": _price.get("sfcoPdMrgnRt", basic.get("sfcoPdMrgnRt", 0))
+            or 0,
+            "sfcoPdLwstMrgnRt": _price.get(
+                "sfcoPdLwstMrgnRt", basic.get("sfcoPdLwstMrgnRt", 0)
+            )
+            or 0,
+            "pcsLwstMrgnRt": _price.get("pcsLwstMrgnRt", basic.get("pcsLwstMrgnRt", 0))
+            or 0,
+            "dmstOvsDvDvsCd": str(basic.get("dmstOvsDvDvsCd", "") or "DMST"),
+            "dvPdTypCd": str(basic.get("dvPdTypCd", "") or "GNRL"),
+            "dvCst": self._safe_int(basic.get("dvCst", 0)),  # type: ignore[attr-defined]
+            "dvCstStdQty": self._safe_int(basic.get("dvCstStdQty", 0)),  # type: ignore[attr-defined]
+            "stkMgtYn": str(basic.get("stkMgtYn", "") or "Y"),
+            "thdyPdYn": str(basic.get("thdyPdYn", "") or "N"),
+            "fprdDvPdYn": str(basic.get("fprdDvPdYn", "") or "N"),
+            "mallNo": str(basic.get("mallNo", "") or "1"),
+            "cartDvsCd": "01",
+            "infwMdiaCd": "PC",
+            "screenType": "PRODUCT",
+            "maxPurQty": 999999,
+            "aplyBestPrcChk": "Y",
+            "aplyStdDttm": datetime.now().strftime("%Y%m%d%H%M%S"),
+            "pyMnsExcpLst": py_mns_excp_lst or [],
+            "discountApplyProductList": discount_apply_product_list or [],
+        }
+
+    async def _fetch_qty_change_discounts(
+        self, client: httpx.AsyncClient, body: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        """qtyChangeFavorInfoList API — 상품할인/채널할인(제휴할인)/카드즉시할인 등
+        쿠폰이 아닌 자동 적용 할인 목록 조회.
+
+        VIP/이벤트 상품(fboxBtnEpsrCd=NON_EPSR)은 이 할인들이 benefits API 자체
+        discountGroups에 안 뜬다 — benefits 호출 시 discountApplyProductList로
+        명시 주입해야 반영된다(실측: 브라우저 네트워크 캡처로 확인, 2026-07-10).
+        """
+        url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/qtyChangeFavorInfoList"
+        _headers = {
+            **self.HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://www.lotteon.com",
+        }
+        if _lotteon_cookie_cache:
+            _headers["Cookie"] = _lotteon_cookie_cache
+        try:
+            resp = await client.post(url, json=body, headers=_headers)
+            if resp.status_code != 200:
+                return []
+            result = resp.json()
+            if str(result.get("returnCode")) != "200":
+                return []
+            data = result.get("data") or {}
+            return data.get("discountApplyProductList") or []
+        except Exception as e:
+            logger.debug(f"[LOTTEON] qtyChangeFavorInfoList 실패: {e}")
+            return []
+
+    async def _post_benefits(
+        self, client: httpx.AsyncClient, body: dict[str, Any], spd_no: str
+    ) -> Optional[dict[str, Any]]:
+        """favorBox/benefits API POST 1콜 실행. 실패 시 None."""
+        url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/favorBox/benefits"
+        _benefit_headers = {
+            **self.HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://www.lotteon.com",
+        }
+        if _lotteon_cookie_cache:
+            _benefit_headers["Cookie"] = _lotteon_cookie_cache
+        resp = await client.post(url, json=body, headers=_benefit_headers)
+        if resp.status_code != 200:
+            logger.warning(
+                f"[LOTTEON] benefits API HTTP {resp.status_code}: {resp.text[:200]}"
+            )
+            return None
+        result = resp.json()
+        if str(result.get("returnCode")) != "200":
+            logger.warning(
+                f"[LOTTEON] benefits API 실패: {result.get('message', '')[:100]}"
+            )
+            return None
+        return result.get("data") or {}
+
+    async def _issue_download_coupons(
+        self, client: httpx.AsyncClient, cpn_nos: list[str]
+    ) -> bool:
+        """미발급 다운로드 쿠폰(CPN_OVR_CPN) 일괄 발급.
+
+        발급 안 하면 benefits 응답이 "받기 전" 값(과대 원가)으로 나온다 —
+        화면의 "쿠폰받고 최대할인 적용" 체크박스와 동일한 효과를 API로 재현.
+        """
+        url = f"{self.PBF_BASE}/promotion/v2/cart/orderFavorBox/updateCouponFullDownloadProcess"
+        _headers = {
+            **self.HEADERS,
+            "Accept": "application/json, text/plain, */*",
+            "Content-Type": "application/json",
+            "Origin": "https://www.lotteon.com",
+        }
+        if _lotteon_cookie_cache:
+            _headers["Cookie"] = _lotteon_cookie_cache
+        try:
+            resp = await client.post(
+                url,
+                json={
+                    "cpnNos": cpn_nos,
+                    "aplyStdDttm": datetime.now().strftime("%Y%m%d%H%M%S"),
+                    "apiDvsCd": "FB_PD",
+                },
+                headers=_headers,
+            )
+            return resp.status_code == 200
+        except Exception as e:
+            logger.debug(f"[LOTTEON] 쿠폰 발급 실패: {cpn_nos} — {e}")
+            return False
+
+    @staticmethod
+    def _find_unissued_download_coupons(data: dict[str, Any]) -> list[str]:
+        """discountGroups에서 미발급 다운로드 쿠폰(downloadYn=Y, issYn=N) cpnNo 수집."""
+        cpn_nos: list[str] = []
+        for _group in data.get("discountGroups") or []:
+            for _pr in _group.get("discountApplyPromotionList") or []:
+                _coupon = _pr.get("couponInfo") or {}
+                _cpn_no = _coupon.get("cpnNo")
+                if (
+                    _cpn_no
+                    and str(_coupon.get("downloadYn", "")).upper() == "Y"
+                    and str(_coupon.get("issYn", "")).upper() == "N"
+                ):
+                    cpn_nos.append(_cpn_no)
+        return cpn_nos
+
     async def fetch_benefit_price(
         self,
         pbf_data: dict[str, Any],
@@ -492,6 +663,10 @@ class DetailClientMixin:
         sitm_no: str = "",
     ) -> Optional[int]:
         """favorBox/benefits API로 최대혜택가(totAmt) 조회.
+
+        미발급 다운로드 쿠폰이 있으면 API로 직접 발급 후 재계산한다 — 화면의
+        "쿠폰받고 최대할인 적용" 체크박스와 동일한 값을 얻기 위함. 쿠폰 발급 없이
+        읽으면 "나의 혜택가"(받기 전) 값이라 원가가 과대 계산된다.
 
         Returns:
           최대혜택가(int) 또는 None (실패 시)
@@ -510,47 +685,6 @@ class DetailClientMixin:
         # 매 상품마다 200+키 sorted+INFO 로깅은 단일 워커 로그 부하 → debug 로 강등
         logger.debug(f"[LOTTEON] benefits API basicInfo keys: {sorted(basic.keys())}")
 
-        body = {
-            "spdNo": spd_no,
-            "sitmNo": sitm_no,
-            "slPrc": sl_prc,
-            "slQty": 1,
-            "trGrpCd": str(basic.get("trGrpCd", "") or "LE"),
-            "trNo": str(basic.get("trNo", "") or ""),
-            "lrtrNo": str(basic.get("lrtrNo", "") or ""),
-            "brdNo": str(basic.get("brdNo", "") or ""),
-            "scatNo": str(basic.get("scatNo", "") or ""),
-            "strCd": str(basic.get("strCd", "") or ""),
-            # 채널 정보 — PC 웹 고정값 (basicInfo에 없을 수 있음)
-            "chCsfCd": str(basic.get("chCsfCd", "") or "PA"),
-            "chDtlNo": str(basic.get("chDtlNo", "") or "1025188"),
-            "chNo": str(basic.get("chNo", "") or "100994"),
-            "chTypCd": str(basic.get("chTypCd", "") or "PA07"),
-            "ctrtTypCd": str(basic.get("ctrtTypCd", "") or "A"),
-            "afflPdMrgnRt": basic.get("afflPdMrgnRt"),
-            "afflPdLwstMrgnRt": basic.get("afflPdLwstMrgnRt"),
-            "sfcoPdMrgnRt": self._safe_int(basic.get("sfcoPdMrgnRt", 0)),  # type: ignore[attr-defined]
-            "sfcoPdLwstMrgnRt": self._safe_int(basic.get("sfcoPdLwstMrgnRt", 0)),  # type: ignore[attr-defined]
-            "pcsLwstMrgnRt": self._safe_int(basic.get("pcsLwstMrgnRt", 0)),  # type: ignore[attr-defined]
-            "dmstOvsDvDvsCd": str(basic.get("dmstOvsDvDvsCd", "") or "DMST"),
-            "dvPdTypCd": str(basic.get("dvPdTypCd", "") or "GNRL"),
-            "dvCst": self._safe_int(basic.get("dvCst", 0)),  # type: ignore[attr-defined]
-            "dvCstStdQty": self._safe_int(basic.get("dvCstStdQty", 0)),  # type: ignore[attr-defined]
-            "stkMgtYn": str(basic.get("stkMgtYn", "") or "Y"),
-            "thdyPdYn": str(basic.get("thdyPdYn", "") or "N"),
-            "fprdDvPdYn": str(basic.get("fprdDvPdYn", "") or "N"),
-            "mallNo": str(basic.get("mallNo", "") or "1"),
-            "cartDvsCd": "01",
-            "infwMdiaCd": "PC",
-            "screenType": "PRODUCT",
-            "maxPurQty": 999999,
-            "aplyBestPrcChk": "Y",
-            "aplyStdDttm": datetime.now().strftime("%Y%m%d%H%M%S"),
-            "pyMnsExcpLst": [],
-            "discountApplyProductList": [],
-        }
-
-        url = f"{self.PBF_BASE}/product/v2/extlmsa/promotion/favorBox/benefits"
         _cookie_len = (
             len(_lotteon_cookie_cache.split(";")) if _lotteon_cookie_cache else 0
         )
@@ -561,31 +695,66 @@ class DetailClientMixin:
         )
         try:
             client = await self._get_pbf_client()
-            _benefit_headers = {
-                **self.HEADERS,
-                "Accept": "application/json, text/plain, */*",
-                "Content-Type": "application/json",
-                "Origin": "https://www.lotteon.com",
-            }
+
+            body = self._build_benefit_body(basic, spd_no, sitm_no, sl_prc, price=price)
+            data = await self._post_benefits(client, body, spd_no)
+            if data is None:
+                return None
+
+            # NON_EPSR 케이스: benefits API가 discountGroups를 아예 비워서 반환하는 상품
+            # (VIP/이벤트 상품쿠폰 등 — fboxBtnEpsrCd=NON_EPSR, 실측 확인). 이런 상품은
+            # 상품할인/제휴할인/카드즉시할인이 benefits 자체 계산에 안 잡히고
+            # qtyChangeFavorInfoList로 먼저 조회해 discountApplyProductList로 명시
+            # 주입해야 계산된다. discountGroups가 이미 있는(정상 계산되는) 상품은
+            # 검증된 기존 흐름을 그대로 두고 이 보정을 건너뛴다(불필요한 값 변동 방지).
+            _qty_discounts: list[dict[str, Any]] = []
+            if not data.get("discountGroups"):
+                _qty_body = self._build_benefit_body(
+                    basic, spd_no, sitm_no, sl_prc, price=price
+                )
+                _qty_discounts = await self._fetch_qty_change_discounts(
+                    client, _qty_body
+                )
+                if _qty_discounts:
+                    _rebody = self._build_benefit_body(
+                        basic,
+                        spd_no,
+                        sitm_no,
+                        sl_prc,
+                        discount_apply_product_list=_qty_discounts,
+                        price=price,
+                    )
+                    _redata = await self._post_benefits(client, _rebody, spd_no)
+                    if _redata is not None:
+                        logger.info(
+                            f"[LOTTEON] NON_EPSR 보정(qtyChangeFavorInfoList): {spd_no} → "
+                            f"totAmt {data.get('totAmt')} → {_redata.get('totAmt')}"
+                        )
+                        data = _redata
+
+            # 미발급 다운로드 쿠폰 발급 → 재계산 (쿠키 있을 때만 — 로그인 세션 필요)
             if _lotteon_cookie_cache:
-                _benefit_headers["Cookie"] = _lotteon_cookie_cache
-            resp = await client.post(
-                url,
-                json=body,
-                headers=_benefit_headers,
-            )
-            if resp.status_code != 200:
-                logger.warning(
-                    f"[LOTTEON] benefits API HTTP {resp.status_code}: {resp.text[:200]}"
-                )
-                return None
-            result = resp.json()
-            if str(result.get("returnCode")) != "200":
-                logger.warning(
-                    f"[LOTTEON] benefits API 실패: {result.get('message', '')[:100]}"
-                )
-                return None
-            data = result.get("data") or {}
+                _unissued = self._find_unissued_download_coupons(data)
+                if _unissued:
+                    _issued_ok = await self._issue_download_coupons(client, _unissued)
+                    if _issued_ok:
+                        _rebody = self._build_benefit_body(
+                            basic,
+                            spd_no,
+                            sitm_no,
+                            sl_prc,
+                            discount_apply_product_list=_qty_discounts,
+                            price=price,
+                        )
+                        _redata = await self._post_benefits(client, _rebody, spd_no)
+                        if _redata is not None:
+                            logger.info(
+                                f"[LOTTEON] 쿠폰 발급 후 재계산: {spd_no} → "
+                                f"{len(_unissued)}건 발급, "
+                                f"totAmt {data.get('totAmt')} → {_redata.get('totAmt')}"
+                            )
+                            data = _redata
+
             tot_amt = data.get("totAmt")
             if tot_amt is not None and float(tot_amt) > 0:
                 benefit = int(float(tot_amt))

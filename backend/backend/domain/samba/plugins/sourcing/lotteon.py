@@ -229,22 +229,28 @@ class LotteonSourcingPlugin(SourcingPlugin):
         # spdNo 추출 (sitmNo: LE1220771485_1325086305 → spdNo: LE1220771485)
         _spd = sitm_no.split("_")[0] if "_" in sitm_no else sitm_no
 
-        # 최대혜택가는 확장앱 DOM에서만 수집 — benefits API 사용 안 함
-
-        opt_stock = await client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no)
+        # 최대혜택가 — benefits API(쿠폰 발급+재계산 포함)를 주 소스로 사용.
+        # 2026-05-01 DOM 전용 회귀(34cd0fb5)는 당시 benefits API가 쿠폰 미발급 상태값을
+        # 반환하던 버그 때문이었음 — fetch_benefit_price에 쿠폰 자동발급+재계산+
+        # NON_EPSR(qtyChangeFavorInfoList) 보정을 추가해 근본 수정(2026-07-10).
+        benefit, opt_stock = await asyncio.gather(
+            client.fetch_benefit_price(pbf, spd_no=_spd, sitm_no=sitm_no),
+            client.fetch_option_stock(pbf, spd_no=_spd, sitm_no=sitm_no),
+        )
+        if benefit and benefit > 0:
+            detail["bestBenefitPrice"] = benefit
         if opt_stock:
             detail["options"] = opt_stock
             detail["_option_stock_live"] = True
 
-        # 옵션 가격을 판매가로 보정 (sl_prc 정가 대신)
-        _eff_price = detail.get("salePrice") or 0
+        # 옵션 가격을 혜택가/판매가로 보정 (sl_prc 정가 대신)
+        _eff_price = detail.get("bestBenefitPrice") or detail.get("salePrice") or 0
         if _eff_price > 0 and detail.get("options"):
             for _opt in detail["options"]:
                 _opt["price"] = _eff_price
 
-        # pbf-only 빠른경로는 best_benefit_price 미수집 → 항상 price_uncertain
-        # 오토튠이 cost 갱신 및 전송 보류 (정가 폴백 차단)
-        detail["price_uncertain"] = True
+        # API(benefits/즉시할인) 둘 다로도 가격을 못 얻은 경우만 불확실 처리
+        detail["price_uncertain"] = not detail.get("bestBenefitPrice")
         return detail
 
     def _parse_pbf_to_detail(self, pbf: dict) -> dict:
@@ -565,63 +571,72 @@ class LotteonSourcingPlugin(SourcingPlugin):
             )
 
         # ── DOM 재고 병합 (설계문서 §3.5) — 지점 단위 pbf 재고 이슈 해소 ──
-        # 확장앱이 롯데ON PDP를 열어 사이즈별 실재고(판매자 지점 기준)를 추출해
-        # pbf 옵션 리스트의 stock을 덮어쓴다. 미연결/타임아웃/파싱 실패 시 pbf 값 유지.
-        # ── DOM 위임 필수 — 최대혜택가/실재고는 DOM에서만 수집 가능 ──
+        # 확장앱/데몬이 롯데ON PDP를 열어 사이즈별 실재고(판매자 지점 기준)를 추출해
+        # pbf 옵션 리스트의 stock을 덮어쓴다.
+        # ── 혜택가 주 소스는 benefits API(위에서 이미 계산됨, 2026-07-10부터) ──
+        # API 가격 확보 성공 시 데몬 호출 자체를 생략한다 — "주 소스로 전환"만 하고
+        # 매 사이클 데몬 응답을 여전히 기다리면 속도 개선이 전혀 없음(실측 지적).
+        # 재고는 pbf option/mapping API(fetch_option_stock, 위에서 이미 반영됨) 값 사용 —
+        # 지점별 실재고 정밀도는 DOM 대비 약간 낮을 수 있음. API 실패 시에만 데몬 대기.
         dom_ext: dict | None = None
-        from backend.core.config import settings
-        from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
+        _api_price_ok = bool(detail.get("bestBenefitPrice"))
 
-        # 헤드리스 데몬 라우팅 — 환경변수의 데몬 풀에서 round-robin 으로 1개 선택.
-        # autotune_daemon_device_ids (콤마 구분) 가 우선, 비어있으면 하위호환으로
-        # autotune_daemon_device_id (단수) 사용. 둘 다 비어있으면 기존 확장앱 흐름.
-        _route_owner: str | None = _pick_autotune_daemon_owner(settings)
+        if not _api_price_ok:
+            from backend.core.config import settings
+            from backend.domain.samba.proxy.sourcing_queue import SourcingQueue
 
-        try:
-            _dom_req, _dom_fut = SourcingQueue.add_detail_job(
-                "LOTTEON", site_product_id, owner_device_id=_route_owner
-            )
-            dom_ext = await asyncio.wait_for(_dom_fut, timeout=60)
-            if isinstance(dom_ext, dict) and dom_ext.get("login_required"):
-                _reason = (
-                    "창 미오픈"
-                    if dom_ext.get("gate_blocked")
-                    else "비로그인 확정(#memInfo 없음)"
+            # 헤드리스 데몬 라우팅 — 환경변수의 데몬 풀에서 round-robin 으로 1개 선택.
+            # autotune_daemon_device_ids (콤마 구분) 가 우선, 비어있으면 하위호환으로
+            # autotune_daemon_device_id (단수) 사용. 둘 다 비어있으면 기존 확장앱 흐름.
+            _route_owner: str | None = _pick_autotune_daemon_owner(settings)
+
+            try:
+                _dom_req, _dom_fut = SourcingQueue.add_detail_job(
+                    "LOTTEON", site_product_id, owner_device_id=_route_owner
                 )
-                logger.warning(f"[LOTTEON] {_reason} → 갱신 차단: {site_product_id}")
-                return RefreshResult(
-                    product_id=product_id,
-                    error=f"LOTTEON {_reason} — 갱신 차단",
-                )
-            # 매장픽업 전용 상품 — 배송 불가, 수집 부적합 → 마켓 자동 삭제 처리
-            # 사용자 검증(LE1216449916): "매장픽업 전용 롯데백화점" 표기, 배송비 0,
-            # 일반 배송으로 위장 수집 시 cost에 임의 배송비 가산 + 주문 받아도 발송 불가.
-            if isinstance(dom_ext, dict) and dom_ext.get("store_pickup_only"):
-                logger.warning(
-                    f"[LOTTEON] 매장픽업 전용 상품 감지 → 마켓 삭제 처리: {site_product_id}"
-                )
-                return RefreshResult(
-                    product_id=product_id,
-                    new_sale_status="sold_out",
-                    changed=True,
-                    deleted_from_source=True,
-                )
-            if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
+                dom_ext = await asyncio.wait_for(_dom_fut, timeout=60)
+                if isinstance(dom_ext, dict) and dom_ext.get("login_required"):
+                    _reason = (
+                        "창 미오픈"
+                        if dom_ext.get("gate_blocked")
+                        else "비로그인 확정(#memInfo 없음)"
+                    )
+                    logger.warning(
+                        f"[LOTTEON] {_reason} → 갱신 차단: {site_product_id}"
+                    )
+                    return RefreshResult(
+                        product_id=product_id,
+                        error=f"LOTTEON {_reason} — 갱신 차단",
+                    )
+                # 매장픽업 전용 상품 — 배송 불가, 수집 부적합 → 마켓 자동 삭제 처리
+                # 사용자 검증(LE1216449916): "매장픽업 전용 롯데백화점" 표기, 배송비 0,
+                # 일반 배송으로 위장 수집 시 cost에 임의 배송비 가산 + 주문 받아도 발송 불가.
+                if isinstance(dom_ext, dict) and dom_ext.get("store_pickup_only"):
+                    logger.warning(
+                        f"[LOTTEON] 매장픽업 전용 상품 감지 → 마켓 삭제 처리: {site_product_id}"
+                    )
+                    return RefreshResult(
+                        product_id=product_id,
+                        new_sale_status="sold_out",
+                        changed=True,
+                        deleted_from_source=True,
+                    )
+                if not (isinstance(dom_ext, dict) and dom_ext.get("success")):
+                    dom_ext = None
+            except asyncio.TimeoutError:
                 dom_ext = None
-        except asyncio.TimeoutError:
-            logger.warning(
-                f"[LOTTEON] 데몬 미응답(60s, DOM위임) → 갱신 차단: {site_product_id}"
-            )
-            return RefreshResult(
-                product_id=product_id,
-                error="LOTTEON 데몬 미응답 (60s 타임아웃, DOM위임) — 갱신 차단",
-            )
-        except Exception as _dom_err:
-            # dom_ext 는 None 유지 → 하단 else 분기에서 price_uncertain=True 처리됨.
-            # 데몬 미등록(RuntimeError) 등 원인 가시성 확보를 위해 warning 으로 노출.
-            logger.warning(
-                f"[LOTTEON] DOM 위임 실패 → 가격 불확실 처리: {site_product_id} — {_dom_err}"
-            )
+                logger.warning(
+                    f"[LOTTEON] 데몬 미응답(60s) → 갱신 차단(API 가격도 없음): {site_product_id}"
+                )
+                return RefreshResult(
+                    product_id=product_id,
+                    error="LOTTEON 데몬 미응답 (60s 타임아웃) — 갱신 차단",
+                )
+            except Exception as _dom_err:
+                dom_ext = None
+                logger.warning(
+                    f"[LOTTEON] DOM 위임 실패: {site_product_id} — {_dom_err}"
+                )
 
         if dom_ext and dom_ext.get("options") and detail.get("options"):
             _changes = _merge_dom_stock(detail["options"], dom_ext["options"])
@@ -633,25 +648,29 @@ class LotteonSourcingPlugin(SourcingPlugin):
             if any(_safe_stock(o.get("stock")) > 0 for o in detail["options"]):
                 detail["_option_stock_live"] = True
 
-        # DOM에서 직접 파싱한 "나의 혜택가" — 유일한 혜택가 출처
-        # 추출 실패(DOM 미연결/혜택가 0) 시 price_uncertain=True 마킹 → 오토튠이 cost 갱신 및 전송 보류
-        if dom_ext:
+        # 혜택가: benefits API가 주 소스 — 이미 값이 있으면 그대로 유지.
+        # API가 실패한 경우에만 DOM 파싱값으로 폴백(구 동작 보존).
+        if _api_price_ok:
+            detail["price_uncertain"] = False
+        elif dom_ext:
             _dom_benefit = dom_ext.get("best_benefit_price") or 0
             if _dom_benefit > 0:
                 detail["bestBenefitPrice"] = _dom_benefit
+                detail["price_uncertain"] = False
                 logger.info(
-                    f"[LOTTEON] DOM 혜택가 적용: {site_product_id} → {_dom_benefit:,}원"
+                    f"[LOTTEON] DOM 혜택가 폴백 적용: {site_product_id} → "
+                    f"{_dom_benefit:,}원 (API 실패)"
                 )
             else:
                 detail["price_uncertain"] = True
                 logger.warning(
-                    f"[LOTTEON][가격불확실] DOM 혜택가 추출 실패: {site_product_id} "
+                    f"[LOTTEON][가격불확실] API·DOM 둘 다 혜택가 없음: {site_product_id} "
                     f"→ cost 갱신 및 전송 보류"
                 )
         else:
             detail["price_uncertain"] = True
             logger.warning(
-                f"[LOTTEON][가격불확실] DOM 미응답: {site_product_id} → cost 갱신 및 전송 보류"
+                f"[LOTTEON][가격불확실] API 실패 + DOM 미응답: {site_product_id} → cost 갱신 및 전송 보류"
             )
 
         if dom_ext:

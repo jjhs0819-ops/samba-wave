@@ -1386,15 +1386,20 @@ async def _site_autotune_loop(device_id: str, site: str):
                     await asyncio.sleep(30)
                     continue
 
-                # 데몬 전용 사이트(SSG/ABC/GrandStage/LOTTEON)는 살아있는 데몬이 없으면
+                # 데몬 전용 사이트(SSG/ABC/GrandStage)는 살아있는 데몬이 없으면
                 # 잡 발행이 전건 "데몬 미등록"으로 즉시 실패 → 진행 카운터 헛증가 + 로그 폭주.
                 # 살아있는 데몬 없으면 SELECT/배치/발행 전부 스킵하고 대기. 데몬 복구 시 재개.
                 # (idx 보존 — 데몬 복귀하면 멈췄던 진행 순번부터 이어감)
+                # LOTTEON 제외(2026-07-10): refresh()가 benefits API(쿠폰발급+재계산)를
+                # 주 소스로 쓰도록 전환 — 데몬은 재고보정/로그인체크 보조로만 쓰고
+                # 미등록이어도 refresh() 자체가 API 가격으로 정상 동작함
+                # (plugins/sourcing/lotteon.py::refresh 참조). cancel_order 잡 라우팅에
+                # 이미 있는 "LOTTEON만 예외" 패턴과 동일.
                 from backend.domain.samba.proxy.sourcing_queue import (
                     DAEMON_ONLY_SITES,
                 )
 
-                if site in DAEMON_ONLY_SITES:
+                if site in (DAEMON_ONLY_SITES - {"LOTTEON"}):
                     from backend.domain.samba.proxy.daemon_pool import (
                         pick_daemon_owner,
                     )
