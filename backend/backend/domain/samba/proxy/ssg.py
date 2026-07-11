@@ -289,6 +289,10 @@ class SSGClient:
         # updateItem에서는 tempUitemId 대신 실제 uitemId를 사용해야 SSG가 옵션 가격을 인식.
         # sales-status API로 현재 uitemId 목록 조회 → 등록 순서(tempUitemId 1,2,3...)와 매핑.
         uitem_id_map: dict[str, str] = {}
+        # SSG에 등록된 전체 uitemId 집합(교정과 무관하게 보존) — 커버보강/품절정리가
+        # '누락/품절 옵션'을 정확히 판별하는 기준. uitem_id_map은 옵션명 교정으로 값이
+        # 바뀌어 SSG 옵션 일부가 유실될 수 있으므로 집합은 별도로 둔다.
+        ssg_all_uids: list[str] = []
         try:
             status_resp = await self.get_item_sales_status(item_id)
             option_invs = (
@@ -302,6 +306,7 @@ class SSGClient:
                 uid = str(inv.get("uitemId", "")).strip()
                 if uid:
                     uitem_id_map[str(idx)] = uid
+                    ssg_all_uids.append(uid)
             if uitem_id_map:
                 logger.info(
                     f"[SSG] uitemId 매핑 완료 ({len(uitem_id_map)}개): {uitem_id_map}"
@@ -408,7 +413,7 @@ class SSGClient:
         # 재전송이 일부 옵션만 새 가격으로 갱신 → 나머지 옵션이 옛 가격으로 남는다.
         # 그러면 SSG의 '대표가격 == 옵션최저가' 제약 위반 → updateItem 전체 거부
         # (가격+재고 모두 미반영). SSG 모든 uitemId를 대표가로 통일해 등식을 만족시킨다.
-        if uitem_id_map and isinstance(product_data.get("salesPrcInfos"), dict):
+        if ssg_all_uids and isinstance(product_data.get("salesPrcInfos"), dict):
             _sp = product_data["salesPrcInfos"].get("uitemPrc", [])
             if isinstance(_sp, dict):
                 _sp = [_sp]
@@ -426,7 +431,7 @@ class SSGClient:
                 _plural["uitemPrc"] = _items
                 _present = {str(it.get("uitemId", "")).strip() for it in _items}
                 _added = 0
-                for _uid in uitem_id_map.values():
+                for _uid in ssg_all_uids:
                     if _uid and _uid not in _present:
                         _items.append(
                             {
@@ -439,14 +444,14 @@ class SSGClient:
                         _added += 1
                 if _added:
                     logger.info(
-                        f"[SSG] 옵션 커버 보강: SSG {len(uitem_id_map)}개 옵션 중 "
+                        f"[SSG] 옵션 커버 보강: SSG {len(ssg_all_uids)}개 옵션 중 "
                         f"누락 {_added}개를 대표가={_base.get('sellprc')}로 통일"
                     )
 
         # 소싱처에서 품절돼 DB 옵션에서 빠진 옵션을 SSG에서도 재고 0(품절)로 내린다.
         # (원주문링크=C7만인데 판매링크=C7+C8 → 업데이트로 SSG C8도 품절 처리해 일치시킴)
         # uitems에 남아있는 uitemId = DB 실제 옵션, uitem_id_map의 나머지 = 빠진 옵션.
-        if uitem_id_map:
+        if ssg_all_uids:
             _uitems_wrap = product_data.get("uitems")
             if not isinstance(_uitems_wrap, dict):
                 _uitems_wrap = {"uitem": []}
@@ -459,7 +464,7 @@ class SSGClient:
             _uitems_wrap["uitem"] = _ui
             _ui_present = {str(u.get("uitemId", "")).strip() for u in _ui}
             _soldout = 0
-            for _uid in uitem_id_map.values():
+            for _uid in ssg_all_uids:
                 if _uid and _uid not in _ui_present:
                     _ui.append(
                         {"uitemId": _uid, "baseInvQty": 0, "useYn": "N"}
