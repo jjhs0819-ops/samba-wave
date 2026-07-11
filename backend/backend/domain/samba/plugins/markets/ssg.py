@@ -361,7 +361,36 @@ class SSGPlugin(MarketPlugin):
                             f"[SSG] SSG.COM(6005) 전시카테고리 유사도 선택: {main_category_id} "
                             f"({_best_path!r}, 후보 {len(main_cat_candidates)}개)"
                         )
-                    else:
+                    if not main_category_id:
+                        # 6005 검색 결과 없음/부적합 → 신발·샌들 계열 leaf명/경로 키워드로
+                        # 6005 전시카테고리 직접 매핑(fallback). 매핑 코드는 6005 실측 확인값.
+                        # "메인매장 카테고리 필수" 거부로 self-heal도 못 채우던 신발 카테고리
+                        # (런닝화/샌들/스포츠신발/등산화 등)를 처음부터 채운다.
+                        _fb_src = f"{leaf_name} {path_6004}"
+                        _FB_6005 = [
+                            ("런닝화", "6000200591"),
+                            ("워킹화", "6000200591"),
+                            ("등산화", "6000204830"),
+                            ("트레킹", "6000204830"),
+                            ("트래킹", "6000204830"),
+                            ("스포츠신발", "6000204826"),
+                            ("샌들", "6000204965"),
+                            ("슬리퍼", "6000204965"),
+                            ("운동화", "6000200209"),
+                            ("스니커즈", "6000200209"),
+                            ("스포츠화", "6000204970"),
+                            ("신발", "6000204970"),
+                        ]
+                        for _kw, _cid in _FB_6005:
+                            if _kw in _fb_src:
+                                main_category_id = _cid
+                                main_cat_candidates = [_cid]
+                                logger.info(
+                                    f"[SSG] 6005 fallback 매핑: '{_kw}'→{_cid} "
+                                    f"(원경로={_fb_src.strip()!r})"
+                                )
+                                break
+                    if not main_category_id:
                         logger.warning(
                             f"[SSG] SSG.COM(6005) '{leaf_name}' 검색 결과 없음"
                         )
@@ -395,6 +424,13 @@ class SSGPlugin(MarketPlugin):
                     )
             except Exception as _e:
                 logger.warning(f"[SSG] 기존 6005 카테고리 보존 조회 실패(무시): {_e}")
+
+            # 기존 6005도 없는 수정건 → 6005 조회+fallback 매핑 1회 수행.
+            # 경량 수정(skip_image)은 위에서 _lookup_6005_main_cat 을 건너뛰므로,
+            # 기존 등록에 6005가 없으면 "메인매장 카테고리 필수" 로 계속 거부됐다
+            # (self-heal 은 신규등록 전용이라 수정건은 못 잡음). 여기서 1회 채운다.
+            if not main_category_id and category_id and _ssg_com_enabled:
+                await _lookup_6005_main_cat()
 
         # 무신사 등 referer 차단 CDN URL을 R2로 미러링
         # — SSG는 등록 URL을 자체 서버가 fetch하므로 핫링크 차단 시 워터마크 이미지로 캐싱됨
