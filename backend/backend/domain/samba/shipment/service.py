@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import time
 from datetime import UTC, datetime
@@ -204,8 +205,6 @@ _group_locks: dict[str, asyncio.Lock] = {}
 # 상품별 전송 락 — 동일 상품+동일 계정 조합 중복 전송 방지
 _transmitting_products: set[tuple] = set()
 
-# 계정별 세마포어 — API Rate Limit 방지 (계정당 동시 1건)
-_account_semaphores: dict[str, asyncio.Semaphore] = {}
 
 # 전송 중단 플래그 — job_id별 분리 (멀티유저 격리)
 import threading as _threading
@@ -268,14 +267,93 @@ def _get_group_lock(account_id: str) -> asyncio.Lock:
 
 
 def clear_account_semaphores():
-    """별도 스레드 실행 시 이전 이벤트 루프 세마포어 정리."""
-    _account_semaphores.clear()
+    """별도 스레드 실행 시 이전 이벤트 루프의 계정 차선 정리."""
+    _account_lanes.clear()
 
 
-def _get_account_semaphore(account_id: str) -> asyncio.Semaphore:
-    if account_id not in _account_semaphores:
-        _account_semaphores[account_id] = asyncio.Semaphore(1)
-    return _account_semaphores[account_id]
+# ────────────────────────────────────────────
+# 계정 차선 우선순위 (부분 양보)
+# ────────────────────────────────────────────
+# 대량 신규전송과 오토튠 가격/재고 업데이트가 같은 계정 세마포어(동시 1건)를 나눠 쓰면서,
+# 오토튠 부하가 클 때 신규등록 1건이 오토튠 update 뒤에 밀려 건당 수십초~수분까지 지연되던
+# 문제(shared lane)를 완화한다. 신규등록(high)이 대기 중이면 수정(low)은 양보하되, floor 만큼
+# 신규등록이 지나가면 강제 통과시켜 오토튠이 굶지 않게 한다(부분 양보 → 역마진/품절 긴급
+# 갱신은 계속 흐름). 우선순위는 획득 지점의 is_update 로 판정. 기본 OFF → 켜기 전 동작 불변.
+
+# 부분 양보 활성 여부 (기본 OFF — 켜기 전 동작 불변)
+_LANE_PRIORITY_ENABLED = os.environ.get(
+    "SSG_TRANSMIT_PRIORITY_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+# high 전송이 이만큼 처리되는 동안 low는 양보, 그 뒤엔 강제 통과 → 오토튠 최소 ~1/(FLOOR+1) 몫
+_LANE_PRIORITY_FLOOR = int(os.environ.get("SSG_TRANSMIT_PRIORITY_FLOOR", "4"))
+# 양보 폴링 간격(초)
+_LANE_PRIORITY_SLICE = float(os.environ.get("SSG_TRANSMIT_PRIORITY_SLICE", "0.1"))
+# low 가 양보할 수 있는 최대 시간(초) — 초과 시 무조건 경쟁 획득(안전 상한, 굶주림 방지)
+_LANE_PRIORITY_MAX_YIELD_SEC = float(
+    os.environ.get("SSG_TRANSMIT_PRIORITY_MAX_YIELD_SEC", "45")
+)
+
+
+class _AccountLane:
+    """계정별 단일 차선(동시 1건) + 우선순위 부분양보 상태."""
+
+    __slots__ = ("lock", "hp_waiting", "hp_served")
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.hp_waiting = 0  # 현재 대기/보유 중인 high(전송) 수
+        self.hp_served = 0  # 누적 high 획득 수(양보 floor 계산용)
+
+
+_account_lanes: dict[str, _AccountLane] = {}
+
+
+def _get_account_lane(account_id: str) -> _AccountLane:
+    lane = _account_lanes.get(account_id)
+    if lane is None:
+        lane = _AccountLane()
+        _account_lanes[account_id] = lane
+    return lane
+
+
+async def _acquire_account_lane(
+    account_id: str, priority: str, timeout: float
+) -> _AccountLane:
+    """계정 차선을 획득한다. priority='low'는 high 전송이 대기 중이면 부분 양보한다.
+
+    반환된 lane 은 반드시 _release_account_lane 으로 해제해야 한다.
+    TimeoutError 발생 시 호출자가 처리(기존 세마포어와 동일 시맨틱).
+    """
+    lane = _get_account_lane(account_id)
+    is_high = priority == "high"
+    is_low = priority == "low"
+
+    if is_high:
+        lane.hp_waiting += 1
+    try:
+        # low: high 전송이 대기 중이면 양보(폴링). floor(누적 high 획득)와 시간 상한으로
+        # 굶주림 방지 — 둘 중 하나라도 충족되면 즉시 경쟁 획득으로 넘어간다.
+        if is_low and _LANE_PRIORITY_ENABLED and lane.hp_waiting > 0:
+            _start_served = lane.hp_served
+            _yield_deadline = time.monotonic() + _LANE_PRIORITY_MAX_YIELD_SEC
+            while (
+                lane.hp_waiting > 0
+                and (lane.hp_served - _start_served) < _LANE_PRIORITY_FLOOR
+                and time.monotonic() < _yield_deadline
+            ):
+                await asyncio.sleep(_LANE_PRIORITY_SLICE)
+        await asyncio.wait_for(lane.lock.acquire(), timeout=timeout)
+    finally:
+        if is_high:
+            lane.hp_waiting -= 1
+    if is_high:
+        lane.hp_served += 1
+    return lane
+
+
+def _release_account_lane(lane: _AccountLane) -> None:
+    if lane.lock.locked():
+        lane.lock.release()
 
 
 STATUS_LABELS: dict[str, str] = {
@@ -2100,11 +2178,15 @@ class SambaShipmentService:
                         )
                         return res
 
-                # 마켓 API 호출 (계정별 세마포어 — 120초 대기)
+                # 마켓 API 호출 (계정별 차선 — 300초 대기, 부분양보 우선순위 적용)
                 # httpx 타임아웃과 차등화하여 한 건이 느려도 동반 타임아웃 폭주 방지
-                account_sem = _get_account_semaphore(account_id)
+                # 신규등록(사장님이 보는 대량전송)=high, 수정(오토튠 백그라운드 갱신)=low.
+                # 대량전송 중 오토튠 update 가 차선을 양보해 배치가 빠르게 완주(부분양보).
+                _lane_priority = "low" if res.get("is_update") else "high"
                 try:
-                    await asyncio.wait_for(account_sem.acquire(), timeout=300)
+                    account_lane = await _acquire_account_lane(
+                        account_id, _lane_priority, timeout=300
+                    )
                 except asyncio.TimeoutError:
                     res["error"] = f"계정 사용 중 (300초 타임아웃, {market_type})"
                     logger.warning(f"[전송] 계정 {account_id} 세마포어 300초 타임아웃")
@@ -2165,7 +2247,7 @@ class SambaShipmentService:
                         f"[마켓전송완료] {market_type} 소요시간: {elapsed:.1f}초 (상품: {product_row.name[:40]})"
                     )
                 finally:
-                    account_sem.release()
+                    _release_account_lane(account_lane)
 
                 # 404 → 상품번호 초기화
                 if result.get("_clear_product_no"):
