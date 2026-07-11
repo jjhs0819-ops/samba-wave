@@ -904,10 +904,10 @@ export const collectorApi = {
   // SSG 는 비동기 job 응답 ({job_id, status}) — Cloudflare 100s origin timeout 우회.
   // 그 외 사이트는 기존 동기 응답 ({categories, total, groupCount}).
   // brandScan 호출자는 항상 BrandScanResult 를 받음 — job_id 응답이면 polling 으로 변환.
-  brandScan: async (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number, options?: Record<string, boolean>): Promise<BrandScanResult> => {
+  brandScan: async (brand: string, gf?: string, keyword?: string, source_site?: string, selected_brands?: string[], brand_ids?: string[], brand_total?: number, options?: Record<string, boolean>, seller_no?: string): Promise<BrandScanResult> => {
     const res = await request<BrandScanResult | { job_id: string; status: 'running' }>(
       `${SAMBA_PREFIX}/collector/brand-scan`,
-      { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0, options: options || {} }) },
+      { method: "POST", body: JSON.stringify({ brand, gf: gf || 'A', keyword: keyword || '', source_site: source_site || 'MUSINSA', selected_brands: selected_brands || [], brand_ids: brand_ids || [], brand_total: brand_total || 0, options: options || {}, seller_no: seller_no || '' }) },
       { timeoutMs: 600_000 },
     )
     if (!('job_id' in res)) return res
@@ -924,7 +924,7 @@ export const collectorApi = {
     }
     throw new Error('스캔 시간 초과 (600초)')
   },
-  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[]; brand_ids?: string[] }) =>
+  brandCreateGroups: (data: { brand: string; brand_name?: string; gf?: string; categories: { categoryCode: string; path: string; count: number }[]; requested_count_per_group?: number; real_total?: number; applied_policy_id?: string; options?: Record<string, boolean>; source_site?: string; selected_brands?: string[]; brand_ids?: string[]; seller_no?: string }) =>
     request<{ created: number; groups: { id: string; name: string; count: number; path: string }[] }>(
       `${SAMBA_PREFIX}/collector/brand-create-groups`,
       { method: "POST", body: JSON.stringify(data) },

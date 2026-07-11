@@ -35,6 +35,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     # SSG/LOTTEON: 확장앱 경로 — owner deviceId 필터링 적용 후 실행 PC 1대만 처리
     "SSG": 3,  # worker._SSG_BATCH=3과 통일
     "LOTTEON": 2,  # worker BATCH 별도 미정의 — 보수값 유지
+    "LOTTEON_SELLERSHOP": 2,  # LOTTEON 동일(WAF 보수)
     "GSShop": 5,
     "ElandMall": 5,
     "SSF": 5,
@@ -152,6 +153,7 @@ SITE_PRODUCT_TIMEOUT: dict[str, int] = {
     # 90s timeout 시 timeout 다수 발생 확인 → 큐 대기 흡수 위해 150s 유지.
     # 근본 해결: 확장앱 동시처리 캡 늘리기(아래 _siteSemaphores).
     "LOTTEON": 150,
+    "LOTTEON_SELLERSHOP": 150,  # LOTTEON 동일(DOM위임 60s 흡수)
     "SSG": 150,
     "ABCmart": 150,
     "GrandStage": 150,
@@ -740,14 +742,17 @@ async def _refresh_product_inner(
     product: Any, idx: int = 0, total: int = 0
 ) -> RefreshResult:
     source_site = getattr(product, "source_site", "")
+    # LOTTEON_SELLERSHOP 는 board 분리 전용 source_site —
+    # refresh 라우팅(plugin/parser)·설정은 base 사이트(LOTTEON)와 동일 취급.
+    _lookup_site = "LOTTEON" if source_site == "LOTTEON_SELLERSHOP" else source_site
 
     # 소싱처 플러그인 우선 호출
     from backend.domain.samba.plugins import SOURCING_PLUGINS
 
     # DB의 source_site 값과 플러그인 site_name 대소문자 불일치 방어 (예: DB 'Nike' vs site_name 'NIKE').
     # 일치하면 첫 lookup 적중, 불일치면 .upper() fallback. enrich.py 의 동일 패턴.
-    plugin = SOURCING_PLUGINS.get(source_site) or (
-        SOURCING_PLUGINS.get(source_site.upper()) if source_site else None
+    plugin = SOURCING_PLUGINS.get(_lookup_site) or (
+        SOURCING_PLUGINS.get(_lookup_site.upper()) if _lookup_site else None
     )
     if plugin:
         product._refresh_idx = idx
@@ -795,7 +800,7 @@ async def _refresh_product_inner(
         return result
 
     # 레거시 폴백 — 소싱처별 파서 선택
-    parser = SITE_PARSERS.get(source_site)
+    parser = SITE_PARSERS.get(_lookup_site)
     if not parser:
         return RefreshResult(
             product_id=product.id,

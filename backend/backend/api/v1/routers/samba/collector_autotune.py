@@ -60,6 +60,23 @@ def _is_send_stale(sent_at: str | None, max_age_sec: float) -> bool:
         return True
 
 
+# 오토튠 사이클은 LOTTEON_SELLERSHOP 를 base LOTTEON 으로 흡수.
+# board 분리 전용 source_site — refresh 라우팅·데몬 owner(pick_daemon_owner("LOTTEON"))가
+# 모두 LOTTEON 동일이라 별도 사이클/데몬 배정 불요. coordinator 만 정규화하면 LOTTEON 사이클이
+# LOTTEON_SELLERSHOP 까지 함께 refresh(혜택가/재고)+품절정리+진행분모 흡수.
+_AUTOTUNE_SITE_ALIASES = {"LOTTEON_SELLERSHOP": "LOTTEON"}
+
+
+def _norm_autotune_site(s: str) -> str:
+    """source_site → 오토튠 cycle site (alias 흡수)."""
+    return _AUTOTUNE_SITE_ALIASES.get(s, s)
+
+
+def _autotune_site_members(site: str) -> list[str]:
+    """이 cycle site 로 흡수되는 모든 source_site (자기 + alias 원본)."""
+    return [site] + [k for k, v in _AUTOTUNE_SITE_ALIASES.items() if v == site]
+
+
 async def _get_active_sites_cached() -> list[str]:
     """모든 PC가 공유하는 활성 소싱처 distinct 결과 (TTL 30s).
 
@@ -109,7 +126,9 @@ async def _get_active_sites_cached() -> list[str]:
             async with get_read_session() as rs:
                 result = await rs.execute(stmt)
                 # "manual" source_site는 실제 소싱처 플러그인이 없어 오토튠 실패 반복 — 제외
-                sites = [r[0] for r in result.all() if r[0] and r[0] != "manual"]
+                # LOTTEON_SELLERSHOP → LOTTEON 흡수(별도 사이클 안 생김)
+                _raw_sites = [r[0] for r in result.all() if r[0] and r[0] != "manual"]
+                sites = sorted({_norm_autotune_site(s) for s in _raw_sites})
         except Exception as _e:
             if cached:
                 logging.getLogger("backend.autotune").warning(
@@ -1467,7 +1486,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                         *market_cond,
                         *_market_filter_where,
                         _CP.applied_policy_id != None,
-                        _CP.source_site == site,
+                        # LOTTEON 사이클이 LOTTEON_SELLERSHOP 도 흡수
+                        # (refresh 대상 + 진행 분모 count(_where) 둘 다 동일하게 적용됨)
+                        _CP.source_site.in_(_autotune_site_members(site)),
                     ]
                     # 단일 상품 오토튠 필터 (PC별)
                     _target_ids = _pc_target_ids.get(device_id)
@@ -3836,7 +3857,8 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 *market_cond,
                                 _CP.sale_status == "sold_out",
                                 _CP.lock_delete != True,
-                                _CP.source_site == site,
+                                # 품절정리도 LOTTEON_SELLERSHOP 흡수
+                                _CP.source_site.in_(_autotune_site_members(site)),
                             ]
                             # 사이클 중 이미 삭제된 상품 제외
                             if _cycle_deleted_pids:

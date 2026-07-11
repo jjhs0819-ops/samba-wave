@@ -583,6 +583,12 @@ async def enrich_product(
     from backend.domain.samba.plugins import SOURCING_PLUGINS
 
     _src = product.source_site or ""
+    # LOTTEON_SELLERSHOP 는 board 분리 전용 source_site —
+    # enrich(상세보강) 라우팅·플러그인·DOM혜택가도 base 사이트(LOTTEON)와 동일 취급.
+    # refresher.py:709 의 _lookup_site 정규화와 동일 패턴 (이게 없으면 상품관리 개별
+    # 업데이트가 "'LOTTEON_SELLERSHOP' 상세 보강은 아직 지원하지 않습니다" 400 으로 죽음).
+    if _src == "LOTTEON_SELLERSHOP":
+        _src = "LOTTEON"
     plugin = SOURCING_PLUGINS.get(_src) or SOURCING_PLUGINS.get(_src.upper())
     if plugin and product.site_product_id:
         # 수동 enrich 컨텍스트 마킹 — SSG 등 plugin.refresh 내부에서

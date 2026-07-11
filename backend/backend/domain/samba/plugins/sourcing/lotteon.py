@@ -189,6 +189,19 @@ class LotteonSourcingPlugin(SourcingPlugin):
             keyword, selected_brands=selected_brands, max_scan=max_scan
         )
 
+    async def scan_seller_shop_categories(
+        self, sler_no: str, dshop_no: str | None = None
+    ) -> dict:
+        """롯데ON 셀러샵(전시매장) 카테고리 스캔 — dshopNo 자동해석(getStoreBasicInfo).
+
+        키워드 검색(qapi 2,100 상한) 대신 셀러샵 전시매장
+        전체 상품을 scatNo로 버킷팅 → scan_categories 호환 응답.
+        """
+        from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient
+
+        client = LotteonSourcingClient(proxy_url=_select_lotteon_proxy())
+        return await client.scan_seller_shop_categories(sler_no, dshop_no)
+
     async def discover_brands(self, keyword: str) -> dict:
         """롯데ON 키워드 검색 → 발견된 브랜드 목록 반환 (사용자 선택용)."""
         from backend.domain.samba.proxy.lotteon_sourcing import LotteonSourcingClient

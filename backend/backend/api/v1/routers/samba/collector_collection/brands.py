@@ -33,6 +33,25 @@ class BrandRefreshRequest(BaseModel):
     categories: list[str] = []  # 빈 리스트=전체, 값 있으면 해당 카테고리만 처리
 
 
+def _extract_sler_no(s: str) -> str:
+    """seller_no 또는 sellerShop URL 에서 셀러식별자(SLD…/SLO…) 추출.
+
+    'https://…/sellerShop/SLD3986330?tabNo=2' → 'SLD3986330',
+    'SLD3986330' → 'SLD3986330', 그 외 → ''.
+    """
+    import re
+
+    s = (s or "").strip()
+    if not s:
+        return ""
+    m = re.search(r"sellerShop/([A-Za-z0-9]+)", s)
+    if m:
+        return m.group(1)
+    if re.fullmatch(r"SL[DO]\d{4,}", s, re.IGNORECASE):
+        return s
+    return ""
+
+
 class BrandScanRequest(BaseModel):
     brand: str = ""
     gf: str = "A"
@@ -42,6 +61,7 @@ class BrandScanRequest(BaseModel):
     brand_ids: list[str] = []  # SSG repBrandId 리스트
     brand_total: int = 0  # 선택된 브랜드 총 상품수 (비례 스케일링용)
     options: dict = {}
+    seller_no: str = ""  # 롯데온 셀러샵 식별자/URL
 
 
 class BrandDiscoverRequest(BaseModel):
@@ -60,6 +80,7 @@ class BrandCreateGroupsRequest(BaseModel):
     source_site: str = "MUSINSA"
     selected_brands: list[str] = []
     brand_ids: list[str] = []  # SSG repBrandId 리스트
+    seller_no: str = ""  # 롯데온 셀러샵 식별자/URL
 
 
 class BrandCollectAllRequest(BaseModel):
@@ -521,7 +542,8 @@ async def brand_scan(
     지원 소싱처: MUSINSA, LOTTEON, GSSHOP, ABCmart, Nike, SSG, FashionPlus, KREAM
     """
     keyword = body.keyword or body.brand
-    if not keyword:
+    # 셀러샵 모드는 seller_no 만으로 충분 (keyword 불요)
+    if not keyword and not body.seller_no:
         raise HTTPException(400, "keyword 또는 brand가 필요합니다")
 
     if body.source_site == "GSSHOP":
@@ -534,6 +556,10 @@ async def brand_scan(
         from backend.domain.samba.plugins.sourcing.lotteon import LotteonSourcingPlugin
 
         plugin = LotteonSourcingPlugin()
+        # seller_no/sellerShop URL 이면 셀러샵 카테고리 스캔
+        _sler = _extract_sler_no(body.seller_no or keyword)
+        if _sler:
+            return await plugin.scan_seller_shop_categories(_sler)
         # selected_brands가 없으면 keyword 자체를 단일 브랜드로 사용 (하위 호환)
         selected = body.selected_brands or [keyword]
         return await plugin.scan_categories(keyword, selected_brands=selected)
@@ -615,6 +641,27 @@ async def brand_create_groups(
 
     svc = _get_services(session)
     created_groups = []
+    # 셀러샵 모드 식별자 (있으면 keyword=sellerShop URL 로 저장)
+    _seller_no = (
+        _extract_sler_no(body.seller_no) if body.source_site == "LOTTEON" else ""
+    )
+    # 셀러샵 그룹명/소싱브랜드명 = 스토어명(storeNm, 예 "패션스토어") — SLD 식별자보다 직관적.
+    # getStoreBasicInfo 1회 해석(셀러샵 API는 메인IP로 동작 → 프록시 불요).
+    _seller_store_name = ""
+    if _seller_no:
+        try:
+            from backend.domain.samba.proxy.lotteon_sourcing import (
+                LotteonSourcingClient,
+            )
+
+            _sc = LotteonSourcingClient()
+            _tr, _lr = await _sc.fetch_seller_shop_ids(_seller_no)
+            if _tr:
+                _, _seller_store_name = await _sc.fetch_seller_dshop_no(
+                    _tr, _lr or _seller_no
+                )
+        except Exception as _e:
+            logger.warning(f"[셀러샵] 스토어명 해석 실패 {_seller_no}: {_e}")
 
     for cat in body.categories:
         code = cat.get("categoryCode", "")
@@ -623,7 +670,14 @@ async def brand_create_groups(
 
         # 그룹명: "{SITE}_{브랜드}_{카테고리}"
         # Nike: source_site와 브랜드가 동일하므로 브랜드 라벨 생략
-        label = body.brand_name or body.brand or "브랜드"
+        # 셀러샵은 스토어명 + " 셀러샵" 마커로 그룹명 충돌 차단:
+        # 같은 브랜드 키워드수집 그룹("LOTTEON_패션스토어_…")과 이름이 겹치면 create_filter
+        # upsert 가 기존 그룹 keyword 를 덮어써 실데이터 손상 → 마커로 별도 네임스페이스.
+        label = (
+            f"{_seller_store_name} 셀러샵"
+            if _seller_store_name
+            else (body.brand_name or body.brand or "브랜드")
+        )
         segments = path.split(" > ") if path else [code]
         # Nike: 카테고리 경로에서 "Nike" 제거 (source_site로 충분)
         if body.source_site == "Nike":
@@ -790,8 +844,18 @@ async def brand_create_groups(
             bc_codes = cat.get("bc_codes") or ([code] if code else [])
             category_filter = ",".join(bc_codes) if bc_codes else None
 
+        # 셀러샵 모드: keyword 를 sellerShop URL 로 교체.
+        # worker._collect_direct_api 가 '/sellerShop/' 감지 → collect_seller_shop 으로
+        # 전시매장 전체 수집 후 category_filter(BC scatNo)로 카테고리 분배.
+        if _seller_no:
+            keyword = (
+                f"https://www.lotteon.com/p/display/seller/sellerShop/{_seller_no}"
+            )
+            _bc = cat.get("bc_codes") or ([code] if code else [])
+            category_filter = ",".join(_bc) if _bc else None
+
         # 소싱처 브랜드명 저장 (수집 시 빈 brand/manufacturer 자동 채움용)
-        _source_brand = body.brand_name or body.brand or ""
+        _source_brand = _seller_store_name or body.brand_name or body.brand or ""
         filter_data: dict = {
             "source_site": body.source_site,
             "name": group_name,

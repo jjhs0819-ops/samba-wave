@@ -27,6 +27,10 @@ export async function performCreateGroup(args: CreateGroupArgs) {
   } = args
   const input = collectUrl.trim()
   if (!input) return
+  if (selectedSite === 'LOTTEON_SELLERSHOP') {
+    showAlert('롯데ON셀러샵은 SLO 입력 후 "카테고리 스캔"으로 수집하세요 (단일 그룹 생성 미지원)', 'error')
+    return
+  }
   setCollecting(true)
   addLog(`그룹 생성 중: ${input}${brandCode ? ` (브랜드: ${brandCode})` : ''}`)
   try {

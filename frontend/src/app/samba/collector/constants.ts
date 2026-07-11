@@ -8,6 +8,7 @@ export const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'ABCmart', label: 'ABC마트' },
   { id: 'SSG', label: '신세계몰' },
   { id: 'LOTTEON', label: '롯데ON' },
+  { id: 'LOTTEON_SELLERSHOP', label: '롯데ON셀러샵' },
   { id: 'GSShop', label: 'GSShop' },
   { id: 'NAVERSTORE', label: '네이버스토어' },
   { id: 'SNKRDUNK', label: '스니덩크' },

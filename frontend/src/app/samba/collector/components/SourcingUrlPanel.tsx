@@ -230,6 +230,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               selectedSite === 'REXMONDE' ? '키워드 또는 URL (예: 나이키, https://www.okmall.com/search?keyword=나이키)' :
               selectedSite === 'SSG' ? '키워드 또는 URL (예: 나이키, https://www.ssg.com/search.ssg?query=나이키)' :
               selectedSite === 'LOTTEON' ? '키워드 또는 URL (예: 나이키, https://www.lotteon.com/search?query=나이키)' :
+              selectedSite === 'LOTTEON_SELLERSHOP' ? '셀러샵 SLO번호 또는 URL (예: SLD3986330, https://www.lotteon.com/p/display/seller/sellerShop/SLD3986330)' :
               selectedSite === 'GSShop' ? '키워드 또는 URL (예: 내셔널지오그래픽, https://www.gsshop.com/search?tq=내셔널지오그래픽)' :
               selectedSite === 'ElandMall' ? '키워드 또는 URL (예: 나이키, https://www.elandmall.com/search?kwd=나이키)' :
               selectedSite === 'SSF' ? '키워드 또는 URL (예: 나이키, https://www.ssfshop.com/search?keyword=나이키)' :
@@ -242,7 +243,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               color: c.text, outline: 'none',
             }}
           />
-          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM') && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'LOTTEON_SELLERSHOP' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -255,6 +256,32 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
               const gf = parsed?.searchParams.get('gf') || 'A'
               if (!brand && !keyword) { showAlert('브랜드 또는 키워드를 확인하세요'); setBrandScanning(false); return }
+
+              // LOTTEON 셀러샵 URL 이면 브랜드 디스커버리/모달 우회 →
+              // 전시매장(dshopNo 자동해석) 전체 상품을 scatNo 카테고리로 직접 스캔.
+              // LOTTEON=셀러샵 URL 일 때만, LOTTEON_SELLERSHOP=항상 셀러모드
+              // (URL 의 SLO 추출, 없으면 입력 자체를 SLO 로). 백엔드 brandScan/Groups 엔 site=LOTTEON 으로
+              // 보내고(워커가 LOTTEON_SELLERSHOP 저장), 버튼만 분리.
+              const _sellerNo = selectedSite === 'LOTTEON'
+                ? (collectUrl.match(/sellerShop\/([A-Za-z0-9]+)/)?.[1] || '')
+                : selectedSite === 'LOTTEON_SELLERSHOP'
+                ? (collectUrl.match(/sellerShop\/([A-Za-z0-9]+)/)?.[1] || collectUrl.trim())
+                : ''
+              if (selectedSite === 'LOTTEON_SELLERSHOP' && !_sellerNo) {
+                showAlert('셀러샵 SLO번호 또는 sellerShop URL을 입력하세요'); setBrandScanning(false); return
+              }
+              if (_sellerNo) {
+                addLog(`[카테고리스캔] 롯데온 셀러샵 ${_sellerNo} 전시매장 스캔 시작...`)
+                try {
+                  const res = await collectorApi.brandScan('', 'A', '', 'LOTTEON', [], [], 0, checkedOptions, _sellerNo)
+                  setBrandCategories(res.categories)
+                  setBrandTotal(res.total)
+                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                  addLog(`[카테고리스캔] 셀러샵 ${_sellerNo}: ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
+                } catch (e) { addLog(`[카테고리스캔] 셀러샵 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
 
               // 롯데ON / SSG / 패션플러스: 브랜드 탐색 후 선택 모달 표시
               if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus') {
@@ -388,14 +415,16 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                 const brand = parsed?.searchParams.get('brand') || pathBrandMatch?.[1] || detectedBrandCode || ''
                 const keyword = parsed?.searchParams.get('keyword') || parsed?.searchParams.get('searchWord') || (!brand ? collectUrl.trim() : '')
                 const gf = parsed?.searchParams.get('gf') || 'A'
+                const _sellerNoG = (selectedSite === 'LOTTEON' || selectedSite === 'LOTTEON_SELLERSHOP') ? (collectUrl.match(/sellerShop\/([A-Za-z0-9]+)/)?.[1] || (selectedSite === 'LOTTEON_SELLERSHOP' ? collectUrl.trim() : '')) : ''
                 try {
                   const res = await collectorApi.brandCreateGroups({
-                    brand, brand_name: pendingKeyword || keyword || brand, gf,
+                    brand, brand_name: _sellerNoG ? `롯데온셀러샵 ${_sellerNoG}` : (pendingKeyword || keyword || brand), gf,
                     categories: selected,
                     requested_count_per_group: FIXED_REQUESTED_COUNT,
                     real_total: brandTotal,
                     options: checkedOptions,
-                    source_site: selectedSite,
+                    source_site: selectedSite === 'LOTTEON_SELLERSHOP' ? 'LOTTEON' : selectedSite,
+                    seller_no: _sellerNoG,
                     selected_brands: brandModalParsed ? Array.from(brandModalSelected) : undefined,
                     // SSG repBrandId 필터: 선택된 브랜드 id 목록 전달
                     brand_ids: brandModalParsed

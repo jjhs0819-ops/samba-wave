@@ -5497,8 +5497,50 @@ class JobWorker:
                         f"[잡워커] LOTTEON 브랜드/서브키워드 파라미터 파싱 실패: {exc}"
                     )
 
+            # sf.keyword 가 sellerShop URL 이면 collect_seller_shop
+            # 으로 전시매장 전체 상품을 1회 수집(같은 셀러의 카테고리 그룹들은 _search_cache
+            # 키=(site,keyword=셀러URL)가 동일 → fetch 1회 공유). 아래 LOTTEON BC 사후필터
+            # (category_filter=BC scatNo)가 카테고리별로 분배하므로 키워드 경로와 합류.
+            _is_seller_shop = site == "LOTTEON" and "/sellerShop/" in keyword
             try:
-                if _per_brand_keywords:
+                if _is_seller_shop:
+                    _cache_key = (site, keyword)
+                    _cached = self._search_cache.get(_cache_key)
+                    if _cached and _time.time() - _cached[1] < 300:
+                        items_list = list(_cached[0])
+                        logger.info(
+                            f"[잡워커] LOTTEON 셀러샵 캐시 히트 → {len(items_list)}건"
+                        )
+                    else:
+                        import re as _re_sler
+
+                        _m_sler = _re_sler.search(r"sellerShop/([A-Za-z0-9]+)", keyword)
+                        _sler_no = _m_sler.group(1) if _m_sler else ""
+                        # 전시매장 전체 fetch 는 대형 셀러(수천건)
+                        # 시 수분 소요 → 그 사이 worker 세션이 idle-in-transaction(상단 sf/job 조회로
+                        # autobegin) 상태로 잡혀 idle_in_transaction_session_timeout(120s, orm.py)
+                        # 에 걸려 서버가 커넥션을 끊는다 → fetch 후 저장/잡갱신이
+                        # 'PreparedStatement.fetch(): the underlying connection is closed' 로 실패.
+                        # 해결: 장기 fetch 직전 commit 으로 트랜잭션을 닫고(IIT 는
+                        # idle-IN-transaction 만 종료) close 로 커넥션을 풀에 반납 → fetch 동안
+                        # 점유 커넥션 0, 이후 저장경로가 fresh 커넥션 재획득(pool_recycle 검증).
+                        # expire_on_commit=False(orm.py) 라 sf/job 객체 값은 보존된다.
+                        await session.commit()
+                        try:
+                            await session.close()
+                        except Exception:
+                            pass
+                        items_list = (
+                            await client.collect_seller_shop(_sler_no)
+                            if _sler_no
+                            else []
+                        )
+                        self._search_cache[_cache_key] = (items_list, _time.time())
+                        logger.info(
+                            f"[잡워커] LOTTEON 셀러샵 수집 {_sler_no} → {len(items_list)}건"
+                        )
+                    result = {"products": items_list, "total": len(items_list)}
+                elif _per_brand_keywords:
                     items_list = []
                     seen_pids: set[str] = set()
                     # LOTTEON 전수 페이징: 브랜드당 qapi 상한 2,100건 전체 수집
@@ -5872,7 +5914,9 @@ class JobWorker:
         # LOTTEON: 선택된 브랜드 목록으로 정확 일치 필터링
         # URL 파라미터 brands=나이키,나이키 키즈 형태 (콤마 구분)
         # brands 파라미터 없으면 keyword 단일 브랜드로 사용 (하위 호환)
-        if site == "LOTTEON":
+        # 셀러샵 URL 엔 brands= 가 없어 keyword(셀러URL) 폴백이
+        # 전 상품을 오필터(0건)하므로 스킵 — 셀러샵 자체가 브랜드 스코프.
+        if site == "LOTTEON" and not _is_seller_shop:
             from backend.domain.samba.proxy.lotteon_sourcing import _filter_by_brands
 
             _selected_brands: list[str] = []
@@ -6003,6 +6047,12 @@ class JobWorker:
                             _lotteon_details[pid] = det
                     done = min(batch_start + BATCH_SIZE, len(new_items))
                     await repo.update_progress(job.id, done, len(new_items))
+                    # 상세 선취합은 배치(10건)별 HTTP 대기로 idle
+                    # 구간이 누적된다. 단일 트랜잭션 유지 시 idle_in_transaction_session_timeout
+                    # (120s)에 걸려 커넥션이 끊겨 대형 셀러샵(수천건) 수집이 전량 실패한다.
+                    # 배치마다 commit 으로 트랜잭션을 닫아 다음 배치 HTTP 동안 커넥션을
+                    # idle-NOT-in-transaction 으로 유지 → IIT 미발동(진행률도 durable).
+                    await session.commit()
                     logger.info(
                         f"[잡워커] LOTTEON 상세 선취합 [{done}/{len(new_items)}]"
                     )
@@ -6729,7 +6779,10 @@ class JobWorker:
                     or item.get("category4", "")
                 )
             product_data = {
-                "source_site": site,
+                # 셀러샵 수집분은 board(테트리스) 분리를 위해
+                # source_site 를 LOTTEON_SELLERSHOP 로 저장한다. site(=LOTTEON)는 수집/필터
+                # 로직 전부에서 그대로 쓰이고 저장 시점에만 분기(refresh 는 base-site 정규화).
+                "source_site": ("LOTTEON_SELLERSHOP" if _is_seller_shop else site),
                 "search_filter_id": filter_id,
                 "site_product_id": p_id,
                 "source_url": item.get("source_url", "")

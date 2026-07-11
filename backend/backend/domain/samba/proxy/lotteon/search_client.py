@@ -511,3 +511,511 @@ class SearchClientMixin:
             "total": total,
             "groupCount": len(categories),
         }
+
+    # ─────────────────────────────────────────────────────────────────
+    # 셀러샵(전시매장 dshopNo) 단위 상품 열거
+    #
+    # 키워드 검색(qapi)은 offset 2,100 상한 + 관련도 기반이라 서브브랜드 누락이
+    # 발생한다. 셀러샵은 판매자가 직접 구성한 전시매장(dshopNo)을 단위로,
+    # seltSellerDpShop API로 전체 상품을 완전 페이지네이션할 수 있다(상한 없음).
+    # - 게스트(비로그인) 호출 가능. 게스트는 totalCount=0으로 응답하므로
+    #   dataList가 빌 때까지 pageNo를 증가시켜 종료를 판정한다.
+    # - 각 상품의 scatNo(lfScatNo/scat3No)로 카테고리 버킷팅 → scan_categories와 동일.
+    # - spdNo는 기존 get_product_detail(spdNo) 입력과 동일. sitmNo도 동봉되어
+    #   refresh pbf 빠른경로(_fetch_pbf_refresh)를 즉시 사용 가능.
+    # - dshopNo(전시매장) 해석은 SPA 클라이언트 전용이라 HTML에 없다 → 호출자가
+    #   dshop_no를 전달(프론트/daemon이 셀러샵 탭에서 추출). trNo만 페이지에서 추출.
+    # ─────────────────────────────────────────────────────────────────
+
+    SELLER_SHOP_PAGE = "https://www.lotteon.com/p/display/seller/sellerShop"
+    SELLER_DPSHOP_API = "https://www.lotteon.com/p/display/seller/seltSellerDpShop"
+    # getStoreBasicInfo 는 pbf 호스트(상품 base와 다름) — 셀러샵 루트 dshopNo(전시매장)
+    # 출처. SPA가 페이지 로드 시 이 API로 this.info.dshopNo 를 채운 뒤 seltSellerDpShop
+    # 의 dshopNo 로 사용한다. (constant.js 정의 라이브 확인 2026-06-23)
+    SELLER_STORE_INFO_API = (
+        "https://pbf.lotteon.com/display/v1/sellerShop/getStoreBasicInfo"
+    )
+    # fashion 템플릿(일부 패션 셀러) — dpShop 루트가 0건이면
+    # 카테고리트리(getSellerCategoryList) 리프 displayCategoryId 별로
+    # seltSellerShopDispCate(dcatNo,depthVal,dshopNo)로 수집 (검증 2026-06-23).
+    SELLER_CATEGORY_API = (
+        "https://www.lotteon.com/p/display/seller/getSellerCategoryList"
+    )
+    SELLER_DISPCATE_API = (
+        "https://www.lotteon.com/p/display/seller/seltSellerShopDispCate"
+    )
+
+    async def fetch_seller_shop_ids(
+        self, sler_no: str
+    ) -> tuple[str | None, str | None]:
+        """셀러샵 페이지 HTML 히든인풋에서 trNo(`#trNo`) + lrtrNo(`#lrtrNo`) 추출.
+
+        seltSellerDpShop 은 trNo, getStoreBasicInfo 는 trNo+lrtrNo 가 필요하다. 둘 다
+        셀러샵 페이지에만 있다. lrtrNo 는 URL 경로의 셀러식별자(SLD…)와 동일하므로
+        미발견 시 sler_no 로 폴백. 세션 비종속 — 게스트로 1회 받아 재사용 가능.
+        """
+        import re
+
+        url = f"{self.SELLER_SHOP_PAGE}/{sler_no}"
+        async with httpx.AsyncClient(
+            **self._httpx_kwargs(timeout=self._timeout_obj(), follow_redirects=True)
+        ) as client:
+            resp = await client.get(url, headers=self.HEADERS)
+            if resp.status_code in (429, 403):
+                raise RateLimitError(
+                    resp.status_code, int(resp.headers.get("Retry-After", "60"))
+                )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[LOTTEON][seller] 셀러샵 페이지 HTTP {resp.status_code}: {sler_no}"
+                )
+                return None, None
+            html = resp.text
+        tr = re.search(r'id="trNo"[^>]*value="([^"]+)"', html)
+        lr = re.search(r'id="lrtrNo"[^>]*value="([^"]+)"', html)
+        if not tr:
+            logger.warning(f"[LOTTEON][seller] trNo 미발견: {sler_no}")
+        return (
+            tr.group(1) if tr else None,
+            (lr.group(1) if lr else None) or sler_no,
+        )
+
+    async def fetch_seller_trno(self, sler_no: str) -> str | None:
+        """하위호환 — trNo 만 필요할 때. 내부적으로 fetch_seller_shop_ids 사용."""
+        tr, _ = await self.fetch_seller_shop_ids(sler_no)
+        return tr
+
+    async def fetch_seller_dshop_no(
+        self, tr_no: str, lrtr_no: str
+    ) -> tuple[str | None, str | None]:
+        """getStoreBasicInfo(pbf)로 셀러샵 루트 dshopNo + 매장명 조회.
+
+        seltSellerDpShop 의 dshopNo 는 이 전시매장 루트값이다. dshopNo 를 호출자가
+        추측(탭번호 등)하면 sellerDpShopInfo=None(빈응답)이 되므로 반드시 이 API로
+        해석해야 한다. (SPA의 getStoreBasicInfo → this.info.dshopNo 경로와 동일)
+        """
+        from urllib.parse import urlencode
+
+        qs = urlencode({"trNo": tr_no, "lrtrNo": lrtr_no})
+        url = f"{self.SELLER_STORE_INFO_API}?{qs}"
+        headers = {**self.HEADERS, "Accept": "application/json, */*"}
+        async with httpx.AsyncClient(
+            **self._httpx_kwargs(timeout=self._timeout_obj(), follow_redirects=True)
+        ) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (429, 403):
+                raise RateLimitError(
+                    resp.status_code, int(resp.headers.get("Retry-After", "60"))
+                )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[LOTTEON][seller] getStoreBasicInfo HTTP {resp.status_code}: "
+                    f"lrtr={lrtr_no}"
+                )
+                return None, None
+            data = (resp.json() or {}).get("data") or {}
+        return data.get("dshopNo"), (data.get("storeNm") or data.get("dshopNm"))
+
+    async def _fetch_seller_dpshop_page(
+        self, tr_no: str, dshop_no: str, page: int, rows: int, sort: str
+    ) -> list[dict[str, Any]]:
+        """seltSellerDpShop 단일 페이지 호출 → 상품 raw dataList 반환."""
+        from urllib.parse import urlencode
+
+        qs = urlencode(
+            {
+                "trNo": tr_no,
+                "dshopNo": dshop_no,
+                "pageNo": page,
+                "rowsPerPage": rows,
+                "pdSortCd": sort or "",
+                "freeDvrPdYn": "N",
+            }
+        )
+        url = f"{self.SELLER_DPSHOP_API}?{qs}"
+        headers = {**self.HEADERS, "Accept": "application/json, */*"}
+        async with httpx.AsyncClient(
+            **self._httpx_kwargs(timeout=self._timeout_obj(), follow_redirects=True)
+        ) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (429, 403):
+                raise RateLimitError(
+                    resp.status_code, int(resp.headers.get("Retry-After", "60"))
+                )
+            if self._is_transient_5xx_s(resp.status_code):
+                raise RateLimitError(
+                    resp.status_code, max(int(resp.headers.get("Retry-After", "10")), 5)
+                )
+            if resp.status_code != 200:
+                logger.warning(
+                    f"[LOTTEON][seller] seltSellerDpShop HTTP {resp.status_code} "
+                    f"(dshopNo={dshop_no}, p{page})"
+                )
+                return []
+            data = resp.json()
+        info = data.get("sellerDpShopInfo") or {}
+        pl = info.get("sellerPdList") or {}
+        return pl.get("dataList") or []
+
+    async def fetch_seller_category_leaves(
+        self, tr_no: str, lrtr_no: str, dshop_no: str
+    ) -> list[tuple[str, int]]:
+        """getSellerCategoryList → 리프 카테고리 (displayCategoryId, depthNo) 리스트.
+
+        fashion 템플릿 셀러샵은 dpShop 루트가 비어있고 카테고리별로 상품이 박혀 있다.
+        리프(leafYn=Y 또는 자식없음)만 모아 seltSellerShopDispCate 로 수집한다.
+        """
+        from urllib.parse import urlencode
+
+        qs = urlencode({"trNo": tr_no, "lrtrNo": lrtr_no, "dshopNo": dshop_no})
+        url = f"{self.SELLER_CATEGORY_API}?{qs}"
+        headers = {**self.HEADERS, "Accept": "application/json, */*"}
+        async with httpx.AsyncClient(
+            **self._httpx_kwargs(timeout=self._timeout_obj(), follow_redirects=True)
+        ) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code != 200:
+                return []
+            data = resp.json() or {}
+        leaves: list[tuple[str, int]] = []
+
+        def _walk(nodes: list) -> None:
+            for n in nodes or []:
+                ch = n.get("children") or []
+                cid = n.get("displayCategoryId")
+                if cid and (n.get("leafYn") == "Y" or not ch):
+                    try:
+                        dep = int(n.get("depthNo") or 0)
+                    except (TypeError, ValueError):
+                        dep = 0
+                    leaves.append((cid, dep))
+                else:
+                    _walk(ch)
+
+        _walk(data.get("sellerShopCategoryList") or [])
+        return leaves
+
+    async def _fetch_seller_dispcate_page(
+        self,
+        tr_no: str,
+        lrtr_no: str,
+        dshop_no: str,
+        dcat_no: str,
+        depth: int,
+        page: int,
+        rows: int,
+        sort: str,
+    ) -> list[dict[str, Any]]:
+        """seltSellerShopDispCate 단일 페이지 → 상품 raw dataList (fashion 템플릿용)."""
+        from urllib.parse import urlencode
+
+        qs = urlencode(
+            {
+                "trNo": tr_no,
+                "lrtrNo": lrtr_no,
+                "dshopNo": dshop_no,
+                "dcatNo": dcat_no,
+                "depthVal": depth,
+                "pageNo": page,
+                "rowsPerPage": rows,
+                "pdSortCd": sort or "",
+                "freeDvrPdYn": "N",
+            }
+        )
+        url = f"{self.SELLER_DISPCATE_API}?{qs}"
+        headers = {**self.HEADERS, "Accept": "application/json, */*"}
+        async with httpx.AsyncClient(
+            **self._httpx_kwargs(timeout=self._timeout_obj(), follow_redirects=True)
+        ) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (429, 403):
+                raise RateLimitError(
+                    resp.status_code, int(resp.headers.get("Retry-After", "60"))
+                )
+            if self._is_transient_5xx_s(resp.status_code):
+                raise RateLimitError(
+                    resp.status_code, max(int(resp.headers.get("Retry-After", "10")), 5)
+                )
+            if resp.status_code != 200:
+                return []
+            data = resp.json()
+        info = data.get("sellerDpShopInfo") or {}
+        pl = info.get("sellerPdList") or {}
+        return pl.get("dataList") or []
+
+    def _convert_seller_item(self, it: dict, now_iso: str) -> dict[str, Any]:
+        """seltSellerDpShop 상품 raw → 표준 상품 dict (search()와 동일 키 구조)."""
+        spd = it.get("spdNo") or ""
+        img = it.get("imgFullUrl") or ""
+        # 혜택가: 1인당가(onerFvrPrc) > 2차혜택 > 1차혜택 순 우선
+        benefit = (
+            it.get("onerFvrPrc") or it.get("scndFvrPrc") or it.get("frstFvrPrc") or 0
+        )
+        return {
+            "site_product_id": spd,
+            "sitm_no": it.get("sitmNo") or "",
+            "name": it.get("spdNm") or "",
+            "brand": it.get("brdNm") or "",
+            "sale_price": int(it.get("slPrc") or 0),
+            "original_price": int(it.get("slPrc") or 0),
+            "best_benefit_price": int(benefit or 0),
+            "images": [img] if img else [],
+            "source_url": f"{self.PRODUCT_URL}/{spd}",
+            "free_shipping": False,
+            "options": [],
+            "scat_no": it.get("lfScatNo")
+            or it.get("scat3No")
+            or it.get("scat2No")
+            or "",
+            "sale_status": it.get("slStatCd") or "",
+            "collected_at": now_iso,
+        }
+
+    async def collect_seller_shop(
+        self,
+        sler_no: str,
+        dshop_no: str | None = None,
+        *,
+        tr_no: str | None = None,
+        lrtr_no: str | None = None,
+        sort: str = "",
+        max_count: int = 10000,
+        rows: int = 100,
+        max_pages: int = 100,  # rows*max_pages >= max_count 로 max_count 가 실 상한
+    ) -> list[dict[str, Any]]:
+        """셀러샵 전시매장(dshopNo) 전체 상품을 페이지네이션으로 완전 열거.
+
+        Args:
+          sler_no: 셀러번호(SLD…/SLO…) = URL 경로 식별자(=lrtrNo). 페이지에서
+                   trNo/lrtrNo 추출 + dshopNo 자동해석에 사용.
+          dshop_no: 전시매장 루트번호. None 이면 getStoreBasicInfo 로 자동해석(권장).
+          tr_no/lrtr_no: 사전 추출값(있으면 페이지 재조회 생략).
+          sort: pdSortCd (빈값=기본/추천순, "01"=판매량순 등).
+          max_count: 최대 수집 수(안전 상한).
+          rows: 페이지당 행수(<=100 권장).
+          max_pages: 최대 페이지(무한루프 가드).
+
+        Returns:
+          표준 상품 dict 리스트(search()와 동일 키 구조). scat_no로 카테고리 버킷팅 가능.
+        """
+        from datetime import datetime, timezone
+
+        # trNo/lrtrNo 확보 (페이지 1회 조회)
+        if not tr_no or not lrtr_no:
+            _tr, _lr = await self.fetch_seller_shop_ids(sler_no)
+            tr_no = tr_no or _tr
+            lrtr_no = lrtr_no or _lr
+        if not tr_no:
+            logger.warning(f"[LOTTEON][seller] trNo 미확보 — 중단: {sler_no}")
+            return []
+        # dshopNo 자동해석 (getStoreBasicInfo) — 추측값 금지(빈응답 원인)
+        if not dshop_no:
+            dshop_no, _store_nm = await self.fetch_seller_dshop_no(
+                tr_no, lrtr_no or sler_no
+            )
+            if dshop_no:
+                logger.info(
+                    f"[LOTTEON][seller] dshopNo 자동해석: {sler_no} → "
+                    f"{dshop_no} ({_store_nm})"
+                )
+        if not dshop_no:
+            logger.warning(f"[LOTTEON][seller] dshopNo 미확보 — 중단: {sler_no}")
+            return []
+
+        now_iso = datetime.now(tz=timezone.utc).isoformat()
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        logger.info(
+            f"[LOTTEON][seller] 수집 시작: sler={sler_no} dshop={dshop_no} sort={sort!r}"
+        )
+        for page in range(1, max_pages + 1):
+            try:
+                items = await self._fetch_seller_dpshop_page(
+                    tr_no, dshop_no, page, rows, sort
+                )
+            except RateLimitError as e:
+                logger.warning(
+                    f"[LOTTEON][seller] 차단 HTTP {e.status} p{page} — 부분종료 {len(out)}건"
+                )
+                break
+            if not items:
+                break
+            new = 0
+            for it in items:
+                spd = it.get("spdNo")
+                if not spd or spd in seen:
+                    continue
+                seen.add(spd)
+                new += 1
+                out.append(self._convert_seller_item(it, now_iso))
+                if len(out) >= max_count:
+                    break
+            logger.info(
+                f"[LOTTEON][seller] {sler_no}/{dshop_no} p{page}: +{new} (누적 {len(out)})"
+            )
+            # 게스트는 totalCount=0이므로 페이지 길이/신규수로 종료 판정
+            if new == 0 or len(items) < rows or len(out) >= max_count:
+                break
+        else:
+            # for-else: break 없이 max_pages 소진 → 셀러 상품이 상한 초과 가능(불완전).
+            # 이전엔 조용히 잘렸으나(codex #4b), 이제 경고로 노출해 재수집 판단 가능케 함.
+            logger.warning(
+                f"[LOTTEON][seller] max_pages({max_pages}) 소진 — {sler_no}/{dshop_no} "
+                f"수집 불완전 가능 (수집 {len(out)}건, max_count={max_count})"
+            )
+
+        # fashion 템플릿 폴백: dpShop 루트가 0건이면
+        # 카테고리 트리 리프별 seltSellerShopDispCate 로 수집(일부 패션 셀러, 검증 2026-06-23).
+        if not out:
+            leaves = await self.fetch_seller_category_leaves(
+                tr_no, lrtr_no or sler_no, dshop_no
+            )
+            if leaves:
+                logger.info(
+                    f"[LOTTEON][seller] dpShop 0건 → fashion 폴백: "
+                    f"{sler_no} 리프카테고리 {len(leaves)}개"
+                )
+                for dcat, depth in leaves:
+                    for page in range(1, max_pages + 1):
+                        try:
+                            items = await self._fetch_seller_dispcate_page(
+                                tr_no,
+                                lrtr_no or sler_no,
+                                dshop_no,
+                                dcat,
+                                depth,
+                                page,
+                                rows,
+                                sort,
+                            )
+                        except RateLimitError as e:
+                            logger.warning(
+                                f"[LOTTEON][seller] dispCate 차단 HTTP {e.status} "
+                                f"{dcat} p{page} — 부분종료 {len(out)}건"
+                            )
+                            return out
+                        if not items:
+                            break
+                        new = 0
+                        for it in items:
+                            spd = it.get("spdNo")
+                            if not spd or spd in seen:
+                                continue
+                            seen.add(spd)
+                            new += 1
+                            out.append(self._convert_seller_item(it, now_iso))
+                            if len(out) >= max_count:
+                                break
+                        # fashion 폴백은 seen 을 카테고리 간
+                        # 공유하므로, 특정 페이지가 전부 교차중복(new==0)이어도 그 카테고리
+                        # 후속 페이지에 신규가 있을 수 있다. new==0 로 종료하면 상품 유실 →
+                        # 진짜 종료는 마지막 페이지(len<rows) 또는 상한 도달만으로 판정.
+                        if len(items) < rows or len(out) >= max_count:
+                            break
+                    if len(out) >= max_count:
+                        break
+                logger.info(
+                    f"[LOTTEON][seller] fashion 폴백 수집: {sler_no} → {len(out)}건"
+                )
+        logger.info(f"[LOTTEON][seller] 수집 완료: {sler_no}/{dshop_no} → {len(out)}건")
+        return out
+
+    async def _resolve_unmapped_scat_names(
+        self, cat_counter: dict[str, int], products: list[dict[str, Any]]
+    ) -> None:
+        """미매핑 BC scatNo → 대표상품 detail breadcrumb 으로 카테고리 경로 해석·캐시.
+
+        scan_categories(키워드)의 자동매핑과 동일 기법 — 미매핑 코드별 대표상품 1개의
+        get_product_detail HTML breadcrumb 을 병렬 추출해 _LOTTEON_SCAT_NAMES 에 적재.
+        """
+        unmapped = {
+            bc
+            for bc in cat_counter
+            if bc and bc != "기타" and bc not in _LOTTEON_SCAT_NAMES
+        }
+        if not unmapped:
+            return
+        bc_to_pid: dict[str, str] = {}
+        for p in products:
+            scat = p.get("scat_no") or ""
+            pid = p.get("site_product_id") or ""
+            if scat in unmapped and scat not in bc_to_pid and pid:
+                bc_to_pid[scat] = pid
+                if len(bc_to_pid) >= len(unmapped):
+                    break
+
+        async def _one(bc_code: str, pid: str) -> tuple[str, str]:
+            try:
+                detail = await self.get_product_detail(pid)  # type: ignore[attr-defined]
+                cats = detail.get("categories") or []
+                if not cats and detail.get("category"):
+                    cats = [
+                        c.strip() for c in detail["category"].split(">") if c.strip()
+                    ]
+                if cats:
+                    return bc_code, " > ".join(cats[:4])
+            except Exception as e:
+                logger.debug(f"[LOTTEON][seller] BC 매핑 실패 {bc_code}: {e}")
+            return bc_code, ""
+
+        results = await asyncio.gather(
+            *[_one(bc, pid) for bc, pid in bc_to_pid.items()], return_exceptions=True
+        )
+        mapped = 0
+        for r in results:
+            if isinstance(r, Exception):
+                continue
+            bc_code, path = r
+            if path:
+                _LOTTEON_SCAT_NAMES[bc_code] = path
+                mapped += 1
+        logger.info(f"[LOTTEON][seller] 카테고리명 자동매핑 {mapped}/{len(unmapped)}개")
+
+    async def scan_seller_shop_categories(
+        self,
+        sler_no: str,
+        dshop_no: str | None = None,
+        *,
+        tr_no: str | None = None,
+        lrtr_no: str | None = None,
+    ) -> dict[str, Any]:
+        """셀러샵 전시매장 상품을 scatNo로 버킷팅 → 카테고리 분포(scan_categories 호환).
+
+        dshop_no 미지정 시 getStoreBasicInfo 로 자동해석(호출자는 sler_no만 전달).
+        미매핑 BC코드는 대표상품 breadcrumb 으로 카테고리명 자동해석.
+
+        Returns:
+          {"categories":[{categoryCode, path, count}], "total", "groupCount", "products"}
+        """
+        # 셀러식별자/dshopNo/스토어명(storeNm) 해석 — collect 에 dshop 전달해 중복해석 방지.
+        # store_name 은 그룹명용(예: "패션스토어") — getStoreBasicInfo.storeNm.
+        store_name: str | None = None
+        if not tr_no or not lrtr_no:
+            tr_no, lrtr_no = await self.fetch_seller_shop_ids(sler_no)
+        if not dshop_no and tr_no:
+            dshop_no, store_name = await self.fetch_seller_dshop_no(
+                tr_no, lrtr_no or sler_no
+            )
+        products = await self.collect_seller_shop(
+            sler_no, dshop_no, tr_no=tr_no, lrtr_no=lrtr_no
+        )
+        cat_counter: dict[str, int] = {}
+        for p in products:
+            scat = p.get("scat_no") or "기타"
+            cat_counter[scat] = cat_counter.get(scat, 0) + 1
+        await self._resolve_unmapped_scat_names(cat_counter, products)
+        categories = [
+            {
+                "categoryCode": bc,
+                "path": _LOTTEON_SCAT_NAMES.get(bc, "") or f"미매핑 ({bc})",
+                "count": cnt,
+            }
+            for bc, cnt in sorted(cat_counter.items(), key=lambda x: -x[1])
+        ]
+        return {
+            "categories": categories,
+            "total": len(products),
+            "groupCount": len(categories),
+            "products": products,
+            "store_name": store_name or sler_no,
+        }
