@@ -357,7 +357,11 @@ export default function OrderInfoCell(props: Props) {
             if (apiRes.ok && data.success) {
               const p = data.product
               const costVal = p?.cost || p?.sale_price
-              const priceStr = costVal != null ? `₩${fmtNum(Number(costVal))}` : '-'
+              // 통화 기호: SNKRDUNK(일본 JP API 수집)=¥, 그 외 원화. 값 환산 안 함.
+              const _site = (p?.source_site || '').toUpperCase()
+              const _cur = (p?.extra_data as Record<string, unknown> | undefined)?.currency
+              const curSym = (_site === 'SNKRDUNK' || _cur === 'JPY') ? '¥' : (_cur === 'USD') ? '$' : '₩'
+              const priceStr = costVal != null ? `${curSym}${fmtNum(Number(costVal))}` : '-'
               const stockStr = p?.sale_status === 'preorder' ? '판매예정' : p?.sale_status === 'sold_out' || p?.is_sold_out ? '품절' : '재고있음'
               const retransmitStr = data.retransmitted ? ` | 마켓 ${data.retransmit_accounts}계정 수정등록` : ''
               setRefreshLog(prev => ({ ...prev, [o.id]: `[${ts2}] ${priceStr} | ${stockStr}${retransmitStr}` }))
