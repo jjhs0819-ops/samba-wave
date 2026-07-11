@@ -75,7 +75,7 @@ class MarketPlugin(ABC):
                 import time as _tm
 
                 try:
-                    _ts = int(_vs[len(self._CLAIM_PREFIX):])
+                    _ts = int(_vs[len(self._CLAIM_PREFIX) :])
                 except Exception:
                     _ts = 0
                 if _tm.time() - _ts > self._CLAIM_STALE_SECONDS:
@@ -85,7 +85,9 @@ class MarketPlugin(ABC):
                 return ("owned", claim_val)
             return ("exists", _vs)
         except Exception as _e:
-            logger.warning(f"[{self.market_type}] 등록 선점 조회 실패(무시, 등록 진행): {_e}")
+            logger.warning(
+                f"[{self.market_type}] 등록 선점 조회 실패(무시, 등록 진행): {_e}"
+            )
             return ("owned", claim_val)
 
     async def _cas_claim(
@@ -105,7 +107,12 @@ class MarketPlugin(ABC):
                         "WHERE id = :pid AND market_product_nos ->> :acct = :old "
                         "RETURNING id"
                     ),
-                    {"pid": product_id, "acct": account_id, "val": new_val, "old": old_val},
+                    {
+                        "pid": product_id,
+                        "acct": account_id,
+                        "val": new_val,
+                        "old": old_val,
+                    },
                 )
                 _won = _r.first() is not None
                 await _s.commit()
@@ -169,7 +176,9 @@ class MarketPlugin(ABC):
                 )
                 await _s.commit()
         except Exception as _e:
-            logger.warning(f"[{self.market_type}] 등록 후 즉시기록 실패(worker 기록에 위임): {_e}")
+            logger.warning(
+                f"[{self.market_type}] 등록 후 즉시기록 실패(worker 기록에 위임): {_e}"
+            )
 
     async def handle(
         self, session, product: dict, category_id: str, account, existing_no: str = ""

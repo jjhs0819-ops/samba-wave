@@ -12,9 +12,7 @@ reconciler 모듈은 DB/lifecycle 을 import 하므로 함수 단위 monkeypatch
 """
 
 import asyncio
-import re
 import sys
-import types
 from pathlib import Path
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +45,9 @@ def test_row_regex_parses_stocklist_xml():
         b"<Row><GoodNo>222</GoodNo><GoodsNm><![CDATA[x]]></GoodsNm>"
         b"<SaleStatCd>30</SaleStatCd></Row>"
     )
-    pairs = {m.group(1).decode(): m.group(2).decode() for m in mod._ROW_RE.finditer(xml)}
+    pairs = {
+        m.group(1).decode(): m.group(2).decode() for m in mod._ROW_RE.finditer(xml)
+    }
     assert pairs == {"111": "10", "222": "30"}
 
 

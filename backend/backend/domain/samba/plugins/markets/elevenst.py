@@ -730,10 +730,7 @@ class ElevenstPlugin(MarketPlugin):
                         _claim_pid, _claim_acct, _claim_val
                     )
                     _c_deadline = _cl_time.monotonic() + 60
-                    while (
-                        _c_status == "pending"
-                        and _cl_time.monotonic() < _c_deadline
-                    ):
+                    while _c_status == "pending" and _cl_time.monotonic() < _c_deadline:
                         await _cl_aio.sleep(3.0)
                         _c_status, _c_val = await self._claim_registration_slot(
                             _claim_pid, _claim_acct, _claim_val

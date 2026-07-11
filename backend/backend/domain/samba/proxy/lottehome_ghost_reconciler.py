@@ -50,9 +50,7 @@ END_BATCH_DELAY = 0.3
 
 # 재고목록 XML 행: <GoodNo>..</GoodNo>...<SaleStatCd>NN</SaleStatCd>
 # GoodsNm 뒤에 나오므로 GoodNo→SaleStatCd 사이를 non-greedy 로 매칭.
-_ROW_RE = re.compile(
-    rb"<GoodNo>(\d+)</GoodNo>.*?<SaleStatCd>(\d+)</SaleStatCd>", re.S
-)
+_ROW_RE = re.compile(rb"<GoodNo>(\d+)</GoodNo>.*?<SaleStatCd>(\d+)</SaleStatCd>", re.S)
 
 
 async def _fetch_active_lottehome_accounts() -> list[dict[str, Any]]:
@@ -145,9 +143,7 @@ async def _stream_stocklist(client: LotteHomeClient) -> dict[str, str]:
     if client.proxy_url:
         kw["proxy"] = client.proxy_url
     async with httpx.AsyncClient(**kw) as hc:
-        async with hc.stream(
-            "GET", url, params={"subscriptionId": cert}
-        ) as resp:
+        async with hc.stream("GET", url, params={"subscriptionId": cert}) as resp:
             if resp.status_code != 200:
                 raise RuntimeError(f"searchStockList HTTP {resp.status_code}")
             tail = b""
@@ -259,8 +255,7 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
         if ghosts or stale:
             sev = "WARN" if (len(ghosts) + len(stale)) < ALERT_THRESHOLD else "CRIT"
             logger.warning(
-                "[lottehome_reconciler] %s %s 유령=%d 죽은기록=%d "
-                "db=%d dump=%d",
+                "[lottehome_reconciler] %s %s 유령=%d 죽은기록=%d db=%d dump=%d",
                 sev,
                 label,
                 len(ghosts),
@@ -304,9 +299,7 @@ async def reconcile_all_accounts_once() -> list[dict[str, Any]]:
             logger.exception(
                 f"[lottehome_reconciler] {acc.get('account_label')} 실패: {e}"
             )
-            results.append(
-                {"account_label": acc.get("account_label"), "error": str(e)}
-            )
+            results.append({"account_label": acc.get("account_label"), "error": str(e)})
     return results
 
 
