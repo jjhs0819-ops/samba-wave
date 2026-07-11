@@ -1826,6 +1826,8 @@ class SSGClient:
                         "useYn": "Y",
                     }
                 )
+                # SSG 온라인 상품은 옵션별 다른 매가를 지원하지 않는다("온라인 상품의
+                # 매가는 1개만 입력 가능 (00007)"). 전 옵션 동일 매가(상품 대표가)로 전송.
                 uitem_prices_list.append(
                     {
                         "tempUitemId": temp_id,
