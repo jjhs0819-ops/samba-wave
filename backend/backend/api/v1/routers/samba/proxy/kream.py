@@ -579,6 +579,7 @@ class SnkrdunkFixedPricePatchRequest(BaseModel):
     option: str  # "PSA 10" / "PSA 9"
     enabled: bool
     price: int = 0
+    stock: int = 0  # 보유재고 수량 — 고정가=보유재고, 이 수량만큼 판매 시 재입찰
 
 
 class SnkrdunkKreamNameEnPatchRequest(BaseModel):
@@ -750,8 +751,22 @@ async def snkrdunk_compare_all_public(
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), 0) AS psa9_fixed_price,
+            -- 고정가 보유재고 수량(고정가=보유재고, 판매 시 재입찰 관리용)
+            COALESCE((
+                SELECT NULLIF(o->>'fixedStock', '')::numeric::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
+                LIMIT 1
+            ), 0) AS psa10_fixed_stock,
+            COALESCE((
+                SELECT NULLIF(o->>'fixedStock', '')::numeric::int
+                FROM jsonb_array_elements(options::jsonb) o
+                WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
+                LIMIT 1
+            ), 0) AS psa9_fixed_stock,
             -- 신발(스니커즈)용: 사이즈옵션 전체 재고합 + 최저가(카드 PSA칸 없음 대응)
             COALESCE(extra_data->>'snkr_type', '') AS snkr_type,
+            (COALESCE(extra_data->>'supply_gap', '') = 'true') AS supply_gap,
             -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
             CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN options ELSE NULL END AS size_options,
             COALESCE(extra_data->>'currency', '') AS currency,
@@ -1039,7 +1054,7 @@ async def snkrdunk_update_fixed_price_public(
         SET options = (
             SELECT jsonb_agg(
                 CASE WHEN o->>'name' = :opt_name
-                     THEN o || jsonb_build_object('fixedEnabled', :enabled, 'fixedPrice', :price)
+                     THEN o || jsonb_build_object('fixedEnabled', :enabled, 'fixedPrice', :price, 'fixedStock', :stock)
                      ELSE o END)
             FROM jsonb_array_elements(options::jsonb) o
         ), updated_at = NOW()
@@ -1047,7 +1062,11 @@ async def snkrdunk_update_fixed_price_public(
     """)
     await session.exec(
         sql.bindparams(
-            sid=snkr_id, opt_name=body.option, enabled=body.enabled, price=body.price
+            sid=snkr_id,
+            opt_name=body.option,
+            enabled=body.enabled,
+            price=body.price,
+            stock=body.stock,
         )  # type: ignore[arg-type]
     )
     await session.commit()
