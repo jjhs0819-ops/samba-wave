@@ -46,10 +46,21 @@ def register_tenant_filter_events() -> None:
             if "tenant_id" not in table.columns:
                 continue
             try:
+                # samba_settings는 key-value 전역 설정 테이블 — tenant_id=NULL 행은
+                # 워커/시스템 전역 키(예: bg_worker_last_seen)로, HTTP 컨텍스트 없이
+                # 기록되어 tenant_id가 채워지지 않는다. 이런 전역 행은 모든 테넌트가
+                # 조회 가능해야 하므로 'tenant 일치 OR tenant_id IS NULL'로 완화한다.
+                # 그 외 실데이터 테이블(상품/주문 등)은 엄격 격리 유지.
+                if table.name == "samba_settings":
+                    criteria = (entity.tenant_id == tenant_id) | (
+                        entity.tenant_id.is_(None)
+                    )
+                else:
+                    criteria = entity.tenant_id == tenant_id
                 orm_execute_state.statement = orm_execute_state.statement.options(
                     with_loader_criteria(
                         entity,
-                        entity.tenant_id == tenant_id,
+                        criteria,
                         include_aliases=True,
                     )
                 )
