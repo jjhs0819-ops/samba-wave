@@ -766,6 +766,8 @@ async def snkrdunk_compare_all_public(
             ), 0) AS psa9_fixed_stock,
             -- 신발(스니커즈)용: 사이즈옵션 전체 재고합 + 최저가(카드 PSA칸 없음 대응)
             COALESCE(extra_data->>'snkr_type', '') AS snkr_type,
+            -- 브랜드(상품수집처럼 동적 브랜드 드롭다운용) — DB brand 컬럼
+            COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand,
             (COALESCE(extra_data->>'supply_gap', '') = 'true') AS supply_gap,
             -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
             CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN options ELSE NULL END AS size_options,
