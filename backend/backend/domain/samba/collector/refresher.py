@@ -707,6 +707,18 @@ class RefreshResult:
     # 소싱처에서 상품 자체가 삭제되어 품절 처리된 경우 True (품절 이벤트 reason 구분용)
     deleted_from_source: bool = False
 
+    def __post_init__(self):
+        # 원가 오염 안전캡 (#625): 확장앱 SSG 상세 스크랩이 화면 가격 뒤에 붙은 별개
+        # 숫자(적립·이벤트·할부)까지 이어붙여 원가가 억~조 단위로 오염 → 억 단위 판매가가
+        # 롯데홈/롯데ON/11번가로 오전송된 사고 방지. 확장앱 포함 전 소스·전 적용처 공통 방어.
+        # 원가/혜택가가 판매가의 3배↑ 또는 1천만원↑이면 판매가로 캡(정상 역마진은 보존).
+        _sp = self.new_sale_price
+        if _sp and _sp > 0:
+            for _f in ("new_cost", "new_cost_excl_held_point", "new_benefit_cost"):
+                _v = getattr(self, _f)
+                if _v is not None and (_v > _sp * 3 or _v >= 10_000_000):
+                    setattr(self, _f, _sp)
+
 
 @dataclass
 class BulkRefreshResult:
