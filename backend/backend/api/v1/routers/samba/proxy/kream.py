@@ -407,7 +407,7 @@ async def snkrdunk_kream_compare(
 
     count_sql = text("""
         SELECT COUNT(*) FROM samba_collected_product
-        WHERE source_site = 'SNKRDUNK'
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA')
         AND resell_matches->'kream'->>'product_id' IS NOT NULL
         AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
         AND EXISTS (
@@ -428,7 +428,7 @@ async def snkrdunk_kream_compare(
                resell_matches->'kream'->>'style_code' AS kream_style_code_db,
                options
         FROM samba_collected_product
-        WHERE source_site = 'SNKRDUNK'
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA')
         AND resell_matches->'kream'->>'product_id' IS NOT NULL
         AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
         AND EXISTS (
@@ -492,7 +492,7 @@ async def _snkrdunk_remove_match_impl(
     sql = text("""
         UPDATE samba_collected_product
         SET resell_matches = resell_matches - 'kream', updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
     await session.commit()
@@ -542,7 +542,7 @@ async def _snkrdunk_update_match_impl(
             COALESCE(resell_matches -> 'kream', '{{}}'::jsonb) || {override_obj},
             true
         ){name_set}, updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     params: dict[str, Any] = {"sid": snkr_id, "kream_id": kream_id}
     if style_code:
@@ -770,21 +770,21 @@ async def snkrdunk_compare_all_public(
             COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand,
             (COALESCE(extra_data->>'supply_gap', '') = 'true') AS supply_gap,
             -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
-            CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN options ELSE NULL END AS size_options,
+            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN options ELSE NULL END AS size_options,
             COALESCE(extra_data->>'currency', '') AS currency,
             -- SUM/MIN 서브쿼리는 신발(스니커즈)만 계산 — 카드 2.5만행 전체에 돌리면
             -- /all 이 29초로 느려져 페이지 로드마다 DB 부하(2026-07-09 성능 회귀 수정).
-            CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN COALESCE((
+            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
                 SELECT SUM(NULLIF(o->>'stock', '')::int)
                 FROM jsonb_array_elements(options::jsonb) o
             ), 0) ELSE 0 END AS total_stock,
-            CASE WHEN extra_data->>'snkr_type' = 'sneaker' THEN COALESCE((
+            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
                 SELECT MIN(NULLIF(o->>'price', '')::numeric)::int
                 FROM jsonb_array_elements(options::jsonb) o
                 WHERE NULLIF(o->>'price', '')::numeric > 0
             ), 0) ELSE 0 END AS min_opt_price
         FROM samba_collected_product
-        WHERE source_site = 'SNKRDUNK'
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA')
         ORDER BY site_product_id
     """)
     result = await session.exec(sql)  # type: ignore[arg-type]
@@ -818,8 +818,10 @@ async def snkrdunk_compare_all_public(
         matched = bool(d["kream_id"])
         is_sneaker = d.get("snkr_type") == "sneaker"
         d["is_sneaker"] = is_sneaker
-        # 신발 사이즈옵션 파싱(재고>0만, 사이즈 오름차순) — 프론트 사이즈별 표시용
-        if is_sneaker and d.get("size_options"):
+        # 신발/의류/시계 = 사이즈(또는 ONE SIZE)옵션 기반 재고·가격. PSA칸 없음.
+        is_sized = d.get("snkr_type") in ("sneaker", "apparel", "watch")
+        # 사이즈옵션 파싱(재고>0만, 사이즈 오름차순) — 프론트 사이즈별 표시용
+        if is_sized and d.get("size_options"):
 
             def _cm(name: str) -> float:
                 m = _re_cm.search(name or "")
@@ -850,7 +852,7 @@ async def snkrdunk_compare_all_public(
         has_stock = (
             (d["psa10_stock"] or 0) > 0
             or (d["psa9_stock"] or 0) > 0
-            or (is_sneaker and (d["total_stock"] or 0) > 0)
+            or (is_sized and (d["total_stock"] or 0) > 0)
         )
         d["has_stock"] = has_stock
         d["model_no"] = d["kream_style_code"]
@@ -889,7 +891,7 @@ async def snkrdunk_update_verify_public(
             CAST(:verified AS jsonb),
             true
         ), updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(  # type: ignore[arg-type]
         sql.bindparams(sid=snkr_id, verified="true" if body.verified else "false")
@@ -926,7 +928,7 @@ async def snkrdunk_update_anomaly_ok_public(
                 ),
                 '{kream,anomaly_reason}', '""'::jsonb, true
             ), updated_at = NOW()
-            WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+            WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
         """)
     else:
         # 승인 취소 → anomaly_ok=false (flagged는 봇이 다시 판단)
@@ -936,7 +938,7 @@ async def snkrdunk_update_anomaly_ok_public(
                 COALESCE(resell_matches, '{}'::jsonb),
                 '{kream,anomaly_ok}', 'false'::jsonb, true
             ), updated_at = NOW()
-            WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+            WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
         """)
     await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
     await session.commit()
@@ -961,7 +963,7 @@ async def snkrdunk_kream_image_public(
                 SELECT resell_matches->'kream'->>'product_id' AS pid,
                        resell_matches->'kream'->>'image' AS img
                 FROM samba_collected_product
-                WHERE source_site='SNKRDUNK' AND site_product_id = :sid
+                WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
             """).bindparams(sid=snkr_id)  # type: ignore[arg-type]
         )
     ).first()
@@ -988,7 +990,7 @@ async def snkrdunk_kream_image_public(
                     COALESCE(resell_matches, '{}'::jsonb), '{kream,image}',
                     to_jsonb(CAST(:img AS text))
                 ), updated_at = NOW()
-                WHERE source_site='SNKRDUNK' AND site_product_id = :sid
+                WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
             """).bindparams(img=img, sid=snkr_id)  # type: ignore[arg-type]
         )
         await session.commit()
@@ -1033,7 +1035,7 @@ async def snkrdunk_update_style_code_public(
             to_jsonb(CAST(:style_code AS text)),
             true
         ), updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, style_code=body.style_code))  # type: ignore[arg-type]
     await session.commit()
@@ -1060,7 +1062,7 @@ async def snkrdunk_update_fixed_price_public(
                      ELSE o END)
             FROM jsonb_array_elements(options::jsonb) o
         ), updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(
         sql.bindparams(
@@ -1087,7 +1089,7 @@ async def snkrdunk_update_kream_name_public(
     sql = text("""
         UPDATE samba_collected_product
         SET name = CAST(:kream_name_ko AS text), updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, kream_name_ko=body.kream_name_ko))  # type: ignore[arg-type]
     await session.commit()
@@ -1111,7 +1113,7 @@ async def snkrdunk_update_kream_name_en_public(
             to_jsonb(CAST(:name_en AS text)),
             true
         ), updated_at = NOW()
-        WHERE source_site = 'SNKRDUNK' AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, name_en=body.kream_name_en))  # type: ignore[arg-type]
     await session.commit()
