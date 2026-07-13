@@ -547,6 +547,9 @@ class TheHyundaiSourcingClient:
     _MNDR_FIELD_KEYWORDS = (
         ("material", ("주소재", "소재", "재질")),
         ("color", ("색상",)),
+        # SSG 고시 치수 항목(wear 0000000003 / shoes 0000000170)이
+        # size_notice 를 읽음 (build_ssg_notice) — 예: "230-260"
+        ("size_notice", ("치수",)),
         ("manufacturer", ("제조자", "수입자", "제조사", "판매자")),
         ("origin", ("제조국", "원산지")),
         ("care_instructions", ("취급시 주의사항", "취급주의", "세탁방법")),
