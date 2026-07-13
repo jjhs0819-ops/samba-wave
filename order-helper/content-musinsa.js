@@ -95,9 +95,11 @@
     // 2) 앵커 뒤 첫 '건물번호(번지)' 토큰: 순수숫자 + 선택적 -숫자
     let bn = -1;
     for (let i = anchor + 1; i < tokens.length; i++) {
-      if (/^\d+(-\d+)?(번지)?$/.test(tokens[i])) { bn = i; break; }
+      // 도로명주소 '건물번호,' 형태의 뒤 쉼표 허용 (예: '천중로2길 1, B동 601호' → 건물번호 '1')
+      const t = tokens[i].replace(/,$/, '');
+      if (/^\d+(-\d+)?(번지)?$/.test(t)) { tokens[i] = t; bn = i; break; }
       // '113번' 같이 번 붙은 경우도 허용
-      if (/^\d+(-\d+)?번$/.test(tokens[i])) { bn = i; break; }
+      if (/^\d+(-\d+)?번$/.test(t)) { tokens[i] = t; bn = i; break; }
     }
     if (bn < 0) return { address1: main, address2: detail };
 

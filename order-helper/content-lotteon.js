@@ -63,8 +63,10 @@
     if (anchor < 0) return { address1: main, address2: detail };
     let bn = -1;
     for (let i = anchor + 1; i < tokens.length; i++) {
-      if (/^\d+(-\d+)?(번지)?$/.test(tokens[i])) { bn = i; break; }
-      if (/^\d+(-\d+)?번$/.test(tokens[i])) { bn = i; break; }
+      // 도로명주소 '건물번호,' 형태의 뒤 쉼표 허용 (예: '천중로2길 1, B동 601호' → 건물번호 '1')
+      const t = tokens[i].replace(/,$/, '');
+      if (/^\d+(-\d+)?(번지)?$/.test(t)) { tokens[i] = t; bn = i; break; }
+      if (/^\d+(-\d+)?번$/.test(t)) { tokens[i] = t; bn = i; break; }
     }
     if (bn < 0) return { address1: main, address2: detail };
     let end = bn;
