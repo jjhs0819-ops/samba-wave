@@ -733,6 +733,52 @@ class SSGClient:
             page += 1
         return total
 
+    async def list_live_items(
+        self, site_no: Optional[str] = None, max_pages: int = 2000
+    ) -> list[dict[str, Any]]:
+        """판매중 전체 상품 나열 (유령정리용).
+
+        getItemList.ssg 를 page/pageSize=100/siteNo 로 전량 페이징.
+        각 항목에서 itemId / splVenItemId / sellStatCd / itemNm 만 추출해 반환.
+        (sellStatCd=90 필터는 호출측에서 처리 — 여기선 전량 반환)
+        """
+        site = site_no or self.site_no
+        page, page_size, out = 1, 100, []
+        while page <= max_pages:
+            resp = await self._call_api(
+                "GET",
+                "/item/0.1/getItemList.ssg",
+                params={"page": str(page), "pageSize": str(page_size), "siteNo": site},
+            )
+            result_obj = resp.get("result", {}) if isinstance(resp, dict) else {}
+            items_raw = (
+                result_obj.get("items", {}) if isinstance(result_obj, dict) else {}
+            )
+            # XStream: items는 dict 래퍼, item은 1개면 dict, 여러 개면 list
+            if isinstance(items_raw, dict):
+                iv = items_raw.get("item", [])
+                items_list = (
+                    [iv]
+                    if isinstance(iv, dict)
+                    else (iv if isinstance(iv, list) else [])
+                )
+            elif isinstance(items_raw, list):
+                items_list = items_raw
+            else:
+                items_list = []
+            for it in items_list:
+                if isinstance(it, dict):
+                    out.append(
+                        {
+                            k: it.get(k)
+                            for k in ("itemId", "splVenItemId", "sellStatCd", "itemNm")
+                        }
+                    )
+            if len(items_list) < page_size:
+                break
+            page += 1
+        return out
+
     # ------------------------------------------------------------------
     # 업체정보 조회
     # ------------------------------------------------------------------

@@ -1666,6 +1666,7 @@ async def _start_lottehome_ghost_reconciler() -> None:
 
 _coupang_ghost_reconciler_task: asyncio.Task | None = None
 _esmplus_ghost_reconciler_task: asyncio.Task | None = None
+_ssg_ghost_reconciler_task: asyncio.Task | None = None
 _soldout_cleanup_task: asyncio.Task | None = None
 
 
@@ -1843,6 +1844,19 @@ async def _start_esmplus_ghost_reconciler() -> None:
     _esmplus_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
     logging.getLogger("backend.lifecycle").info(
         "[lifecycle] ESMPlus 유령상품 reconciler 시작"
+    )
+
+
+async def _start_ssg_ghost_reconciler() -> None:
+    """SSG 역방향 유령상품(삼바 미존재·SSG 판매중) 일일 자동 감지 잡 — 24시간 주기."""
+    global _ssg_ghost_reconciler_task
+    from backend.domain.samba.proxy.ssg_ghost_reconciler import (
+        ghost_reconciler_loop,
+    )
+
+    _ssg_ghost_reconciler_task = asyncio.create_task(ghost_reconciler_loop())
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] SSG 역방향 유령상품 reconciler 시작"
     )
 
 
@@ -2077,6 +2091,7 @@ async def lifespan(app: FastAPI):
         await _start_smartstore_ghost_reconciler()
         await _start_coupang_ghost_reconciler()
         await _start_esmplus_ghost_reconciler()
+        await _start_ssg_ghost_reconciler()
         await _start_lottehome_ghost_reconciler()
         await _start_tracking_dispatch_sweep()
         await _start_soldout_cleanup()
@@ -2125,6 +2140,7 @@ async def lifespan(app: FastAPI):
         await _cancel_task(_elevenst_ghost_reconciler_task)
         await _cancel_task(_smartstore_ghost_reconciler_task)
         await _cancel_task(_coupang_ghost_reconciler_task)
+        await _cancel_task(_ssg_ghost_reconciler_task)
         await _cancel_task(_tracking_dispatch_sweep_task)
         await _cancel_task(_soldout_cleanup_task)
         await _shutdown_worker_runtime(worker_runtime)

@@ -100,6 +100,70 @@ async def emergency_clear(admin: str = Depends(require_admin)):
     return {"ok": True, "message": "비상정지 해제"}
 
 
+@router.post("/ssg/cleanup-orphans")
+async def cleanup_ssg_orphans(
+    account_id: str = Query(..., description="정리할 SSG 계정 id"),
+    dry_run: bool = Query(
+        True,
+        description="true면 유령 개수/샘플만, false면 실제 판매종료(sellStatCd=90)",
+    ),
+    max_delete: int = Query(
+        200, ge=0, le=100000, description="한 번에 종료할 최대 유령 수"
+    ),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """SSG 역방향 유령 정리 — 삼바엔 없는데 SSG엔 판매중인 상품을 판매종료.
+
+    SSG 판매중(sellStatCd!=90) 전량 나열 → 각 splVenItemId(= 삼바 수집상품 id)가
+    삼바 DB에 상품으로 존재하지 않으면 유령 → dry_run=false 시 delete_product 로
+    영구판매중지(sellStatCd=90). 삼바에 상품이 존재하면 절대 유령 판정하지 않아
+    오삭제 위험이 낮다(멱등이라 이미 90이어도 안전).
+
+    반드시 account_id 로 특정 계정만 좁혀 실행. 최초 dry_run=true 로
+    ghost_count/ghost_sample 을 확인한 뒤 dry_run=false 로 종료한다. 유령이 많으면
+    HTTP 524(타임아웃)나도 서버는 끝까지 처리하며 max_delete 배치로 반복 호출한다.
+
+    ⚠ splVenItemId 가 삼바 상품 id 형식과 다르면 전량이 유령으로 잡힐 수 있으니,
+    최초 dry_run 응답의 ghost_sample(splVenItemId 형식)·db_existing 수치를 반드시
+    검증한 뒤 dry_run=false 로 넘어갈 것.
+    """
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.ssg_ghost_reconciler import (
+        _reconcile_one_account,
+    )
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type != "ssg":
+        raise HTTPException(
+            status_code=400, detail=f"SSG 계정이 아닙니다: {acc.market_type}"
+        )
+
+    acc_dict = {
+        "id": acc.id,
+        "account_label": acc.account_label,
+        "api_key": acc.api_key,
+        "additional_fields": acc.additional_fields or {},
+    }
+    # SSG 전량 나열(수십 초) 동안 이 세션이 idle-in-transaction 으로 커넥션을
+    # 물지 않도록 먼저 종료 — reconciler 는 내부에서 자체 세션으로 DB 대조.
+    await session.commit()
+    return await _reconcile_one_account(
+        acc_dict, dry_run=dry_run, max_delete=max_delete
+    )
+
+
 @router.post("/esm/cleanup-orphans")
 async def cleanup_esm_orphans(
     account_id: str = Query(..., description="정리할 ESM(옥션/G마켓) 계정 id"),
