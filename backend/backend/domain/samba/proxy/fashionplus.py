@@ -73,8 +73,11 @@ class FashionPlusClient:
     def _client_kwargs(self) -> dict[str, Any]:
         """httpx.AsyncClient 생성 인자 — 프록시 있으면 주입."""
         kw: dict[str, Any] = {"timeout": 15, "follow_redirects": True}
-        if self.proxy_url:
-            kw["proxy"] = self.proxy_url
+        # 연결 수립 실패("All connection attempts failed")만 백오프(0.5→1→2초)
+        # 자동 재시도 — HTTP 응답을 받은 뒤의 재시도가 아니므로 429/403 차단
+        # 감지·품절 판정에는 영향 없음. transport 지정 시 proxy 인자가 무시되므로
+        # 프록시도 transport 쪽에 함께 넣는다.
+        kw["transport"] = httpx.AsyncHTTPTransport(retries=3, proxy=self.proxy_url)
         return kw
 
     async def _fetch_search_meta(self, keyword: str) -> dict[str, Any]:
