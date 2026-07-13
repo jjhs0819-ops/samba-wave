@@ -1032,8 +1032,15 @@ class LotteHomePlugin(MarketPlugin):
                 _pid = product.get("id")
                 if _images:
                     _imgs1, _ = await _img_svc.mirror_with_persistence(_pid, _images)
+                    # 대표(img_url)/추가(img_url1~5) 이미지는 롯데홈이 서버에서 직접
+                    # fetch·검증한다. 권장 규격 1024x1024 미달 시 "이미지가 잘못
+                    # 등록되었습니다"로 반려 → 삼바는 성공으로 알아 유령 축적(2026-07,
+                    # 무신사 대량등록 시 4천여 건). min_dim=1024 로 미달분 업스케일해
+                    # 규격 충족(쿠팡 min_dim=500 / ESM min_dim=600 과 동일 패턴).
+                    # 상세이미지(detail_html)는 구매자 브라우저 렌더라 서버검증을 받지
+                    # 않으므로 규격 강제 불필요.
                     product["images"], _, _ = await _img_svc.mirror_oversized_to_r2(
-                        _imgs1
+                        _imgs1, min_dim=1024
                     )
                 if _detail_images:
                     _dimgs1, _ = await _img_svc.mirror_with_persistence(
