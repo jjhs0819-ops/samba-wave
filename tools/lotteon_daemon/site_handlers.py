@@ -240,6 +240,18 @@ _SSG_EXTRACT_JS = r"""
     }
     const obj = window.resultItemObj || {}
     const _intVal = (v) => parseInt((v || '0').toString().replace(/[^0-9]/g, ''), 10) || 0
+    // 원가 오염 방지(#625 데몬측): DOM 텍스트는 가격 앞뒤로 별개 숫자(카드 할인율 "7%",
+    // 적립·이벤트·할부·행사기간 등)가 붙을 수 있어, 숫자를 전부 이어붙이는 _intVal 을 쓰면
+    // "7%"+가격+"37만…07.14" 가 한 숫자로 결합돼 억~조 단위 오염값이 됨(2026-07-11 실사고 —
+    // 닥스 등 2,723건 원가 조 단위 오염 → 롯데홈/롯데ON/플토 조 단위 가격 전송).
+    // 콤마 묶음(1,234,567) 또는 4자리+ 연속 숫자 중 첫 토큰만 가격으로 취하고 1억 이상은
+    // 폐기(0 반환 → 백엔드 폴백). SSG 단품 가격은 1억을 넘지 않음.
+    const _priceVal = (t) => {
+      const m = (t || '').toString().match(/\d{1,3}(?:,\d{3})+|\d{4,}/)
+      if (!m) return 0
+      const n = parseInt(m[0].replace(/,/g, ''), 10) || 0
+      return n >= 100000000 ? 0 : n
+    }
 
     let domCardPrice = 0
     let domSalePrice = 0
@@ -251,8 +263,10 @@ _SSG_EXTRACT_JS = r"""
         if (dt.textContent.trim() !== '카드혜택가') return
         const dd = dt.nextElementSibling
         if (dd) {
+          // em.ssg_price 미존재 시 dd 전체 텍스트 폴백 — 할인율/행사 문구가 섞이므로
+          // 반드시 _priceVal(가격형 토큰만)로 파싱해야 함 (_intVal 금지).
           const em = dd.querySelector('em.ssg_price') || dd
-          const v = _intVal(em.textContent)
+          const v = _priceVal(em.textContent)
           if (v) domCardPrice = v
         }
       })
@@ -261,10 +275,10 @@ _SSG_EXTRACT_JS = r"""
         const cardEl = document.querySelector(
           '.mndtl_card_price em.ssg_price, .mndtl_card_btnmore .ssg_price, .cdtl_card_price .ssg_price'
         )
-        if (cardEl) domCardPrice = _intVal(cardEl.textContent)
+        if (cardEl) domCardPrice = _priceVal(cardEl.textContent)
       }
       const saleEl = document.querySelector('.cdtl_new_price.notranslate em.ssg_price, .cdtl_price .ssg_price')
-      if (saleEl) domSalePrice = _intVal(saleEl.textContent)
+      if (saleEl) domSalePrice = _priceVal(saleEl.textContent)
     } catch (_) {}
 
     const sellprc = _intVal(obj.sellprc)
@@ -272,6 +286,8 @@ _SSG_EXTRACT_JS = r"""
     const norprc = _intVal(obj.norprc || obj.orgPrc)
     const salePrice = domSalePrice || bestAmt
     const originalPrice = norprc || sellprc || salePrice
+    // 카드혜택가가 판매가의 3배를 넘으면 파싱 오염으로 보고 폐기(정상 카드가는 판매가 이하)
+    if (domCardPrice > 0 && salePrice > 0 && domCardPrice > salePrice * 3) domCardPrice = 0
     const cost = domCardPrice || bestAmt || salePrice
     // 전품절 여부: resultItemObj.soldOut="Y" 1순위, DOM "품절" 버튼 폴백
     let soldOut = String(obj.soldOut || '').toUpperCase() === 'Y'

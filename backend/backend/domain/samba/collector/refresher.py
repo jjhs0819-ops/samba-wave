@@ -718,6 +718,17 @@ class RefreshResult:
                 _v = getattr(self, _f)
                 if _v is not None and (_v > _sp * 3 or _v >= 10_000_000):
                     setattr(self, _f, _sp)
+        # 옵션 원가도 동일 캡 — 오염 혜택가로 계산된 비율(카드할인율 = 혜택가/판매가)이
+        # 옵션별 cost에 곱해지는 경로(plugins/sourcing/ssg.py)는 위 필드 캡을 우회한다.
+        # 옵션 자체 price 기준으로 캡(price 없으면 상품 판매가 폴백).
+        if self.new_options:
+            for _o in self.new_options:
+                if not isinstance(_o, dict):
+                    continue
+                _oc = _o.get("cost")
+                _op = _o.get("price") or (_sp if _sp and _sp > 0 else 0)
+                if _oc and _op and _op > 0 and (_oc > _op * 3 or _oc >= 10_000_000):
+                    _o["cost"] = _op
 
 
 @dataclass

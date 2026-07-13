@@ -175,14 +175,39 @@ def daemon_detail_fallback(ext_result: dict) -> dict:
     """
     if not isinstance(ext_result, dict):
         return {}
+
+    # 가격 오염 방어(#625 보완 — 수집 경로): 구버전 데몬/확장앱의 DOM 스크랩이 가격 앞뒤
+    # 숫자(할인율·적립·행사기간)를 이어붙여 억~조 단위 오염값을 회신할 수 있다(2026-07-11
+    # 실사고: 닥스 등 2,723건 원가 조 단위 오염). RefreshResult 캡은 갱신 경로만 보호하므로
+    # 신규 수집이 지나는 이 변환 지점에서도 차단해야 한다.
+    def _sane_price(v) -> int:
+        """판매가/정상가 후보 — 1억 이상은 스크랩 오염으로 폐기."""
+        v = int(v or 0)
+        return v if 0 < v < 100_000_000 else 0
+
     _sale = (
-        int(ext_result.get("domSalePrice", 0) or 0)
-        or int(ext_result.get("sale_price", 0) or 0)
-        or int(ext_result.get("best_benefit_price", 0) or 0)
+        _sane_price(ext_result.get("domSalePrice", 0))
+        or _sane_price(ext_result.get("sale_price", 0))
+        or _sane_price(ext_result.get("best_benefit_price", 0))
     )
-    _card = int(ext_result.get("domCardPrice", 0) or 0)
-    _benefit = _card or int(ext_result.get("best_benefit_price", 0) or 0) or _sale
-    _orig = int(ext_result.get("original_price", 0) or 0) or _sale
+
+    def _sane_benefit(v) -> int:
+        """카드혜택가/혜택가 후보 — 판매가의 3배↑ 또는 1천만원↑은 오염으로 폐기.
+
+        기준은 RefreshResult.__post_init__ 원가 안전캡(#625)과 동일(정상 역마진 보존).
+        """
+        v = int(v or 0)
+        if v <= 0:
+            return 0
+        if v >= 10_000_000 or (_sale > 0 and v > _sale * 3):
+            return 0
+        return v
+
+    _card = _sane_benefit(ext_result.get("domCardPrice", 0))
+    _benefit = (
+        _card or _sane_benefit(ext_result.get("best_benefit_price", 0)) or _sale
+    )
+    _orig = _sane_price(ext_result.get("original_price", 0)) or _sale
     _name = (ext_result.get("name") or "").strip()
     _opts: list[dict] = []
     for _o in ext_result.get("options", []) or []:

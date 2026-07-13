@@ -128,6 +128,24 @@ def resolve_cost_for_policy(
     return cost
 
 
+# 마켓 전송가/원가 상한 — 이 금액 이상이면 가격 오염으로 보고 전송을 차단한다(#625 보완).
+# 2026-07-11 SSG 스크랩 오염으로 원가가 조 단위로 저장 → 조 단위 판매가가 롯데홈/롯데ON/
+# 플레이오토에 실전송된 사고의 최후 방어선. 원인이 무엇이든(스크랩·정책·데이터) 이상 가격이
+# 마켓 API로 나가는 것 자체를 막는다. 취급 상품(패션)은 1억을 넘지 않는다.
+PRICE_SANITY_CAP = 100_000_000
+
+
+def exceeds_price_cap(*values) -> bool:
+    """전송가/원가 후보 중 상한(1억) 이상이 있으면 True — 전송 차단용."""
+    for v in values:
+        try:
+            if v is not None and float(v) >= PRICE_SANITY_CAP:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
 def calc_market_price(
     cost: float,
     policy_pricing: dict,
@@ -671,6 +689,14 @@ class SambaShipmentService:
                             f"[가격방어] 그룹전송 차단 — 원가 이상치: "
                             f"원가={int(cost):,}, 정상가={int(_orig_price):,}, "
                             f"계산가={calc_price:,}"
+                        )
+                        continue
+
+                    # 가격 이상치 방어(상한): 원가/계산가 1억 이상은 오염으로 보고 차단(#625 보완)
+                    if exceeds_price_cap(cost, calc_price):
+                        logger.error(
+                            f"[가격방어] 그룹전송 차단 — 가격 상한 초과: "
+                            f"원가={int(cost):,}, 계산가={calc_price:,}"
                         )
                         continue
 
@@ -2030,6 +2056,19 @@ class SambaShipmentService:
                 # 스킵 판단
                 cur_price = int(acct_product.get("sale_price") or 0)
                 cur_cost_int = int(acct_product.get("cost") or 0)
+                # 가격 이상치 방어(상한): 판매가/원가가 1억 이상이면 오염으로 보고 전송 차단.
+                # 정책 유무와 무관하게 최종 전송값 기준으로 검사하는 최후 게이트(#625 보완,
+                # 2026-07-11 조 단위 가격 실전송 사고 재발 방지).
+                if exceeds_price_cap(cur_price, cur_cost_int):
+                    logger.error(
+                        f"[가격방어] 전송 차단 — 가격 상한 초과: "
+                        f"판매가={cur_price:,}, 원가={cur_cost_int:,}"
+                    )
+                    res["error"] = (
+                        f"가격 이상치 감지 — 판매가 {cur_price:,}원 / "
+                        f"원가 {cur_cost_int:,}원 (1억 이상, 원가 오염 의심)"
+                    )
+                    return res
                 # last_sent_data 가 dict 아닌 오염값(과거 jsonb 병합 버그로 배열/JSON null
                 # 저장된 경우)이면 빈 dict 취급 — .get() 크래시 방지
                 _lsd_raw = product_row.last_sent_data
