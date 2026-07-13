@@ -30,6 +30,7 @@ SOURCE_SITE_CURRENCY_MAP: dict[str, str] = {
     "snkrdunk": "JPY",
     "rakuten": "JPY",
     "buyma": "JPY",
+    "onitsuka": "JPY",
     "poizon": "CNY",
     "zoom": "CNY",
     "farfetch": "EUR",

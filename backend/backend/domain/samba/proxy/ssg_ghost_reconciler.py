@@ -140,9 +140,7 @@ async def _log_monitor_event(
             session.add(
                 SambaMonitorEvent(
                     event_type="ssg_ghost_detected",
-                    severity="warning"
-                    if ghost_count < ALERT_THRESHOLD
-                    else "critical",
+                    severity="warning" if ghost_count < ALERT_THRESHOLD else "critical",
                     market_type="ssg",
                     summary=(
                         f"SSG {account_label} 유령상품 {ghost_count}개 감지 "
@@ -250,9 +248,7 @@ async def _reconcile_one_account(
 
     result["deleted"] = deleted
     result["failed"] = failed
-    logger.info(
-        f"[ssg_ghost] {label} 종료완료={len(deleted)} 실패={len(failed)}"
-    )
+    logger.info(f"[ssg_ghost] {label} 종료완료={len(deleted)} 실패={len(failed)}")
     return result
 
 

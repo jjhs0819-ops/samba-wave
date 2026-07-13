@@ -204,9 +204,7 @@ def daemon_detail_fallback(ext_result: dict) -> dict:
         return v
 
     _card = _sane_benefit(ext_result.get("domCardPrice", 0))
-    _benefit = (
-        _card or _sane_benefit(ext_result.get("best_benefit_price", 0)) or _sale
-    )
+    _benefit = _card or _sane_benefit(ext_result.get("best_benefit_price", 0)) or _sale
     _orig = _sane_price(ext_result.get("original_price", 0)) or _sale
     _name = (ext_result.get("name") or "").strip()
     _opts: list[dict] = []

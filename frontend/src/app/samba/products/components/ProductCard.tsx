@@ -497,7 +497,7 @@ const ProductCard = React.memo(function ProductCard({
   // SNKRDUNK는 일본 사이트(JP API) 수집이라 엔화(¥).
   const _site = (p.source_site || '').toUpperCase()
   const _cur = (p.extra_data as Record<string, unknown> | undefined)?.currency
-  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA']
+  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA']
   const USD_SOURCE_SITES = ['AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
   const curSym = (JPY_SOURCE_SITES.includes(_site) || _cur === 'JPY') ? '¥'
     : (USD_SOURCE_SITES.includes(_site) || _cur === 'USD') ? '$'
