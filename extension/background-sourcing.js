@@ -581,13 +581,16 @@ async function _processJobWithCap(job) {
 const _trackingPending = new Map() // requestId → {resolve, timeoutId, tabId}
 
 // 송장 잡 site(대문자) → 자동로그인 siteKey 매핑.
-// SPA_DIRECT_LOGIN_SITES(ssg/lotteon/abcmart/musinsa)는 주문매칭 계정으로 강제 로그인 지원.
+// SPA_DIRECT_LOGIN_SITES(ssg/lotteon/abcmart/musinsa/fashionplus)는 주문매칭 계정으로 강제 로그인 지원.
+// FASHIONPLUS: 단일 소싱계정이라 계정 스왑은 불필요하나, 세션 만료 시 자동 복구를 위해 매핑.
+// 이 매핑 누락이 패션플러스 송장 "content script 응답 없음"(비로그인 리다이렉트)의 근본 원인이었음.
 const _TRACKING_AUTO_LOGIN_MAP = {
   SSG: 'ssg',
   LOTTEON: 'lotteon',
   ABCMART: 'abcmart',
   GRANDSTAGE: 'abcmart',
   MUSINSA: 'musinsa',
+  FASHIONPLUS: 'fashionplus',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
