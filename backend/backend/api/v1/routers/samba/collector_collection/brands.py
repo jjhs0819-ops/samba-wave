@@ -337,6 +337,15 @@ async def brand_refresh(
                 keyword_url = (
                     f"https://kream.co.kr/search?keyword={_quote(keyword)}{_opt_suffix}"
                 )
+            elif site == "THEHYUNDAI":
+                # q=키워드 + flCate=catLcd (서버측 카테고리 필터) — worker.py가
+                # q/flBrand/flCate 를 파싱해 client.search 필터로 전달
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"THEHYUNDAI_{keyword}_{path_tail}"
+                keyword_url = (
+                    f"https://hi.thehyundai.com/search?q={_quote(keyword)}"
+                    f"&flCate={cat_code}{_opt_suffix}"
+                )
             else:
                 # MUSINSA
                 cat_name = path.replace(" > ", "_").replace("/", "_")
@@ -635,6 +644,19 @@ async def brand_scan(
         plugin = KreamPlugin()
         return await plugin.scan_categories(keyword)
 
+    if body.source_site == "THEHYUNDAI":
+        # env var gate(ENABLE_THEHYUNDAI=1) 통과 시에만 import 성공
+        from backend.domain.samba.plugins.sourcing.thehyundai import TheHyundaiPlugin
+
+        plugin = TheHyundaiPlugin()
+        selected = body.selected_brands or ([keyword] if keyword else None)
+        return await plugin.scan_categories(
+            keyword,
+            selected_brands=selected,
+            brand_ids=body.brand_ids or None,
+            brand_total=body.brand_total or 0,
+        )
+
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 
@@ -811,6 +833,21 @@ async def brand_create_groups(
             keyword = (
                 f"https://www.fashionplus.co.kr/search/goods/result"
                 f"?searchWord={_quote_fp(_label_fp)}{_brand_fp}{_cat_params}{_md_fp}{_so_fp}"
+            )
+            category_filter = code or None
+        elif body.source_site == "THEHYUNDAI":
+            from urllib.parse import quote as _quote_th
+
+            _label_th = body.brand_name or body.brand or ""
+            _md_th = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so_th = "&includeSoldOut=1" if _opts_include_sold_out else ""
+            # flBrand=operBrndCd (서버측 브랜드 필터), flCate=catLcd (카테고리 필터)
+            # — worker.py가 q/flBrand/flCate 파싱해 client.search 필터로 전달
+            _brand_th = f"&flBrand={body.brand_ids[0]}" if body.brand_ids else ""
+            _cate_th = f"&flCate={code}" if code else ""
+            keyword = (
+                f"https://hi.thehyundai.com/search?q={_quote_th(_label_th)}"
+                f"{_brand_th}{_cate_th}{_md_th}{_so_th}"
             )
             category_filter = code or None
         else:  # LOTTEON

@@ -5317,6 +5317,11 @@ class JobWorker:
                 _ctg_lv = qs.get("ctgLv", [""])[0]
                 if _ctg_lv:
                     _search_kwargs["ctg_lv"] = _ctg_lv
+                # 더현대 필터 파라미터 (flBrand=operBrndCd, flCate=catLcd)
+                for _th_k in ("flBrand", "flCate"):
+                    _th_v = qs.get(_th_k, [""])[0]
+                    if _th_v:
+                        _search_kwargs[_th_k] = _th_v
                 # SSG ctgPath 파라미터 → 전시카테고리 전체 경로 (그룹 생성 시 저장)
                 _ctg_path = qs.get("ctgPath", [""])[0]
                 if _ctg_path:
@@ -5418,6 +5423,13 @@ class JobWorker:
             from backend.domain.samba.proxy.snkrdunk import SnkrdunkClient
 
             client = SnkrdunkClient()
+        elif site == "THEHYUNDAI":
+            # 더현대Hi — 순수 httpx 직접 호출 (프록시/확장앱 불요, Referer 헤더는 클라이언트가 처리)
+            from backend.domain.samba.proxy.thehyundai_sourcing import (
+                TheHyundaiSourcingClient,
+            )
+
+            client = TheHyundaiSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
