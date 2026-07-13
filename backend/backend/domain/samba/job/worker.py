@@ -2514,6 +2514,7 @@ class JobWorker:
             "SSG",
             "NAVERSTORE",
             "SNKRDUNK",
+            "THEHYUNDAI",
         }
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
