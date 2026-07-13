@@ -96,7 +96,7 @@ export default function LotteOnBrandModal({
               const selectedBrandTotal = brandModalList
                 .filter(b => brandModalSelected.has(b.name))
                 .reduce((sum, b) => sum + b.count, 0)
-              const siteLabel = selectedSite === 'SSG' ? 'SSG' : selectedSite === 'FashionPlus' ? '패션플러스' : '롯데ON'
+              const siteLabel = selectedSite === 'SSG' ? 'SSG' : selectedSite === 'FashionPlus' ? '패션플러스' : selectedSite === 'THEHYUNDAI' ? '더현대Hi' : '롯데ON'
               addLog(`[카테고리스캔] ${siteLabel} "${keyword || brand}" 스캔 시작... (${fmtNum(selectedBrands.length)}개 브랜드)`)
               try {
                 const res = await collectorApi.brandScan(brand, gf, keyword, selectedSite, selectedBrands, selectedBrandIds, selectedBrandTotal)

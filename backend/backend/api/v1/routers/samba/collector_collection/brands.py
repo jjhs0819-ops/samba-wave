@@ -442,6 +442,25 @@ async def brand_discover(body: BrandDiscoverRequest):
         plugin = FashionPlusPlugin()
         return await plugin.discover_brands(body.keyword)
 
+    if body.source_site == "THEHYUNDAI":
+        # env var gate(ENABLE_THEHYUNDAI=1) 통과 시에만 import 성공
+        from backend.domain.samba.plugins.sourcing.thehyundai import TheHyundaiPlugin
+
+        res = await TheHyundaiPlugin().discover_brands(body.keyword)
+        # 플러그인 canonical key 는 value(operBrndCd) — 프론트 브랜드 모달은
+        # id 를 brand_ids 로 전달하므로 id 별칭 부여 (scan flBrand/그룹 flBrand 로 이어짐)
+        return {
+            "brands": [
+                {
+                    "name": b.get("name", ""),
+                    "count": int(b.get("count") or 0),
+                    "id": b.get("value") or "",
+                }
+                for b in res.get("brands", [])
+            ],
+            "total": res.get("total", 0),
+        }
+
     raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
 
@@ -842,8 +861,13 @@ async def brand_create_groups(
             _md_th = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
             _so_th = "&includeSoldOut=1" if _opts_include_sold_out else ""
             # flBrand=operBrndCd (서버측 브랜드 필터), flCate=catLcd (카테고리 필터)
-            # — worker.py가 q/flBrand/flCate 파싱해 client.search 필터로 전달
-            _brand_th = f"&flBrand={body.brand_ids[0]}" if body.brand_ids else ""
+            # — worker.py가 q/flBrand/flCate 파싱해 client.search 필터로 전달.
+            # 다중 브랜드 구분자는 | (파이프, 쉼표는 서버 0건 — URL 인코딩 %7C)
+            _brand_th = (
+                f"&flBrand={_quote_th('|'.join(body.brand_ids))}"
+                if body.brand_ids
+                else ""
+            )
             _cate_th = f"&flCate={code}" if code else ""
             keyword = (
                 f"https://hi.thehyundai.com/search?q={_quote_th(_label_th)}"
