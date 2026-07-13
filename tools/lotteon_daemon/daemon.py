@@ -78,7 +78,13 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.51"
+DAEMON_VERSION = "1.4.52"
+
+# urllib 기본 User-Agent("Python-urllib/3.x")를 Cloudflare 가 봇으로 인식해 403 차단
+# (2026-07-13, GCP→Cloudflare Tunnel 전환 이후 신규 발생). self-update 관련 모든
+# urllib 요청에 반드시 이 헤더를 실어 보낼 것 — 빠지면 latest-version 조회부터 막혀
+# 신버전 감지→자기종료→업데이트 실패 데드루프 재발.
+_DAEMON_HTTP_USER_AGENT = f"SambaAutotuneDaemon/{DAEMON_VERSION}"
 
 # N건 처리 후 프록시 교체를 위해 supervisor 재기동 유도 (0=비활성)
 _PROXY_ROTATE_AFTER = 10
@@ -261,7 +267,11 @@ def _fetch_latest_download_url() -> str:
     _ctx.check_hostname = False
     _ctx.verify_mode = _ssl.CERT_NONE
     try:
-        with urllib.request.urlopen(_DAEMON_LATEST_VERSION_URL, timeout=10, context=_ctx) as resp:
+        req = urllib.request.Request(
+            _DAEMON_LATEST_VERSION_URL,
+            headers={"User-Agent": _DAEMON_HTTP_USER_AGENT},
+        )
+        with urllib.request.urlopen(req, timeout=10, context=_ctx) as resp:
             data = _json.loads(resp.read().decode("utf-8") or "{}")
             return (data.get("download_url") or "").strip()
     except Exception as exc:
@@ -293,7 +303,11 @@ def _perform_self_update(api_key: str = "") -> bool:
         try:
             logger_print("자동 업데이트: backend 경유 다운로드 (자동 키 갱신)")
             req = urllib.request.Request(
-                _DAEMON_UPDATE_URL_BACKEND, headers={"X-Api-Key": api_key}
+                _DAEMON_UPDATE_URL_BACKEND,
+                headers={
+                    "X-Api-Key": api_key,
+                    "User-Agent": _DAEMON_HTTP_USER_AGENT,
+                },
             )
             with (
                 urllib.request.urlopen(req, timeout=120, context=_ctx) as resp,
@@ -311,7 +325,10 @@ def _perform_self_update(api_key: str = "") -> bool:
                 logger_print("GitHub fallback URL 조회 실패 — 업데이트 중단")
                 return False
             try:
-                with urllib.request.urlopen(_dl_url, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
+                _dl_req = urllib.request.Request(
+                    _dl_url, headers={"User-Agent": _DAEMON_HTTP_USER_AGENT}
+                )
+                with urllib.request.urlopen(_dl_req, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
                     while True:
                         chunk = resp.read(1 << 16)
                         if not chunk:
@@ -327,7 +344,10 @@ def _perform_self_update(api_key: str = "") -> bool:
             return False
         try:
             logger_print(f"자동 업데이트: 새 exe 다운로드 {_dl_url}")
-            with urllib.request.urlopen(_dl_url, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
+            _dl_req = urllib.request.Request(
+                _dl_url, headers={"User-Agent": _DAEMON_HTTP_USER_AGENT}
+            )
+            with urllib.request.urlopen(_dl_req, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
                 while True:
                     chunk = resp.read(1 << 16)
                     if not chunk:

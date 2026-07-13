@@ -973,11 +973,15 @@ export default function WarroomPage() {
       if (!dev && !daemonDev) return
       const { API_BASE_URL: apiBase } = await import('@/config/api')
       // 사이트별 dev 분리 (2026-05-25 사용자 룰):
-      //  - 데몬 전용(SSG/ABCmart/GrandStage/LOTTEON) → 데몬 dev 에만 (가격수집+송장 둘 다 데몬)
+      //  - 데몬 전용(SSG/ABCmart/GrandStage) → 데몬 dev 에만 (가격수집+송장 둘 다 데몬)
       //  - 무신사/GSShop → 브라우저 dev 에만 (가격수집은 확장앱). 송장(tracking)은 데몬에
       //    등록하지 않아도 백엔드 dequeue 의 tracking site-분담 예외로 데몬 기존 워커가 처리.
       //    (무신사를 데몬 active_sites 에 넣으면 가격수집 워커가 중복 스폰되는 사고 — 등록 금지)
-      const _DAEMON_ONLY = new Set(['SSG', 'ABCmart', 'GrandStage', 'LOTTEON'])
+      //  - LOTTEON (2026-07-13 제외): backend 8dd2538a 로 refresh()가 benefits API 를
+      //    주소스로 써서 데몬 없이도 가격수집 동작 — 무신사와 동일하게 브라우저 dev 전담으로
+      //    전환. 데몬 전용에 남겨두면 데몬 한 번도 안 켠 PC는 등록 자체가 조용히 스킵돼
+      //    활성사이클이 0으로 보이던 버그(등록 로직이 실행 로직 변경을 못 따라감).
+      const _DAEMON_ONLY = new Set(['SSG', 'ABCmart', 'GrandStage'])
       // ABCmart 체크 = ABCmart + GrandStage 자동 expand (같은 a-rt.com 도메인)
       const _SITE_EXPAND: Record<string, string[]> = {
         ABCmart: ['ABCmart', 'GrandStage'],

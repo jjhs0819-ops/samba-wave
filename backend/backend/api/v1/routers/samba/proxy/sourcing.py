@@ -255,7 +255,13 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # self-update 자살 루프(60초마다 rc=10 재시작) = "데몬 자꾸 죽음" 사고(2026-06-17).
 # 1.4.39: v1.4.39 릴리스 업로드 + 다운로드 200 검증 완료(로그 100줄 캡 + httpx 억제 +
 # 크래시 서버보고). 로컬 1.4.39 worker 기동·httpx억제·로그캡 실측 확인 후 상향.
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.51"
+# 2026-07-13: 1.4.51 로 올렸으나 데몬(urllib 기본 User-Agent="Python-urllib/3.x")이
+# Cloudflare Tunnel 전환 이후 이 UA를 봇으로 차단(403) → latest-version 조회 자체가
+# 실패해 전 데몬이 신버전 감지→자기종료(rc=10)→업데이트 실패→60초 재시작 데드루프
+# (404 아닌 403 변종, project_daemon_self_update_404_deathloop 재발). 1.4.50 으로
+# 임시 되돌려 루프 정지 후, daemon.py 의 모든 urllib 요청에 User-Agent 헤더 추가한
+# 1.4.52 빌드(build.ps1)·릴리스(upload.ps1, 다운로드 200 검증 완료) 후 상향.
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.52"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"

@@ -937,13 +937,18 @@ def register_pc_allowed_sites(
         _pc_last_seen.pop(dev, None)
         _pc_site_history.pop(dev, None)
         return existed
-    # 데몬 전용 사이트 strip — 비데몬 dev 분담에 4개 사이트 절대 박히지 않음.
-    # 옛 확장앱이 X-Allowed-Sites 헤더에 SSG/ABC/GrandStage/LOTTEON 박아 보내도
-    # backend 가 무시. 사용자 룰 (3일 강조) 영구 차단 단일 진실 출처.
+    # 데몬 전용 사이트 strip — 비데몬 dev 분담에 SSG/ABC/GrandStage 절대 박히지 않음.
+    # 옛 확장앱이 X-Allowed-Sites 헤더에 박아 보내도 backend 가 무시.
+    # 사용자 룰 (3일 강조) 영구 차단 단일 진실 출처.
+    # LOTTEON 예외 (2026-07-13): 8dd2538a 로 refresh()가 benefits API 를 주소스로
+    # 써서 데몬 없이도 가격수집 동작하도록 바뀌었는데, 이 strip 목록은 그대로 둬서
+    # 브라우저 device 는 롯데ON 배정 자체가 안 되던 버그(체크박스 켜도 조용히 스킵,
+    # 등록은 늘 samba-daemon-* 로만 가능해 UI 활성사이클에 "(데몬)"만 표시됨).
+    # _site_autotune_loop 의 실행 게이트(DAEMON_ONLY_SITES - {"LOTTEON"})와 동일하게 맞춤.
     if not dev.startswith("samba-daemon-"):
         from backend.domain.samba.proxy.sourcing_queue import DAEMON_ONLY_SITES
 
-        _block = {s.upper() for s in DAEMON_ONLY_SITES}
+        _block = {s.upper() for s in DAEMON_ONLY_SITES} - {"LOTTEON"}
         sites = [s for s in sites if (s or "").strip().upper() not in _block]
     # GrandStage 는 abcmart.a-rt.com 의 GRAND STAGE 탭 — backend 수집이 두 탭 통합해
     # source_site='ABCmart' 로 저장. 별도 GrandStage 분담 불필요. 옛 데몬/UI 잔재 stale
