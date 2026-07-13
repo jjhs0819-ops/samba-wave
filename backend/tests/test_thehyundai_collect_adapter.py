@@ -115,6 +115,54 @@ class TestWorkerSnakeCaseKeys:
         assert n["source_url"] == "https://hi.thehyundai.com/product/40B0696270"
 
 
+class TestMndrFields:
+    """필수고시(mndrInfoList) → 부가필드 매핑. 카테고리별 고시양식이 달라
+    itstCd 코드가 아닌 itstTitl 키워드 매칭 사용."""
+
+    def test_extract_full(self) -> None:
+        mndr = {
+            "brndBcdVal": "HQ7901001",
+            "mndrInfoList": [
+                {"itstTitl": "제품 주소재", "itstCntn": "겉감 : 합성가죽"},
+                {"itstTitl": "색상", "itstCntn": "블랙/앤트러사이트"},
+                {"itstTitl": "치수", "itstCntn": "230-260"},
+                {"itstTitl": "제조자(수입자명)", "itstCntn": "(유)나이키코리아"},
+                {"itstTitl": "제조국", "itstCntn": "베트남 외"},
+                {"itstTitl": "취급시 주의사항", "itstCntn": "단독 세탁"},
+                {"itstTitl": "품질보증기준", "itstCntn": "공정위 고시 기준"},
+            ],
+        }
+        out = TheHyundaiSourcingClient._extract_mndr_fields(mndr)
+        assert out["material"] == "겉감 : 합성가죽"
+        assert out["color"] == "블랙/앤트러사이트"
+        assert out["manufacturer"] == "(유)나이키코리아"
+        assert out["origin"] == "베트남 외"
+        assert out["care_instructions"] == "단독 세탁"
+        assert out["quality_guarantee"] == "공정위 고시 기준"
+        assert out["style_code"] == "HQ7901001"
+        assert "치수" not in str(out)  # 미매핑 항목은 제외
+
+    def test_extract_none_and_empty(self) -> None:
+        assert TheHyundaiSourcingClient._extract_mndr_fields(None) == {}
+        assert TheHyundaiSourcingClient._extract_mndr_fields({}) == {}
+        # 내용 빈 행은 스킵
+        out = TheHyundaiSourcingClient._extract_mndr_fields(
+            {"mndrInfoList": [{"itstTitl": "색상", "itstCntn": ""}]}
+        )
+        assert "color" not in out
+
+    def test_first_match_wins(self) -> None:
+        out = TheHyundaiSourcingClient._extract_mndr_fields(
+            {
+                "mndrInfoList": [
+                    {"itstTitl": "소재", "itstCntn": "면 100%"},
+                    {"itstTitl": "겉감 소재", "itstCntn": "폴리 100%"},
+                ]
+            }
+        )
+        assert out["material"] == "면 100%"
+
+
 class TestGetDetailAlias:
     async def test_alias_delegates(self) -> None:
         client = TheHyundaiSourcingClient()
