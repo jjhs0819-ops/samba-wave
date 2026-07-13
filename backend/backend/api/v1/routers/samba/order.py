@@ -12309,6 +12309,12 @@ def _parse_lottehome_order(
             str(delv_info.get("recvZipCd") or delv_info.get("ZipCd") or "").strip()
             or None
         ),
+        # 배송메시지(customer_note) — 롯데홈 주문 최상위 `DlvMemoCont`(배송메모).
+        # (2026-07 실측: "해외배송이면 주문취소해요"가 DlvMemoCont 로 옴. 값 없으면
+        #  "null" 문자열로 오는데 _lh_str 가 걸러줌.) 선물카드 메시지 CardMemoCont 는 백업.
+        # 다른 마켓(스마트스토어/롯데ON/11번가/쿠팡/GS/플레이오토)처럼 customer_note 매핑
+        # — 롯데홈 파서에만 누락돼 삼바 화면 고객메모가 항상 비어있던 문제 수정.
+        "customer_note": _lh_str(item.get("DlvMemoCont"), item.get("CardMemoCont")),
         "quantity": qty,
         "sale_price": sale_price,
         "total_payment_amount": sale_price * qty,
