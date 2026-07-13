@@ -40,6 +40,8 @@ FILTER_INFO = "/proxy/v1/dp/search/searchFilterInfo"
 ITEM_DETAIL = "/proxy/v1/pd/item/detail"
 UITM_STCK_LIST = "/proxy/v1/pd/item/uitm/uitmStckList"
 MAX_BNFT_LIST = "/proxy/v1/pd/item/prmo/maxBnftList"
+# 필수고시정보 (소재/색상/제조자/제조국/취급주의/품질보증 + brndBcdVal=스타일코드)
+MNDR_INFO_LIST = "/proxy/v1/pd/item/inf/mndrInfoList"
 
 # sort 매핑 — 1차 B-4 검증
 _SORT_MAP = {
@@ -218,11 +220,25 @@ class TheHyundaiSourcingClient:
             detail_data = await self._get_detail(client, slitm_cd)
             if detail_data is None:
                 return {}
-            stck_list: Optional[list] = None
-            if detail_data.get("uitmCombYn") == "1":
-                stck_list = await self._get_uitm_stck_list(client, slitm_cd) or []
-            max_bnft = await self._get_max_bnft_list(client, slitm_cd)
-            return self._build_detail(slitm_cd, detail_data, stck_list, max_bnft)
+            # stck/bnft/mndr 는 상호 독립 — 병렬 조회로 상세 1건 wall-clock 단축
+            import asyncio as _asyncio
+
+            need_stck = detail_data.get("uitmCombYn") == "1"
+            stck_task = (
+                self._get_uitm_stck_list(client, slitm_cd)
+                if need_stck
+                else _asyncio.sleep(0, result=None)
+            )
+            stck_list, max_bnft, mndr_info = await _asyncio.gather(
+                stck_task,
+                self._get_max_bnft_list(client, slitm_cd),
+                self._get_mndr_info(client, slitm_cd),
+            )
+            if need_stck and stck_list is None:
+                stck_list = []
+            return self._build_detail(
+                slitm_cd, detail_data, stck_list, max_bnft, mndr_info
+            )
 
     async def refresh_product(self, product: Any) -> "RefreshResult":
         """오토튠 사이클 — RefreshResult 전 필드 채움.
@@ -515,9 +531,49 @@ class TheHyundaiSourcingClient:
             },
         )
 
+    async def _get_mndr_info(
+        self, client: httpx.AsyncClient, slitm_cd: str
+    ) -> Optional[dict]:
+        """필수고시정보 — 실패해도 상세 자체는 유효하므로 None 허용."""
+        return await self._fetch_json(client, MNDR_INFO_LIST, {"slitmCd": slitm_cd})
+
     # ──────────────────────────────────────────────────────────
     # internal — 정규화
     # ──────────────────────────────────────────────────────────
+
+    # 고시 itstTitl 키워드 → 삼바 필드 매핑. 카테고리별 고시양식(의류/신발/가전)마다
+    # itstCd 가 달라 코드 매칭 대신 제목 키워드 매칭 (앞선 키워드 우선).
+    _MNDR_FIELD_KEYWORDS = (
+        ("material", ("주소재", "소재", "재질")),
+        ("color", ("색상",)),
+        ("manufacturer", ("제조자", "수입자", "제조사", "판매자")),
+        ("origin", ("제조국", "원산지")),
+        ("care_instructions", ("취급시 주의사항", "취급주의", "세탁방법")),
+        ("quality_guarantee", ("품질보증",)),
+    )
+
+    @classmethod
+    def _extract_mndr_fields(cls, mndr_info: Optional[dict]) -> dict:
+        """mndrInfoList 응답 → {material, color, manufacturer, origin,
+        care_instructions, quality_guarantee, style_code} (없는 항목은 미포함)."""
+        out: dict[str, str] = {}
+        if not mndr_info:
+            return out
+        style = (mndr_info.get("brndBcdVal") or "").strip()
+        if style:
+            out["style_code"] = style
+        for row in mndr_info.get("mndrInfoList") or []:
+            title = (row.get("itstTitl") or "").strip()
+            content = (row.get("itstCntn") or "").strip()
+            if not title or not content:
+                continue
+            for field, keywords in cls._MNDR_FIELD_KEYWORDS:
+                if field in out:
+                    continue
+                if any(kw in title for kw in keywords):
+                    out[field] = content
+                    break
+        return out
 
     @staticmethod
     def _safe_int(v: Any) -> int:
@@ -614,6 +670,7 @@ class TheHyundaiSourcingClient:
         detail_data: dict,
         stck_list: Optional[list],
         max_bnft: Optional[dict],
+        mndr_info: Optional[dict] = None,
     ) -> dict:
         prc_info = detail_data.get("prcInfo") or {}
         brnd_info = detail_data.get("brndInfo") or {}
@@ -688,6 +745,9 @@ class TheHyundaiSourcingClient:
             "source_url": f"{BASE_URL}/product/{slitm_cd}",
             "itemGbcd": detail_data.get("itemGbcd"),
             "itemGbPtcGbCd": detail_data.get("itemGbPtcGbCd"),
+            # 필수고시 — material/color/manufacturer/origin/care_instructions/
+            # quality_guarantee/style_code (잡워커 product_data 가 그대로 저장)
+            **self._extract_mndr_fields(mndr_info),
         }
 
     @staticmethod
