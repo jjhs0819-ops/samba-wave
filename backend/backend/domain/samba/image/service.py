@@ -1266,13 +1266,17 @@ class ImageTransformService:
                 try:
                     parsed = urlparse(url)
                     host = (parsed.netloc or "").lower()
-                    # R2 본인 호스트면 그대로
-                    if public_host and host == public_host:
-                        self._mirror_memo[memo_key] = url
-                        return url, None, False
                     # min_dim/enforce_max_dim 모드: HEAD 우회하고 무조건 다운로드
                     # — HEAD 로는 픽셀 크기를 알 수 없으므로 PIL 로 직접 확인 필요.
                     strict_pixel = bool(min_dim > 0 or enforce_max_dim)
+                    # R2 본인 호스트면 그대로 — 단, strict_pixel(min_dim/enforce_max_dim)
+                    # 모드에선 이미 R2 인 이미지도 픽셀 규격을 재검증해야 하므로 통과 금지.
+                    # 롯데홈은 mirror_with_persistence 로 먼저 R2 미러(예: 833x1000)한 뒤
+                    # 이 함수를 min_dim=1024 로 호출하는데, 여기서 통과시키면 업스케일이
+                    # 스킵돼 규격 미달 이미지가 그대로 전송된다(2026-07 대표/추가 반려 원인).
+                    if public_host and host == public_host and not strict_pixel:
+                        self._mirror_memo[memo_key] = url
+                        return url, None, False
 
                     # HEAD 로 size 조회 — 초과 후보만 다운로드
                     # Content-Length 누락/비숫자 또는 HEAD 자체 실패 시 over=True 로 fallthrough
