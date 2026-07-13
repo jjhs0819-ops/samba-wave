@@ -283,8 +283,8 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                 return
               }
 
-              // 롯데ON / SSG / 패션플러스: 브랜드 탐색 후 선택 모달 표시
-              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus') {
+              // 롯데ON / SSG / 패션플러스 / 더현대: 브랜드 탐색 후 선택 모달 표시
+              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'THEHYUNDAI') {
                 try {
                   const discoverKeyword = keyword || brand
                   const res = await collectorApi.brandDiscover(discoverKeyword, selectedSite)
@@ -370,21 +370,6 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                   setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
                   addLog(`[카테고리스캔] KREAM: ${scanKeyword} → ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
                 } catch (e) { addLog(`[카테고리스캔] KREAM 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
-                setBrandScanning(false)
-                return
-              }
-
-              // 더현대Hi: 키워드만으로 바로 스캔 (무신사 브랜드 모달 폴백 차단)
-              if (selectedSite === 'THEHYUNDAI') {
-                const scanKeyword = keyword || brand || collectUrl.trim()
-                addLog(`[카테고리스캔] 더현대Hi "${scanKeyword}" 스캔 시작...`)
-                try {
-                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'THEHYUNDAI', [], [], 0, checkedOptions)
-                  setBrandCategories(res.categories)
-                  setBrandTotal(res.total)
-                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
-                  addLog(`[카테고리스캔] 더현대Hi: ${scanKeyword} → ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
-                } catch (e) { addLog(`[카테고리스캔] 더현대Hi 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
                 setBrandScanning(false)
                 return
               }

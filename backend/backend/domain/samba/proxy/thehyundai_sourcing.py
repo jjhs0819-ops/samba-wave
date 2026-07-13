@@ -385,8 +385,9 @@ class TheHyundaiSourcingClient:
             "searchQuery": keyword or "",
         }
         if brand_ids:
-            # flBrand 다중 — 쉼표 구분 (3-A에서 단건만 검증, 다중은 추정)
-            params["flBrand"] = ",".join(str(b) for b in brand_ids if b)
+            # flBrand 다중 구분자는 | (파이프). 쉼표는 서버가 0건 반환 (2026-07-13 실측:
+            # 101047,141300 → 0건 / 101047|141300 → 1,855건)
+            params["flBrand"] = "|".join(str(b) for b in brand_ids if b)
 
         async with self._client() as client:
             data = await self._fetch_json(client, FILTER_INFO, params)
