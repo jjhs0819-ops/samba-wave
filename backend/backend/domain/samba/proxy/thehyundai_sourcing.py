@@ -583,17 +583,27 @@ class TheHyundaiSourcingClient:
         except (TypeError, ValueError):
             return 0
 
+    # 이미지 리사이즈 — 파라미터 없으면 600×600 기본 서빙. 서버 원본이 커서
+    # RS=1000x1000 이 실제 1000px 반환 (2026-07-13 실측, PDP 웹뷰는 600 사용).
+    # 마켓 등록 화질 기준(SSG 권장 1000)에 맞춰 1000 고정.
+    _IMG_RESIZE = "?RS=1000x1000"
+
     @classmethod
     def _to_image_url(cls, path: str) -> str:
         if not path:
             return ""
         if path.startswith("http"):
-            return path
-        if path.startswith("//"):
-            return f"https:{path}"
-        if not path.startswith("/"):
-            path = "/" + path
-        return f"{IMAGE_HOST}{path}"
+            url = path
+        elif path.startswith("//"):
+            url = f"https:{path}"
+        else:
+            if not path.startswith("/"):
+                path = "/" + path
+            url = f"{IMAGE_HOST}{path}"
+        # 이미 쿼리가 있으면 그대로 (이중 부여 방지)
+        if "?" in url:
+            return url
+        return url + cls._IMG_RESIZE
 
     @staticmethod
     def _extract_slitm_cd(s: Any) -> str:
