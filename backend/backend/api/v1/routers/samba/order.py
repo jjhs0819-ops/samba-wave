@@ -1274,11 +1274,13 @@ async def dashboard_stats(
         int(prev_snap_row) if prev_snap_row is not None else None
     )
 
-    # 신규등록 = first_market_registered_at 기준 (0→≥1 전환 날짜)
-    # 마켓삭제 = 등록상품수[d-1] + 신규등록[d] - 등록상품수[d] 역산
-    #   → 방정식 보장: 전일 + 신규등록 - 마켓삭제 = 금일 등록상품수
-    #   → DB 직접삭제·배치·판매중지 등 모든 경로로 사라진 것 자동 포함
-    #   → 스냅샷 없는 날은 두 값 모두 None
+    # 신규등록 = first_market_registered_at 기준 (0→≥1 최초 전환 날짜). 상품당 최초 1회만
+    #   찍히므로 재등록(품절삭제 후 재등록)은 제외 — "진짜 신규 상품"만 카운트.
+    # 순증감(±) = 등록상품수[d] - 등록상품수[d-1] (스냅샷 델타).
+    #   구 "마켓삭제"는 (전일 + 신규등록 - 금일) 역산 + max(...,0) 클램프였으나,
+    #   재등록을 신규로 못 세어 방정식이 음수로 깨지면 거짓 0 이 나와 폐기(#dashboard-fix).
+    #   실제 삭제 이벤트가 DB에 안 남아 삭제 건수 소급 불가 → 정직하게 순증감만 노출.
+    #   스냅샷 없는 날은 순증감 None(프론트 "—").
     all_dates = [(week_ago + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     for idx, w in enumerate(weekly):
         d_str = w["date"]
@@ -1286,13 +1288,11 @@ async def dashboard_stats(
         reg_today = reg_count_map.get(d_str)
         reg_prev = reg_count_map.get(prev_str)
         new_reg = int(new_reg_map.get(d_str, 0))
+        w["newRegistered"] = new_reg
         if reg_today is not None and reg_prev is not None:
-            market_deleted = max((reg_prev + new_reg) - reg_today, 0)
-            w["newRegistered"] = new_reg
-            w["marketDeleted"] = market_deleted
+            w["netChange"] = reg_today - reg_prev
         else:
-            w["newRegistered"] = None
-            w["marketDeleted"] = 0
+            w["netChange"] = None
         w["registeredCount"] = reg_today
         w["collectedCount"] = int(collected_count_map.get(d_str, 0))
 

@@ -141,7 +141,7 @@ export default function SambaDashboard() {
     shippedCount: w.shippedCount ?? 0,
     unshippedCount: w.unshippedCount as number | null | undefined,
     newRegistered: w.newRegistered as number | null | undefined,
-    marketDeleted: w.marketDeleted ?? 0,
+    netChange: (w.netChange ?? null) as number | null,
     registeredCount: w.registeredCount as number | null | undefined,
     collectedCount: w.collectedCount ?? 0,
   }))
@@ -282,7 +282,7 @@ export default function SambaDashboard() {
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>발송</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>미발송</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>신규등록</th>
-                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>마켓삭제</th>
+                <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>순증감</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>등록상품수</th>
                 <th style={{ textAlign: 'right', padding: '0.625rem 0', color: c.textSub, fontWeight: 500 }}>수집상품수</th>
               </tr>
@@ -297,7 +297,7 @@ export default function SambaDashboard() {
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: c.success }}>{fmtNum(d.shippedCount)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: (d.unshippedCount ?? 0) > 0 ? c.danger : c.text }}>{d.unshippedCount == null ? '—' : fmtNum(d.unshippedCount)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: c.text }}>{d.newRegistered == null ? '—' : fmtNum(d.newRegistered)}</td>
-                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: c.text }}>{fmtNum(d.marketDeleted)}</td>
+                  <td style={{ padding: '0.625rem 0', textAlign: 'right', color: d.netChange == null ? c.text : d.netChange > 0 ? c.success : d.netChange < 0 ? c.danger : c.text }}>{d.netChange == null ? '—' : `${d.netChange > 0 ? '+' : ''}${fmtNum(d.netChange)}`}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: c.text }}>{d.registeredCount == null ? '—' : fmtNum(d.registeredCount)}</td>
                   <td style={{ padding: '0.625rem 0', textAlign: 'right', color: c.text }}>{fmtNum(d.collectedCount)}</td>
                 </tr>
