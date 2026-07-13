@@ -583,6 +583,38 @@ class TheHyundaiSourcingClient:
         except (TypeError, ValueError):
             return 0
 
+    @staticmethod
+    def _infer_sex(category_path: str, name: str) -> str:
+        """성별 추정 — 더현대 API 에 성별 필드가 없어 카테고리 경로+상품명 키워드로
+        폴백 추정 (ABC마트 선례와 동일한 값 체계: 여성용/남성용/남여공용/아동·주니어).
+        아동 → 여성 → 남성 순 (유아동 카테고리에 여아/남아가 섞여 아동 우선,
+        '우먼'에 '먼'이 포함되므로 여성을 남성보다 먼저 체크)."""
+        t = f"{category_path} {name}".lower()
+        if any(
+            k in t
+            for k in (
+                "키즈",
+                "kids",
+                "유아",
+                "아동",
+                "주니어",
+                "junior",
+                "토들러",
+                "베이비",
+                "infant",
+                "boys",
+                "girls",
+            )
+        ):
+            return "아동/주니어공용"
+        if any(k in t for k in ("여성", "여아", "우먼", "women", "woman", "wmns")):
+            return "여성용"
+        if any(k in t for k in ("남성", "남아", "men", "man")):
+            return "남성용"
+        if any(k in t for k in ("유니섹스", "unisex", "공용")):
+            return "남여공용"
+        return ""
+
     # 이미지 리사이즈 — 파라미터 없으면 600×600 기본 서빙. 서버 원본이 커서
     # RS=1000x1000 이 실제 1000px 반환 (2026-07-13 실측, PDP 웹뷰는 600 사용).
     # 마켓 등록 화질 기준(SSG 권장 1000)에 맞춰 1000 고정.
@@ -756,6 +788,10 @@ class TheHyundaiSourcingClient:
             "source_url": f"{BASE_URL}/product/{slitm_cd}",
             "itemGbcd": detail_data.get("itemGbcd"),
             "itemGbPtcGbCd": detail_data.get("itemGbPtcGbCd"),
+            # 성별 — API 무필드, 카테고리+상품명 추정 (빈값이면 워커가 남녀공용 기본)
+            "sex": self._infer_sex(
+                category_path, (detail_data.get("slitmNm") or "")
+            ),
             # 필수고시 — material/color/manufacturer/origin/care_instructions/
             # quality_guarantee/style_code (잡워커 product_data 가 그대로 저장)
             **self._extract_mndr_fields(mndr_info),
