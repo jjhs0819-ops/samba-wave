@@ -1272,8 +1272,25 @@ async def _reward_auto_loop() -> None:
     """
     global _reward_auto_last_run
     import time
+    from datetime import datetime as _dt
 
     _log = logging.getLogger("backend.lifecycle")
+
+    # [2026-07-13] 재기동 시 in-memory 게이트가 0.0 으로 리셋돼 실행 시각이 재기동
+    # 시점 기준으로 밀리던 문제 → 시작 시 DB 에 저장된 마지막 실행 시각을 복원해
+    # 재기동돼도 24h 인터벌이 이어지도록 한다. (last_at 은 UTC ISO 문자열)
+    try:
+        from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+        from backend.db.orm import get_read_session
+
+        async with get_read_session() as rs0:
+            last_at = await _get_setting(rs0, "reward_auto_run_last_at")
+        if last_at:
+            _reward_auto_last_run = _dt.fromisoformat(last_at).timestamp()
+            _log.info(f"[적립금 auto] 재기동 복원 — last_at={last_at}")
+    except Exception as e0:
+        _log.warning(f"[적립금 auto] last_at 복원 실패(무시): {e0}")
+
     while True:
         await asyncio.sleep(60)
         try:
