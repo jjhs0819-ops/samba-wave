@@ -12,6 +12,7 @@ export const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'GSShop', label: 'GSShop' },
   { id: 'NAVERSTORE', label: '네이버스토어' },
   { id: 'SNKRDUNK', label: '스니덩크' },
+  { id: 'ONITSUKA', label: '오니츠카 타이거' },
   { id: 'BUNJANG', label: '번개장터' },
   // 개발예정 (비활성)
   { id: 'DANAWA', label: '다나와', disabled: true },
@@ -42,6 +43,7 @@ export const SITE_OPTIONS: Record<string, SiteOption[]> = {
   ],
   KREAM: [...COMMON_OPTIONS],
   SNKRDUNK: [...COMMON_OPTIONS],
+  ONITSUKA: [...COMMON_OPTIONS],
   FashionPlus: [...COMMON_OPTIONS],
   SSG: [
     { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },

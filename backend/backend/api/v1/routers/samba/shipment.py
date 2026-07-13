@@ -103,7 +103,9 @@ async def emergency_clear(admin: str = Depends(require_admin)):
 @router.post("/esm/cleanup-orphans")
 async def cleanup_esm_orphans(
     account_id: str = Query(..., description="정리할 ESM(옥션/G마켓) 계정 id"),
-    dry_run: bool = Query(True, description="true면 개수/목록만, false면 실제 판매중지+삭제"),
+    dry_run: bool = Query(
+        True, description="true면 개수/목록만, false면 실제 판매중지+삭제"
+    ),
     wipe_all: bool = Query(
         False,
         description="true면 삼바 추적분까지 포함해 계정 전체 삭제(초기화) + 삼바 추적 제거",
