@@ -67,9 +67,9 @@ class TestNormalizeSearchItem:
 
     def test_image_url_prefix(self) -> None:
         out = TheHyundaiSourcingClient._normalize_search_item(SAMPLE_SEARCH_ITEM)
-        # itemImageUrl 이 절대 URL 로 변환되어야 함
+        # itemImageUrl 이 절대 URL 로 변환 + RS 리사이즈(기본 600 → 1000) 부여
         assert out["imageUrl"].startswith("https://image.thehyundai.com")
-        assert out["imageUrl"].endswith("40B0696270_0.jpg")
+        assert out["imageUrl"].endswith("40B0696270_0.jpg?RS=1000x1000")
 
     def test_sold_out_flag(self) -> None:
         item = {**SAMPLE_SEARCH_ITEM, "ostkYn": "1"}
