@@ -799,10 +799,12 @@ class EbayClient:
         # KRW → USD 환율 (kwargs로 exchange_rate 전달 가능, 기본 1400)
         exchange_rate = float(kwargs.get("exchange_rate", 1400))
         price_usd = round(price_krw / exchange_rate, 2) if price_krw > 0 else 0.0
-        # 정책의 eBay 배송비($, 가디정책 등) — 환율변환된 USD 가격에 그대로 가산
-        ebay_shipping_usd = float(kwargs.get("ebay_shipping_usd", 0) or 0)
-        if ebay_shipping_usd > 0:
-            price_usd = round(price_usd + ebay_shipping_usd, 2)
+        # 무료배송 배송비($) — 환율 안 곱히고 USD 그대로(수수료 그로스업 완료된 값) 가산.
+        ebay_shipping_grossed_usd = float(
+            kwargs.get("ebay_shipping_grossed_usd", 0) or 0
+        )
+        if ebay_shipping_grossed_usd > 0:
+            price_usd = round(price_usd + ebay_shipping_grossed_usd, 2)
 
         # 상세 설명: detail_html 우선, 없으면 이미지 HTML 생성
         description = product.get("detail_html") or ""

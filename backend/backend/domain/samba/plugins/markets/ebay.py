@@ -357,9 +357,10 @@ class EbayPlugin(MarketPlugin):
                 extras.get("exchangeRate") or settings_creds.get("exchangeRate", 1400)
             )
 
-        # 정책(가격정책) 마켓별 설정의 eBay 배송비($) — 최종 USD 가격에 가산
-        # 정책관리 페이지에서 $ 단위로 입력받음(policy.market_policies["eBay"]["shippingCost"])
-        ebay_shipping_usd = 0.0
+        # 무료배송 배송비($, policy.market_policies["eBay"]["shippingCost"]) — 환율 안 곱히고
+        # USD 그대로 수수료(feeRate)만 그로스업해서 최종 USD 가격에 더함.
+        # (shipment/service.py의 calc_market_price는 원화 계산이라 이베이 배송비는 0으로 빼놓음)
+        ebay_shipping_grossed_usd = 0.0
         policy_id = (
             product.get("applied_policy_id") if isinstance(product, dict) else None
         )
@@ -371,9 +372,15 @@ class EbayPlugin(MarketPlugin):
                 policy = await policy_repo.get_async(policy_id)
                 if policy and policy.market_policies:
                     ebay_mp = policy.market_policies.get("eBay", {}) or {}
-                    ebay_shipping_usd = float(ebay_mp.get("shippingCost", 0) or 0)
+                    ship_usd = float(ebay_mp.get("shippingCost", 0) or 0)
+                    fee_rate = float(ebay_mp.get("feeRate", 0) or 0)
+                    if ship_usd > 0:
+                        if 0 < fee_rate < 100:
+                            ebay_shipping_grossed_usd = ship_usd / (1 - fee_rate / 100)
+                        else:
+                            ebay_shipping_grossed_usd = ship_usd
             except Exception as e:
-                logger.warning("[eBay] 정책 배송비($) 조회 실패: %s", e)
+                logger.warning("[eBay] 정책 배송비($)/수수료 조회 실패: %s", e)
 
         client = EbayClient(
             app_id=app_id,
@@ -491,7 +498,7 @@ class EbayPlugin(MarketPlugin):
             return_policy_id=return_policy_id,
             merchant_location_key=merchant_location_key,
             exchange_rate=exchange_rate,
-            ebay_shipping_usd=ebay_shipping_usd,
+            ebay_shipping_grossed_usd=ebay_shipping_grossed_usd,
         )
 
         try:

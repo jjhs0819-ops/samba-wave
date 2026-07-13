@@ -26,6 +26,9 @@ export interface StoreSettingsState {
   esmDispatchOptions: Record<string, { value: string; label: string }[]>
   lotteonDeliveryPolicyOptions: { value: string; label: string }[]
   lotteonWarehouseOptions: { departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }
+  ebayFulfillmentPolicyOptions: { value: string; label: string }[]
+  ebayReturnPolicyOptions: { value: string; label: string }[]
+  ebayPaymentPolicyOptions: { value: string; label: string }[]
   elevenstDispatchTemplateOptions: { value: string; label: string }[]
   lotteHomeDeliveryPolicyOptions: { value: string; label: string }[]
   lotteHomeExtraPolicyOptions: { value: string; label: string }[]
@@ -55,6 +58,9 @@ export interface StoreSettingsActions {
   setEsmDispatchOptions: React.Dispatch<React.SetStateAction<Record<string, { value: string; label: string }[]>>>
   setLotteonDeliveryPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setLotteonWarehouseOptions: React.Dispatch<React.SetStateAction<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>>
+  setEbayFulfillmentPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
+  setEbayReturnPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
+  setEbayPaymentPolicyOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setElevenstDispatchTemplateOptions: React.Dispatch<React.SetStateAction<{ value: string; label: string }[]>>
   setCoupangOutboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string; deliveryCode?: string }>>>
   setCoupangInboundList: React.Dispatch<React.SetStateAction<Array<{ code: string; name: string; address: string; address_detail: string; zipcode: string; phone: string }>>>
@@ -96,6 +102,9 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
   const [esmDispatchOptions, setEsmDispatchOptions] = useState<Record<string, { value: string; label: string }[]>>({})
   const [lotteonDeliveryPolicyOptions, setLotteonDeliveryPolicyOptions] = useState<{ value: string; label: string }[]>([])
   const [lotteonWarehouseOptions, setLotteonWarehouseOptions] = useState<{ departure: { value: string; label: string }[]; return_: { value: string; label: string }[] }>({ departure: [], return_: [] })
+  const [ebayFulfillmentPolicyOptions, setEbayFulfillmentPolicyOptions] = useState<{ value: string; label: string }[]>([])
+  const [ebayReturnPolicyOptions, setEbayReturnPolicyOptions] = useState<{ value: string; label: string }[]>([])
+  const [ebayPaymentPolicyOptions, setEbayPaymentPolicyOptions] = useState<{ value: string; label: string }[]>([])
   const [elevenstDispatchTemplateOptions, setElevenstDispatchTemplateOptions] = useState<{ value: string; label: string }[]>([])
   const [networkIps, setNetworkIps] = useState({ web: '', local: '' })
   const [networkIpStatus, setNetworkIpStatus] = useState('')
@@ -532,6 +541,19 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
       }).catch(() => {})
   }, [storeTab, savedStoreData, storeData, lotteonDeliveryPolicyOptions.length, lotteonWarehouseOptions.departure.length, editingAccountId])
 
+  // 이베이 탭 수정 모드 진입 시 배송/반품/결제 정책 목록 자동 로드
+  useEffect(() => {
+    if (storeTab !== 'ebay') return
+    if (!editingAccountId) return
+    if (ebayFulfillmentPolicyOptions.length > 0) return
+    proxyApi.ebayPolicies(editingAccountId).then(res => {
+      if (!res.success) return
+      setEbayFulfillmentPolicyOptions(res.fulfillment.map(p => ({ value: p.id, label: p.name || p.id })))
+      setEbayReturnPolicyOptions(res.return.map(p => ({ value: p.id, label: p.name || p.id })))
+      setEbayPaymentPolicyOptions(res.payment.map(p => ({ value: p.id, label: p.name || p.id })))
+    }).catch(() => {})
+  }, [storeTab, editingAccountId, ebayFulfillmentPolicyOptions.length])
+
   // 지마켓/옥션: 수정 모드 진입 시 해당 계정의 출고지·발송정책 로드
   useEffect(() => {
     if (storeTab !== 'gmarket' && storeTab !== 'auction') return
@@ -640,6 +662,9 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     esmDispatchOptions,
     lotteonDeliveryPolicyOptions,
     lotteonWarehouseOptions,
+    ebayFulfillmentPolicyOptions,
+    ebayReturnPolicyOptions,
+    ebayPaymentPolicyOptions,
     elevenstDispatchTemplateOptions,
     networkIps,
     networkIpStatus,
@@ -667,6 +692,9 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
     setEsmDispatchOptions,
     setLotteonDeliveryPolicyOptions,
     setLotteonWarehouseOptions,
+    setEbayFulfillmentPolicyOptions,
+    setEbayReturnPolicyOptions,
+    setEbayPaymentPolicyOptions,
     setElevenstDispatchTemplateOptions,
     setCoupangOutboundList,
     setCoupangInboundList,

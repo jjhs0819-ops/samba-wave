@@ -622,6 +622,9 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'siteId', label: 'Site ID', type: 'select', options: [
       { value: '0', label: 'US (0)' }, { value: '3', label: 'UK (3)' }, { value: '77', label: 'DE (77)' }, { value: '15', label: 'AU (15)' },
     ]},
+    { name: 'fulfillmentPolicyId', label: '배송 정책', type: 'ebay-fulfillment-select' },
+    { name: 'returnPolicyId', label: '반품 정책', type: 'ebay-return-select' },
+    { name: 'paymentPolicyId', label: '결제 정책', type: 'ebay-payment-select' },
   ]},
   { key: 'amazon', label: '아마존', authField: 'accessToken', guideUrl: 'https://developer-docs.amazon.com/sp-api/', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },

@@ -21,6 +21,7 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
   'setStoreTab' | 'setStoreData' | 'setSsgShippingOptions' | 'setSsgAddrOptions' |
   'setEsmPlaceOptions' | 'setEsmDispatchOptions' |
   'setLotteonDeliveryPolicyOptions' | 'setLotteonWarehouseOptions' |
+  'setEbayFulfillmentPolicyOptions' | 'setEbayReturnPolicyOptions' | 'setEbayPaymentPolicyOptions' |
   'setElevenstDispatchTemplateOptions' |
   'setCoupangOutboundList' | 'setCoupangInboundList' | 'loadCoupangShippingPlaces' |
   'setLotteHomeDeliveryPolicyOptions' | 'setLotteHomeExtraPolicyOptions' | 'setLotteHomeShippingPlaceOptions' | 'setLotteHomeReturnPlaceOptions' |
@@ -35,6 +36,7 @@ export function StoreSettingsPanel(props: Props) {
     ssgShippingOptions, ssgAddrOptions,
     esmPlaceOptions, esmDispatchOptions,
     lotteonDeliveryPolicyOptions, lotteonWarehouseOptions,
+    ebayFulfillmentPolicyOptions, ebayReturnPolicyOptions, ebayPaymentPolicyOptions,
     elevenstDispatchTemplateOptions,
     coupangOutboundList, coupangInboundList,
     lotteHomeDeliveryPolicyOptions, lotteHomeExtraPolicyOptions, lotteHomeShippingPlaceOptions, lotteHomeReturnPlaceOptions,
@@ -45,6 +47,7 @@ export function StoreSettingsPanel(props: Props) {
     setSsgShippingOptions, setSsgAddrOptions,
     setEsmPlaceOptions, setEsmDispatchOptions,
     setLotteonDeliveryPolicyOptions, setLotteonWarehouseOptions,
+    setEbayFulfillmentPolicyOptions, setEbayReturnPolicyOptions, setEbayPaymentPolicyOptions,
     setElevenstDispatchTemplateOptions,
     setCoupangOutboundList, setCoupangInboundList, loadCoupangShippingPlaces,
     setLotteHomeDeliveryPolicyOptions, setLotteHomeExtraPolicyOptions, setLotteHomeShippingPlaceOptions, setLotteHomeReturnPlaceOptions,
@@ -443,6 +446,33 @@ export function StoreSettingsPanel(props: Props) {
                       <option value=''>-- 불러오기 버튼으로 선택 --</option>
                       {lotteonWarehouseOptions.return_.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                     </select>
+                  ) : field.type === 'ebay-fulfillment-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 계정 저장 후 자동 로드 --</option>
+                      {ebayFulfillmentPolicyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'ebay-return-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 계정 저장 후 자동 로드 --</option>
+                      {ebayReturnPolicyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  ) : field.type === 'ebay-payment-select' ? (
+                    <select
+                      style={{ ...inputStyle, flex: 1 }}
+                      value={storeData[market.key]?.[field.name] ?? savedStoreData[market.key]?.[field.name] ?? ''}
+                      onChange={(e) => updateStoreField(market.key, field.name, e.target.value)}
+                    >
+                      <option value=''>-- 계정 저장 후 자동 로드 --</option>
+                      {ebayPaymentPolicyOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
                   ) : field.type === 'lottehome-policy-select' ? (
                     <select
                       style={{ ...inputStyle, flex: 1 }}
@@ -604,6 +634,26 @@ export function StoreSettingsPanel(props: Props) {
                         >API 발급</a>
                       )}
                     </>
+                  )}
+                  {/* 이베이 배송/반품/결제 정책 목록 불러오기 버튼 */}
+                  {market.key === 'ebay' && market.authField === field.name && (
+                    <button
+                      onClick={async () => {
+                        if (!editingAccountId) { showAlert('먼저 계정을 저장한 뒤(수정 모드) 불러올 수 있습니다.', 'error'); return }
+                        try {
+                          const res = await proxyApi.ebayPolicies(editingAccountId)
+                          if (res.success) {
+                            setEbayFulfillmentPolicyOptions(res.fulfillment.map(p => ({ value: p.id, label: p.name || p.id })))
+                            setEbayReturnPolicyOptions(res.return.map(p => ({ value: p.id, label: p.name || p.id })))
+                            setEbayPaymentPolicyOptions(res.payment.map(p => ({ value: p.id, label: p.name || p.id })))
+                            showAlert(`배송정책 ${fmtNum(res.fulfillment.length)}건, 반품정책 ${fmtNum(res.return.length)}건, 결제정책 ${fmtNum(res.payment.length)}건을 불러왔습니다.`, 'success')
+                          } else {
+                            showAlert(res.message || '정책 불러오기 실패', 'error')
+                          }
+                        } catch { showAlert('정책 불러오기 실패', 'error') }
+                      }}
+                      style={{ ...btn('secondary'), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                    >정책 불러오기</button>
                   )}
                   {/* 11번가 출고지정보 가져오기 버튼 */}
                   {market.key === '11st' && field.name === 'shipFromAddress' && (

@@ -1705,6 +1705,14 @@ export const proxyApi = {
       `${SAMBA_PREFIX}/proxy/lotteon/auth-test`,
       { method: 'POST', body: JSON.stringify(payload || {}) }
     ),
+  ebayPolicies: (accountId: string) =>
+    request<{
+      success: boolean
+      message?: string
+      fulfillment: { id: string; name: string }[]
+      payment: { id: string; name: string }[]
+      return: { id: string; name: string }[]
+    }>(`${SAMBA_PREFIX}/proxy/ebay/policies?account_id=${encodeURIComponent(accountId)}`),
   lotteonDeliveryPolicies: (accountId?: string, apiKey?: string) => {
     const qs = new URLSearchParams()
     if (accountId) qs.set('account_id', accountId)

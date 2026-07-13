@@ -2022,6 +2022,15 @@ class SambaShipmentService:
                             **policy_market_data,
                             _pkey: _mp_copy,
                         }
+                    # 이베이 배송비($)는 원화 계산에서 제외 — 환율 곱하지 않고
+                    # ebay.py에서 USD 그대로 수수료만 그로스업해서 최종 가격에 더함.
+                    if market_type == "ebay" and _pkey:
+                        _ebay_mp_zeroed = dict(_effective_market_data.get(_pkey, {}))
+                        _ebay_mp_zeroed["shippingCost"] = 0
+                        _effective_market_data = {
+                            **_effective_market_data,
+                            _pkey: _ebay_mp_zeroed,
+                        }
                     calc_price = calc_market_price(
                         effective_cost,
                         policy.pricing,

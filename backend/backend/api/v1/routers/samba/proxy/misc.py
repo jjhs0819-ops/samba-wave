@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Optional
 
 import httpx
@@ -1044,6 +1045,78 @@ async def ebay_auth_test(
     except Exception as e:
         logger.warning(f"[eBay] auth-test 오류: {e}")
         return {"success": False, "message": f"인증 테스트 오류: {e}"}
+
+
+@router.get("/ebay/policies")
+async def ebay_list_policies(
+    account_id: str,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """이베이 Business Policy 목록 조회 — 배송/반품/결제 정책 선택용.
+
+    스토어설정 화면에서 정책ID를 직접 입력하는 대신 드롭다운으로 고를 수 있게
+    실제 계정에 등록된 정책 목록(이름+ID)을 이베이 API에서 가져온다.
+    """
+    from sqlalchemy import text as _eb_text
+
+    from backend.domain.samba.proxy.ebay import EbayApiError, EbayClient
+
+    row = (
+        await session.exec(
+            _eb_text(
+                "SELECT api_key, api_secret, oauth_refresh_token, additional_fields "
+                "FROM samba_market_account WHERE id = :aid"
+            ),
+            params={"aid": account_id},
+        )
+    ).first()
+    if not row:
+        return {"success": False, "message": "계정을 찾을 수 없습니다."}
+
+    af = row[3] if isinstance(row[3], dict) else {}
+    client_id = af.get("clientId") or row[0] or ""
+    client_secret = af.get("clientSecret") or row[1] or ""
+    dev_id = af.get("devId", "")
+    refresh_token = af.get("oauthToken") or row[2] or ""
+
+    if not client_id or not client_secret or not refresh_token:
+        return {
+            "success": False,
+            "message": "App ID, Cert ID, OAuth Refresh Token이 모두 필요합니다.",
+        }
+
+    try:
+        client = EbayClient(
+            app_id=client_id,
+            dev_id=dev_id,
+            cert_id=client_secret,
+            refresh_token=refresh_token,
+        )
+        fulfillment, payment, returns = await asyncio.gather(
+            client.get_fulfillment_policies(),
+            client.get_payment_policies(),
+            client.get_return_policies(),
+        )
+        return {
+            "success": True,
+            "fulfillment": [
+                {"id": p.get("fulfillmentPolicyId", ""), "name": p.get("name", "")}
+                for p in fulfillment
+            ],
+            "payment": [
+                {"id": p.get("paymentPolicyId", ""), "name": p.get("name", "")}
+                for p in payment
+            ],
+            "return": [
+                {"id": p.get("returnPolicyId", ""), "name": p.get("name", "")}
+                for p in returns
+            ],
+        }
+    except EbayApiError as e:
+        return {"success": False, "message": f"정책 조회 실패: {e}"}
+    except Exception as e:
+        logger.warning(f"[eBay] 정책 목록 조회 오류: {e}")
+        return {"success": False, "message": f"정책 조회 오류: {e}"}
 
 
 # ═══════════════════════════════════════════════
