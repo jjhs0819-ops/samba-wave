@@ -102,6 +102,17 @@
       const url = new URL(REVIEW_ORDERS_API)
       url.searchParams.set('page', String(_apiPage))
       url.searchParams.set('size', '20')
+      // [2026-07-13] 무신사가 orders API에 검색기간(searchFromYmd/ToYmd)·timestamp 를
+      // 필수화 → 누락 시 400 Bad Request 로 목록을 못 읽어 '작성 0건'이 됐다. 무신사 UI
+      // 기본값과 동일하게 최근 3개월 범위 + 현재 timestamp 를 붙여 조회한다.
+      const _pad = n => String(n).padStart(2, '0')
+      const _ymd = d => `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`
+      const _to = new Date()
+      const _from = new Date()
+      _from.setMonth(_from.getMonth() - 3)
+      url.searchParams.set('searchFromYmd', _ymd(_from))
+      url.searchParams.set('searchToYmd', _ymd(_to))
+      url.searchParams.set('timestamp', String(Date.now()))
       const res = await fetch(url.toString(), {
         credentials: 'include',
         headers: { Accept: 'application/json' },
