@@ -374,6 +374,21 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                 return
               }
 
+              // 더현대Hi: 키워드만으로 바로 스캔 (무신사 브랜드 모달 폴백 차단)
+              if (selectedSite === 'THEHYUNDAI') {
+                const scanKeyword = keyword || brand || collectUrl.trim()
+                addLog(`[카테고리스캔] 더현대Hi "${scanKeyword}" 스캔 시작...`)
+                try {
+                  const res = await collectorApi.brandScan('', 'A', scanKeyword, 'THEHYUNDAI', [], [], 0, checkedOptions)
+                  setBrandCategories(res.categories)
+                  setBrandTotal(res.total)
+                  setBrandSelectedCats(new Set(res.categories.map(c => c.categoryCode)))
+                  addLog(`[카테고리스캔] 더현대Hi: ${scanKeyword} → ${fmtNum(res.groupCount)}개 카테고리, 총 ${fmtNum(res.total)}건`)
+                } catch (e) { addLog(`[카테고리스캔] 더현대Hi 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
+                setBrandScanning(false)
+                return
+              }
+
               // 무신사: 평문 키워드이고 브랜드 코드 없으면 브랜드 검색 모달 표시
               if (!brand && !parsed) {
                 try {

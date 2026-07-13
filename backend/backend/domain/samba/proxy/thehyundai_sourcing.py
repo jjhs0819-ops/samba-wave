@@ -88,6 +88,70 @@ class TheHyundaiSourcingClient:
     # public API — plugin이 위임
     # ──────────────────────────────────────────────────────────
 
+    async def search(
+        self, keyword: str, max_count: int = 100, **filters: Any
+    ) -> dict:
+        """잡워커 공통 수집 인터페이스 — search_products 페이징 집계.
+
+        keyword 가 그룹 URL(hi.thehyundai.com/search?q=..&flBrand=..&flCate=..)이면
+        파라미터를 직접 추출 (워커가 q만 추출해 넘기는 경우 flBrand/flCate 는
+        _search_kwargs 로 들어옴 — 둘 다 지원). 반환 {"products": [...], "total": N}.
+        """
+        kw = keyword or ""
+        merged: dict[str, Any] = {}
+        # 그룹 URL 직접 수신 폴백 — 워커 외 호출자(진단 스크립트 등) 대비
+        if kw.startswith("http") and "thehyundai.com" in kw:
+            from urllib.parse import parse_qs, urlparse
+
+            qs = parse_qs(urlparse(kw).query)
+            kw = (qs.get("q") or qs.get("searchQuery") or [""])[0]
+            for k in ("flBrand", "flCate", "sort"):
+                v = (qs.get(k) or [""])[0]
+                if v:
+                    merged[k] = v
+            if (qs.get("includeSoldOut") or [""])[0] == "1":
+                merged["includeSoldOut"] = True
+        # 워커 _search_kwargs — 유효한 키만 채택 (타 소싱처용 키 무시)
+        for k in ("flBrand", "flCate", "sort", "target", "targetCode"):
+            v = filters.get(k)
+            if v not in (None, ""):
+                merged[k] = v
+        if filters.get("includeSoldOut"):
+            merged["includeSoldOut"] = True
+
+        try:
+            max_count = max(1, int(max_count or 100))
+        except (TypeError, ValueError):
+            max_count = 100
+
+        products: list[dict] = []
+        seen: set[str] = set()
+        page = 1
+        # 36건/페이지 — max_count 도달 또는 빈 페이지까지 순회 (상한 300페이지 가드)
+        while len(products) < max_count and page <= 300:
+            batch = await self.search_products(kw, page=page, size=36, **merged)
+            if not batch:
+                break
+            added = 0
+            for it in batch:
+                pid = str(it.get("site_product_id") or "")
+                if pid and pid in seen:
+                    continue
+                if pid:
+                    seen.add(pid)
+                products.append(it)
+                added += 1
+                if len(products) >= max_count:
+                    break
+            if added == 0:
+                break  # 전부 중복 → 사이트가 마지막 페이지를 반복 반환하는 경우 종료
+            page += 1
+        return {"products": products, "total": len(products)}
+
+    async def get_detail(self, site_product_id: str, **_ignored: Any) -> dict:
+        """잡워커 범용 상세조회 인터페이스 — get_product_detail 별칭."""
+        return await self.get_product_detail(site_product_id)
+
     async def search_products(self, keyword: str, **filters: Any) -> list[dict]:
         """키워드/카테고리/브랜드 검색.
 
