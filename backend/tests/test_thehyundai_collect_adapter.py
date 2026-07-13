@@ -111,6 +111,8 @@ class TestWorkerSnakeCaseKeys:
         assert n["original_price"] == 55300
         assert n["cost"] == 42590  # 상세 누락 시 폴백용 표시가
         assert n["free_shipping"] is True
+        # 원문링크 — 잡워커가 source_url(snake)로 읽음 (미제공 시 링크 빈값 사고)
+        assert n["source_url"] == "https://hi.thehyundai.com/product/40B0696270"
 
 
 class TestGetDetailAlias:

@@ -584,6 +584,8 @@ class TheHyundaiSourcingClient:
             "isSoldOut": ostk_yn == "1",
             "imageUrl": cls._to_image_url(item.get("itemImageUrl") or ""),
             "sourceUrl": f"{BASE_URL}/product/{slitm_cd}" if slitm_cd else "",
+            # snake_case 별칭 — 잡워커가 source_url(snake)로 읽음 (미제공 시 원문링크 빈값)
+            "source_url": f"{BASE_URL}/product/{slitm_cd}" if slitm_cd else "",
             "categoryCode": str(item.get("catLcd") or "").strip(),
             "categoryName": (item.get("catLNm") or "").strip(),
             "category": cls._build_search_category_path(item),
@@ -683,6 +685,7 @@ class TheHyundaiSourcingClient:
             "reservation": detail_data.get("hdmalRsvSellYn") == "1",
             "loyaltyPoints": self._safe_int(bnft_info.get("upntAcmPnt")),
             "sourceUrl": f"{BASE_URL}/product/{slitm_cd}",
+            "source_url": f"{BASE_URL}/product/{slitm_cd}",
             "itemGbcd": detail_data.get("itemGbcd"),
             "itemGbPtcGbCd": detail_data.get("itemGbPtcGbCd"),
         }
