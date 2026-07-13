@@ -6702,7 +6702,15 @@ class JobWorker:
             # SSG 카드혜택가는 결제금액 7만원 이상에서만 적용 — 7만원 미만 단품은 카드할인을
             # 못 받으므로 판매가(카드할인 전 표시가)를 원가로 한다(#430).
             _ssg_list_price = int(detail.get("salePrice", 0) or 0) or sale_price
-            if site == "SSG" and 0 < _ssg_list_price < 70000:
+            if site == "THEHYUNDAI":
+                # 더현대 원가 = 상세 new_cost(카드즉시할인 반영 최저가) 정본.
+                # 상세 누락 시 검색 표시가(cost=salePrice) → sale_price 폴백.
+                cost = (
+                    int(detail.get("cost", 0) or 0)
+                    or int(item.get("cost", 0) or 0)
+                    or sale_price
+                )
+            elif site == "SSG" and 0 < _ssg_list_price < 70000:
                 cost = _ssg_list_price
             elif _use_max_discount:
                 _bbp = int(detail.get("bestBenefitPrice", 0) or 0) or int(
