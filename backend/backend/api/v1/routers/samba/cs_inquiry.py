@@ -2312,24 +2312,31 @@ async def _do_sync_cs_from_markets(
                         )
                         prd_nm = str(qna.get("prdNm", "") or "")
                         content = str(qna.get("brdInfoCont", "") or "")
+                        # 문의자·주문번호·문의일시는 prodqnalist 응답의 실제 필드명 사용
+                        # (#632: 기존 buyMbrNo/brdInfoDt 는 응답에 없어 빈값·now fallback
+                        #  됐음. 실제 필드 = memNM/ordNoDe/createDt, 라이브 확인).
                         questioner = str(
-                            qna.get("buyMbrNo", "") or qna.get("brdMbrNo", "") or ""
+                            qna.get("memNM", "") or qna.get("memID", "") or ""
                         )
+                        ord_no_de = str(qna.get("ordNoDe", "") or "")
 
-                        raw_date_str = str(qna.get("brdInfoDt", "") or "")
+                        # createDt 포맷 = "YYYY-MM-DD HH:MM:SS.0" (KST). 긴급블록
+                        # (alimListInfo)의 YYYYMMDD+createTm 과 포맷이 다르므로 대시/콜론
+                        # 포맷으로 파싱한다(11번가 두 블록 모두 naive 저장 — 일관 유지).
+                        raw_date_str = str(qna.get("createDt", "") or "")
                         from datetime import datetime as _dt
                         from datetime import timezone as _tz
 
                         parsed_date = None
-                        if raw_date_str and len(raw_date_str) >= 8:
+                        if raw_date_str and len(raw_date_str) >= 10:
                             try:
                                 parsed_date = _dt.strptime(
-                                    raw_date_str[:14], "%Y%m%d%H%M%S"
+                                    raw_date_str[:19], "%Y-%m-%d %H:%M:%S"
                                 )
                             except Exception:
                                 try:
                                     parsed_date = _dt.strptime(
-                                        raw_date_str[:8], "%Y%m%d"
+                                        raw_date_str[:10], "%Y-%m-%d"
                                     )
                                 except Exception:
                                     parsed_date = None
@@ -2349,7 +2356,7 @@ async def _do_sync_cs_from_markets(
                             "market": "11번가",
                             "market_inquiry_no": brd_info_no,
                             "market_answer_no": prd_no or None,
-                            "market_order_id": None,
+                            "market_order_id": ord_no_de or None,
                             "market_product_no": prd_no or None,
                             "account_name": elevenst_label,
                             "inquiry_type": (
