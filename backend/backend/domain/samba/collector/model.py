@@ -372,6 +372,17 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=0, sa_column=Column(Integer, nullable=False, server_default="0")
     )
 
+    # 고정가 등록 — true면 오토튠/전송 시 정책 공식 재계산을 건너뛰고
+    # locked_prices[account_id] 값을 그대로 사용 (크림 등 소싱처 시세 변동과 무관하게
+    # 판매가를 고정하고 싶을 때). 2026-07-13 이베이 잉어킹 $105 고정 요청 대응.
+    price_locked: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
+    )
+    locked_prices: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, server_default="{}"),
+    )
+
     # AI 이미지 변환 완료 여부 — tags의 __ai_image__ 태그와 독립. race wipe 영구 차단용
     ai_image_transformed: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, server_default="false")

@@ -1813,7 +1813,31 @@ const ProductCard = React.memo(function ProductCard({
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ color: c.text, fontWeight: 600 }}>{(m as { priceLabel?: string }).priceLabel ?? `${curSym}${fmt(m.price)}`}</span>
+                        {m.marketName === 'eBay' ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            defaultValue={p.locked_prices?.[
+                              accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id || ''
+                            ] ?? (m as { priceLabel?: string; price: number }).price}
+                            onBlur={(e) => {
+                              const ebayAccId = accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id
+                              if (!ebayAccId) return
+                              const v = parseFloat(e.target.value)
+                              if (!Number.isFinite(v)) return
+                              onProductUpdate(p.id, { price_locked: true, locked_prices: { [ebayAccId]: v } })
+                            }}
+                            style={{ width: '80px', padding: '2px 6px', fontSize: '0.85rem', fontWeight: 600, color: c.text, background: c.surface, border: `1px solid ${c.border}`, borderRadius: '4px' }}
+                            title="값을 입력하면 고정가로 저장되어 오토튠이 이 값을 바꾸지 않습니다"
+                          />
+                        ) : (
+                          <span style={{ color: c.text, fontWeight: 600 }}>{(m as { priceLabel?: string }).priceLabel ?? `${curSym}${fmt(m.price)}`}</span>
+                        )}
+                        {p.price_locked && m.marketName === 'eBay' && (
+                          <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(255,184,77,0.12)', color: c.text, border: '1px solid rgba(255,184,77,0.3)' }}>
+                            고정가
+                          </span>
+                        )}
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
                             || m.marketName.toLowerCase().replace(/\s/g, '')

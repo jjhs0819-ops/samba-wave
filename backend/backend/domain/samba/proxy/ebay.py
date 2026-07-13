@@ -792,30 +792,36 @@ class EbayClient:
         # 소싱처 재고 변동과 무관하게 eBay는 1개로 유지 — 주문 시 수동 발주 처리
         quantity = 1
 
-        # 가격: sale_price 우선, 없으면 original_price
-        price_krw = float(
-            product.get("sale_price") or product.get("original_price") or 0
-        )
-        # KRW → USD 환율 (kwargs로 exchange_rate 전달 가능, 기본 1400)
-        exchange_rate = float(kwargs.get("exchange_rate", 1400))
-        price_usd = round(price_krw / exchange_rate, 2) if price_krw > 0 else 0.0
-        # 무료배송 배송비($) — 환율 안 곱히고 USD 그대로(수수료 그로스업 완료된 값) 가산.
-        ebay_shipping_grossed_usd = float(
-            kwargs.get("ebay_shipping_grossed_usd", 0) or 0
-        )
-        if ebay_shipping_grossed_usd > 0:
-            price_usd = round(price_usd + ebay_shipping_grossed_usd, 2)
+        # 고정가 등록 — 지정돼 있으면 환율변환/배송비그로스업/최소마진 전부 건너뛰고
+        # 이 값을 최종 USD 판매가로 그대로 사용 (오토튠 재계산 대상에서 제외).
+        ebay_locked_price_usd = kwargs.get("ebay_locked_price_usd")
+        if ebay_locked_price_usd is not None:
+            price_usd = round(float(ebay_locked_price_usd), 2)
+        else:
+            # 가격: sale_price 우선, 없으면 original_price
+            price_krw = float(
+                product.get("sale_price") or product.get("original_price") or 0
+            )
+            # KRW → USD 환율 (kwargs로 exchange_rate 전달 가능, 기본 1400)
+            exchange_rate = float(kwargs.get("exchange_rate", 1400))
+            price_usd = round(price_krw / exchange_rate, 2) if price_krw > 0 else 0.0
+            # 무료배송 배송비($) — 환율 안 곱히고 USD 그대로(수수료 그로스업 완료된 값) 가산.
+            ebay_shipping_grossed_usd = float(
+                kwargs.get("ebay_shipping_grossed_usd", 0) or 0
+            )
+            if ebay_shipping_grossed_usd > 0:
+                price_usd = round(price_usd + ebay_shipping_grossed_usd, 2)
 
-        # 최소마진($) 하한 보장 — 최종가에서 원가+배송비(실비) 빼고 남는 마진이
-        # 이 금액보다 작으면 차액만큼 최종가를 올림.
-        ebay_min_margin_usd = float(kwargs.get("ebay_min_margin_usd", 0) or 0)
-        if ebay_min_margin_usd > 0:
-            ebay_ship_usd_raw = float(kwargs.get("ebay_ship_usd_raw", 0) or 0)
-            ebay_cost_krw = float(kwargs.get("ebay_cost_krw", 0) or 0)
-            cost_usd = ebay_cost_krw / exchange_rate if ebay_cost_krw > 0 else 0.0
-            margin_usd = price_usd - cost_usd - ebay_ship_usd_raw
-            if margin_usd < ebay_min_margin_usd:
-                price_usd = round(price_usd + (ebay_min_margin_usd - margin_usd), 2)
+            # 최소마진($) 하한 보장 — 최종가에서 원가+배송비(실비) 빼고 남는 마진이
+            # 이 금액보다 작으면 차액만큼 최종가를 올림.
+            ebay_min_margin_usd = float(kwargs.get("ebay_min_margin_usd", 0) or 0)
+            if ebay_min_margin_usd > 0:
+                ebay_ship_usd_raw = float(kwargs.get("ebay_ship_usd_raw", 0) or 0)
+                ebay_cost_krw = float(kwargs.get("ebay_cost_krw", 0) or 0)
+                cost_usd = ebay_cost_krw / exchange_rate if ebay_cost_krw > 0 else 0.0
+                margin_usd = price_usd - cost_usd - ebay_ship_usd_raw
+                if margin_usd < ebay_min_margin_usd:
+                    price_usd = round(price_usd + (ebay_min_margin_usd - margin_usd), 2)
 
         # 상세 설명: detail_html 우선, 없으면 이미지 HTML 생성
         description = product.get("detail_html") or ""
@@ -851,6 +857,14 @@ class EbayClient:
             inventory_item["conditionDescriptors"] = [
                 {"name": "40001", "values": ["400010"]}
             ]
+            # Game aspect 미지정 시 eBay 필수aspect 자동채움이 알파벳순 첫 값("7th Sea CCG")을
+            # 잘못 채워넣는 문제 방지 — 번장 소싱은 전부 포켓몬 카드이므로 명시 고정.
+            # (2026-07-13 실제 베스트셀러 경쟁사 리스팅 "Sell Similar" 초안에서 확인한 값)
+            aspects.setdefault("Game", ["Pokémon TCG"])
+            aspects.setdefault("Card Type", ["Pokémon"])
+            aspects.setdefault("Manufacturer", ["The Pokémon Company"])
+            aspects.setdefault("Language", ["Korean"])
+            aspects.setdefault("Country/Region of Manufacture", ["South Korea"])
 
         # Offer 포맷 (정책 ID는 kwargs 또는 계정 creds에서 전달)
         listing_policies: dict[str, str] = {}

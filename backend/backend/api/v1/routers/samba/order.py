@@ -7332,10 +7332,13 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: 환율 조회 실패, 폴백 1400 사용 — {e}"
                     )
 
+                _ebay_new_this_acc: list[dict[str, Any]] = []
                 for ro in raw_orders:
-                    orders_data.append(
-                        _parse_ebay_order(ro, account["id"], label, ebay_exchange_rate)
+                    _parsed = _parse_ebay_order(
+                        ro, account["id"], label, ebay_exchange_rate
                     )
+                    orders_data.append(_parsed)
+                    _ebay_new_this_acc.append(_parsed)
 
                 # Finance API 실제 정산액 조회 — orderId → (net_usd, fee_usd) 매핑
                 # sell.finances scope 필요. 방금 들어온 주문은 거래 미확정 상태라 매핑 없을 수 있음
@@ -7427,6 +7430,48 @@ async def sync_orders_from_markets(
                     logger.warning(
                         f"[주문동기화] {label}: eBay 반품/취소 조회 실패 — {e}"
                     )
+
+                # 오버셀 방지 — 번장(C2C 단일재고) 소싱상품이 이번 주기에 실제로 판매됐으면
+                # 번장 원 판매자가 자기 글을 "판매완료"로 바꾸는 걸 기다리지 않고 즉시
+                # 우리 쪽에서 sold_out 처리 + eBay 재고 0으로 내림. 2026-07-13 같은 카드가
+                # 재등록(오토튠 refresh)으로 재고 1로 리셋돼 중복판매된 사고 재발 방지.
+                for _od in _ebay_new_this_acc:
+                    _sku = _od.get("shipment_id") or ""
+                    if not _sku:
+                        continue
+                    try:
+                        from sqlalchemy import text as _sa_text
+
+                        _prow = await session.execute(
+                            _sa_text(
+                                "SELECT source_site, sale_status FROM samba_collected_product "
+                                "WHERE id = :pid"
+                            ),
+                            {"pid": _sku},
+                        )
+                        _prec = _prow.first()
+                        if not _prec or _prec[0] != "BUNJANG" or _prec[1] == "sold_out":
+                            continue
+                        await session.execute(
+                            _sa_text(
+                                "UPDATE samba_collected_product SET sale_status='sold_out' "
+                                "WHERE id = :pid"
+                            ),
+                            {"pid": _sku},
+                        )
+                        try:
+                            _offers = await ebay_client.get_offers_by_sku(_sku)
+                            for _off in _offers:
+                                await ebay_client.withdraw_offer(_off["offerId"])
+                            logger.info(
+                                f"[오버셀방지] {_sku} 판매 감지 → sold_out 처리 + eBay 재고 내림"
+                            )
+                        except Exception as _e:
+                            logger.warning(
+                                f"[오버셀방지] {_sku} eBay 재고 내림 실패: {_e}"
+                            )
+                    except Exception as _e:
+                        logger.warning(f"[오버셀방지] {_sku} 처리 실패: {_e}")
             # (dead code 제거: 두 번째 롯데ON 블록 → 첫 번째에 병합 완료)
             elif market_type == "ssg":
                 from backend.domain.samba.proxy.ssg import SSGClient

@@ -804,6 +804,8 @@ export interface SambaCollectedProduct {
   }>;
   lock_delete?: boolean;
   lock_stock?: boolean;
+  price_locked?: boolean;
+  locked_prices?: Record<string, number>;
   tags?: string[];
   monitor_priority?: string;
   last_sent_data?: Record<string, { sale_price?: number; cost?: number; options?: { name: string; price: number; stock: number }[]; sent_at?: string }>;

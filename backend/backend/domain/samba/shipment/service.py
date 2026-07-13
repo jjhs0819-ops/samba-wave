@@ -2031,16 +2031,28 @@ class SambaShipmentService:
                             **_effective_market_data,
                             _pkey: _ebay_mp_zeroed,
                         }
-                    calc_price = calc_market_price(
-                        effective_cost,
-                        policy.pricing,
-                        market_type,
-                        _effective_market_data,
-                        source_site=product_row.source_site or "",
-                        is_point_restricted=getattr(
-                            product_row, "is_point_restricted", None
-                        ),
-                    )
+                    # 고정가 등록 — price_locked=True면 정책 공식 재계산 없이
+                    # locked_prices[account_id] 그대로 사용 (오토튠 가격갱신 제외 요청 대응).
+                    _locked_price = None
+                    if getattr(product_row, "price_locked", False):
+                        _locked_prices = (
+                            getattr(product_row, "locked_prices", None) or {}
+                        )
+                        _locked_price = _locked_prices.get(_acc_id)
+
+                    if _locked_price is not None:
+                        calc_price = _locked_price
+                    else:
+                        calc_price = calc_market_price(
+                            effective_cost,
+                            policy.pricing,
+                            market_type,
+                            _effective_market_data,
+                            source_site=product_row.source_site or "",
+                            is_point_restricted=getattr(
+                                product_row, "is_point_restricted", None
+                            ),
+                        )
 
                     # 가격 이상치 방어: 원가가 정상가의 5% 미만이면 전송 차단
                     _orig_price = int(acct_product.get("original_price") or 0)

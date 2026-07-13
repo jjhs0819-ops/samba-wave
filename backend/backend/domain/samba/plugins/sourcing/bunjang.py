@@ -10,6 +10,27 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 판매글이 아니라 "매입/구매 요청" 글 — 검색어는 일치하지만 실제 재고가 아님.
+# 2026-07-13 사고: 매입글의 임의 희망가를 원가로 오인식 → 원가 없는 상품을 실제
+# 시세보다 훨씬 낮게 이베이 등록 → 판매 후 손해 확정. 검색 결과에서 원천 차단.
+_WTB_KEYWORDS = (
+    "매입",
+    "구매",
+    "삽니다",
+    "구합니다",
+    "구해",
+    "원합니다",
+    "찾습니다",
+    "사려고",
+    "구매요청",
+    "사요",
+    "사겠",
+)
+
+
+def _is_wtb_post(name: str) -> bool:
+    return any(k in (name or "") for k in _WTB_KEYWORDS)
+
 
 class BunjangPlugin(SourcingPlugin):
     """번개장터 소싱처 플러그인.
@@ -44,6 +65,12 @@ class BunjangPlugin(SourcingPlugin):
                 dom_count=dom_count,
             )
         )
+        _before = len(items)
+        items = [it for it in items if not _is_wtb_post(it.get("name", ""))]
+        if _before != len(items):
+            logger.info(
+                f"[번개장터] 매입/구매글 {_before - len(items)}건 제외 (검색결과 {_before}→{len(items)})"
+            )
 
         if not min_sales and not min_rating:
             return items[:limit] if limit else items

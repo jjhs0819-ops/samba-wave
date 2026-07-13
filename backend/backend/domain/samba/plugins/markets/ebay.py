@@ -397,6 +397,16 @@ class EbayPlugin(MarketPlugin):
             except Exception as e:
                 logger.warning("[eBay] 정책 배송비($)/수수료/최소마진 조회 실패: %s", e)
 
+        # 고정가 등록 — price_locked=True면 환율변환/배송비그로스업/최소마진 전부
+        # 건너뛰고 locked_prices[account.id] 값을 최종 USD로 그대로 사용.
+        ebay_locked_price_usd = None
+        if isinstance(product, dict) and product.get("price_locked"):
+            _locked_prices = product.get("locked_prices") or {}
+            _acc_id = str(getattr(account, "id", "") or "")
+            _lp = _locked_prices.get(_acc_id)
+            if _lp is not None:
+                ebay_locked_price_usd = float(_lp)
+
         # 원가($) — cost 컬럼 우선, 없으면 original_price(수정 안 되는 원본가) 폴백
         ebay_cost_krw = float(product.get("cost") or product.get("original_price") or 0)
 
@@ -520,6 +530,7 @@ class EbayPlugin(MarketPlugin):
             ebay_ship_usd_raw=ebay_ship_usd_raw,
             ebay_min_margin_usd=ebay_min_margin_usd,
             ebay_cost_krw=ebay_cost_krw,
+            ebay_locked_price_usd=ebay_locked_price_usd,
         )
 
         try:
@@ -534,6 +545,35 @@ class EbayPlugin(MarketPlugin):
                     "product_no": existing_no,
                 }
             else:
+                # 중복 상품 등록 방지 — 신규 등록 전, 같은 계정에 name_en이 동일한
+                # 다른 상품이 이미 등록돼 있으면 스킵. 2026-07-13 잉어킹 프로모카드
+                # 62건 중복등록(정책위반 삭제 리스크) 사고 재발 방지.
+                _name_en = product.get("name_en") if isinstance(product, dict) else None
+                _pid = product.get("id") if isinstance(product, dict) else None
+                _acc_id = str(getattr(account, "id", "") or "")
+                if _name_en and _pid and _acc_id and session:
+                    from sqlalchemy import text as _sa_text
+
+                    _dup = await session.execute(
+                        _sa_text(
+                            "SELECT id FROM samba_collected_product "
+                            "WHERE name_en = :name_en AND id != :pid "
+                            "AND registered_accounts::jsonb ? :acc_id LIMIT 1"
+                        ),
+                        {"name_en": _name_en, "pid": _pid, "acc_id": _acc_id},
+                    )
+                    _dup_row = _dup.first()
+                    if _dup_row:
+                        logger.warning(
+                            "[eBay] 중복등록 스킵 — 동일 name_en 이미 등록됨: %s (기존 %s)",
+                            _name_en,
+                            _dup_row[0],
+                        )
+                        return {
+                            "success": False,
+                            "message": f"중복 상품 — 이미 등록된 동일 상품 존재({_dup_row[0]})",
+                        }
+
                 # 신규 등록
                 result = await client.register_product(
                     data,
