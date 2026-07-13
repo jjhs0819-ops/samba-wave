@@ -4303,6 +4303,16 @@ async function extractDetailData(tabId, site, productId) {
               domOptions.push({ name: cleanName, stock: stock, isSoldOut: isSoldOut })
             })
           }
+          // 원가 오염 방지(#625): SSG 가격 텍스트에서 첫 [\d,]+ 토큰만 취하고,
+          // 1억 초과값은 폐기(0 반환 → 백엔드 폴백). 화면 가격 뒤에 붙은 별개
+          // 숫자(적립·이벤트·할부 등)까지 이어붙어 억~조 단위 오염값이 만들어지던
+          // 문제 차단. SSG 단품 원가는 1억을 넘지 않음.
+          const _wonInt = function (txt) {
+            const m = (txt || '').match(/[\d,]+/)
+            if (!m) return 0
+            const n = parseInt(m[0].replace(/,/g, ''), 10) || 0
+            return n >= 100000000 ? 0 : n
+          }
           // 카드혜택가 DOM 직접 추출 (html 필드는 script 태그만이라 정규식 매칭 불가)
           let domCardPrice = 0
           const dts = document.querySelectorAll('dt')
@@ -4312,7 +4322,7 @@ async function extractDetailData(tabId, site, productId) {
                 || dt.nextElementSibling?.querySelector('em.ssg_price, .ssg_price')
                 || dt.closest('dl')?.querySelector('em.ssg_price')
               if (em) {
-                domCardPrice = parseInt(em.textContent.replace(/[^\d]/g, ''), 10) || 0
+                domCardPrice = _wonInt(em.textContent)
               }
               break
             }
@@ -4327,7 +4337,7 @@ async function extractDetailData(tabId, site, productId) {
             || document.querySelector('.cdtl_price.point em.ssg_price')
             || document.querySelector('.cdtl_price.point .ssg_price')
           if (_spEl) {
-            domSalePrice = parseInt(_spEl.textContent.replace(/[^\d]/g, ''), 10) || 0
+            domSalePrice = _wonInt(_spEl.textContent)
           }
           // 카테고리 빵부스러기 DOM 직접 추출 — html 필드는 script 태그만이라
           // _parse_result_item_obj의 DOM regex(`카테고리 로케이션`, `신세계백화점 /`)가
