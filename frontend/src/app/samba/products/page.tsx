@@ -2899,6 +2899,7 @@ export default function ProductsPage() {
             <option value="video_yes">영상있음</option>
             <option value="video_no">영상없음</option>
             <option value="has_orders">판매이력상품</option>
+            <option value="name_en_no">영문명 미가공(해외마켓)</option>
           </select>
           <select
             value={sortBy}

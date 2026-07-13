@@ -1231,6 +1231,9 @@ async def scroll_products(
         conditions.append(_CP.video_url != "")
     elif ai_filter == "video_no":
         conditions.append(or_(_CP.video_url.is_(None), _CP.video_url == ""))
+    elif ai_filter == "name_en_no":
+        # 미가공 대기열 — 영문명(name_en) 미설정 상품 (이베이 등 해외마켓 등록 전 필수)
+        conditions.append(or_(_CP.name_en.is_(None), _CP.name_en == ""))
     elif ai_filter == "has_orders":
         from backend.api.v1.routers.samba.collector_common import (
             build_has_orders_conditions,
