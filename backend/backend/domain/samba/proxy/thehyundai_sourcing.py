@@ -572,6 +572,12 @@ class TheHyundaiSourcingClient:
             "brandCode": str(item.get("operBrndCd") or "").strip(),
             "originalPrice": sell_prc,
             "salePrice": bnft_prc or sell_prc,
+            # snake_case 별칭 — 잡워커 수집 루프가 sale_price/original_price/cost(snake)로 읽음.
+            # cost 는 상세(new_cost=카드즉시할인가)가 정본이나, 상세 누락 시 폴백용으로 표시가 제공.
+            "sale_price": bnft_prc or sell_prc,
+            "original_price": sell_prc,
+            "cost": bnft_prc or sell_prc,
+            "free_shipping": item.get("freeDlvYn") == "1",
             "discountRate": cls._safe_int(
                 item.get("bnftPrcRate") or item.get("salePct")
             ),
@@ -651,14 +657,23 @@ class TheHyundaiSourcingClient:
             "originalPrice": csm_prc if csm_prc > 0 else sell_prc,
             "salePrice": dc_prc or sell_prc,
             "cost": new_cost,
+            # snake_case 별칭 — 잡워커 수집 루프 호환 (cost=new_cost 카드즉시할인가 정본)
+            "sale_price": dc_prc or sell_prc,
+            "original_price": csm_prc if csm_prc > 0 else sell_prc,
             "isSoldOut": detail_data.get("ostkYn") == "1",
             "options": options,
             "images": images,
             "category": category_path,
             "categoryCode": str(detail_data.get("itemDcsfCd") or "").strip(),
             "descriptionHtml": self._extract_description_html(detail_data),
+            # snake_case 별칭 — 잡워커가 detail_html/detail_images/shipping_fee(snake)로 읽음.
+            # 상세 이미지는 별도 컬럼이 없어 메인 이미지를 상세로 사용(ABC/GS 선례와 동일).
+            "detail_html": self._extract_description_html(detail_data),
+            "detail_images": images,
+            "shipping_fee": self._safe_int(dlv_first.get("dlvCost")),
             "store": (detail_data.get("storeNm") or "").strip(),
             "freeShipping": dlv_first.get("dlvcPlcyBsicGbcd") == "01",
+            "free_shipping": dlv_first.get("dlvcPlcyBsicGbcd") == "01",
             "shippingFee": self._safe_int(dlv_first.get("dlvCost")),
             "freeShippingThreshold": self._safe_int(dlv_first.get("baseFee")),
             "remoteAreaFee": self._safe_int(dlv_first.get("irgnMntrDlvCost")),

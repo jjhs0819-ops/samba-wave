@@ -94,6 +94,25 @@ class TestSearchAdapter:
         assert "brand_name" not in call
 
 
+class TestWorkerSnakeCaseKeys:
+    """잡워커 수집 루프는 sale_price/original_price/cost(snake) 를 읽음 —
+    정규화·상세가 camelCase 만 내면 판매가 0·원가 100,000 폴백 사고 발생 (실측 버그)."""
+
+    def test_search_item_has_snake_price_keys(self) -> None:
+        raw = {
+            "slitmCd": "40B0696270",
+            "slitmNm": "런 디파이",
+            "sellPrc": 55300,
+            "bnftPrc": 42590,
+            "freeDlvYn": "1",
+        }
+        n = TheHyundaiSourcingClient._normalize_search_item(raw)
+        assert n["sale_price"] == 42590
+        assert n["original_price"] == 55300
+        assert n["cost"] == 42590  # 상세 누락 시 폴백용 표시가
+        assert n["free_shipping"] is True
+
+
 class TestGetDetailAlias:
     async def test_alias_delegates(self) -> None:
         client = TheHyundaiSourcingClient()
