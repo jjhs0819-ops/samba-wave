@@ -1725,11 +1725,33 @@ async def collect_bunjang(
     existing_result = await session.execute(existing_stmt)
     existing_ids = {row[0] for row in existing_result.all()}
 
+    # 검색 API는 배송비를 포함하지 않음 — 상세 API로 신규 상품만 배송비 보강 조회
+    new_items = [
+        item
+        for item in items
+        if str(item.get("site_product_id") or "") not in existing_ids
+        and item.get("site_product_id")
+    ]
+    detail_semaphore = asyncio.Semaphore(3)
+
+    async def _fetch_shipping(item: dict) -> dict:
+        async with detail_semaphore:
+            try:
+                detail = await plugin.get_detail(str(item.get("site_product_id")))
+                await asyncio.sleep(0.3)
+            except Exception:
+                return item
+        if detail and not detail.get("error"):
+            item["free_shipping"] = detail.get("free_shipping", False)
+            item["sourcing_shipping_fee"] = detail.get("sourcing_shipping_fee", 0)
+        return item
+
+    if new_items:
+        new_items = await asyncio.gather(*[_fetch_shipping(it) for it in new_items])
+
     bulk_items = []
-    for item in items:
+    for item in new_items:
         site_pid = str(item.get("site_product_id") or "")
-        if not site_pid or site_pid in existing_ids:
-            continue
         bulk_items.append(
             {
                 "source_site": "BUNJANG",
@@ -1740,6 +1762,8 @@ async def collect_bunjang(
                 "brand": item.get("brand", ""),
                 "original_price": item.get("original_price", 0),
                 "sale_price": item.get("sale_price", 0),
+                "free_shipping": item.get("free_shipping", False),
+                "sourcing_shipping_fee": item.get("sourcing_shipping_fee", 0),
                 "images": item.get("images") or [],
                 "options": item.get("options") or [],
                 "status": "collected",

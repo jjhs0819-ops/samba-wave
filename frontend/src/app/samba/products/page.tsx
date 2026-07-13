@@ -7,6 +7,7 @@ import {
   accountApi,
   shipmentApi,
   proxyApi,
+  forbiddenApi,
   type SambaCollectedProduct,
   type SambaPolicy,
   type SambaSearchFilter,
@@ -105,6 +106,13 @@ export default function ProductsPage() {
   }, [searchParams]);
 
   const [allProducts, setAllProducts] = useState<SambaCollectedProduct[]>([]);
+  const [usdRate, setUsdRate] = useState(1400);
+  useEffect(() => {
+    forbiddenApi.getExchangeRates().then(r => {
+      const rate = r?.currencies?.USD?.effectiveRate
+      if (rate && rate > 0) setUsdRate(rate)
+    }).catch(() => {})
+  }, []);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
   const accountsMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
@@ -3039,6 +3047,7 @@ export default function ProductsPage() {
                 catMappingMap={catMappingMap}
                 filters={searchFilters}
                 detailTemplates={detailTemplates}
+                usdRate={usdRate}
               />
             </div>
           ))}

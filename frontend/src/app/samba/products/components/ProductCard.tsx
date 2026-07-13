@@ -413,6 +413,7 @@ interface ProductCardProps {
   catMappingMap: Map<string, Record<string, string>>
   filters?: SambaSearchFilter[]
   detailTemplates: SambaDetailTemplate[]
+  usdRate?: number
   compact?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
@@ -421,7 +422,7 @@ interface ProductCardProps {
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
-  catMappingMap, filters, detailTemplates, compact, expanded, onToggleExpand,
+  catMappingMap, filters, detailTemplates, usdRate = 1400, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
@@ -548,7 +549,7 @@ const ProductCard = React.memo(function ProductCard({
   const no = String(idx + 1).padStart(6, '0')
 
   // 마켓별 개별 가격 계산 (useMemo 캐싱)
-  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
+  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; minMarginUsd?: number; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
   const marketPriceList = useMemo(() => Object.entries(mp)
     .filter(([, v]) => v.accountId)
     .flatMap(([marketName, v]) => {
@@ -563,6 +564,28 @@ const ProductCard = React.memo(function ProductCard({
           const gr = calcPrice(cost, marginRate, (v.shippingCost ?? shippingCost) || shippingCost, gsFee, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym)
           return { marketName, label: gsName ? `GS샵 (${gsName})` : 'GS샵', rowKey: `GS샵:${accId}`, price: gr.price, calcStr: gr.calcStr }
         })
+      }
+      // 이베이: 배송비($)는 환율 안 곱히고 USD 그대로 수수료만 그로스업해서 최종가에 더함
+      // (backend shipment/service.py + plugins/markets/ebay.py 와 동일 — 실제 등록되는 값).
+      if (marketName === 'eBay') {
+        const feeR = Number(v.feeRate ?? feeRate ?? 0)
+        const shipUsd = Number(v.shippingCost || 0)
+        const base = calcPrice(cost, marginRate, 0, feeR, extraCharge, minMarginAmount, ssMRate, ssMAmount, '₩')
+        const baseUsd = usdRate > 0 ? base.price / usdRate : 0
+        const shipGrossedUsd = feeR > 0 && feeR < 100 ? shipUsd / (1 - feeR / 100) : shipUsd
+        let totalUsd = Math.round((baseUsd + shipGrossedUsd) * 100) / 100
+        let calcStr = `$${totalUsd.toFixed(2)} = (${base.calcStr}) ÷ 환율${fmt(Math.round(usdRate))} + 배송비$${fmt(shipUsd)}÷(1-${feeR}%)=$${shipGrossedUsd.toFixed(2)}`
+        const minMarginUsd = Number(v.minMarginUsd || 0)
+        if (minMarginUsd > 0) {
+          const costUsd = usdRate > 0 ? cost / usdRate : 0
+          const marginUsd = totalUsd - costUsd - shipUsd
+          if (marginUsd < minMarginUsd) {
+            const bump = Math.round((minMarginUsd - marginUsd) * 100) / 100
+            totalUsd = Math.round((totalUsd + bump) * 100) / 100
+            calcStr += ` + 최소마진보전 $${bump.toFixed(2)}`
+          }
+        }
+        return [{ marketName, label: marketName, rowKey: marketName, price: totalUsd, calcStr, priceLabel: `$${totalUsd.toFixed(2)}` }]
       }
       const acct = v.accountId ? accMap.get(v.accountId) : undefined
       const acctFeeRate = Number((acct?.additional_fields as Record<string, unknown> | undefined)?.feeRate || 0)
@@ -610,7 +633,7 @@ const ProductCard = React.memo(function ProductCard({
         }
       }
       return [{ marketName, label: marketName, rowKey: marketName, price: displayPrice, calcStr: displayCalcStr }]
-    }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
+    }), [mp, cost, marginRate, shippingCost, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym, usdRate])
 
   const marketEnabled = (p.market_enabled || {}) as Record<string, boolean>
 
@@ -1790,7 +1813,7 @@ const ProductCard = React.memo(function ProductCard({
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ color: c.text, fontWeight: 600 }}>{curSym}{fmt(m.price)}</span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>{(m as { priceLabel?: string }).priceLabel ?? `${curSym}${fmt(m.price)}`}</span>
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id
                             || m.marketName.toLowerCase().replace(/\s/g, '')

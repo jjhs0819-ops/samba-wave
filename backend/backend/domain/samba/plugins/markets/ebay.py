@@ -301,6 +301,14 @@ class EbayPlugin(MarketPlugin):
                 "message": "eBay 계정 정보가 불완전합니다. appId, certId, authToken(Refresh Token)을 확인해주세요.",
             }
 
+        # 영문 타이틀 없으면 등록 자체 차단 — name_en 미설정 시 한글 name으로
+        # 그대로 등록되는 사고 재발 방지(번역은 API 호출 없이 수동으로 name_en 채운 뒤 등록).
+        if not (product.get("name_en") or product.get("ebay_title")):
+            return {
+                "success": False,
+                "message": "영문명(name_en) 미설정 — 한글 타이틀 등록 차단. name_en 채운 뒤 재전송 필요.",
+            }
+
         # Business Policy ID — 계정 extras 또는 samba_settings에서 조회.
         # (2026-05-25) resolver 위임 + account.tenant_id 자동 추출.
         settings_creds: dict[str, Any] = {}
@@ -360,7 +368,11 @@ class EbayPlugin(MarketPlugin):
         # 무료배송 배송비($, policy.market_policies["eBay"]["shippingCost"]) — 환율 안 곱히고
         # USD 그대로 수수료(feeRate)만 그로스업해서 최종 USD 가격에 더함.
         # (shipment/service.py의 calc_market_price는 원화 계산이라 이베이 배송비는 0으로 빼놓음)
+        # 최소마진($, minMarginUsd) — 최종가에서 원가+배송비 빼고 남는 마진이 이 금액보다
+        # 작으면 차액만큼 최종가를 올림(절대 하한 보장, POIZON 최소수수료와 동일한 개념).
         ebay_shipping_grossed_usd = 0.0
+        ebay_ship_usd_raw = 0.0
+        ebay_min_margin_usd = 0.0
         policy_id = (
             product.get("applied_policy_id") if isinstance(product, dict) else None
         )
@@ -372,15 +384,21 @@ class EbayPlugin(MarketPlugin):
                 policy = await policy_repo.get_async(policy_id)
                 if policy and policy.market_policies:
                     ebay_mp = policy.market_policies.get("eBay", {}) or {}
-                    ship_usd = float(ebay_mp.get("shippingCost", 0) or 0)
+                    ebay_ship_usd_raw = float(ebay_mp.get("shippingCost", 0) or 0)
                     fee_rate = float(ebay_mp.get("feeRate", 0) or 0)
-                    if ship_usd > 0:
+                    ebay_min_margin_usd = float(ebay_mp.get("minMarginUsd", 0) or 0)
+                    if ebay_ship_usd_raw > 0:
                         if 0 < fee_rate < 100:
-                            ebay_shipping_grossed_usd = ship_usd / (1 - fee_rate / 100)
+                            ebay_shipping_grossed_usd = ebay_ship_usd_raw / (
+                                1 - fee_rate / 100
+                            )
                         else:
-                            ebay_shipping_grossed_usd = ship_usd
+                            ebay_shipping_grossed_usd = ebay_ship_usd_raw
             except Exception as e:
-                logger.warning("[eBay] 정책 배송비($)/수수료 조회 실패: %s", e)
+                logger.warning("[eBay] 정책 배송비($)/수수료/최소마진 조회 실패: %s", e)
+
+        # 원가($) — cost 컬럼 우선, 없으면 original_price(수정 안 되는 원본가) 폴백
+        ebay_cost_krw = float(product.get("cost") or product.get("original_price") or 0)
 
         client = EbayClient(
             app_id=app_id,
@@ -499,6 +517,9 @@ class EbayPlugin(MarketPlugin):
             merchant_location_key=merchant_location_key,
             exchange_rate=exchange_rate,
             ebay_shipping_grossed_usd=ebay_shipping_grossed_usd,
+            ebay_ship_usd_raw=ebay_ship_usd_raw,
+            ebay_min_margin_usd=ebay_min_margin_usd,
+            ebay_cost_krw=ebay_cost_krw,
         )
 
         try:

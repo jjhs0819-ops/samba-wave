@@ -139,6 +139,8 @@ interface MarketPolicyForm {
   kreamShippingFeeCard?: number       // 스니덩크배송비(카드, 엔)
   kreamShippingFeeBox?: number        // 스니덩크배송비(박스, 엔)
   kreamForwardingFee?: number         // 배대지비용(원)
+  // 이베이 전용
+  minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
 }
 
 
@@ -1635,6 +1637,13 @@ export default function PoliciesPage() {
                   {marketPolicyTab === 'eBay' && (
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>$ 단위 — 환율 안 곱힘, 수수료만 그로스업되어 최종 USD 가격에 가산</span>
                   )}
+                </div>
+              )}
+              {marketPolicyTab === 'eBay' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소마진</span>
+                  <NumInput value={mp.minMarginUsd ?? 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, minMarginUsd: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="$" />
+                  <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>최종가에서 원가+배송비 빼고 남는 마진이 이 금액보다 작으면 차액만큼 최종가 인상</span>
                 </div>
               )}
               {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑·신세계몰은 자체 블록에서 출고일 표시 / 이베이는 Business Policy(배송정책)가 출고일 대신함 */}

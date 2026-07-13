@@ -140,12 +140,19 @@ class BunjangClient:
         categories = p.get("categories", []) or []
         cat_names = [c.get("name", "") for c in categories if c.get("name")]
         brand_name = (p.get("brand") or {}).get("name", "")
+        trade = p.get("trade", {}) or {}
+        free_shipping = bool(trade.get("freeShipping", False))
+        shipping_fee = int(
+            (trade.get("shippingSpecs", {}) or {}).get("DEFAULT", {}).get("fee", 0) or 0
+        )
 
         return {
             "site_product_id": pid,
             "name": p.get("name", ""),
             "sale_price": p.get("price", 0),
             "original_price": p.get("originPrice", p.get("price", 0)),
+            "free_shipping": free_shipping,
+            "sourcing_shipping_fee": 0 if free_shipping else shipping_fee,
             "images": [thumbnail] if thumbnail else [],
             "brand": brand_name,
             "manufacturer": brand_name,

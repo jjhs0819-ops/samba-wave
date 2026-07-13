@@ -3754,7 +3754,6 @@ class SambaShipmentService:
         dry_run=True이면 삭제 대상 상품 수만 반환.
         """
         from sqlalchemy import cast
-        from sqlalchemy.dialects.postgresql import JSONB as _JSONB
         from sqlmodel import select
 
         from backend.domain.samba.account.model import SambaMarketAccount
@@ -3766,9 +3765,15 @@ class SambaShipmentService:
             raise ValueError(f"계정을 찾을 수 없습니다: {account_id}")
 
         # 2) 해당 계정에 등록된 상품 ID 조회
+        from sqlalchemy import String as _String
+        from sqlalchemy.dialects.postgresql import ARRAY as _PGARRAY
+
+        # cast(f'["{id}"]', JSONB) 는 SQLAlchemy 이중 인코딩으로 @> 가 영원히 0건
+        # 반환 — 계정 삭제/정리 시 등록상품을 하나도 못 찾아 조용히 아무 일도 안 함.
+        # ARRAY(String)+`?|` 로 회피 (project_orm_cast_jsonb_double_encoding 재발, 2026-07-13).
         stmt = select(SambaCollectedProduct.id).where(
-            SambaCollectedProduct.registered_accounts.op("@>")(
-                cast(f'["{account_id}"]', _JSONB)
+            SambaCollectedProduct.registered_accounts.op("?|")(
+                cast([account_id], _PGARRAY(_String))
             )
         )
         result = await self.session.execute(stmt)

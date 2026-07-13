@@ -50,8 +50,8 @@ def _is_shoes_category(category_id: str) -> bool:
 
 
 # 트레이딩카드(포켓몬 TCG 등) 카테고리 — condition="NEW" 사용 불가, 실사용 검증 완료된 카테고리만 등록
-# 183454: Collectible Card Game Singles
-_TCG_CARD_CATEGORY_IDS = {"183454"}
+# 183454: CCG Individual Cards(싱글), 183455: CCG Mixed Card Lots(복수장 묶음)
+_TCG_CARD_CATEGORY_IDS = {"183454", "183455"}
 
 
 def _is_tcg_card_category(category_id: str) -> bool:
@@ -805,6 +805,17 @@ class EbayClient:
         )
         if ebay_shipping_grossed_usd > 0:
             price_usd = round(price_usd + ebay_shipping_grossed_usd, 2)
+
+        # 최소마진($) 하한 보장 — 최종가에서 원가+배송비(실비) 빼고 남는 마진이
+        # 이 금액보다 작으면 차액만큼 최종가를 올림.
+        ebay_min_margin_usd = float(kwargs.get("ebay_min_margin_usd", 0) or 0)
+        if ebay_min_margin_usd > 0:
+            ebay_ship_usd_raw = float(kwargs.get("ebay_ship_usd_raw", 0) or 0)
+            ebay_cost_krw = float(kwargs.get("ebay_cost_krw", 0) or 0)
+            cost_usd = ebay_cost_krw / exchange_rate if ebay_cost_krw > 0 else 0.0
+            margin_usd = price_usd - cost_usd - ebay_ship_usd_raw
+            if margin_usd < ebay_min_margin_usd:
+                price_usd = round(price_usd + (ebay_min_margin_usd - margin_usd), 2)
 
         # 상세 설명: detail_html 우선, 없으면 이미지 HTML 생성
         description = product.get("detail_html") or ""
