@@ -1603,37 +1603,78 @@ class CoupangClient:
         # 호출자가 status 미지정 시 4개 상태 전부 합산 조회.
         statuses = [status] if status else ["RU", "CC", "PR", "UC"]
 
-        for st in statuses:
+        # 한 status × 기간구간의 전체 페이지 수집 (nextToken 페이징 — 동작 동일).
+        async def _fetch_range(st: str, dt_from, dt_to) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
             next_token = ""
             for _ in range(100):  # 무한루프 방지
-                params = {
-                    "createdAtFrom": since.strftime("%Y-%m-%d"),
-                    "createdAtTo": now.strftime("%Y-%m-%d"),
+                p = {
+                    "createdAtFrom": dt_from.strftime("%Y-%m-%d"),
+                    "createdAtTo": dt_to.strftime("%Y-%m-%d"),
                     "maxPerPage": str(max_per_page),
                     "status": st,
                 }
                 if next_token:
-                    params["nextToken"] = next_token
-
-                result = await self._call_api("GET", path, params=params)
-
+                    p["nextToken"] = next_token
+                result = await self._call_api("GET", path, params=p)
                 data = result.get("data", []) if isinstance(result, dict) else []
                 if isinstance(data, list):
-                    all_returns.extend(data)
+                    out.extend(data)
                 elif isinstance(data, dict):
                     items = data.get("returnRequests", data.get("content", []))
                     if isinstance(items, list):
-                        all_returns.extend(items)
-
+                        out.extend(items)
                 next_token = (
                     result.get("nextToken", "") if isinstance(result, dict) else ""
                 )
                 if not next_token:
                     break
+            return out
+
+        # 실패 구간만 기간 반분(bisect) 재귀 재시도 (#636). 주문량 많은 벤더는 CC 의
+        # 30일 윈도우가 쿠팡 게이트웨이 504로 결정적 실패 → 기간을 좁히면 성공(실측:
+        # 30일 504 / 14일·7일 성공, 구간별 무게가 달라 고정분할로는 부족). 실패 구간만
+        # 절반씩 좁혀 재조회. 정상 status 는 기존과 동일 status당 1콜. 깊이 3 제한
+        # (30일 기준 최소 ~4일 구간) — 무한재귀·과호출 방지. 구간은 일 단위로 겹침·틈
+        # 없이 [from..mid] ∪ [mid+1d..to] 분할.
+        async def _fetch_bisect(st: str, dt_from, dt_to, depth: int = 0):
+            try:
+                return await _fetch_range(st, dt_from, dt_to)
+            except Exception as _e:
+                span_days = (dt_to.date() - dt_from.date()).days
+                if depth >= 3 or span_days <= 1:
+                    raise
+                mid = dt_from + timedelta(days=span_days // 2)
+                logger.warning(
+                    f"[쿠팡] {st} {dt_from:%m-%d}~{dt_to:%m-%d} 조회 실패({_e}) "
+                    f"— 기간 반분 재시도(depth={depth})"
+                )
+                left = await _fetch_bisect(st, dt_from, mid, depth + 1)
+                right = await _fetch_bisect(
+                    st, mid + timedelta(days=1), dt_to, depth + 1
+                )
+                return left + right
+
+        # status별 실패 격리 — 한 status 실패가 다른 status 결과를 버리지 않도록.
+        any_ok = False
+        errors: list[str] = []
+        for st in statuses:
+            try:
+                all_returns.extend(await _fetch_bisect(st, since, now))
+                any_ok = True
+            except Exception as _se:
+                errors.append(f"{st}: {_se}")
+                logger.warning(
+                    f"[쿠팡] {st} 최종 조회 실패(격리 — 다른 status 결과 유지): {_se}"
+                )
+
+        # 전 status 완전 실패한 경우에만 예외 — 호출자가 '조회 실패'로 인지(부분성공 보존).
+        if statuses and not any_ok:
+            raise CoupangApiError(f"반품요청 전 status 조회 실패: {'; '.join(errors)}")
 
         logger.info(
             f"[쿠팡] 반품요청(RETURN 카테고리) 조회 완료: {len(all_returns)}건 "
-            f"(최근 {days}일, status={statuses})"
+            f"(최근 {days}일, status={statuses}, 실패={len(errors)})"
         )
         return all_returns
 
