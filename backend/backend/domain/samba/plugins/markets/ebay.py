@@ -426,6 +426,27 @@ class EbayPlugin(MarketPlugin):
             except Exception as e:
                 logger.warning("[eBay] 정책 배송비($)/수수료/최소마진 조회 실패: %s", e)
 
+        # 이베이 기본 상세페이지 노티스 배너 — 번장 등 소싱처 원본 설명(detail_html)에는
+        # 판매자별 안내문구(최소주문금액 등 국내 C2C 전용 지침)가 섞여있어 그대로 노출하면
+        # 안 됨. 상단 배너(조건/포장/배송/관부가세/반품 안내) 고정 사용.
+        # (2026-07-14 실 리스팅에 번장 원문 한글 설명이 그대로 노출된 사고 확인)
+        ebay_notice_banner_url = ""
+        if session:
+            try:
+                from sqlalchemy import text as _sa_text
+
+                _tpl = await session.execute(
+                    _sa_text(
+                        "SELECT top_image_s3_key FROM samba_detail_template "
+                        "WHERE id = 'dt_01KXD39BCZACRDC1VP23TBP2MS'"
+                    )
+                )
+                _tpl_row = _tpl.first()
+                if _tpl_row:
+                    ebay_notice_banner_url = _tpl_row[0] or ""
+            except Exception as e:
+                logger.warning("[eBay] 상세페이지 배너 템플릿 조회 실패: %s", e)
+
         # 고정가 등록 — price_locked=True면 환율변환/배송비그로스업/최소마진 전부
         # 건너뛰고 locked_prices[account.id] 값을 최종 USD로 그대로 사용.
         ebay_locked_price_usd = None
@@ -561,6 +582,7 @@ class EbayPlugin(MarketPlugin):
             ebay_cost_krw=ebay_cost_krw,
             ebay_locked_price_usd=ebay_locked_price_usd,
             account_id=str(getattr(account, "id", "") or ""),
+            ebay_notice_banner_url=ebay_notice_banner_url,
         )
 
         try:

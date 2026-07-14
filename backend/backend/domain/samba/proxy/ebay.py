@@ -832,15 +832,23 @@ class EbayClient:
                 if margin_usd < ebay_min_margin_usd:
                     price_usd = round(price_usd + (ebay_min_margin_usd - margin_usd), 2)
 
-        # 상세 설명: detail_html 우선, 없으면 이미지 HTML 생성
-        description = product.get("detail_html") or ""
-        if not description and all_images:
-            img_tags = "".join(
-                f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
-                for img in all_images
+        # 상세 설명: 소싱처 원본 detail_html(번장 등 C2C 전용 안내문구 섞여있음)은
+        # 그대로 노출하지 않고, 상단 노티스 배너(조건/포장/배송/관부가세/반품) +
+        # 상품 이미지만 구성. (2026-07-14 번장 원문 한글 그대로 노출 사고 확인)
+        ebay_notice_banner_url = kwargs.get("ebay_notice_banner_url", "")
+        img_tags = "".join(
+            f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
+            for img in all_images
+        )
+        if ebay_notice_banner_url:
+            banner_tag = (
+                f'<div style="text-align:center;"><img src="{ebay_notice_banner_url}" '
+                f'style="max-width:860px;width:100%;" /></div>'
             )
+            description = banner_tag + img_tags
+        elif img_tags:
             description = img_tags
-        if not description:
+        else:
             description = f"<p>{name}</p>"
 
         # eBay Inventory Item 포맷
