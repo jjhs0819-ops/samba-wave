@@ -1248,7 +1248,9 @@ class ImageTransformService:
         failed: set[str] = set()
 
         # #543 정책키 — 같은 URL도 검증 파라미터가 다르면 다른 결과라 키에 포함.
-        _policy = f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
+        _policy = (
+            f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
+        )
 
         # #543 순차 → 병렬. 죽은/느린 소스 이미지 대기가 분산돼 상품당 300초 초과 해소.
         # Semaphore 로 동시 다운로드+PIL 디코드 수 제한(메모리 가드).
@@ -1317,8 +1319,13 @@ class ImageTransformService:
 
                     # 변경 필요 여부 판단
                     need_upscale = bool(min_dim > 0 and min(w, h) < min_dim)
+                    # pad_square(롯데홈 500x500 정사각) 모드도 다운스케일 필요 판정에 포함
+                    # (#639 보완): pad_square 는 strict_pixel 을 켜지만 enforce_max_dim 은
+                    # 안 켜서, 정사각 대형이미지(1024x1024)가 need_downscale=False → 조기반환
+                    # 으로 그대로 통과되던 누락. pad_square=False 호출부는 조건 불변(무회귀).
                     need_downscale = bool(
-                        (enforce_max_dim or not strict_pixel) and max(w, h) > max_dim
+                        (enforce_max_dim or pad_square or not strict_pixel)
+                        and max(w, h) > max_dim
                     )
                     over_bytes = len(image_bytes) > max_bytes
                     # 핫링크 차단 도메인 — 크기/용량 무관하게 R2 강제 미러
