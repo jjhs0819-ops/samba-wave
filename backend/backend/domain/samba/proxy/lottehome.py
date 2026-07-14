@@ -12,6 +12,7 @@ EUC-KR 인코딩 요청 / XML 응답 처리를 지원한다.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
@@ -168,7 +169,7 @@ class LotteHomeClient:
         self.agnc_no = agnc_no
         self.env = env
         self.hp_no = hp_no
-        self.proxy_url = proxy_url
+        self.proxy_url = proxy_url or self._env_proxy_url()
 
         # 인증 캐시 (메모리)
         self._cert_key: str = ""
@@ -192,6 +193,32 @@ class LotteHomeClient:
     @property
     def base_url(self) -> str:
         return self.PROD_BASE if self.env == "prod" else self.TEST_BASE
+
+    @staticmethod
+    def _env_proxy_url() -> str:
+        """GCP 등에서 롯데홈 외부연결이 지속 차단될 때 국내 프록시로 우회하는 스위치.
+
+        평소에는 미설정=직접연결 유지. LOTTEHOME_PROXY_URL 환경변수로만 켠다.
+        """
+        proxy = os.environ.get("LOTTEHOME_PROXY_URL", "").strip()
+        if proxy and "://" not in proxy:
+            proxy = f"http://{proxy}"
+        return proxy
+
+    def _client_kwargs(self, timeout: httpx.Timeout) -> dict[str, Any]:
+        """httpx.AsyncClient 생성 인자.
+
+        연결 수립 실패("All connection attempts failed")만 백오프(0.5→1→2초)
+        자동 재시도 — HTTP 응답을 받은 뒤의 재시도가 아니므로 API 에러코드
+        처리·중복 발급 회수 로직에는 영향 없음. transport 지정 시 proxy 인자가
+        무시되므로 프록시도 transport 쪽에 함께 넣는다.
+        """
+        return {
+            "timeout": timeout,
+            "transport": httpx.AsyncHTTPTransport(
+                retries=3, proxy=self.proxy_url or None
+            ),
+        }
 
     # ------------------------------------------------------------------
     # EUC-KR encoding helpers
@@ -353,10 +380,7 @@ class LotteHomeClient:
         timeout = httpx.Timeout(
             timeout_s or settings.http_timeout_default, connect=10.0
         )
-        client_kwargs: dict[str, Any] = {"timeout": timeout}
-        if self.proxy_url:
-            client_kwargs["proxy"] = self.proxy_url
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        async with httpx.AsyncClient(**self._client_kwargs(timeout)) as client:
             if method == "GET":
                 qs = self._build_query(params)
                 if qs:
@@ -855,10 +879,7 @@ class LotteHomeClient:
         )
         found_any = ""
         timeout = httpx.Timeout(timeout_s, connect=10.0)
-        client_kwargs: dict[str, Any] = {"timeout": timeout}
-        if self.proxy_url:
-            client_kwargs["proxy"] = self.proxy_url
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        async with httpx.AsyncClient(**self._client_kwargs(timeout)) as client:
             async with client.stream("GET", f"{url}?{qs}") as resp:
                 if resp.status_code != 200:
                     return ""
