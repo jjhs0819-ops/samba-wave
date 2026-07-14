@@ -45,6 +45,7 @@ interface Props {
   loadOrders: () => void | Promise<void>
   productMemo?: string // 상품메모(#535) — 상품관리 memo live-join
   snkrProductNo?: string // 스니덩크 상품번호 — 크림 주문에 소싱처번호 표시(클릭복사)
+  collectedImage?: string // 주문 product_image 누락 시 매칭 수집상품 이미지 폴백(플레이오토 등)
 }
 
 export default function OrderInfoCell(props: Props) {
@@ -55,7 +56,7 @@ export default function OrderInfoCell(props: Props) {
     customerAddress, renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
-    openUrlModal, handleTracking, loadOrders, productMemo, snkrProductNo,
+    openUrlModal, handleTracking, loadOrders, productMemo, snkrProductNo, collectedImage,
   } = props
 
   // 크림 주문 판별 — 상품주문번호 옆에 크림/스니덩크 상품번호 표시용
@@ -173,9 +174,9 @@ export default function OrderInfoCell(props: Props) {
 
       {/* 상품 이미지 (100x100) + 마켓/주문번호 */}
       <div style={{ display: 'flex', gap: '0.625rem', marginBottom: '0.5rem' }}>
-        {o.product_image ? (
+        {(o.product_image || collectedImage) ? (
           <img
-            src={o.product_image}
+            src={o.product_image || collectedImage}
             alt=""
             onClick={() => handleImageClick(o)}
             style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${c.border}`, flexShrink: 0, cursor: 'pointer' }}

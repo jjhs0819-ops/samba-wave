@@ -31,8 +31,10 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
         }
       } catch { /* ignore */ }
     }
-    // 4. KREAM 주문: collected_product_id로 수집상품 source_url 직접 조회 (SNKRDUNK 페이지)
-    if (_srcSiteBase === 'KREAM' && o.collected_product_id) {
+    // 4. collected_product_id로 매칭 수집상품의 source_url 직접 조회.
+    //    플레이오토(EMP) 등 주문 source_url 미저장 + product_id 역추적 실패 케이스 폴백.
+    //    collected_product_id는 DB 정확매칭이라 안전(상품명 숫자 추정 fallback과 무관). KREAM/SNKRDUNK 포함.
+    if (o.collected_product_id) {
       try {
         const cps = await collectorApi.getProductsByIds([o.collected_product_id])
         const cp = cps?.[0]

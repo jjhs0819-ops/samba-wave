@@ -107,6 +107,8 @@ export default function OrdersPage() {
   const [collectedProductSourceSites, setCollectedProductSourceSites] = useState<Record<string, string>>({})
   // 스니덩크 상품번호(site_product_id) — 크림 주문에 소싱처 상품번호 표시용 (collected_product_id → 스니덩크번호)
   const [collectedProductSnkrNos, setCollectedProductSnkrNos] = useState<Record<string, string>>({})
+  // 상품 이미지 — 플레이오토 등 주문 product_image 누락 시 매칭 수집상품 이미지로 폴백
+  const [collectedProductImages, setCollectedProductImages] = useState<Record<string, string>>({})
   const [productMemos, setProductMemos] = useState<Record<string, string>>({}) // 상품메모(#535)
 
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
@@ -283,6 +285,7 @@ export default function OrdersPage() {
       setCollectedProductOptions({})
       setCollectedProductSourceSites({})
       setCollectedProductSnkrNos({})
+      setCollectedProductImages({})
       return
     }
     let cancelled = false
@@ -294,6 +297,7 @@ export default function OrdersPage() {
         const nextOptions: Record<string, Array<{ name: string; price: number }>> = {}
         const nextSourceSites: Record<string, string> = {}
         const nextSnkrNos: Record<string, string> = {}
+        const nextImages: Record<string, string> = {}
         for (const row of rows) {
           next[row.id] = row.cost ?? row.sale_price ?? row.original_price ?? 0
           if (Array.isArray(row.options)) {
@@ -304,6 +308,7 @@ export default function OrdersPage() {
                 && typeof (op as { price: unknown }).price === 'number')
           }
           if (row.source_site) nextSourceSites[row.id] = row.source_site
+          if (Array.isArray(row.images) && row.images[0]) nextImages[row.id] = String(row.images[0])
           // 스니덩크 상품번호(site_product_id) — 크림 주문 소싱처번호 표시용
           if (row.site_product_id) nextSnkrNos[row.id] = String(row.site_product_id)
         }
@@ -311,12 +316,14 @@ export default function OrdersPage() {
         setCollectedProductOptions(nextOptions)
         setCollectedProductSourceSites(nextSourceSites)
         setCollectedProductSnkrNos(nextSnkrNos)
+        setCollectedProductImages(nextImages)
       } catch {
         if (!cancelled) {
           setCollectedProductCosts({})
           setCollectedProductOptions({})
           setCollectedProductSourceSites({})
           setCollectedProductSnkrNos({})
+          setCollectedProductImages({})
         }
       }
     })()
@@ -1011,6 +1018,7 @@ export default function OrdersPage() {
         collectedProductOptions={collectedProductOptions}
         collectedProductSourceSites={collectedProductSourceSites}
         collectedProductSnkrNos={collectedProductSnkrNos}
+        collectedProductImages={collectedProductImages}
         productMemos={productMemos}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
