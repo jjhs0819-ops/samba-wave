@@ -1814,29 +1814,54 @@ const ProductCard = React.memo(function ProductCard({
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                         {m.marketName === 'eBay' ? (
-                          <input
-                            type="number"
-                            step="0.01"
-                            defaultValue={p.locked_prices?.[
-                              accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id || ''
-                            ] ?? (m as { priceLabel?: string; price: number }).price}
-                            onBlur={(e) => {
-                              const ebayAccId = accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id
-                              if (!ebayAccId) return
-                              const v = parseFloat(e.target.value)
-                              if (!Number.isFinite(v)) return
-                              onProductUpdate(p.id, { price_locked: true, locked_prices: { [ebayAccId]: v } })
-                            }}
-                            style={{ width: '80px', padding: '2px 6px', fontSize: '0.85rem', fontWeight: 600, color: c.text, background: c.surface, border: `1px solid ${c.border}`, borderRadius: '4px' }}
-                            title="값을 입력하면 고정가로 저장되어 오토튠이 이 값을 바꾸지 않습니다"
-                          />
+                          <>
+                            <input
+                              type="number"
+                              step="0.01"
+                              disabled={!p.price_locked}
+                              defaultValue={p.locked_prices?.[
+                                accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id || ''
+                              ] ?? (m as { priceLabel?: string; price: number }).price}
+                              onBlur={(e) => {
+                                if (!p.price_locked) return
+                                const ebayAccId = accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id
+                                if (!ebayAccId) return
+                                const v = parseFloat(e.target.value)
+                                if (!Number.isFinite(v)) return
+                                onProductUpdate(p.id, { price_locked: true, locked_prices: { [ebayAccId]: v } })
+                              }}
+                              style={{ width: '80px', padding: '2px 6px', fontSize: '0.85rem', fontWeight: 600, color: p.price_locked ? c.text : c.textSub, background: p.price_locked ? c.surface : 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', cursor: p.price_locked ? 'text' : 'not-allowed' }}
+                              title={p.price_locked ? '고정가 값 — 오토튠이 이 값을 바꾸지 않음' : '정책 공식으로 자동 계산된 값(수정하려면 고정가 토글을 켜세요)'}
+                            />
+                            <label
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', color: c.textSub, cursor: 'pointer', userSelect: 'none' }}
+                              title="켜면 왼쪽 값이 고정가로 저장되어 오토튠이 재계산하지 않음"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!p.price_locked}
+                                onChange={(e) => {
+                                  const ebayAccId = accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id
+                                  if (e.target.checked) {
+                                    const current = ebayAccId ? p.locked_prices?.[ebayAccId] : undefined
+                                    const fallback = (m as { priceLabel?: string; price: number }).price
+                                    onProductUpdate(p.id, {
+                                      price_locked: true,
+                                      locked_prices: ebayAccId ? { [ebayAccId]: current ?? fallback } : {},
+                                    })
+                                  } else {
+                                    const nextLocked = { ...(p.locked_prices || {}) }
+                                    if (ebayAccId) delete nextLocked[ebayAccId]
+                                    onProductUpdate(p.id, { price_locked: false, locked_prices: nextLocked })
+                                  }
+                                }}
+                                style={{ margin: 0, cursor: 'pointer' }}
+                              />
+                              고정가
+                            </label>
+                          </>
                         ) : (
                           <span style={{ color: c.text, fontWeight: 600 }}>{(m as { priceLabel?: string }).priceLabel ?? `${curSym}${fmt(m.price)}`}</span>
-                        )}
-                        {p.price_locked && m.marketName === 'eBay' && (
-                          <span style={{ fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px', background: 'rgba(255,184,77,0.12)', color: c.text, border: '1px solid rgba(255,184,77,0.3)' }}>
-                            고정가
-                          </span>
                         )}
                         {(() => {
                           const marketKey = MARKETS.find(mk => m.marketName.includes(mk.name))?.id

@@ -309,6 +309,35 @@ class EbayPlugin(MarketPlugin):
                 "message": "영문명(name_en) 미설정 — 한글 타이틀 등록 차단. name_en 채운 뒤 재전송 필요.",
             }
 
+        # 중복 상품 등록 방지 — 신규 등록(existing_no 없음)일 때만 체크.
+        # 같은 계정에 name_en 동일한 다른 상품이 이미 registered_accounts로 등록돼
+        # 있으면 스킵 (2026-07-13 잉어킹 62건 중복등록 → 정책위반 삭제 위험 사고 재발 방지).
+        if not existing_no and session and account is not None:
+            _acc_id = str(getattr(account, "id", "") or "")
+            _self_id = product.get("id") if isinstance(product, dict) else None
+            _name_en = product.get("name_en") or product.get("ebay_title")
+            if _acc_id and _self_id and _name_en:
+                from sqlalchemy import text as _sa_text
+
+                _dup = await session.execute(
+                    _sa_text(
+                        "SELECT id FROM samba_collected_product "
+                        "WHERE name_en = :name_en AND id != :self_id "
+                        "AND registered_accounts::text LIKE :acc_pattern LIMIT 1"
+                    ),
+                    {
+                        "name_en": _name_en,
+                        "self_id": _self_id,
+                        "acc_pattern": f"%{_acc_id}%",
+                    },
+                )
+                _dup_row = _dup.first()
+                if _dup_row:
+                    return {
+                        "success": False,
+                        "message": f"중복 등록 차단 — 같은 상품({_name_en})이 이미 이 계정에 등록됨 ({_dup_row[0]})",
+                    }
+
         # Business Policy ID — 계정 extras 또는 samba_settings에서 조회.
         # (2026-05-25) resolver 위임 + account.tenant_id 자동 추출.
         settings_creds: dict[str, Any] = {}
