@@ -3867,6 +3867,12 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 *market_cond,
                                 _CP.sale_status == "sold_out",
                                 _CP.lock_delete != True,
+                                # 고정가/재고잠금 상품은 소싱원가 품절과 무관하게 리스팅 유지
+                                # (2026-07-14 이베이 고정가 상품이 번장 품절 연동으로 자동
+                                # 마켓삭제되던 사고 확인 — 사용자가 명시적으로 고정한 상품은
+                                # 소싱처 재고와 분리해서 취급해야 함)
+                                _CP.price_locked != True,
+                                _CP.lock_stock != True,
                                 # 품절정리도 LOTTEON_SELLERSHOP 흡수
                                 _CP.source_site.in_(_autotune_site_members(site)),
                             ]
