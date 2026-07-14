@@ -54,6 +54,21 @@ def _is_shoes_category(category_id: str) -> bool:
 _TCG_CARD_CATEGORY_IDS = {"183454", "183455"}
 
 
+def _extract_pokemon_card_name(title: str) -> str:
+    """제목에서 포켓몬 카드명(캐릭터명) 추출 — "Mega Festa X Promo Card" 패턴 전용.
+
+    확실하지 않으면 빈 문자열 반환 — 잘못된 카드명 추측 채움 방지.
+    """
+    import re
+
+    m = re.search(
+        r"Mega Festa\s+([A-Za-z][A-Za-z ]*?)\s+Promo Card", title, re.IGNORECASE
+    )
+    if m:
+        return m.group(1).strip()
+    return ""
+
+
 def _is_tcg_card_category(category_id: str) -> bool:
     """트레이딩카드 싱글 카테고리인지 확인."""
     return category_id in _TCG_CARD_CATEGORY_IDS
@@ -890,6 +905,18 @@ class EbayClient:
             aspects.setdefault("Manufacturer", ["The Pokémon Company"])
             aspects.setdefault("Language", ["Korean"])
             aspects.setdefault("Country/Region of Manufacture", ["South Korea"])
+            # Age Level은 포켓몬 TCG 표준 연령등급(6+) 고정 — 카드마다 달라지지 않음.
+            aspects.setdefault("Age Level", ["6+"])
+            # Card Name/Set/Rarity는 실제 카드 데이터라 확인 안 되면 추측 채우지 않음
+            # (프로모 카드명 패턴만 신뢰도 있게 추출 가능한 경우에 한해 채움).
+            # (2026-07-14 이베이 아이템스펙 Set/Card Name 등 비어있던 문제 확인)
+            _card_name = _extract_pokemon_card_name(name)
+            if _card_name:
+                aspects.setdefault("Card Name", [_card_name])
+                aspects.setdefault("Character", [_card_name])
+            if "promo" in name.lower():
+                aspects.setdefault("Set", ["Promo Cards"])
+                aspects.setdefault("Rarity", ["Promo"])
 
         # Offer 포맷 (정책 ID는 kwargs 또는 계정 creds에서 전달)
         listing_policies: dict[str, str] = {}
@@ -1198,7 +1225,25 @@ class EbayClient:
             _inventory_item_hash_cache.pop(sku, None)
             raise
 
-        # Offer update는 이미 라이브 리스팅에 자동 반영됨 (publish 재호출 불필요 — Insertion Fee 방지)
+        # Offer update는 보통 이미 라이브 리스팅에 자동 반영됨 (publish 재호출 시
+        # Insertion Fee 발생 위험 — 평소엔 재호출 안 함). 단, 기존 오퍼가 이미
+        # ENDED/UNPUBLISHED 상태였다면 PUT만으로는 재게시되지 않고 데이터만 갱신된 채
+        # 죽어있게 됨 — "수정 성공" 로그와 달리 실제로는 비활성 상태로 남는 사고 확인.
+        # (2026-07-14 이베이 카드 13건 재등록 시도 후 실제로는 대부분 ENDED로 남아있던
+        # 사고 원인 규명 — status 확인 후 필요할 때만 명시적으로 재게시)
+        try:
+            _post = await self._call("GET", f"/sell/inventory/v1/offer/{offer_id}")
+            _post_status = _post.get("listing", {}).get("listingStatus")
+            if _post_status and _post_status != "ACTIVE":
+                logger.warning(
+                    "[eBay] Offer %s 수정 후에도 비활성(%s) — 재게시 시도",
+                    offer_id,
+                    _post_status,
+                )
+                await self.publish_offer(offer_id)
+        except Exception as e:
+            logger.warning("[eBay] 재게시 필요 여부 확인/시도 실패: %s", e)
+
         return {"sku": sku, "offerId": offer_id}
 
     # -------------------------------------------------------------------------
