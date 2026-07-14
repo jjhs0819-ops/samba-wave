@@ -32,6 +32,16 @@ def _is_wtb_post(name: str) -> bool:
     return any(k in (name or "") for k in _WTB_KEYWORDS)
 
 
+# 복수장 묶음(Lot) 상품 — 이베이 카테고리 183455(CCG Mixed Card Lots)가 조건값을
+# 전부 거부하다 카탈로그매칭(25604)까지 실패하는 등 API 등록 안정성이 낮음(2026-07-14
+# ACE SPEC 카드 3장 묶음 등록 실패로 확인). 싱글카드(183454)만 자동화 대상 유지.
+_LOT_KEYWORDS = ("일괄", "묶음", "세트", "lot", "Lot", "LOT")
+
+
+def _is_lot_set(name: str) -> bool:
+    return any(k in (name or "") for k in _LOT_KEYWORDS)
+
+
 class BunjangPlugin(SourcingPlugin):
     """번개장터 소싱처 플러그인.
 
@@ -70,6 +80,12 @@ class BunjangPlugin(SourcingPlugin):
         if _before != len(items):
             logger.info(
                 f"[번개장터] 매입/구매글 {_before - len(items)}건 제외 (검색결과 {_before}→{len(items)})"
+            )
+        _before_lot = len(items)
+        items = [it for it in items if not _is_lot_set(it.get("name", ""))]
+        if _before_lot != len(items):
+            logger.info(
+                f"[번개장터] LOT/일괄 세트 {_before_lot - len(items)}건 제외 (검색결과 {_before_lot}→{len(items)})"
             )
 
         if not min_sales and not min_rating:

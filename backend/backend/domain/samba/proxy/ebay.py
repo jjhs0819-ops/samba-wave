@@ -833,19 +833,19 @@ class EbayClient:
                     price_usd = round(price_usd + (ebay_min_margin_usd - margin_usd), 2)
 
         # 상세 설명: 소싱처 원본 detail_html(번장 등 C2C 전용 안내문구 섞여있음)은
-        # 그대로 노출하지 않고, 상단 노티스 배너(조건/포장/배송/관부가세/반품) +
-        # 상품 이미지만 구성. (2026-07-14 번장 원문 한글 그대로 노출 사고 확인)
+        # 그대로 노출하지 않고, 상단 노티스 배너만 구성 — 상품 이미지는 이미
+        # imageUrls(갤러리)로 표시되므로 설명에 중복 삽입하지 않음.
+        # (2026-07-14 번장 원문 한글 노출 사고 + 대표이미지 중복 삽입 제거 요청)
         ebay_notice_banner_url = kwargs.get("ebay_notice_banner_url", "")
         img_tags = "".join(
             f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
             for img in all_images
         )
         if ebay_notice_banner_url:
-            banner_tag = (
+            description = (
                 f'<div style="text-align:center;"><img src="{ebay_notice_banner_url}" '
                 f'style="max-width:860px;width:100%;" /></div>'
             )
-            description = banner_tag + img_tags
         elif img_tags:
             description = img_tags
         else:
@@ -870,10 +870,18 @@ class EbayClient:
         # 트레이딩카드 싱글(183454 등)은 condition="NEW" 등록 자체가 거부됨(카테고리 정책상 신품 카드 구분 없음)
         # "Ungraded" + Card Condition="Near mint or better"로 고정 — 실제 등록 테스트로 검증된 조합
         if _is_tcg_card_category(category_id):
-            inventory_item["condition"] = "USED_VERY_GOOD"
-            inventory_item["conditionDescriptors"] = [
-                {"name": "40001", "values": ["400010"]}
-            ]
+            if category_id == "183455":
+                # 183455(복수장 묶음/Lot)는 USED_* + conditionDescriptor 계열을 전부 거부함
+                # (25021 invalid condition id). Browse API로 실제 라이브 lot 리스팅 조회해보니
+                # 대부분 NEW(1000)로 등록돼있음 — 카드 자체 상태가 아니라 "묶음 구성이 새로
+                # 만들어진 세트"라는 의미로 이 카테고리는 NEW를 정상 취급하는 것으로 확인.
+                # (2026-07-14 Browse API 실측 확인)
+                inventory_item["condition"] = "NEW"
+            else:
+                inventory_item["condition"] = "USED_VERY_GOOD"
+                inventory_item["conditionDescriptors"] = [
+                    {"name": "40001", "values": ["400010"]}
+                ]
             # Game aspect 미지정 시 eBay 필수aspect 자동채움이 알파벳순 첫 값("7th Sea CCG")을
             # 잘못 채워넣는 문제 방지 — 번장 소싱은 전부 포켓몬 카드이므로 명시 고정.
             # (2026-07-13 실제 베스트셀러 경쟁사 리스팅 "Sell Similar" 초안에서 확인한 값)

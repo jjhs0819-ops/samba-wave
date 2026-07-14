@@ -969,7 +969,7 @@ export default function ProductsPage() {
   const handleProductUpdate = useCallback((productId: string, data: Partial<SambaCollectedProduct>) => {
     setAllProducts(prev => prev.map(pp => pp.id === productId ? { ...pp, ...data } : pp))
     // 서버 저장이 필요한 필드만 화이트리스트 호출 (다른 로컬 상태 변경은 호출 생략)
-    const persistKeys: (keyof SambaCollectedProduct)[] = ['coupang_search_tags', 'seo_keywords']
+    const persistKeys: (keyof SambaCollectedProduct)[] = ['coupang_search_tags', 'seo_keywords', 'price_locked', 'locked_prices', 'stock_quantities']
     const persistData: Partial<SambaCollectedProduct> = {}
     let need = false
     for (const k of persistKeys) {
