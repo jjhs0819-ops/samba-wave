@@ -24,6 +24,10 @@ export interface ExternalSettingsState {
   geminiApiKey: string
   geminiModel: string
   geminiStatus: string
+  // OpenAI
+  openaiApiKey: string
+  openaiModel: string
+  openaiStatus: string
   // Cloudflare R2
   r2AccountId: string
   r2AccessKey: string
@@ -71,6 +75,8 @@ export interface ExternalSettingsActions {
   toggleAiFeature: (key: string) => void
   testGeminiApi: () => Promise<void>
   saveGeminiSettings: () => Promise<void>
+  testOpenaiApi: () => Promise<void>
+  saveOpenaiSettings: () => Promise<void>
   loadPresets: () => Promise<void>
   handleSavePreset: (key: string, label: string, desc: string) => Promise<void>
   handleRegeneratePreset: (key: string, desc?: string, label?: string) => Promise<void>
@@ -89,6 +95,8 @@ export interface ExternalSettingsActions {
   setClaudeModel: (v: string) => void
   setGeminiApiKey: (v: string) => void
   setGeminiModel: (v: string) => void
+  setOpenaiApiKey: (v: string) => void
+  setOpenaiModel: (v: string) => void
   setR2AccountId: (v: string) => void
   setR2AccessKey: (v: string) => void
   setR2SecretKey: (v: string) => void

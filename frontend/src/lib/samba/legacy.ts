@@ -1778,6 +1778,9 @@ export const proxyApi = {
   geminiTest: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/gemini/test`, { method: 'POST' }),
+  openaiTest: () =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/openai/test`, { method: 'POST' }),
   r2Test: () =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/r2/test`, { method: 'POST' }),

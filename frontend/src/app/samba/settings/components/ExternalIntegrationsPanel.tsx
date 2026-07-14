@@ -38,6 +38,10 @@ export function ExternalIntegrationsPanel(props: Props) {
     geminiApiKey, geminiModel, geminiStatus,
     setGeminiApiKey, setGeminiModel,
     testGeminiApi, saveGeminiSettings,
+    // OpenAI
+    openaiApiKey, openaiModel, openaiStatus,
+    setOpenaiApiKey, setOpenaiModel,
+    testOpenaiApi, saveOpenaiSettings,
     // R2
     r2AccountId, r2AccessKey, r2SecretKey, r2BucketName, r2PublicUrl, r2Status,
     setR2AccountId, setR2AccessKey, setR2SecretKey, setR2BucketName, setR2PublicUrl,
@@ -218,14 +222,43 @@ export function ExternalIntegrationsPanel(props: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: c.textSub, minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
             <select style={{ ...inputStyle, width: '300px' }} value={geminiModel} onChange={(e) => setGeminiModel(e.target.value)}>
-              <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (권장)</option>
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-              <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+              <option value="gemini-2.5-flash-image">Gemini 2.5 Flash Image (권장 — 이미지 변환용)</option>
             </select>
           </div>
           {geminiStatus && (
             <div style={{ fontSize: '0.8125rem', color: geminiStatus.includes('저장') ? c.success : c.danger, padding: '0.4rem 0' }}>
               {geminiStatus}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* OpenAI (이미지 편집) */}
+      <div style={{ ...card, padding: '1.5rem', marginTop: '1.25rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>OpenAI (이미지 편집)</span>
+          <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>상품사진 자연스러운 합성/편집용</span>
+          <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(16,163,127,0.1)', border: '1px solid rgba(16,163,127,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
+          <button onClick={saveOpenaiSettings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+        </div>
+        <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: c.textSub, minWidth: '100px', fontSize: '0.875rem' }}>API Key</label>
+            <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+              <input type={visiblePasswords.has('openai_apiKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={openaiApiKey} onChange={(e) => setOpenaiApiKey(e.target.value)} placeholder='sk-...' />
+              <button type="button" onClick={() => togglePasswordVisibility('openai_apiKey')} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textMuted, cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('openai_apiKey') ? '숨김' : '보기'}</button>
+            </div>
+            <button onClick={testOpenaiApi} style={{ ...btn('secondary'), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <label style={{ color: c.textSub, minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
+            <select style={{ ...inputStyle, width: '300px' }} value={openaiModel} onChange={(e) => setOpenaiModel(e.target.value)}>
+              <option value="gpt-image-1">GPT Image 1 (권장)</option>
+            </select>
+          </div>
+          {openaiStatus && (
+            <div style={{ fontSize: '0.8125rem', color: openaiStatus.includes('저장') ? c.success : c.danger, padding: '0.4rem 0' }}>
+              {openaiStatus}
             </div>
           )}
         </div>

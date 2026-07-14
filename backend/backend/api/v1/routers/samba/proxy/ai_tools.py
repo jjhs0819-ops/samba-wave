@@ -146,6 +146,51 @@ async def gemini_api_test(
         return {"success": False, "message": f"API 호출 실패: {exc}"}
 
 
+@router.post("/openai/test")
+async def openai_api_test(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+) -> dict[str, Any]:
+    """OpenAI API 키 유효성 검증."""
+    creds = await _get_setting(session, "openai", tenant_id=tenant_id)
+    if not creds or not isinstance(creds, dict):
+        return {"success": False, "message": "OpenAI API 설정이 저장되지 않았습니다."}
+
+    api_key = creds.get("apiKey", "")
+    model = creds.get("model", "gpt-image-1")
+    if not api_key:
+        return {"success": False, "message": "API Key가 비어있습니다."}
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(
+                "https://api.openai.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+            if resp.status_code == 200:
+                return {"success": True, "message": f"인증 성공 (모델: {model})"}
+            else:
+                err = (
+                    resp.json()
+                    if resp.headers.get("content-type", "").startswith(
+                        "application/json"
+                    )
+                    else {}
+                )
+                err_msg = (
+                    err.get("error", {}).get("message", "")
+                    if isinstance(err.get("error"), dict)
+                    else str(err.get("error", ""))
+                )
+                return {
+                    "success": False,
+                    "message": err_msg or f"HTTP {resp.status_code}",
+                }
+    except Exception as exc:
+        logger.error(f"[OpenAI] API 테스트 실패: {exc}")
+        return {"success": False, "message": f"API 호출 실패: {exc}"}
+
+
 @router.post("/r2/test")
 async def r2_test(
     session: AsyncSession = Depends(get_read_session_dependency),

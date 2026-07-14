@@ -7397,7 +7397,13 @@ async def sync_orders_from_markets(
                             gross_usd = tx_map[oid]["gross"]
                             fee_usd = tx_map[oid]["fee"]
                             od["revenue"] = int(round(net_usd * ebay_exchange_rate))
+                            # gross(가격+배송비 등 실제 결제 총액)로 sale_price도 함께 갱신.
+                            # pricingSummary.total만 쓰면 수량>1 주문에서 총액이 아닌
+                            # 축소된 값으로 남는 사고가 있었음(2026-07-14).
                             if gross_usd > 0:
+                                od["sale_price"] = int(
+                                    round(gross_usd * ebay_exchange_rate)
+                                )
                                 od["fee_rate"] = round(fee_usd / gross_usd * 100, 2)
                             od["notes"] = (
                                 f"gross ${gross_usd:.2f} - fee ${fee_usd:.2f} "
@@ -9619,7 +9625,11 @@ async def sync_orders_from_markets(
                     # 가능 — fallback 매칭이 다른 사람 행을 잘못 매칭해 한 행에 두 주문 데이터를
                     # 짬뽕시키는 사고 원인 (2026-05-19 임재광/최호선 사례).
                     # 롯데ON은 (channel_id, od_no, od_seq) 매칭만 신뢰.
-                    and order_data.get("source") != "lotteon"
+                    # 이베이도 제외: shipment_id=SKU라 재고 2개 이상인 동일 리스팅을 서로 다른
+                    # 구매자가 각각 주문하면 SKU+product_id가 같아 fallback이 서로 다른 두 주문을
+                    # 한 행으로 합쳐버림 (2026-07-14 잉어킹 4개+1개 주문 뒤섞임 사고).
+                    # 이베이는 order_number(legacyOrderId) 매칭만 신뢰.
+                    and order_data.get("source") not in ("lotteon", "ebay")
                 ):
                     # 같은 orderId + 상품번호로 이미 있는 주문 검색
                     _dup_candidates = await svc.repo.filter_by_async(
@@ -9658,7 +9668,17 @@ async def sync_orders_from_markets(
                         and order_data["sale_price"] != existing.sale_price
                     ):
                         update_fields["sale_price"] = order_data["sale_price"]
-                        if order_data.get("revenue") is not None:
+                        # Finance API로 확정된 정산액을 미확정 추정치로 되돌리는 회귀 방지
+                        # (2026-07-14 이베이 수량>1 주문 총액 역행 사고, 아래 10065행 부근과 동일 가드).
+                        _existing_is_finance_9667 = "(Finance API)" in (
+                            existing.notes or ""
+                        )
+                        _new_is_finance_9667 = "(Finance API)" in (
+                            order_data.get("notes") or ""
+                        )
+                        if order_data.get("revenue") is not None and not (
+                            _existing_is_finance_9667 and not _new_is_finance_9667
+                        ):
                             update_fields["revenue"] = order_data["revenue"]
                         if order_data.get("fee_rate") is not None:
                             update_fields["fee_rate"] = order_data["fee_rate"]
@@ -10068,8 +10088,15 @@ async def sync_orders_from_markets(
                     sp = float(
                         update_fields.get("sale_price", existing.sale_price) or 0
                     )
-                    if new_revenue and float(new_revenue) != float(
-                        existing.revenue or 0
+                    # Finance API로 이미 확정된 정산액을, 이번 폴링에서 Finance 매칭이
+                    # 안 됐다는 이유로 추정치(sale_price-fee)로 되돌리는 회귀 방지.
+                    # (2026-07-14 이베이 수량>1 주문 총액 역행 사고)
+                    _existing_is_finance = "(Finance API)" in (existing.notes or "")
+                    _new_is_finance = "(Finance API)" in (order_data.get("notes") or "")
+                    if (
+                        new_revenue
+                        and float(new_revenue) != float(existing.revenue or 0)
+                        and not (_existing_is_finance and not _new_is_finance)
                     ):
                         rev = float(new_revenue)
                         update_fields["revenue"] = rev

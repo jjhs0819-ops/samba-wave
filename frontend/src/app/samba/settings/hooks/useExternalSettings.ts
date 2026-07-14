@@ -34,8 +34,11 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
   const [claudeStatus, setClaudeStatus] = useState('')
   const [aiFeatures, setAiFeatures] = useState<Record<string, boolean>>({ productName: true })
   const [geminiApiKey, setGeminiApiKey] = useState('')
-  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-lite')
+  const [geminiModel, setGeminiModel] = useState('gemini-2.5-flash-image')
   const [geminiStatus, setGeminiStatus] = useState('')
+  const [openaiApiKey, setOpenaiApiKey] = useState('')
+  const [openaiModel, setOpenaiModel] = useState('gpt-image-1')
+  const [openaiStatus, setOpenaiStatus] = useState('')
   const [r2AccountId, setR2AccountId] = useState('')
   const [r2AccessKey, setR2AccessKey] = useState('')
   const [r2SecretKey, setR2SecretKey] = useState('')
@@ -169,8 +172,16 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
       const gm = await forbiddenApi.getSetting('gemini').catch(() => null) as Record<string, unknown> | null
       if (gm) {
         setGeminiApiKey(String(gm.apiKey || ''))
-        setGeminiModel(String(gm.model || 'gemini-2.5-flash-lite'))
+        setGeminiModel(String(gm.model || 'gemini-2.5-flash-image'))
         if (gm.apiKey) setGeminiStatus('저장됨')
+      }
+    } catch { /* ignore */ }
+    try {
+      const oa = await forbiddenApi.getSetting('openai').catch(() => null) as Record<string, unknown> | null
+      if (oa) {
+        setOpenaiApiKey(String(oa.apiKey || ''))
+        setOpenaiModel(String(oa.model || 'gpt-image-1'))
+        if (oa.apiKey) setOpenaiStatus('저장됨')
       }
     } catch { /* ignore */ }
     try {
@@ -318,6 +329,36 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     } catch { showAlert('저장 실패', 'error') }
   }
 
+  // OpenAI API 테스트
+  const testOpenaiApi = async () => {
+    if (!openaiApiKey) { showAlert('API Key를 먼저 입력해주세요', 'error'); return }
+    setOpenaiStatus('API 연결 확인 중...')
+    try {
+      await forbiddenApi.saveSetting('openai', { apiKey: openaiApiKey, model: openaiModel, updatedAt: new Date().toISOString() })
+      const result = await proxyApi.openaiTest()
+      if (result.success) {
+        setOpenaiStatus(`✓ ${result.message}`)
+        showAlert(result.message, 'success')
+      } else {
+        setOpenaiStatus(`✗ ${result.message}`)
+        showAlert(result.message, 'error')
+      }
+    } catch (e) {
+      setOpenaiStatus('연결 실패')
+      showAlert(`OpenAI API 연결 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
+    }
+  }
+
+  // OpenAI 저장
+  const saveOpenaiSettings = async () => {
+    if (!openaiApiKey) { showAlert('API Key를 입력해주세요', 'error'); return }
+    try {
+      await forbiddenApi.saveSetting('openai', { apiKey: openaiApiKey, model: openaiModel, updatedAt: new Date().toISOString() })
+      setOpenaiStatus(`저장 완료 (${new Date().toLocaleTimeString('ko-KR', { hour12: false })})`)
+      showAlert('OpenAI 설정이 저장되었습니다', 'success')
+    } catch { showAlert('저장 실패', 'error') }
+  }
+
   // 프리셋 로드
   const loadPresets = useCallback(async () => {
     try {
@@ -439,6 +480,7 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     kakaoUserId, kakaoApiKey, kakaoSenderKey, kakaoSender, kakaoStatus,
     claudeApiKey, claudeModel, claudeStatus, aiFeatures,
     geminiApiKey, geminiModel, geminiStatus,
+    openaiApiKey, openaiModel, openaiStatus,
     r2AccountId, r2AccessKey, r2SecretKey, r2BucketName, r2PublicUrl, r2Status,
     presets, editingPreset, editingDesc, editingLabel, regenerating, presetZoom,
     forbiddenText, deletionText, initialForbiddenText, initialDeletionText,
@@ -459,6 +501,8 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     toggleAiFeature,
     testGeminiApi,
     saveGeminiSettings,
+    testOpenaiApi,
+    saveOpenaiSettings,
     loadPresets,
     handleSavePreset,
     handleRegeneratePreset,
@@ -477,6 +521,8 @@ export function useExternalSettings(): ExternalSettingsState & ExternalSettingsA
     setClaudeModel,
     setGeminiApiKey,
     setGeminiModel,
+    setOpenaiApiKey,
+    setOpenaiModel,
     setR2AccountId,
     setR2AccessKey,
     setR2SecretKey,
