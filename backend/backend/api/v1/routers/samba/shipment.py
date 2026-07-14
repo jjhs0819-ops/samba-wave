@@ -379,6 +379,115 @@ class CleanupOrphansRequest(BaseModel):
     product_ids: Optional[list[str]] = None
 
 
+@router.post("/smartstore/backfill-origin")
+async def backfill_smartstore_origin(
+    account_id: str = Query(..., description="backfill할 스마트스토어 계정 id"),
+    dry_run: bool = Query(
+        True, description="true면 분류만, false면 실제 originProductNo 저장"
+    ),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """스마트스토어 원상품번호(originProductNo) backfill — 삭제/오토튠 403 근본수정.
+
+    2026-05 이전 등록분은 market_product_nos에 채널번호만 있고 {acc}_origin(원번호)이
+    없어, 삭제/재고 API(origin-products/{no})를 채널번호로 호출 → 403. 판매자 전체
+    상품을 스캔해 채널번호→원번호 맵을 만들고 {acc}_origin 을 채운다.
+
+    - backfilled: 원번호를 채운 수 (이후 삭제·오토튠 정상화)
+    - missing_in_market: 채널번호가 스캔에 없음 = 스마트스토어에 실재하지 않는 유령
+      (별도 등록기록 정리 대상)
+    최초 dry_run=true 로 수치 확인 후 dry_run=false 로 저장.
+    """
+    import json as _json
+
+    from sqlalchemy import text as _text
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.smartstore import SmartStoreClient
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type != "smartstore":
+        raise HTTPException(
+            status_code=400, detail=f"스마트스토어 계정이 아닙니다: {acc.market_type}"
+        )
+    extras = acc.additional_fields or {}
+    client_id = extras.get("clientId", "") or acc.api_key or ""
+    client_secret = extras.get("clientSecret", "") or acc.api_secret or ""
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="스마트스토어 인증 정보 없음")
+
+    client = SmartStoreClient(client_id, client_secret)
+    # 스마트스토어 전량 스캔(수십 초) 동안 세션이 idle-in-tx 로 커넥션 물지 않도록 먼저 종료
+    await session.commit()
+    naver = await client.scan_all_products()
+    ch2origin = SmartStoreClient.build_channel_origin_map(naver)
+
+    rows = (
+        await session.execute(
+            _text(
+                "SELECT id, market_product_nos, name FROM samba_collected_product "
+                "WHERE registered_accounts @> CAST(:arr AS jsonb)"
+            ).bindparams(arr=f'["{account_id}"]')
+        )
+    ).all()
+
+    origin_key = f"{account_id}_origin"
+    backfilled: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    already = 0
+    for rid, mpn_raw, name in rows:
+        mpn = dict(mpn_raw or {})
+        if mpn.get(origin_key):
+            already += 1
+            continue
+        bare = str(mpn.get(account_id) or "").strip()
+        if not bare:
+            continue  # 등록번호 자체 없음(prdNo無) — 별개 유령, 여기선 스킵
+        origin = ch2origin.get(bare)
+        if origin:
+            backfilled.append(
+                {"id": rid, "channel": bare, "origin": origin, "name": (name or "")[:30]}
+            )
+            if not dry_run:
+                mpn[origin_key] = origin
+                await session.execute(
+                    _text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = CAST(:nos AS jsonb) WHERE id = :id"
+                    ).bindparams(
+                        nos=_json.dumps(mpn, ensure_ascii=False), id=rid
+                    )
+                )
+        else:
+            missing.append({"id": rid, "channel": bare, "name": (name or "")[:30]})
+    if not dry_run:
+        await session.commit()
+
+    return {
+        "account_id": account_id,
+        "scanned_market": len(naver),
+        "channel_origin_map_size": len(ch2origin),
+        "db_registered": len(rows),
+        "already_has_origin": already,
+        "backfilled": len(backfilled),
+        "missing_in_market": len(missing),
+        "dry_run": dry_run,
+        "backfill_sample": backfilled[:15],
+        "missing_sample": missing[:15],
+    }
+
+
 @router.post("/smartstore/cleanup-orphans")
 async def cleanup_smartstore_orphans(
     body: CleanupOrphansRequest = CleanupOrphansRequest(),

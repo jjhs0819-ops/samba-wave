@@ -1411,6 +1411,96 @@ class SmartStoreClient:
         """상품 조회."""
         return await self._call_api("GET", f"/v2/products/origin-products/{product_no}")
 
+    async def scan_all_products(self, max_pages: int = 200) -> list[dict[str, Any]]:
+        """판매자 전체 상품 목록 수집 (POST /v1/products/search 페이징).
+
+        각 항목에 originProductNo / channelProducts[].channelProductNo /
+        sellerManagementCode 가 함께 담겨, 채널번호↔원번호 매핑에 사용한다.
+        (cleanup_smartstore_orphans 의 페이징/레이트리밋 로직과 동일 — 순차 1,
+        호출 간 0.4s, 5회 백오프. 네이버 search RPS 한도가 매우 낮음.)
+        """
+        import asyncio
+
+        def _contents(resp: object) -> list[dict[str, Any]]:
+            if isinstance(resp, list):
+                return resp
+            if isinstance(resp, dict):
+                v = resp.get("contents") or resp.get("data") or []
+                return v if isinstance(v, list) else []
+            return []
+
+        products: list[dict[str, Any]] = []
+        r1 = await self._call_api(
+            "POST", "/v1/products/search", body={"page": 1, "size": 100}
+        )
+        p1 = _contents(r1)
+        products.extend(p1)
+
+        total_pages = 0
+        if isinstance(r1, dict):
+            tp = r1.get("totalPages")
+            if isinstance(tp, int) and tp > 0:
+                total_pages = tp
+            else:
+                te = r1.get("totalElements")
+                if isinstance(te, int) and te > 0:
+                    total_pages = (te + 99) // 100
+        if total_pages <= 0:
+            total_pages = 1 if len(p1) < 100 else max_pages
+        total_pages = min(total_pages, max_pages)
+
+        if total_pages > 1:
+            sem = asyncio.Semaphore(1)
+
+            async def _fetch(pno: int) -> list[dict[str, Any]]:
+                for attempt in range(5):
+                    try:
+                        async with sem:
+                            rr = await self._call_api(
+                                "POST",
+                                "/v1/products/search",
+                                body={"page": pno, "size": 100},
+                            )
+                            await asyncio.sleep(0.4)
+                        return _contents(rr)
+                    except Exception as e:
+                        msg = str(e)
+                        if "429" in msg or "Too Many" in msg:
+                            await asyncio.sleep(2 * (2**attempt))
+                        else:
+                            await asyncio.sleep(0.5 * (2**attempt))
+                logger.warning(f"[스마트스토어] scan page {pno} 5회 재시도 실패")
+                return []
+
+            results = await asyncio.gather(
+                *[_fetch(p) for p in range(2, total_pages + 1)],
+                return_exceptions=True,
+            )
+            for rr in results:
+                if isinstance(rr, BaseException):
+                    continue
+                products.extend(rr)
+        return products
+
+    @staticmethod
+    def build_channel_origin_map(naver_products: list[dict[str, Any]]) -> dict[str, str]:
+        """scan_all_products 결과 → {channelProductNo|originProductNo: originProductNo} 맵."""
+        m: dict[str, str] = {}
+        for np in naver_products:
+            on = str(
+                np.get("originProductNo")
+                or np.get("originProduct", {}).get("id", "")
+                or ""
+            )
+            if not on:
+                continue
+            m[on] = on
+            for cp in np.get("channelProducts", []) or []:
+                cn = cp.get("channelProductNo")
+                if cn:
+                    m[str(cn)] = on
+        return m
+
     # ------------------------------------------------------------------
     # 주문 조회
     # ------------------------------------------------------------------
