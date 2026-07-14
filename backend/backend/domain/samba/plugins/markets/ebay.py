@@ -560,6 +560,7 @@ class EbayPlugin(MarketPlugin):
             ebay_min_margin_usd=ebay_min_margin_usd,
             ebay_cost_krw=ebay_cost_krw,
             ebay_locked_price_usd=ebay_locked_price_usd,
+            account_id=str(getattr(account, "id", "") or ""),
         )
 
         try:

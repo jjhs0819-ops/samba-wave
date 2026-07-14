@@ -136,6 +136,7 @@ class CollectedProductUpdate(BaseModel):
     lock_stock: Optional[bool] = None
     price_locked: Optional[bool] = None
     locked_prices: Optional[dict] = None
+    stock_quantities: Optional[dict] = None
     images: Optional[list] = None
     detail_images: Optional[list] = None
     tags: Optional[list] = None
@@ -2111,9 +2112,11 @@ async def update_collected_product(
     svc = _get_services(session)
     data = body.model_dump(exclude_unset=True)
 
-    # extra_data/locked_prices는 덮어쓰지 않고 기존 값과 병합 (계정별 키 보존)
-    if ("extra_data" in data and data["extra_data"] is not None) or (
-        "locked_prices" in data and data["locked_prices"] is not None
+    # extra_data/locked_prices/stock_quantities는 덮어쓰지 않고 기존 값과 병합 (계정별 키 보존)
+    if (
+        ("extra_data" in data and data["extra_data"] is not None)
+        or ("locked_prices" in data and data["locked_prices"] is not None)
+        or ("stock_quantities" in data and data["stock_quantities"] is not None)
     ):
         repo = svc.product_repo
         existing = await repo.get_async(product_id)
@@ -2124,6 +2127,9 @@ async def update_collected_product(
             if "locked_prices" in data and data["locked_prices"] is not None:
                 existing_locked = getattr(existing, "locked_prices", {}) or {}
                 data["locked_prices"] = {**existing_locked, **data["locked_prices"]}
+            if "stock_quantities" in data and data["stock_quantities"] is not None:
+                existing_qty = getattr(existing, "stock_quantities", {}) or {}
+                data["stock_quantities"] = {**existing_qty, **data["stock_quantities"]}
 
     result = await svc.update_collected_product(product_id, data)
     if not result:

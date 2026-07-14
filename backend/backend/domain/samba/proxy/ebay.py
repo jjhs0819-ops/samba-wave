@@ -788,9 +788,18 @@ class EbayClient:
         aspects.setdefault("Unit Type", ["Item"])
         aspects.setdefault("California Prop 65 Warning", ["No warning applicable"])
 
-        # eBay 재고 고정: 항상 1개로 고정 (무재고 위탁판매 정책)
-        # 소싱처 재고 변동과 무관하게 eBay는 1개로 유지 — 주문 시 수동 발주 처리
+        # eBay 재고: 기본 1개(무재고 위탁판매 정책, 오버셀 방지) — product["stock_quantities"]
+        # [account_id]로 계정별 재고수량 명시 지정 가능(2026-07-14 사용자 요청).
+        # 소싱처가 실제 여러 개 확보 가능한 경우가 아니면 1개 유지 권장 — 임의로 올리면 오버셀 위험.
         quantity = 1
+        if isinstance(product, dict):
+            _stock_qtys = product.get("stock_quantities") or {}
+            _acc_id_for_qty = kwargs.get("account_id") or ""
+            if _acc_id_for_qty and _acc_id_for_qty in _stock_qtys:
+                try:
+                    quantity = max(1, int(_stock_qtys[_acc_id_for_qty]))
+                except (TypeError, ValueError):
+                    quantity = 1
 
         # 고정가 등록 — 지정돼 있으면 환율변환/배송비그로스업/최소마진 전부 건너뛰고
         # 이 값을 최종 USD 판매가로 그대로 사용 (오토튠 재계산 대상에서 제외).

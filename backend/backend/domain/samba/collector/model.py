@@ -383,6 +383,13 @@ class SambaCollectedProduct(SQLModel, table=True):
         sa_column=Column(JSONB, nullable=False, server_default="{}"),
     )
 
+    # 마켓별 등록 재고수량 — {account_id: qty}. 미설정 계정은 기본 1개.
+    # 2026-07-14 이베이 고정재고 설정 요청 대응.
+    stock_quantities: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSONB, nullable=False, server_default="{}"),
+    )
+
     # AI 이미지 변환 완료 여부 — tags의 __ai_image__ 태그와 독립. race wipe 영구 차단용
     ai_image_transformed: bool = Field(
         default=False, sa_column=Column(Boolean, nullable=False, server_default="false")

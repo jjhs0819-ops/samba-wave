@@ -1859,6 +1859,30 @@ const ProductCard = React.memo(function ProductCard({
                               />
                               고정가
                             </label>
+                            <label
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', color: c.textSub }}
+                              title="이베이 등록 재고수량 — 소싱처에서 실제로 여러 개 확보 가능한 상품만 1보다 크게. 임의로 올리면 오버셀 위험"
+                            >
+                              재고
+                              <input
+                                type="number"
+                                min={1}
+                                step={1}
+                                defaultValue={
+                                  p.stock_quantities?.[
+                                    accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id || ''
+                                  ] ?? 1
+                                }
+                                onBlur={(e) => {
+                                  const ebayAccId = accounts.find(a => a.market_type === 'ebay' && (p.registered_accounts || []).includes(a.id))?.id
+                                  if (!ebayAccId) return
+                                  const v = parseInt(e.target.value, 10)
+                                  if (!Number.isFinite(v) || v < 1) return
+                                  onProductUpdate(p.id, { stock_quantities: { [ebayAccId]: v } })
+                                }}
+                                style={{ width: '40px', padding: '2px 4px', fontSize: '0.8rem', fontWeight: 600, color: c.text, background: c.surface, border: `1px solid ${c.border}`, borderRadius: '4px' }}
+                              />
+                            </label>
                           </>
                         ) : (
                           <span style={{ color: c.text, fontWeight: 600 }}>{(m as { priceLabel?: string }).priceLabel ?? `${curSym}${fmt(m.price)}`}</span>
