@@ -110,6 +110,10 @@ async def cleanup_ssg_orphans(
     max_delete: int = Query(
         200, ge=0, le=100000, description="한 번에 종료할 최대 유령 수"
     ),
+    debug: bool = Query(
+        False,
+        description="true면 SSG getItemList 파라미터 조합별 첫 페이지 raw 구조/건수 진단 반환(삭제 안 함)",
+    ),
     session: AsyncSession = Depends(get_write_session_dependency),
     admin: str = Depends(require_admin),
 ):
@@ -159,6 +163,68 @@ async def cleanup_ssg_orphans(
     # SSG 전량 나열(수십 초) 동안 이 세션이 idle-in-transaction 으로 커넥션을
     # 물지 않도록 먼저 종료 — reconciler 는 내부에서 자체 세션으로 DB 대조.
     await session.commit()
+
+    if debug:
+        # getItemList 가 1건만 반환하는 원인 격리 — 파라미터 조합별 첫 페이지 구조/건수.
+        from backend.domain.samba.proxy.ssg import SSGClient
+        from backend.domain.samba.proxy.ssg_ghost_reconciler import (
+            _extract_api_key,
+            _extract_site_no,
+        )
+
+        _site = _extract_site_no(acc_dict)
+        _client = SSGClient(_extract_api_key(acc_dict), site_no=_site)
+        _combos = [
+            ("siteNo+ps100", {"page": "1", "pageSize": "100", "siteNo": _site}),
+            ("no_siteNo+ps100", {"page": "1", "pageSize": "100"}),
+            ("siteNo+ps10", {"page": "1", "pageSize": "10", "siteNo": _site}),
+            ("siteNo+pageSize1000", {"page": "1", "pageSize": "1000", "siteNo": _site}),
+        ]
+        _out: dict[str, Any] = {"site_no": _site, "combos": {}}
+        for _label, _params in _combos:
+            try:
+                _resp = await _client._call_api(
+                    "GET", "/item/0.1/getItemList.ssg", params=_params
+                )
+                _result = _resp.get("result", _resp) if isinstance(_resp, dict) else {}
+                _items_raw = (
+                    _result.get("items") if isinstance(_result, dict) else None
+                )
+                _iv = (
+                    _items_raw.get("item")
+                    if isinstance(_items_raw, dict)
+                    else _items_raw
+                )
+                _cnt = (
+                    len(_iv)
+                    if isinstance(_iv, list)
+                    else (1 if isinstance(_iv, dict) else 0)
+                )
+                _sample = (
+                    (_iv[0] if isinstance(_iv, list) and _iv else _iv) if _cnt else None
+                )
+                _out["combos"][_label] = {
+                    "result_keys": list(_result.keys())
+                    if isinstance(_result, dict)
+                    else str(type(_result)),
+                    "items_raw_type": type(_items_raw).__name__,
+                    "item_type": type(_iv).__name__,
+                    "count_first_page": _cnt,
+                    "total_field": (
+                        _result.get("totalCnt")
+                        or _result.get("totalCount")
+                        or _result.get("total")
+                    )
+                    if isinstance(_result, dict)
+                    else None,
+                    "sample_keys": list(_sample.keys())
+                    if isinstance(_sample, dict)
+                    else None,
+                }
+            except Exception as _e:
+                _out["combos"][_label] = {"error": str(_e)[:300]}
+        return _out
+
     return await _reconcile_one_account(
         acc_dict, dry_run=dry_run, max_delete=max_delete
     )
