@@ -1218,6 +1218,7 @@ class ImageTransformService:
         quality: int = 85,
         min_dim: int = 0,
         enforce_max_dim: bool = False,
+        pad_square: bool = False,
     ) -> tuple[list[str], dict[str, str], set[str]]:
         """용량/픽셀 초과·미달 이미지를 다운로드/리사이즈하여 R2로 업로드.
 
@@ -1247,7 +1248,7 @@ class ImageTransformService:
         failed: set[str] = set()
 
         # #543 정책키 — 같은 URL도 검증 파라미터가 다르면 다른 결과라 키에 포함.
-        _policy = f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:"
+        _policy = f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
 
         # #543 순차 → 병렬. 죽은/느린 소스 이미지 대기가 분산돼 상품당 300초 초과 해소.
         # Semaphore 로 동시 다운로드+PIL 디코드 수 제한(메모리 가드).
@@ -1268,7 +1269,7 @@ class ImageTransformService:
                     host = (parsed.netloc or "").lower()
                     # min_dim/enforce_max_dim 모드: HEAD 우회하고 무조건 다운로드
                     # — HEAD 로는 픽셀 크기를 알 수 없으므로 PIL 로 직접 확인 필요.
-                    strict_pixel = bool(min_dim > 0 or enforce_max_dim)
+                    strict_pixel = bool(min_dim > 0 or enforce_max_dim or pad_square)
                     # R2 본인 호스트면 그대로 — 단, strict_pixel(min_dim/enforce_max_dim)
                     # 모드에선 이미 R2 인 이미지도 픽셀 규격을 재검증해야 하므로 통과 금지.
                     # 롯데홈은 mirror_with_persistence 로 먼저 R2 미러(예: 833x1000)한 뒤
@@ -1326,11 +1327,14 @@ class ImageTransformService:
                     )
 
                     # 픽셀/용량 모두 통과하고 차단 도메인도 아니면 원본 유지
+                    # (단, pad_square 요청 시 이미 정사각인 경우만 통과)
+                    already_square = (not pad_square) or (w == h)
                     if (
                         not need_upscale
                         and not need_downscale
                         and not over_bytes
                         and not is_hotlink
+                        and already_square
                     ):
                         self._mirror_memo[memo_key] = url
                         return url, None, False
@@ -1362,6 +1366,15 @@ class ImageTransformService:
                             canvas = Image.new("RGB", (pad_w, pad_h), (255, 255, 255))
                             canvas.paste(img, ((pad_w - w2) // 2, (pad_h - h2) // 2))
                             img = canvas
+
+                    # 정사각 강제 (롯데홈 대표/추가 정사각 규격) — 긴 변 기준 흰 여백 패딩.
+                    # 내용 왜곡·잘림 없이 짧은 변에 흰 여백만 추가해 N×N 정사각 생성.
+                    if pad_square and img.size[0] != img.size[1]:
+                        _w3, _h3 = img.size
+                        _side = max(_w3, _h3)
+                        _sq = Image.new("RGB", (_side, _side), (255, 255, 255))
+                        _sq.paste(img, ((_side - _w3) // 2, (_side - _h3) // 2))
+                        img = _sq
 
                     out = io.BytesIO()
                     # 품질 단계적 하향: 85 → 70 → 55 까지 시도
