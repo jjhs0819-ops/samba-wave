@@ -882,6 +882,69 @@ async def _delete_gmarket(
     return result
 
 
+async def _delete_ebay(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """eBay 상품 삭제 — 오퍼 withdraw + inventory item 삭제.
+
+    2026-07-14: MARKET_DELETE_HANDLERS에 ebay 미등록으로 품절 감지 시
+    "삭제 핸들러 미구현" 로그만 남기고 리스팅이 그대로 살아있어 오버셀
+    재발 위험 확인 → 등록.
+    """
+    from backend.domain.samba.proxy.ebay import EbayApiError, EbayClient
+
+    sku = product.get("id", "")
+    if not sku:
+        return {"success": False, "message": "eBay SKU(상품 id) 없음 (건너뜀)"}
+
+    extras = getattr(account, "additional_fields", None) or {} if account else {}
+    app_id = extras.get("clientId", "")
+    cert_id = extras.get("clientSecret", "")
+    refresh_token = extras.get("oauthToken", "")
+    if not all([app_id, cert_id, refresh_token]):
+        return {"success": False, "message": "eBay 계정 인증정보 없음"}
+
+    client = EbayClient(
+        app_id=app_id,
+        dev_id=extras.get("devId", ""),
+        cert_id=cert_id,
+        refresh_token=refresh_token,
+    )
+    try:
+        offers = await client.get_offers_by_sku(sku)
+        if not offers:
+            return {
+                "success": True,
+                "message": "eBay 이미 종료됨(오퍼 없음, 정리 완료 처리)",
+                "ghost_cleanup": True,
+            }
+        for off in offers:
+            offer_id = off.get("offerId")
+            if not offer_id:
+                continue
+            try:
+                await client.withdraw_offer(offer_id)
+            except EbayApiError as we:
+                if "not available" not in str(we).lower():
+                    raise
+        await client.delete_inventory_item(sku)
+        return {"success": True, "message": "eBay withdraw + inventory 삭제 완료"}
+    except EbayApiError as e:
+        if "not available" in str(e).lower() or "404" in str(e):
+            return {
+                "success": True,
+                "message": f"eBay 이미 종료됨(자동정리): {e}",
+                "ghost_cleanup": True,
+            }
+        logger.error(f"[eBay] 삭제 실패: {e}")
+        return {"success": False, "message": f"eBay 삭제 실패: {e}"}
+    except Exception as e:
+        logger.error(f"[eBay] 삭제 예외: {e}")
+        return {"success": False, "message": f"eBay 삭제 예외: {e}"}
+
+
 async def _delete_auction(
     session: AsyncSession,
     product: dict[str, Any],
@@ -1107,4 +1170,5 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "gmarket": _delete_gmarket,
     "auction": _delete_auction,
     "hmall": _delete_hmall,
+    "ebay": _delete_ebay,
 }
