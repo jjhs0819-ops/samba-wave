@@ -1036,17 +1036,38 @@ class EbayClient:
 
         # ─── 최적화 2: Offer ID 캐시 조회 ───
         offer_id = data.get("existing_offer_id", "") or _offer_id_cache.get(sku, "")
+        _live_offer: dict | None = None
 
         if not offer_id:
             try:
                 offers = await self.get_offers_by_sku(sku)
                 if offers:
-                    offer_id = offers[0].get("offerId", "")
+                    _live_offer = offers[0]
+                    offer_id = _live_offer.get("offerId", "")
                     if offer_id:
                         _offer_id_cache[sku] = offer_id
                         _evict_if_needed(_offer_id_cache)
             except Exception as e:
                 logger.warning("[eBay] Offer 조회 실패 (신규 등록으로 폴백): %s", e)
+
+        # 재고수량이 1보다 크게 설정된 상품(stock_quantities)은 이미 팔린 수량을
+        # 반영해야 함 — 그대로 밀어넣으면 매 동기화마다 판매분이 복구되는 오버셀 재발.
+        # (2026-07-14 사용자 확인 질문으로 발견)
+        _configured_qty = int(offer_data.get("availableQuantity", 1) or 1)
+        if _configured_qty > 1:
+            try:
+                if _live_offer is None:
+                    _fresh = await self.get_offers_by_sku(sku)
+                    _live_offer = _fresh[0] if _fresh else None
+                if _live_offer:
+                    _sold = int(
+                        _live_offer.get("listing", {}).get("soldQuantity", 0) or 0
+                    )
+                    offer_data["availableQuantity"] = max(0, _configured_qty - _sold)
+            except Exception as e:
+                logger.warning(
+                    "[eBay] 판매수량 반영 재고계산 실패(설정값 그대로 사용): %s", e
+                )
 
         async def _safe_create_offer(sku_arg: str, offer: dict) -> str:
             """Offer 생성 — 25002(이미 존재) 발생 시 기존 삭제 후 재생성."""
