@@ -690,6 +690,12 @@ def _parse_lotteon_return(
     except (ValueError, TypeError):
         qty = 1
 
+    # 잔여수량 — 전체취소(0) 판별용. 주문동기화(order.py)의 부분취소 스킵 가드와 동일 소스.
+    try:
+        rmdr_qty = int(item.get("rmdrQty", 0) or 0)
+    except (TypeError, ValueError):
+        rmdr_qty = 0
+
     return {
         "source": "lotteon",
         "order_number": item.get("odNo", ""),
@@ -699,10 +705,67 @@ def _parse_lotteon_return(
         "reason_code": item.get("clmRsnCd", ""),
         "reason": item.get("clmRsnNm", "") or item.get("clmRsnCd", ""),
         "quantity": qty,
+        "rmdr_qty": rmdr_qty,
         "product_name": item.get("spdNm", "") or item.get("sitmNm", ""),
         "product_id": item.get("spdNo", "") or item.get("sitmNo", ""),
         "status": status,
     }
+
+
+# 배송 진행 단계 보호 — 주문동기화(order.py `_lo_shipped_guard`)와 동일 집합.
+_LO_SHIPPED_GUARD = {
+    "송장전송완료",
+    "국내배송중",
+    "배송완료",
+    "구매확정",
+    "발송완료",
+}
+# 취소 라벨 우선순위 — 종결(취소완료)이 요청보다 높다. 하향 전이 차단용.
+_LO_CANCEL_PRIORITY = {"취소요청": 1, "취소처리중": 2, "취소완료": 3}
+
+
+def _lotteon_claim_order_ss(claim: dict[str, Any], current_ss: str) -> Optional[str]:
+    """롯데ON 클레임 → 원주문 shipping_status. 변경하면 안 되면 None.
+
+    주문동기화는 odPrgsStepCd 21을 '취소완료'로 매핑하는데(order.py cancel_step_map),
+    반품동기화가 상태 무관하게 '취소요청'을 쓰면 두 동기화가 같은 컬럼을 두고 싸운다.
+    클레임 조회창이 반품 30일 / 주문 7일이라 8일차 이후엔 되돌리는 쪽만 남아 영구
+    고착된다(#642). 롯데온 출고 전 취소는 대부분 신청 즉시 종결(21)이라 사실상 항상
+    잘못된 값을 쓰게 된다.
+    """
+    rt = claim.get("return_type", "")
+    if rt != "cancel":
+        return "교환요청" if rt == "exchange" else "반품요청"
+
+    status = claim.get("status", "")
+    if status == "rejected":
+        # 22 철회 = 고객이 취소요청을 회수한 것. 취소가 아니므로 원주문을 건드리지
+        # 않는다. '취소요청'을 쓰면 취소도 아닌 주문이 취소요청 좀비로 남는다.
+        return None
+    if status != "completed":
+        return "취소요청"
+
+    # 21 취소완료 — order.py 와 동일한 가드 2종을 적용한 뒤에만 종결 반영
+    if int(claim.get("rmdr_qty", 0) or 0) > 0:
+        # 부분취소는 전체취소가 아님. 수량 처리는 메인 주문목록 파싱에 위임.
+        return None
+    if current_ss in _LO_SHIPPED_GUARD:
+        # 배송 진행/정산 주문 오취소 차단
+        return None
+    return "취소완료"
+
+
+def _lotteon_claim_mos(claim: dict[str, Any]) -> str:
+    """롯데ON 클레임 → samba_return.market_order_status. 종결은 종결 라벨로 기록."""
+    rt = claim.get("return_type", "")
+    if rt == "cancel":
+        status = claim.get("status", "")
+        if status == "completed":
+            return "취소완료"
+        if status == "rejected":
+            return "취소거부"
+        return "취소요청"
+    return "교환요청" if rt == "exchange" else "반품요청"
 
 
 class SyncReturnsRequest(BaseModel):
@@ -1149,11 +1212,7 @@ async def sync_returns_from_markets(
                         # type이 없거나 잘못 저장된 경우 수정
                         if er.type != correct_type:
                             patch_lo["type"] = correct_type
-                        patch_lo["market_order_status"] = {
-                            "exchange": "교환요청",
-                            "return": "반품요청",
-                            "cancel": "취소요청",
-                        }.get(correct_type, "반품요청")
+                        patch_lo["market_order_status"] = _lotteon_claim_mos(claim)
                         status_priority = {
                             "requested": 0,
                             "approved": 1,
@@ -1187,15 +1246,17 @@ async def sync_returns_from_markets(
                                 f"[롯데ON] 반품 레코드 패치 불필요: {order_number} er.type={er.type} er.market_order_status={er.market_order_status}"
                             )
                         # 원주문 shipping_status 동기화 (교환/반품 진행 중이면 주문 페이지에서 제외)
-                        new_order_ss = (
-                            "교환요청" if correct_type == "exchange" else "반품요청"
-                        )
-                        if correct_type == "cancel":
-                            new_order_ss = "취소요청"
-                        if existing_order.shipping_status != new_order_ss:
-                            await order_repo.update_async(
-                                existing_order.id, shipping_status=new_order_ss
-                            )
+                        _cur_ss = existing_order.shipping_status or ""
+                        new_order_ss = _lotteon_claim_order_ss(claim, _cur_ss)
+                        if new_order_ss and _cur_ss != new_order_ss:
+                            # 종결 라벨 하향 전이 차단 — 취소완료 주문을 취소요청/반품요청으로
+                            # 되돌리지 않는다(#335 일괄 SQL 가드가 못 막던 per-claim 경로).
+                            _cur_p = _LO_CANCEL_PRIORITY.get(_cur_ss, 0)
+                            _new_p = _LO_CANCEL_PRIORITY.get(new_order_ss, 0)
+                            if _cur_p == 0 or _new_p >= _cur_p:
+                                await order_repo.update_async(
+                                    existing_order.id, shipping_status=new_order_ss
+                                )
                         continue
 
                     from datetime import UTC, datetime
@@ -1251,21 +1312,18 @@ async def sync_returns_from_markets(
                         ],
                         "notes": [],
                     }
-                    return_data["market_order_status"] = {
-                        "exchange": "교환요청",
-                        "return": "반품요청",
-                        "cancel": "취소요청",
-                    }.get(claim["return_type"], "반품요청")
+                    return_data["market_order_status"] = _lotteon_claim_mos(claim)
                     await svc.repo.create_async(**return_data)
                     # 원주문 shipping_status 동기화
-                    new_order_ss = (
-                        "교환요청" if claim["return_type"] == "exchange" else "반품요청"
-                    )
-                    if claim["return_type"] == "cancel":
-                        new_order_ss = "취소요청"
-                    await order_repo.update_async(
-                        existing_order.id, shipping_status=new_order_ss
-                    )
+                    _cur_ss = existing_order.shipping_status or ""
+                    new_order_ss = _lotteon_claim_order_ss(claim, _cur_ss)
+                    if new_order_ss and _cur_ss != new_order_ss:
+                        _cur_p = _LO_CANCEL_PRIORITY.get(_cur_ss, 0)
+                        _new_p = _LO_CANCEL_PRIORITY.get(new_order_ss, 0)
+                        if _cur_p == 0 or _new_p >= _cur_p:
+                            await order_repo.update_async(
+                                existing_order.id, shipping_status=new_order_ss
+                            )
                     synced += 1
 
                 # 교환 클레임 동기화
