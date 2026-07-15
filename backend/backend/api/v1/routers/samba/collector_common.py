@@ -118,6 +118,23 @@ _KNOWN_PROXY_KEYS = {
 }
 
 
+def _build_detail_html_from_images(images: list) -> str:
+    """상세 이미지 URL 배열을 상세 HTML로 조합 (detail_html 미제공 소싱처 fallback).
+
+    롯데온 등 일부 소싱처는 detailImages 만 보내고 detail_html 을 조합하지 않아,
+    SSG 전송 시 상세페이지가 '제목만' 나오던 문제의 근본 수정.
+    패플/나이키 등 다른 소싱처와 동일한 형식으로 조합한다.
+    """
+    if not images:
+        return ""
+    return "\n".join(
+        f'<div style="text-align:center;"><img src="{img}" '
+        f'style="max-width:860px;width:100%;" /></div>'
+        for img in images
+        if img
+    )
+
+
 def _build_product_data(
     detail: dict,
     goods_no: str,
@@ -211,7 +228,9 @@ def _build_product_data(
         "detail_html": raw_detail_html
         or detail.get("detailHtml")
         or detail.get("detail_html")
-        or "",
+        or _build_detail_html_from_images(
+            detail.get("detailImages") or detail.get("detail_images") or []
+        ),
         "status": "collected",
         "sale_status": detail.get("saleStatus", "in_stock"),
         "free_shipping": detail.get("freeShipping", False),
