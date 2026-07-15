@@ -445,6 +445,23 @@ export function useStoreSettings(): StoreSettingsState & StoreSettingsActions {
           oauthToken: String(safeData.oauthToken || ''),
           account_id: editingAccountId || undefined,
         })
+      } else if (marketKey === 'kream') {
+        // 공식 파트너 API — 헤더 3개(service/key/secret) 전부 필요.
+        // 수정모드에서 마스킹된 Secret은 safeData에서 제거되므로 저장값 복원(포이즌과 동일).
+        let apiKey = String(safeData.apiKey || data.apiKey || '')
+        let apiSecret = String(safeData.apiSecret || '')
+        const apiService = String(safeData.apiService || data.apiService || '')
+        if (editingAccountId && !apiSecret) {
+          try {
+            const secrets = await accountApi.getSecrets(editingAccountId) as Record<string, string>
+            if (secrets.apiSecret) apiSecret = String(secrets.apiSecret)
+            if (!apiKey && secrets.apiKey) apiKey = String(secrets.apiKey)
+          } catch { /* 조회 실패 시 무시 — 백엔드 account_id 폴백 시도 */ }
+        }
+        result = await proxyApi.kreamAuthTest({
+          apiService, apiKey, apiSecret,
+          account_id: editingAccountId || undefined,
+        })
       } else {
         result = await proxyApi.marketAuthTest(marketKey)
       }

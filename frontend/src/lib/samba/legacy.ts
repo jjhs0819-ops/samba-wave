@@ -1755,6 +1755,10 @@ export const proxyApi = {
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/gsshop/auth-test`,
       { method: 'POST', body: JSON.stringify(payload || {}) }),
+  kreamAuthTest: (payload: { apiService?: string; apiKey?: string; apiSecret?: string; account_id?: string }) =>
+    request<{ success: boolean; message: string }>(
+      `${SAMBA_PREFIX}/proxy/kream/auth-test`,
+      { method: 'POST', body: JSON.stringify(payload) }),
   marketAuthTest: (marketKey: string) =>
     request<{ success: boolean; message: string }>(
       `${SAMBA_PREFIX}/proxy/market/auth-test/${marketKey}`, { method: 'POST' }),

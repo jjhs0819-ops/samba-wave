@@ -800,3 +800,66 @@ class KreamClient:
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "image/jpeg")
             return resp.content, content_type
+
+
+class KreamPartnerClient:
+    """KREAM 공식 파트너 OpenAPI 클라이언트 (v1.6.0, 2026-07-15 정식 허가).
+
+    기존 KreamClient(비공식/확장앱 큐)와 별개다. 인증은 HMAC 서명 없이
+    헤더 3개를 그대로 보낸다:
+      x-kream-partner-api-service / -api-key / -api-secret
+
+    service 값은 판매자센터 [서비스 연동 관리] 의 **영문 슬러그** (직연동=direct,
+    허브넷=hubnet). 한글 서비스명을 보내면 서버가 "유효한 API 서비스가 아닙니다"로
+    거부한다(실호출 검증).
+
+    BASE 는 운영 호스트. 공식 문서(redoc)는 partner-openapi-dev 를 노출하지만
+    그 쪽은 운영키를 거부한다("유효한 API 키가 아닙니다") — 문서에 운영 호스트가
+    없어 실호출로 확인함.
+    """
+
+    BASE = "https://partner-openapi.kream.co.kr/openapi"
+    BASE_DEV = "https://partner-openapi-dev.kream.co.kr/openapi"
+
+    def __init__(
+        self,
+        api_service: str,
+        api_key: str,
+        api_secret: str,
+        use_dev: bool = False,
+        timeout: float = 15.0,
+    ) -> None:
+        self.api_service = (api_service or "").strip()
+        self.api_key = (api_key or "").strip()
+        self.api_secret = (api_secret or "").strip()
+        self.base = self.BASE_DEV if use_dev else self.BASE
+        self._timeout = timeout
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "x-kream-partner-api-service": self.api_service,
+            "x-kream-partner-api-key": self.api_key,
+            "x-kream-partner-api-secret": self.api_secret,
+            "Accept": "application/json",
+        }
+
+    async def request(self, method: str, path: str, **kwargs: Any) -> tuple[int, Any]:
+        """공통 요청 — (status_code, body) 반환. 인증 실패도 예외 없이 그대로 돌려준다."""
+        url = f"{self.base}{path}"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.request(method, url, headers=self._headers(), **kwargs)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"detail": (resp.text or "")[:200]}
+        return resp.status_code, body
+
+    async def auth_me(self) -> dict[str, Any]:
+        """GET /auth/me — 인증 확인용. 응답: id/email/user_type(1개인2사업자3브랜드)/is_brand."""
+        status, body = await self.request("GET", "/auth/me")
+        if status == 200 and isinstance(body, dict):
+            return {"success": True, "data": body}
+        detail = ""
+        if isinstance(body, dict):
+            detail = str(body.get("detail") or body)
+        return {"success": False, "status": status, "detail": detail}

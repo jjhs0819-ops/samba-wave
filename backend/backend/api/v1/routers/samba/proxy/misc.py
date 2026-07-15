@@ -1124,6 +1124,74 @@ async def ebay_list_policies(
 # ═══════════════════════════════════════════════
 
 
+@router.post("/kream/auth-test")
+async def kream_auth_test(
+    body: Optional[dict[str, Any]] = None,
+    account_id: Optional[str] = None,
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """KREAM 공식 파트너 API 인증 테스트 — GET /auth/me 실호출.
+
+    범용 market_auth_test 는 폐기된 samba_settings store_* 만 확인해서
+    samba_market_account 에 저장된 크림 계정을 항상 "저장되지 않았습니다"로
+    오판했다(eBay 와 동일한 문제). 실제 API 를 호출해 판정한다.
+
+    폼 입력값 우선, 마스킹/누락 시 account_id 의 저장값으로 폴백.
+    """
+    from sqlalchemy import text as _kr_text
+
+    from backend.domain.samba.proxy.kream import KreamPartnerClient
+
+    b = body or {}
+    api_service = str(b.get("apiService") or b.get("api_service") or "").strip()
+    api_key = str(b.get("apiKey") or b.get("api_key") or "").strip()
+    api_secret = str(b.get("apiSecret") or b.get("api_secret") or "").strip()
+    account_id = account_id or b.get("account_id")
+
+    # 저장값 폴백 — 프론트는 인증정보를 additional_fields 에 넣고, 구 계정은 컬럼에 있다.
+    if account_id and not (api_service and api_key and api_secret):
+        row = (
+            await session.exec(
+                _kr_text(
+                    "SELECT api_key, api_secret, additional_fields "
+                    "FROM samba_market_account WHERE id = :aid"
+                ),
+                params={"aid": account_id},
+            )
+        ).first()
+        if row:
+            af = row[2] if isinstance(row[2], dict) else {}
+            api_service = api_service or str(af.get("apiService") or "")
+            api_key = api_key or str(af.get("apiKey") or row[0] or "")
+            api_secret = api_secret or str(af.get("apiSecret") or row[1] or "")
+
+    missing = [
+        n
+        for n, v in (
+            ("API Service", api_service),
+            ("API Key", api_key),
+            ("API Secret", api_secret),
+        )
+        if not v
+    ]
+    if missing:
+        return {"success": False, "message": f"{', '.join(missing)} 를 입력해주세요."}
+
+    result = await KreamPartnerClient(api_service, api_key, api_secret).auth_me()
+    if result.get("success"):
+        d = result.get("data") or {}
+        _types = {1: "개인", 2: "사업자", 3: "브랜드"}
+        _t = _types.get(d.get("user_type"), str(d.get("user_type") or ""))
+        return {
+            "success": True,
+            "message": f"인증 성공 — {d.get('email', '')} ({_t})",
+        }
+    return {
+        "success": False,
+        "message": f"인증 실패({result.get('status')}): {result.get('detail') or ''}",
+    }
+
+
 @router.post("/market/auth-test/{market_key}")
 async def market_auth_test(
     market_key: str,
