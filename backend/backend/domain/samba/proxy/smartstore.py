@@ -1411,13 +1411,19 @@ class SmartStoreClient:
         """상품 조회."""
         return await self._call_api("GET", f"/v2/products/origin-products/{product_no}")
 
-    async def scan_all_products(self, max_pages: int = 200) -> list[dict[str, Any]]:
+    async def scan_all_products(
+        self, max_pages: int = 200
+    ) -> tuple[list[dict[str, Any]], list[int]]:
         """판매자 전체 상품 목록 수집 (POST /v1/products/search 페이징).
 
         각 항목에 originProductNo / channelProducts[].channelProductNo /
         sellerManagementCode 가 함께 담겨, 채널번호↔원번호 매핑에 사용한다.
         (cleanup_smartstore_orphans 의 페이징/레이트리밋 로직과 동일 — 순차 1,
         호출 간 0.4s, 5회 백오프. 네이버 search RPS 한도가 매우 낮음.)
+
+        Returns:
+            (상품목록, 실패페이지번호목록). 실패 페이지가 있으면 스캔이 불완전하므로
+            "마켓에 없다"(유령) 판정을 내리면 안 된다 — 호출부가 반드시 확인할 것.
         """
         import asyncio
 
@@ -1449,10 +1455,13 @@ class SmartStoreClient:
             total_pages = 1 if len(p1) < 100 else max_pages
         total_pages = min(total_pages, max_pages)
 
+        failed_pages: list[int] = []
         if total_pages > 1:
             sem = asyncio.Semaphore(1)
 
-            async def _fetch(pno: int) -> list[dict[str, Any]]:
+            async def _fetch(pno: int) -> tuple[int, list[dict[str, Any]], bool]:
+                """returns (page_no, contents, success)."""
+                last_err: Exception | None = None
                 for attempt in range(5):
                     try:
                         async with sem:
@@ -1462,15 +1471,18 @@ class SmartStoreClient:
                                 body={"page": pno, "size": 100},
                             )
                             await asyncio.sleep(0.4)
-                        return _contents(rr)
+                        return pno, _contents(rr), True
                     except Exception as e:
+                        last_err = e
                         msg = str(e)
                         if "429" in msg or "Too Many" in msg:
                             await asyncio.sleep(2 * (2**attempt))
                         else:
                             await asyncio.sleep(0.5 * (2**attempt))
-                logger.warning(f"[스마트스토어] scan page {pno} 5회 재시도 실패")
-                return []
+                logger.warning(
+                    f"[스마트스토어] scan page {pno} 5회 재시도 실패: {last_err}"
+                )
+                return pno, [], False
 
             results = await asyncio.gather(
                 *[_fetch(p) for p in range(2, total_pages + 1)],
@@ -1478,12 +1490,21 @@ class SmartStoreClient:
             )
             for rr in results:
                 if isinstance(rr, BaseException):
+                    # gather 자체가 삼킨 예외 — 어느 페이지인지 알 수 없으므로
+                    # 불완전 스캔으로 표시(0)해 유령 판정을 막는다.
+                    failed_pages.append(0)
                     continue
-                products.extend(rr)
-        return products
+                pno, contents, ok = rr
+                if ok:
+                    products.extend(contents)
+                else:
+                    failed_pages.append(pno)
+        return products, failed_pages
 
     @staticmethod
-    def build_channel_origin_map(naver_products: list[dict[str, Any]]) -> dict[str, str]:
+    def build_channel_origin_map(
+        naver_products: list[dict[str, Any]],
+    ) -> dict[str, str]:
         """scan_all_products 결과 → {channelProductNo|originProductNo: originProductNo} 맵."""
         m: dict[str, str] = {}
         for np in naver_products:

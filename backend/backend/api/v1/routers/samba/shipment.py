@@ -187,9 +187,7 @@ async def cleanup_ssg_orphans(
                     "GET", "/item/0.1/getItemList.ssg", params=_params
                 )
                 _result = _resp.get("result", _resp) if isinstance(_resp, dict) else {}
-                _items_raw = (
-                    _result.get("items") if isinstance(_result, dict) else None
-                )
+                _items_raw = _result.get("items") if isinstance(_result, dict) else None
                 _iv = (
                     _items_raw.get("item")
                     if isinstance(_items_raw, dict)
@@ -430,8 +428,12 @@ async def backfill_smartstore_origin(
     client = SmartStoreClient(client_id, client_secret)
     # 스마트스토어 전량 스캔(수십 초) 동안 세션이 idle-in-tx 로 커넥션 물지 않도록 먼저 종료
     await session.commit()
-    naver = await client.scan_all_products()
+    naver, scan_failed_pages = await client.scan_all_products()
     ch2origin = SmartStoreClient.build_channel_origin_map(naver)
+    # 스캔이 불완전하면(레이트리밋 등으로 페이지 유실) 그 페이지 상품이 맵에 없다.
+    # 이때 "마켓에 없음=유령" 으로 단정하면 멀쩡한 상품을 유령으로 오분류하므로,
+    # 매칭 실패분을 missing 이 아니라 unknown 으로 분리한다.
+    scan_complete = not scan_failed_pages
 
     rows = (
         await session.execute(
@@ -445,7 +447,9 @@ async def backfill_smartstore_origin(
     origin_key = f"{account_id}_origin"
     backfilled: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
+    unknown: list[dict[str, Any]] = []
     already = 0
+    skipped_no_number = 0
     for rid, mpn_raw, name in rows:
         mpn = dict(mpn_raw or {})
         if mpn.get(origin_key):
@@ -453,11 +457,19 @@ async def backfill_smartstore_origin(
             continue
         bare = str(mpn.get(account_id) or "").strip()
         if not bare:
-            continue  # 등록번호 자체 없음(prdNo無) — 별개 유령, 여기선 스킵
+            # 등록번호 자체 없음(prdNo無) — 별개 유령, 여기선 스킵.
+            # 카운트해두지 않으면 합계가 db_registered 와 안 맞아 보고가 새어 보인다.
+            skipped_no_number += 1
+            continue
         origin = ch2origin.get(bare)
         if origin:
             backfilled.append(
-                {"id": rid, "channel": bare, "origin": origin, "name": (name or "")[:30]}
+                {
+                    "id": rid,
+                    "channel": bare,
+                    "origin": origin,
+                    "name": (name or "")[:30],
+                }
             )
             if not dry_run:
                 mpn[origin_key] = origin
@@ -465,26 +477,32 @@ async def backfill_smartstore_origin(
                     _text(
                         "UPDATE samba_collected_product "
                         "SET market_product_nos = CAST(:nos AS jsonb) WHERE id = :id"
-                    ).bindparams(
-                        nos=_json.dumps(mpn, ensure_ascii=False), id=rid
-                    )
+                    ).bindparams(nos=_json.dumps(mpn, ensure_ascii=False), id=rid)
                 )
-        else:
+        elif scan_complete:
             missing.append({"id": rid, "channel": bare, "name": (name or "")[:30]})
+        else:
+            unknown.append({"id": rid, "channel": bare, "name": (name or "")[:30]})
     if not dry_run:
         await session.commit()
 
     return {
         "account_id": account_id,
         "scanned_market": len(naver),
+        "scan_complete": scan_complete,
+        "scan_failed_pages": scan_failed_pages,
         "channel_origin_map_size": len(ch2origin),
         "db_registered": len(rows),
         "already_has_origin": already,
+        "skipped_no_number": skipped_no_number,
         "backfilled": len(backfilled),
         "missing_in_market": len(missing),
+        # 스캔 불완전 시 매칭 실패분 — 유령인지 스캔 유실인지 불명. 재실행 후 재판정.
+        "unknown_scan_incomplete": len(unknown),
         "dry_run": dry_run,
         "backfill_sample": backfilled[:15],
         "missing_sample": missing[:15],
+        "unknown_sample": unknown[:15],
     }
 
 

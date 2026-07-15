@@ -1248,7 +1248,9 @@ class ImageTransformService:
         failed: set[str] = set()
 
         # #543 정책키 — 같은 URL도 검증 파라미터가 다르면 다른 결과라 키에 포함.
-        _policy = f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
+        _policy = (
+            f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
+        )
 
         # #543 순차 → 병렬. 죽은/느린 소스 이미지 대기가 분산돼 상품당 300초 초과 해소.
         # Semaphore 로 동시 다운로드+PIL 디코드 수 제한(메모리 가드).
