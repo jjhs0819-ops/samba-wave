@@ -23,3 +23,6 @@ build/
 .DS_Store
 
 backend/.venv
+
+# 맥 로컬 bg-worker venv — 이미지 유출 방지 (1.5GB)
+scripts/.venv-bgworker/

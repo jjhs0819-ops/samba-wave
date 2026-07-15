@@ -57,6 +57,24 @@ class SSGPlugin(MarketPlugin):
                 "_skip_retry": True,
             }
 
+        # 옵션별 가격 불균일 상품은 SSG 전송 제외.
+        # SSG 온라인 상품은 옵션별 다른 매가를 지원하지 않는다("온라인 상품의 매가는
+        # 1개만 입력 가능 (00007)"). 옵션가가 1원이라도 다르면 등록/수정하지 않는다.
+        _opt_prices = {
+            int(o.get("price") or 0)
+            for o in (product.get("options") or [])
+            if isinstance(o, dict) and int(o.get("price") or 0) > 0
+        }
+        if len(_opt_prices) > 1:
+            return {
+                "success": False,
+                "message": (
+                    f"옵션별 가격 상이({len(_opt_prices)}종) — SSG는 옵션별 다른 "
+                    "매가 미지원, 전송 제외"
+                ),
+                "_skip_retry": True,
+            }
+
         # 전시카테고리 미매핑 시 등록 불가 — 명확한 에러 반환
         if not category_id:
             product_name = product.get("name", "")
@@ -361,7 +379,36 @@ class SSGPlugin(MarketPlugin):
                             f"[SSG] SSG.COM(6005) 전시카테고리 유사도 선택: {main_category_id} "
                             f"({_best_path!r}, 후보 {len(main_cat_candidates)}개)"
                         )
-                    else:
+                    if not main_category_id:
+                        # 6005 검색 결과 없음/부적합 → 신발·샌들 계열 leaf명/경로 키워드로
+                        # 6005 전시카테고리 직접 매핑(fallback). 매핑 코드는 6005 실측 확인값.
+                        # "메인매장 카테고리 필수" 거부로 self-heal도 못 채우던 신발 카테고리
+                        # (런닝화/샌들/스포츠신발/등산화 등)를 처음부터 채운다.
+                        _fb_src = f"{leaf_name} {path_6004}"
+                        _FB_6005 = [
+                            ("런닝화", "6000200591"),
+                            ("워킹화", "6000200591"),
+                            ("등산화", "6000204830"),
+                            ("트레킹", "6000204830"),
+                            ("트래킹", "6000204830"),
+                            ("스포츠신발", "6000204826"),
+                            ("샌들", "6000204965"),
+                            ("슬리퍼", "6000204965"),
+                            ("운동화", "6000200209"),
+                            ("스니커즈", "6000200209"),
+                            ("스포츠화", "6000204970"),
+                            ("신발", "6000204970"),
+                        ]
+                        for _kw, _cid in _FB_6005:
+                            if _kw in _fb_src:
+                                main_category_id = _cid
+                                main_cat_candidates = [_cid]
+                                logger.info(
+                                    f"[SSG] 6005 fallback 매핑: '{_kw}'→{_cid} "
+                                    f"(원경로={_fb_src.strip()!r})"
+                                )
+                                break
+                    if not main_category_id:
                         logger.warning(
                             f"[SSG] SSG.COM(6005) '{leaf_name}' 검색 결과 없음"
                         )
@@ -395,6 +442,13 @@ class SSGPlugin(MarketPlugin):
                     )
             except Exception as _e:
                 logger.warning(f"[SSG] 기존 6005 카테고리 보존 조회 실패(무시): {_e}")
+
+            # 기존 6005도 없는 수정건 → 6005 조회+fallback 매핑 1회 수행.
+            # 경량 수정(skip_image)은 위에서 _lookup_6005_main_cat 을 건너뛰므로,
+            # 기존 등록에 6005가 없으면 "메인매장 카테고리 필수" 로 계속 거부됐다
+            # (self-heal 은 신규등록 전용이라 수정건은 못 잡음). 여기서 1회 채운다.
+            if not main_category_id and category_id and _ssg_com_enabled:
+                await _lookup_6005_main_cat()
 
         # 무신사 등 referer 차단 CDN URL을 R2로 미러링
         # — SSG는 등록 URL을 자체 서버가 fetch하므로 핫링크 차단 시 워터마크 이미지로 캐싱됨
@@ -477,6 +531,29 @@ class SSGPlugin(MarketPlugin):
         if existing_no:
             data["itemId"] = existing_no
             result = await client.update_product(data)
+            # 신규 옵션(소싱처에 새 사이즈 생김) → updateItem 불가 → 삭제 후 재등록.
+            # SSG updateItem 은 기존 옵션 수정만 되고 신규 옵션 추가가 안 되므로,
+            # 옵션 구성이 바뀐 상품은 기존 등록을 판매중지 후 insertItem 으로 새로 올린다.
+            if result.get("_needs_reregister"):
+                logger.info(
+                    f"[SSG] 옵션 구성 변경(신규 사이즈) → 기존 판매중지 후 재등록: "
+                    f"itemId={existing_no}"
+                )
+                try:
+                    await client.delete_product(existing_no)
+                except Exception as _de:
+                    logger.warning(f"[SSG] 재등록 전 판매중지 실패(무시): {_de}")
+                data.pop("itemId", None)
+                # SSG는 판매중지된 상품이라도 '동일 상품명'이면 재등록을 거부한다
+                # ("동일한 상품이 이미 존재"). 상품명에 고유 접미사를 붙여 회피한다.
+                import datetime as _dt
+
+                _suffix = _dt.datetime.now().strftime("%m%d%H%M")
+                _base_nm = str(data.get("itemNm") or "").strip()[:38]
+                data["itemNm"] = f"{_base_nm} R{_suffix}"
+                logger.info(f"[SSG] 재등록 상품명 고유화: {data['itemNm']}")
+                result = await client.register_product(data)
+                result["_clear_product_no"] = True  # 호출자에서 DB 상품번호 초기화
             # 영구판매중지 상품은 수정 불가 → 상품번호 초기화 후 신규등록
             result_data_chk = result.get("data", {})
             if isinstance(result_data_chk, dict):
@@ -499,67 +576,156 @@ class SSGPlugin(MarketPlugin):
         else:
             result = await client.register_product(data)
 
-        # itemMngPropId 카테고리 거부 자동 재시도 (insertItem 한정, 1회)
-        # 같은 wear 그룹이라도 카테고리에 따라 일부 itemMngPropId 가 거부되는 경우 대응.
-        # 에러 메시지에서 거부된 ID 추출 → _ssg_notice_drop_props 에 누적 → 재변환·재전송.
+        # 고시항목(itemMngPropId) 자동 self-heal 재시도 (insertItem 한정, 최대 8회 loop)
+        # SSG 고시분류(ClsId)마다 요구 항목이 달라(#274 근본원인), 신발/가방/잡화/수영/골프
+        # 등에서 ①'고시분류에 없는 값' 거부 ②'필수 항목 누락' 이 순차 발생.
+        # ① → 해당 itemMngPropId drop 누적,  ② → 항목이름으로 값 유추해 add 누적.
+        # 진전이 없거나 성공할 때까지 재변환·재전송 반복.
         if not data.get("itemId"):
-            _retry_data = result.get("data", {}) if isinstance(result, dict) else {}
-            _retry_res = (
-                _retry_data.get("result", {}) if isinstance(_retry_data, dict) else {}
-            )
-            if isinstance(_retry_res, dict):
-                _retry_code = str(_retry_res.get("resultCode", "") or "")
-                if _retry_code and _retry_code not in ("00", "SUCCESS"):
-                    _retry_msg = (
-                        _retry_res.get("resultDesc", "")
-                        or _retry_res.get("resultMessage", "")
-                        or ""
+            import re as _re_ssg
+
+            def _resolve_notice_content(_nm: str) -> str:
+                _n = _nm or ""
+                _fb = "상세페이지 참조"
+                _up = _n.upper()
+                if "전화" in _n or "연락처" in _n or "A/S" in _n or "AS " in _up:
+                    return (
+                        creds.get("asPhone")
+                        or product.get("_ssg_notice_as_contact")
+                        or _fb
                     )
-                    if "itemMngPropId" in _retry_msg:
-                        import re as _re_ssg
+                if "소재" in _n or "재질" in _n or "섬유" in _n:
+                    return product.get("material") or _fb
+                if "색상" in _n or "색깔" in _n:
+                    return product.get("color") or _fb
+                if (
+                    "치수" in _n
+                    or "크기" in _n
+                    or "사이즈" in _n
+                    or "규격" in _n
+                    or "제품별" in _n
+                ):
+                    return (
+                        product.get("size_notice") or product.get("sizeNotice") or _fb
+                    )
+                if "제조국" in _n or "원산지" in _n:
+                    return product.get("origin") or _fb
+                if (
+                    "제조자" in _n
+                    or "제조사" in _n
+                    or "수입자" in _n
+                    or "판매자" in _n
+                    or "생산자" in _n
+                ):
+                    return product.get("manufacturer") or product.get("brand") or _fb
+                if "품질보증" in _n or "보증기준" in _n:
+                    return "관련 법 및 소비자분쟁해결 규정에 따름"
+                return _fb
 
-                        _rejected_ids = _re_ssg.findall(
-                            r"itemMngPropId\s*:\s*(\d+)", _retry_msg
-                        )
-                        if _rejected_ids:
-                            _existing_drop = product.get("_ssg_notice_drop_props") or []
-                            if isinstance(_existing_drop, str):
-                                _existing_drop = [
-                                    s.strip()
-                                    for s in _existing_drop.replace(" ", ",").split(",")
-                                    if s.strip()
-                                ]
-                            _merged_drop = sorted(
-                                {str(x) for x in _existing_drop} | set(_rejected_ids)
-                            )
-                            logger.warning(
-                                f"[SSG] itemMngPropId 거부 감지({_rejected_ids}) → drop 누적 후 1회 재시도: drop={_merged_drop}"
-                            )
-                            product = {
-                                **product,
-                                "_ssg_notice_drop_props": _merged_drop,
-                            }
-                            try:
-                                data = client.transform_product(
-                                    product,
-                                    category_id,
-                                    std_category_id=std_category_id,
-                                    main_category_id=main_category_id,
-                                    infra=infra,
-                                    margin_rate=margin_rate,
-                                    shpp_rqrm_dcnt=shpp_rqrm_dcnt,
-                                    day_max_qty=day_max_qty,
-                                    once_min_qty=once_min_qty,
-                                    once_max_qty=once_max_qty,
-                                    brand_mappings=brand_mappings,
-                                )
-                                result = await client.register_product(data)
-                            except Exception as e:
-                                import traceback as _tb
+            for _mng_attempt in range(20):
+                _retry_data = result.get("data", {}) if isinstance(result, dict) else {}
+                _retry_res = (
+                    _retry_data.get("result", {}) if isinstance(_retry_data, dict) else {}
+                )
+                if not isinstance(_retry_res, dict):
+                    break
+                _retry_code = str(_retry_res.get("resultCode", "") or "")
+                if not _retry_code or _retry_code in ("00", "SUCCESS"):
+                    break
+                _retry_msg = (
+                    _retry_res.get("resultDesc", "")
+                    or _retry_res.get("resultMessage", "")
+                    or ""
+                )
+                if "itemMngPropId" not in _retry_msg:
+                    break
 
-                                logger.error(
-                                    f"[SSG] itemMngPropId 재시도 실패: {e}\n{_tb.format_exc()}"
-                                )
+                _changed = False
+
+                if "누락" in _retry_msg:
+                    # 필수 항목 누락 → 값 채워 add. 형식: [itemMngPropId : 항목명 (0000000075)]
+                    _miss = _re_ssg.findall(
+                        r"itemMngPropId\s*:\s*([^()\[\]]+?)\s*\((\d+)\)", _retry_msg
+                    )
+                    _add_list = list(product.get("_ssg_notice_add_attrs") or [])
+                    _add_ids = {
+                        str(a.get("itemMngPropId"))
+                        for a in _add_list
+                        if isinstance(a, dict)
+                    }
+                    for _nm, _num in _miss:
+                        _num = _num.strip()
+                        if _num and _num not in _add_ids:
+                            _add_list.append(
+                                {
+                                    "itemMngPropId": _num,
+                                    "itemMngCntt": _resolve_notice_content(_nm),
+                                }
+                            )
+                            _add_ids.add(_num)
+                            _changed = True
+                    if _changed:
+                        product = {**product, "_ssg_notice_add_attrs": _add_list}
+                else:
+                    # 고시분류에 없는 값 → drop 누적
+                    _rejected_ids = _re_ssg.findall(
+                        r"itemMngPropId\s*:\s*(\d+)", _retry_msg
+                    )
+                    _existing_drop = product.get("_ssg_notice_drop_props") or []
+                    if isinstance(_existing_drop, str):
+                        _existing_drop = [
+                            s.strip()
+                            for s in _existing_drop.replace(" ", ",").split(",")
+                            if s.strip()
+                        ]
+                    _prev_set = {str(x) for x in _existing_drop}
+                    _merged_drop = sorted(_prev_set | set(_rejected_ids))
+                    # drop 하려는 항목이 방금 add한 것이면 add에서도 제거(무한 add↔drop 방지)
+                    _add_list = [
+                        a
+                        for a in (product.get("_ssg_notice_add_attrs") or [])
+                        if str(a.get("itemMngPropId")) not in set(_rejected_ids)
+                    ]
+                    if set(_merged_drop) != _prev_set:
+                        product = {
+                            **product,
+                            "_ssg_notice_drop_props": _merged_drop,
+                            "_ssg_notice_add_attrs": _add_list,
+                        }
+                        _changed = True
+
+                if not _changed:
+                    logger.warning(
+                        f"[SSG] 고시 self-heal 중단 — 진전 없음: {_retry_msg[:120]}"
+                    )
+                    break
+                logger.warning(
+                    f"[SSG] 고시 self-heal 재시도({_mng_attempt + 1}/20): "
+                    f"drop={product.get('_ssg_notice_drop_props')} "
+                    f"add={[a.get('itemMngPropId') for a in (product.get('_ssg_notice_add_attrs') or [])]}"
+                )
+                try:
+                    data = client.transform_product(
+                        product,
+                        category_id,
+                        std_category_id=std_category_id,
+                        main_category_id=main_category_id,
+                        infra=infra,
+                        margin_rate=margin_rate,
+                        shpp_rqrm_dcnt=shpp_rqrm_dcnt,
+                        day_max_qty=day_max_qty,
+                        once_min_qty=once_min_qty,
+                        once_max_qty=once_max_qty,
+                        brand_mappings=brand_mappings,
+                    )
+                    result = await client.register_product(data)
+                except Exception as e:
+                    import traceback as _tb
+
+                    logger.error(
+                        f"[SSG] 고시 self-heal 재시도 실패: {e}\n{_tb.format_exc()}"
+                    )
+                    break
 
         # ssgComEnabled off 매장 self-heal — "SSG.COM몰 메인매장 카테고리는 1개 이상 필수"
         # 거부 시 그 자리에서 6005 조회를 1회 수행 후 재시도. 스위치를 안 켜도 자동 복구되어
@@ -682,8 +848,13 @@ class SSGPlugin(MarketPlugin):
 
         action = "수정" if existing_no else "등록"
         _ret = {"success": True, "message": f"SSG {action} 성공", "data": result}
-        # 멱등가드/수정 경로 — itemId 를 결과에 실어 market_product_nos 백필 보장(#321).
+        # 재등록(옵션구성 변경/영구판매중지)은 새 itemId 로 insertItem 된 것이므로
+        # 옛 existing_no 를 넣으면 안 된다 — _clear_product_no 전파 + product_no 생략해
+        # 호출자의 _extract_market_product_no 가 data(insertItem 응답)의 새 itemId 를 잡게 한다.
+        if result.get("_clear_product_no"):
+            _ret["_clear_product_no"] = True
+        # 멱등가드/순수 수정 경로 — itemId 를 결과에 실어 market_product_nos 백필 보장(#321).
         # (선제검색으로 찾은 itemId 는 DB 미저장 상태이므로 명시 전달 필요)
-        if existing_no:
+        elif existing_no:
             _ret["product_no"] = existing_no
         return _ret

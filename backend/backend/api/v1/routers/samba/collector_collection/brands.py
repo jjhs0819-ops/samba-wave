@@ -126,6 +126,7 @@ async def brand_refresh(
             "LOTTEON",
             "GSShop",
             "KREAM",
+            "THEHYUNDAI",
         }
         if site not in _SCAN_SUPPORTED:
             raise HTTPException(
@@ -163,6 +164,16 @@ async def brand_refresh(
             from backend.domain.samba.plugins.sourcing.kream import KreamPlugin
 
             scan_result = await KreamPlugin().scan_categories(keyword)
+            categories = scan_result.get("categories", [])
+        elif site == "THEHYUNDAI":
+            # env var gate 통과 시에만 import 성공
+            from backend.domain.samba.plugins.sourcing.thehyundai import (
+                TheHyundaiPlugin,
+            )
+
+            scan_result = await TheHyundaiPlugin().scan_categories(
+                keyword, selected_brands=[keyword] if keyword else None
+            )
             categories = scan_result.get("categories", [])
         else:
             # MUSINSA — brand-scan과 동일한 필터 API 재귀 탐색 방식 사용 (전체 카테고리)
@@ -326,6 +337,15 @@ async def brand_refresh(
                 keyword_url = (
                     f"https://kream.co.kr/search?keyword={_quote(keyword)}{_opt_suffix}"
                 )
+            elif site == "THEHYUNDAI":
+                # q=키워드 + flCate=catLcd (서버측 카테고리 필터) — worker.py가
+                # q/flBrand/flCate 를 파싱해 client.search 필터로 전달
+                path_tail = "_".join(segments) if segments else cat_code
+                group_name = f"THEHYUNDAI_{keyword}_{path_tail}"
+                keyword_url = (
+                    f"https://hi.thehyundai.com/search?q={_quote(keyword)}"
+                    f"&flCate={cat_code}{_opt_suffix}"
+                )
             else:
                 # MUSINSA
                 cat_name = path.replace(" > ", "_").replace("/", "_")
@@ -421,6 +441,25 @@ async def brand_discover(body: BrandDiscoverRequest):
 
         plugin = FashionPlusPlugin()
         return await plugin.discover_brands(body.keyword)
+
+    if body.source_site == "THEHYUNDAI":
+        # env var gate(ENABLE_THEHYUNDAI=1) 통과 시에만 import 성공
+        from backend.domain.samba.plugins.sourcing.thehyundai import TheHyundaiPlugin
+
+        res = await TheHyundaiPlugin().discover_brands(body.keyword)
+        # 플러그인 canonical key 는 value(operBrndCd) — 프론트 브랜드 모달은
+        # id 를 brand_ids 로 전달하므로 id 별칭 부여 (scan flBrand/그룹 flBrand 로 이어짐)
+        return {
+            "brands": [
+                {
+                    "name": b.get("name", ""),
+                    "count": int(b.get("count") or 0),
+                    "id": b.get("value") or "",
+                }
+                for b in res.get("brands", [])
+            ],
+            "total": res.get("total", 0),
+        }
 
     raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
@@ -624,6 +663,19 @@ async def brand_scan(
         plugin = KreamPlugin()
         return await plugin.scan_categories(keyword)
 
+    if body.source_site == "THEHYUNDAI":
+        # env var gate(ENABLE_THEHYUNDAI=1) 통과 시에만 import 성공
+        from backend.domain.samba.plugins.sourcing.thehyundai import TheHyundaiPlugin
+
+        plugin = TheHyundaiPlugin()
+        selected = body.selected_brands or ([keyword] if keyword else None)
+        return await plugin.scan_categories(
+            keyword,
+            selected_brands=selected,
+            brand_ids=body.brand_ids or None,
+            brand_total=body.brand_total or 0,
+        )
+
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 
 
@@ -800,6 +852,26 @@ async def brand_create_groups(
             keyword = (
                 f"https://www.fashionplus.co.kr/search/goods/result"
                 f"?searchWord={_quote_fp(_label_fp)}{_brand_fp}{_cat_params}{_md_fp}{_so_fp}"
+            )
+            category_filter = code or None
+        elif body.source_site == "THEHYUNDAI":
+            from urllib.parse import quote as _quote_th
+
+            _label_th = body.brand_name or body.brand or ""
+            _md_th = "&maxDiscount=1" if body.options.get("maxDiscount") else ""
+            _so_th = "&includeSoldOut=1" if _opts_include_sold_out else ""
+            # flBrand=operBrndCd (서버측 브랜드 필터), flCate=catLcd (카테고리 필터)
+            # — worker.py가 q/flBrand/flCate 파싱해 client.search 필터로 전달.
+            # 다중 브랜드 구분자는 | (파이프, 쉼표는 서버 0건 — URL 인코딩 %7C)
+            _brand_th = (
+                f"&flBrand={_quote_th('|'.join(body.brand_ids))}"
+                if body.brand_ids
+                else ""
+            )
+            _cate_th = f"&flCate={code}" if code else ""
+            keyword = (
+                f"https://hi.thehyundai.com/search?q={_quote_th(_label_th)}"
+                f"{_brand_th}{_cate_th}{_md_th}{_so_th}"
             )
             category_filter = code or None
         else:  # LOTTEON

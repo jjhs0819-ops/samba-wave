@@ -469,6 +469,15 @@ async function _spaDirectLogin(siteKey, username, password) {
               btnId: 'button[type="submit"], button.login-btn, button.btn-login, #loginBtn',
               btnText: '로그인',
             },
+            fashionplus: {
+              // www.fashionplus.co.kr/auth/login — JS 소스 분석 확인:
+              //   id=input#login_id / pw=input[type=password] / 버튼=button.mm_btn.__btn_lg_primary__
+              // 셀렉터가 빗나가도 아래 폼-폴백(pw 폼 안 text input) + 버튼 전역탐색이 커버.
+              id: ['#login_id', 'input[name="login_id"]', 'input[name="userId"]', 'input[name="id"]', 'input[type="text"]:not([type="hidden"])'],
+              pw: ['input[type="password"]', '#login_pw', 'input[name="password"]', 'input[name="passwd"]'],
+              btnId: 'button.mm_btn.__btn_lg_primary__, button[type="submit"], .btn_login',
+              btnText: '로그인',
+            },
           }
           const sel = SELECTORS[siteKeyArg]
           if (!sel) return { success: false, error: 'unsupported site' }
@@ -947,7 +956,7 @@ async function _ensureLoggedInSingle(siteKey, accountId) {
   // [SPA 분기] LOTTEON / ABCmart / SSG는 백엔드 라디오 지정 계정으로만 자동로그인
   // 사용자 요구 — 소싱처계정의 username/password를 직접 .value 설정 (Chrome 자동완성 드롭다운 사용 X)
   // 백엔드 자격증명 없으면 즉시 실패. chrome.debugger triple-click 폴백 제거 (드롭다운 노출 방지).
-  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg', 'musinsa', 'member']
+  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg', 'musinsa', 'member', 'fashionplus']
   if (SPA_DIRECT_LOGIN_SITES.includes(siteKey)) {
     // [2026-06-10] SSG 세션 재사용 — fresh 로그인 횟수 자체를 줄여 "비정상 자동접근" 잠금 회피.
     // ① 현 세션이 이미 잡 계정이면 로그인 생략 ② 저장세션 복원으로 살아나면 로그인 생략.

@@ -289,6 +289,10 @@ class SSGClient:
         # updateItem에서는 tempUitemId 대신 실제 uitemId를 사용해야 SSG가 옵션 가격을 인식.
         # sales-status API로 현재 uitemId 목록 조회 → 등록 순서(tempUitemId 1,2,3...)와 매핑.
         uitem_id_map: dict[str, str] = {}
+        # SSG에 등록된 전체 uitemId 집합(교정과 무관하게 보존) — 커버보강/품절정리가
+        # '누락/품절 옵션'을 정확히 판별하는 기준. uitem_id_map은 옵션명 교정으로 값이
+        # 바뀌어 SSG 옵션 일부가 유실될 수 있으므로 집합은 별도로 둔다.
+        ssg_all_uids: list[str] = []
         try:
             status_resp = await self.get_item_sales_status(item_id)
             option_invs = (
@@ -302,6 +306,7 @@ class SSGClient:
                 uid = str(inv.get("uitemId", "")).strip()
                 if uid:
                     uitem_id_map[str(idx)] = uid
+                    ssg_all_uids.append(uid)
             if uitem_id_map:
                 logger.info(
                     f"[SSG] uitemId 매핑 완료 ({len(uitem_id_map)}개): {uitem_id_map}"
@@ -310,6 +315,77 @@ class SSGClient:
             logger.warning(
                 f"[SSG] uitemId 조회 실패 — tempUitemId로 전송 (옵션가 미반영 위험): {_e}"
             )
+
+        # ★위치 기반 매핑 교정 — 옵션명으로 정확 매칭.
+        # sales-status는 옵션명이 없어 위치(1,2,3)로만 매핑하는데, DB 옵션 순서와
+        # SSG 등록 옵션 순서가 다르면 재고/가격이 '반대 사이즈'에 들어가는 치명 버그
+        # (예: DB[W8,W5] vs SSG[W5,W8] → W8 재고가 W5에, W5 재고가 W8에).
+        # get_item_detail의 옵션명(uitemOptnNm1)으로 tempUitemId→uitemId를 바로잡는다.
+        def _norm_opt(_s: str) -> str:
+            return "".join(str(_s).split()).lower()
+
+        try:
+            _detail = await self.get_item_detail(item_id)
+            _ssg_name_to_uid: dict[str, str] = {}
+
+            def _collect(o: Any) -> None:
+                if isinstance(o, dict):
+                    _nm = o.get("uitemOptnNm1")
+                    _uid = o.get("uitemId")
+                    if _nm and _uid:
+                        _ssg_name_to_uid.setdefault(_norm_opt(_nm), str(_uid).strip())
+                    for _v in o.values():
+                        _collect(_v)
+                elif isinstance(o, list):
+                    for _v in o:
+                        _collect(_v)
+
+            _collect(_detail.get("result", _detail))
+            _uw = product_data.get("uitems")
+            _ul = (_uw.get("uitem") if isinstance(_uw, dict) else None) or []
+            if isinstance(_ul, dict):
+                _ul = [_ul]
+            _fixed = 0
+            for _u in _ul:
+                _t = str(_u.get("tempUitemId", "")).strip()
+                _nm = _norm_opt(_u.get("uitemOptnNm1", ""))
+                if _t and _nm and _nm in _ssg_name_to_uid:
+                    _correct = _ssg_name_to_uid[_nm]
+                    if uitem_id_map.get(_t) != _correct:
+                        _fixed += 1
+                    uitem_id_map[_t] = _correct
+            if _fixed:
+                logger.info(
+                    f"[SSG] 옵션명 기반 uitemId 교정 {_fixed}개 "
+                    f"(위치매핑 오류→반대옵션 재고 방지)"
+                )
+
+            # DB 옵션 중 SSG에 없는 '신규 옵션'(소싱처에 새 사이즈 생김) 감지.
+            # SSG updateItem은 기존 옵션 수정만 가능하고 신규 옵션 추가는 안 되므로,
+            # updateItem 하면 '매가 1개만'(00003) 등으로 전체 거부된다.
+            # → 재등록 신호를 반환해 호출자(plugin)가 삭제 후 insertItem 하도록 한다.
+            if _ssg_name_to_uid:  # SSG 옵션 조회 성공 시에만 판단(오탐 방지)
+                _db_names = {
+                    _norm_opt(_u.get("uitemOptnNm1", ""))
+                    for _u in _ul
+                    if _u.get("uitemOptnNm1")
+                }
+                _new_opts = _db_names - set(_ssg_name_to_uid.keys())
+                if _new_opts:
+                    logger.info(
+                        f"[SSG] 신규 옵션 {len(_new_opts)}개 감지(SSG에 없음) → "
+                        f"updateItem 불가, 삭제 후 재등록 필요: {sorted(_new_opts)[:5]}"
+                    )
+                    return {
+                        "success": False,
+                        "_needs_reregister": True,
+                        "message": (
+                            f"신규 옵션 {len(_new_opts)}개 — 옵션 구성 변경, "
+                            "삭제 후 재등록 필요"
+                        ),
+                    }
+        except Exception as _e:
+            logger.warning(f"[SSG] 옵션명 매핑 조회 실패(위치매핑 유지): {_e}")
 
         def _replace_temp_ids_in_prices(data: dict) -> dict:
             """tempUitemId를 실제 uitemId로 교체 (uitemPluralPrcs + uitems 모두).
@@ -357,22 +433,88 @@ class SSGClient:
 
         product_data = _replace_temp_ids_in_prices(product_data)
 
+        # SSG 등록 옵션 전체를 대표가와 동일 가격으로 커버 (DB 옵션 축소 대응).
+        # 패플이 품절 사이즈를 옵션에서 제거하면 DB 옵션 수 < SSG 등록 옵션 수가 되어,
+        # 재전송이 일부 옵션만 새 가격으로 갱신 → 나머지 옵션이 옛 가격으로 남는다.
+        # 그러면 SSG의 '대표가격 == 옵션최저가' 제약 위반 → updateItem 전체 거부
+        # (가격+재고 모두 미반영). SSG 모든 uitemId를 대표가로 통일해 등식을 만족시킨다.
+        if ssg_all_uids and isinstance(product_data.get("salesPrcInfos"), dict):
+            _sp = product_data["salesPrcInfos"].get("uitemPrc", [])
+            if isinstance(_sp, dict):
+                _sp = [_sp]
+            if _sp:
+                _base = _sp[0]
+                _plural = product_data.get("uitemPluralPrcs")
+                if not isinstance(_plural, dict):
+                    _plural = {"uitemPrc": []}
+                    product_data["uitemPluralPrcs"] = _plural
+                _items = _plural.get("uitemPrc")
+                if isinstance(_items, dict):
+                    _items = [_items]
+                elif not isinstance(_items, list):
+                    _items = []
+                _plural["uitemPrc"] = _items
+                _present = {str(it.get("uitemId", "")).strip() for it in _items}
+                _added = 0
+                for _uid in ssg_all_uids:
+                    if _uid and _uid not in _present:
+                        _items.append(
+                            {
+                                "splprc": _base.get("splprc"),
+                                "sellprc": _base.get("sellprc"),
+                                "mrgrt": _base.get("mrgrt"),
+                                "uitemId": _uid,
+                            }
+                        )
+                        _added += 1
+                if _added:
+                    logger.info(
+                        f"[SSG] 옵션 커버 보강: SSG {len(ssg_all_uids)}개 옵션 중 "
+                        f"누락 {_added}개를 대표가={_base.get('sellprc')}로 통일"
+                    )
+
+        # 소싱처에서 품절돼 DB 옵션에서 빠진 옵션을 SSG에서도 재고 0(품절)로 내린다.
+        # (원주문링크=C7만인데 판매링크=C7+C8 → 업데이트로 SSG C8도 품절 처리해 일치시킴)
+        # uitems에 남아있는 uitemId = DB 실제 옵션, uitem_id_map의 나머지 = 빠진 옵션.
+        if ssg_all_uids:
+            _uitems_wrap = product_data.get("uitems")
+            if not isinstance(_uitems_wrap, dict):
+                _uitems_wrap = {"uitem": []}
+                product_data["uitems"] = _uitems_wrap
+            _ui = _uitems_wrap.get("uitem")
+            if isinstance(_ui, dict):
+                _ui = [_ui]
+            elif not isinstance(_ui, list):
+                _ui = []
+            _uitems_wrap["uitem"] = _ui
+            _ui_present = {str(u.get("uitemId", "")).strip() for u in _ui}
+            _soldout = 0
+            for _uid in ssg_all_uids:
+                if _uid and _uid not in _ui_present:
+                    _ui.append(
+                        {"uitemId": _uid, "baseInvQty": 0, "useYn": "N"}
+                    )
+                    _soldout += 1
+            if _soldout:
+                logger.info(
+                    f"[SSG] 품절옵션 정리: DB에서 빠진 {_soldout}개 옵션을 재고0·미사용 처리"
+                )
+
         xml_body = '<?xml version="1.0" encoding="UTF-8"?>' + self._to_xml(
             product_data, "updateItem"
         )
         logger.debug(f"[SSG] updateItem XML (itemId={item_id}):\n{xml_body[:2000]}")
         result = await self._call_api_xml("POST", "/item/0.4/updateItem.ssg", xml_body)
 
-        # 가격 인상 감지: SSG가 '새 대표가 vs 기존 옵션최저가'를 먼저 검증하므로
-        # 대표가 인상 시 오류 → 1단계로 대표가만 기존 옵션가로 낮춰 검증 통과 후 옵션가 올리기
-        # → 2단계에서 새 대표가 + 새 옵션가로 전체 업데이트
+        # 가격 인상/하락 감지: SSG가 '새 대표가 vs 현재 DB 옵션최저가'를 검증.
+        # - 가격 인상: 대표가를 기존 옵션가로 맞춘 뒤 옵션가 올리기 → 2단계에서 새 대표가
+        # - 가격 하락: 옵션가를 먼저 낮추고(salesPrcInfos 없이) → 2단계에서 새 대표가
         desc = result.get("result", {}).get("resultDesc", "") or ""
         m = _re.search(r"옵션최저가격\s*([\d,]+)원", desc)
         if not m:
             m = _re.search(r"옵션판매가[는은]\s*([\d,]+)원", desc)
         if m and product_data.get("salesPrcInfos"):
             cur_min = int(m.group(1).replace(",", ""))
-            logger.info(f"[SSG] 가격 인상 감지 → 1단계: 대표가={cur_min}원으로 맞추기")
 
             def _patch_sell(prc_wrap, new_sell):
                 w = _copy.deepcopy(prc_wrap)
@@ -383,23 +525,38 @@ class SSGClient:
                     p["sellprc"] = new_sell
                 return w
 
-            # 1단계: 대표가만 기존 옵션가로 맞추기 (uitems 제외 — 가격 조정만 목적)
-            step1_data = {
-                "itemId": item_id,
-                "salesPrcInfos": _patch_sell(product_data["salesPrcInfos"], cur_min),
-            }
+            # 새 대표가 추출 (가격 인상/하락 분기)
+            _prc_items = product_data["salesPrcInfos"].get("uitemPrc", [])
+            if isinstance(_prc_items, dict):
+                _prc_items = [_prc_items]
+            new_sell = _prc_items[0].get("sellprc", cur_min) if _prc_items else cur_min
+
+            # SSG는 '대표가격 == 저장된 옵션최저가'를 강제한다. 대표가+옵션가를 한 번에
+            # 바꾸면 새 대표가를 '기존' 저장된 옵션최저가와 비교해 거부(resultCode 99).
+            # 해결: 1단계에서 salesPrcInfos(대표가) 없이 uitemPluralPrcs(옵션가)만 new_sell로
+            # 먼저 반영해 저장된 옵션최저가를 new_sell로 올린 뒤(대표가 검증 미발동),
+            # 2단계에서 대표가=new_sell 전송 → 저장된 옵션(new_sell)과 일치해 통과.
+            direction = "하락" if new_sell < cur_min else "인상"
+            logger.info(
+                f"[SSG] 가격 {direction}(신가={new_sell} vs 구가={cur_min})"
+                f" → 1단계: uitemPluralPrcs 옵션가={new_sell}으로 먼저 반영"
+            )
+            step1_data: dict[str, Any] = {"itemId": item_id}
             if product_data.get("uitemPluralPrcs"):
-                step1_data["uitemPluralPrcs"] = product_data["uitemPluralPrcs"]
+                step1_data["uitemPluralPrcs"] = _patch_sell(
+                    product_data["uitemPluralPrcs"], new_sell
+                )
+
             xml_step1 = '<?xml version="1.0" encoding="UTF-8"?>' + self._to_xml(
                 step1_data, "updateItem"
             )
             r1 = await self._call_api_xml("POST", "/item/0.4/updateItem.ssg", xml_step1)
             r1_code = r1.get("result", {}).get("resultCode")
             logger.info(
-                f"[SSG] updateItem 1단계(대표가={cur_min}) resultCode={r1_code}"
+                f"[SSG] updateItem 1단계 resultCode={r1_code}"
             )
             await _asyncio.sleep(1.5)
-            # 2단계: 원래 데이터(새 대표가)로 재시도 — 이제 옵션가도 올라갔으므로 통과
+            # 2단계: 원래 데이터(새 대표가+옵션가)로 재시도
             result = await self._call_api_xml(
                 "POST", "/item/0.4/updateItem.ssg", xml_body
             )
@@ -1740,6 +1897,8 @@ class SSGClient:
                         "useYn": "Y",
                     }
                 )
+                # SSG 온라인 상품은 옵션별 다른 매가를 지원하지 않는다("온라인 상품의
+                # 매가는 1개만 입력 가능 (00007)"). 전 옵션 동일 매가(상품 대표가)로 전송.
                 uitem_prices_list.append(
                     {
                         "tempUitemId": temp_id,
