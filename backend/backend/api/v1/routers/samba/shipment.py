@@ -187,9 +187,7 @@ async def cleanup_ssg_orphans(
                     "GET", "/item/0.1/getItemList.ssg", params=_params
                 )
                 _result = _resp.get("result", _resp) if isinstance(_resp, dict) else {}
-                _items_raw = (
-                    _result.get("items") if isinstance(_result, dict) else None
-                )
+                _items_raw = _result.get("items") if isinstance(_result, dict) else None
                 _iv = (
                     _items_raw.get("item")
                     if isinstance(_items_raw, dict)
@@ -228,6 +226,175 @@ async def cleanup_ssg_orphans(
     return await _reconcile_one_account(
         acc_dict, dry_run=dry_run, max_delete=max_delete
     )
+
+
+@router.post("/playauto/backfill-mastercode")
+async def backfill_playauto_mastercode(
+    account_id: str = Query(..., description="backfill할 플레이오토 계정 id"),
+    dry_run: bool = Query(
+        True, description="true면 분류만, false면 실제 MasterCode 저장"
+    ),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """플레이오토 MasterCode backfill — 등록됐는데 market_product_nos가 null인 상품 번호 복구.
+
+    등록 성공응답에서 MasterCode를 msg에서만 뽑는 취약파싱 + 프록시 재시도 유실로,
+    registered인데 EMP 번호 미저장(null)이 된 상품이 있다. 그 결과 주문 매칭 실패
+    (이미지/원문링크 안 뜸)·삭제·오토튠 품절이 막힌다.
+
+    EMP 상품 전체(get_products)를 받아 품번(site_product_id)/상품명으로 MasterCode를
+    매칭해 market_product_nos[account]에 채운다.
+    - backfilled: 번호 채운 수 (→ 주문매칭·삭제·오토튠 정상화)
+    - missing_in_emp: EMP에도 없음 = 등록 실패/삭제(별도 처리)
+    - ambiguous_in_emp: 같은 품번/상품명의 EMP 상품이 2개 이상 = 중복등록분.
+      오매칭 방지를 위해 건너뜀(수동 확인 대상)
+    ⚠ 재전송 금지(mpn null→__AUTO__ 신규등록→EMP 중복생성). 최초 dry_run=true 로 확인.
+    """
+    import json as _json
+
+    from sqlalchemy import text as _text
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.playauto import PlayAutoClient
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type != "playauto":
+        raise HTTPException(
+            status_code=400, detail=f"플레이오토 계정이 아닙니다: {acc.market_type}"
+        )
+    extras = acc.additional_fields or {}
+    api_key = extras.get("apiKey", "") or acc.api_key or ""
+    if not api_key:
+        raise HTTPException(status_code=400, detail="플레이오토 apiKey 없음")
+
+    def _first(d: dict, keys: list[str]) -> str:
+        for k in keys:
+            v = d.get(k) if isinstance(d, dict) else None
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        return ""
+
+    _MK = ["MasterCode", "masterCode", "master_code", "Code", "code"]
+    _MODK = ["Model", "model", "ModelName", "modelName"]
+    _NMK = ["ProdName", "prodName", "prod_name", "Name", "name"]
+
+    client = PlayAutoClient(api_key)
+    # EMP 전량 조회(수십 초) 동안 세션이 idle-in-tx 로 커넥션 물지 않도록 먼저 종료
+    await session.commit()
+    try:
+        emp = await client.get_products("")
+    finally:
+        await client.close()
+
+    # EMP Model = 품번(site_product_id) — proxy/playauto.py `Model` 세팅부 참조.
+    # 같은 품번/상품명에 EMP 상품이 2개 이상이면(=mpn null 재전송으로 생긴 중복 등록)
+    # 어느 쪽이 맞는지 알 수 없으므로 매칭에서 제외한다. 임의로 하나 고르면
+    # 엉뚱한 MasterCode 가 박혀 이후 삭제/오토튠이 남의 상품을 건드린다.
+    by_model: dict[str, str] = {}
+    by_name: dict[str, str] = {}
+    dup_model: set[str] = set()
+    dup_name: set[str] = set()
+    for e in emp or []:
+        if not isinstance(e, dict):
+            continue
+        mc = _first(e, _MK)
+        if not mc:
+            continue
+        md = _first(e, _MODK)
+        nm = _first(e, _NMK)
+        if md:
+            prev = by_model.get(md)
+            if prev is None:
+                by_model[md] = mc
+            elif prev != mc:
+                dup_model.add(md)
+        if nm:
+            prev = by_name.get(nm)
+            if prev is None:
+                by_name[nm] = mc
+            elif prev != mc:
+                dup_name.add(nm)
+
+    rows = (
+        await session.execute(
+            _text(
+                "SELECT id, market_product_nos, name, site_product_id "
+                "FROM samba_collected_product "
+                "WHERE registered_accounts @> CAST(:arr AS jsonb)"
+            ).bindparams(arr=f'["{account_id}"]')
+        )
+    ).all()
+
+    backfilled: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
+    already = 0
+    for rid, mpn_raw, name, spid in rows:
+        mpn = dict(mpn_raw or {})
+        if str(mpn.get(account_id) or "").strip():
+            already += 1
+            continue
+        # 품번(site_product_id)만 매칭 키로 쓴다. style_code 는 Model 로 전송된 적이
+        # 없어(= EMP 에 존재하지 않는 키) 폴백에 넣으면 "다른 상품의 품번과 우연히
+        # 같은 경우"에만 hit 하는 오매칭 경로가 된다.
+        mc = ""
+        is_ambiguous = False
+        key = str(spid).strip() if spid else ""
+        if key:
+            if key in dup_model:
+                is_ambiguous = True
+            else:
+                mc = by_model.get(key, "")
+        if not mc and not is_ambiguous and name:
+            if name in dup_name:
+                is_ambiguous = True
+            else:
+                mc = by_name.get(name, "")
+        if is_ambiguous:
+            ambiguous.append({"id": rid, "name": (name or "")[:30], "spid": spid})
+        elif mc:
+            backfilled.append(
+                {"id": rid, "master": mc, "name": (name or "")[:30], "spid": spid}
+            )
+            if not dry_run:
+                mpn[account_id] = mc
+                await session.execute(
+                    _text(
+                        "UPDATE samba_collected_product "
+                        "SET market_product_nos = CAST(:nos AS jsonb) WHERE id = :id"
+                    ).bindparams(nos=_json.dumps(mpn, ensure_ascii=False), id=rid)
+                )
+        else:
+            missing.append({"id": rid, "name": (name or "")[:30], "spid": spid})
+    if not dry_run:
+        await session.commit()
+
+    return {
+        "account_id": account_id,
+        "emp_products": len(emp or []),
+        "by_model_map": len(by_model),
+        "by_name_map": len(by_name),
+        "db_registered": len(rows),
+        "already_has_number": already,
+        "backfilled": len(backfilled),
+        "missing_in_emp": len(missing),
+        "ambiguous_in_emp": len(ambiguous),
+        "dry_run": dry_run,
+        "backfill_sample": backfilled[:15],
+        "missing_sample": missing[:15],
+        "ambiguous_sample": ambiguous[:15],
+    }
 
 
 @router.post("/esm/cleanup-orphans")
