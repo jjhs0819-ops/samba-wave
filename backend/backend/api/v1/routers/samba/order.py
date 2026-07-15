@@ -10008,6 +10008,28 @@ async def sync_orders_from_markets(
                                 f"[주문동기화] 배송→반품 상태 전환: {order_data.get('order_number')} "
                                 f"{existing.shipping_status} → {new_ship_status}"
                             )
+                        elif (
+                            existing.shipping_status == "반품요청"
+                            and new_ship_status
+                            in (
+                                "반품완료",
+                                "반품거부",
+                            )
+                        ):
+                            # [#641] 반품 진행 → 반품 종결 전진 전이.
+                            #   취소는 취소요청→취소완료 전진 분기가 있는데(위 cancel_statuses
+                            #   분기) 반품엔 대칭 분기가 없어, 마켓이 반품완료를 보내도 아래
+                            #   catch-all 제외목록의 '반품요청'에 걸려 조용히 드랍 → '반품요청'
+                            #   영구 고착. 실측(2026-07-15): 이 체인을 쓰는 쿠팡/11번가/SSG/
+                            #   롯데ON 전부 반품완료 0건인데 반품요청은 90건 누적 — 라벨 도달
+                            #   자체가 불가능했다.
+                            #   역행(반품완료/반품거부 → 반품요청)은 계속 차단해야 하므로
+                            #   제외목록은 그대로 두고 전진만 허용한다.
+                            update_fields["shipping_status"] = new_ship_status
+                            logger.info(
+                                f"[주문동기화] 반품 종결 전이: {order_data.get('order_number')} "
+                                f"{existing.shipping_status} → {new_ship_status}"
+                            )
                         elif existing.shipping_status not in (
                             "송장전송완료",
                             "국내배송중",
