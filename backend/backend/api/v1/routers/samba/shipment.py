@@ -1246,9 +1246,7 @@ async def backfill_lottehome_goodsno(
 
     dup_products: list[dict[str, Any]] = []
     for pid, gnos in pid_gnos.items():
-        row = next(
-            c for cs in by_spid.values() for c in cs if c[0] == pid
-        )
+        row = next(c for cs in by_spid.values() for c in cs if c[0] == pid)
         _, spid, mpn_raw, regs_raw, status, name = row
         if len(gnos) > 1:
             # 마켓에 같은 상품 리스팅 2개 이상 — 자동 복원 부적합

@@ -261,7 +261,7 @@ async def sourcing_collect_queue(request: Request) -> Any:
 # (404 아닌 403 변종, project_daemon_self_update_404_deathloop 재발). 1.4.50 으로
 # 임시 되돌려 루프 정지 후, daemon.py 의 모든 urllib 요청에 User-Agent 헤더 추가한
 # 1.4.52 빌드(build.ps1)·릴리스(upload.ps1, 다운로드 200 검증 완료) 후 상향.
-AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.52"
+AUTOTUNE_DAEMON_LATEST_VERSION = "1.4.53"
 # asset 명에 버전 박힘 (`samba-v{ver}.exe`) — 지침: 데몬 설치파일명 버전 노출 필수.
 AUTOTUNE_DAEMON_DOWNLOAD_URL = (
     f"https://github.com/sbk0674-web/samba-wave/releases/download/"

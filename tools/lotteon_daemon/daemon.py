@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.52"
+DAEMON_VERSION = "1.4.53"
 
 # urllib 기본 User-Agent("Python-urllib/3.x")를 Cloudflare 가 봇으로 인식해 403 차단
 # (2026-07-13, GCP→Cloudflare Tunnel 전환 이후 신규 발생). self-update 관련 모든
@@ -662,7 +662,8 @@ LOTTEON_MARKER_JS = r"""
 # LOTTEON 발주취소 — 분석 결과(2026-05-26 CDP 9223 실측):
 #  · 취소 페이지: /p/order/claim/cancellation/orderCancellationAccept?odNo={ord_no}&odSeq=1&procSeq=1
 #  · 사유 dropdown: Vue v-select (div.v-select)
-#  · 동의 체크박스 5개: claimAgree/paymentAgree/checkbox_fnclTx/
+#  · 동의: 마스터 체크박스 #030 label 클릭 (2026-07-15 UI 개편, 하위 5개 캐스케이드)
+#    구 레이아웃 폴백 5개: claimAgree/paymentAgree/checkbox_fnclTx/
 #    checkbox_indivisualInfoCollection/checkbox_indivisualInfoConsignment
 #  · 최종 '취소요청' 클릭 → JS confirm "선택한 1개 상품을 취소할까요?"
 #  · confirm accept → POST pbf.lotteon.com/order/claim/v1/cancellation/processOrderCancellation
@@ -705,7 +706,27 @@ LOTTEON_CANCEL_JS = r"""
   if (!selected) return {success: false, error: '사유 옵션(구매 의사 없어짐) 미발견'}
   await new Promise(r => setTimeout(r, 500))
 
-  // 4. 동의 체크박스 5개 강제 체크
+  // 4. 동의 처리 — 마스터 체크박스(#030)가 하위 5개로 캐스케이드 + Vue 검증 갱신 (2026-07-15 UI 개편).
+  //    숨겨진 5개 직접 click 은 native .checked 만 바뀌고 Vue v-model 검증 미갱신
+  //    → 취소요청 클릭 시 alert('동의해주세요') + processOrderCancellation POST 미발사 (이슈 #650)
+  let master = document.getElementById('030')
+  if (!master) {
+    for (const lb of document.querySelectorAll('label[for]')) {
+      const t = (lb.innerText || '').trim()
+      if (/주문취소.*동의|결제.*서비스.*이용.*동의/.test(t)) {
+        const cand = document.getElementById(lb.getAttribute('for'))
+        if (cand && cand.type === 'checkbox' && cand.id !== 'allCheck') { master = cand; break }
+      }
+    }
+  }
+  if (master && !master.checked) {
+    // label 클릭이어야 사이트 자체 핸들러 경유 → 캐스케이드 + Vue 검증 동시 통과
+    const ml = document.querySelector('label[for="' + master.id + '"]')
+    ;(ml || master).click()
+  }
+  await new Promise(r => setTimeout(r, 300))
+
+  // 폴백: 마스터 미노출(구 레이아웃)이거나 캐스케이드 누락 시 개별 체크 (이미 checked 면 skip)
   const agreeIds = [
     'claimAgree', 'paymentAgree', 'checkbox_fnclTx',
     'checkbox_indivisualInfoCollection', 'checkbox_indivisualInfoConsignment',

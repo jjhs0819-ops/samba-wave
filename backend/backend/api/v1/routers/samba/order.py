@@ -11543,9 +11543,7 @@ def _parse_playauto_order(
     # 나머지 2건은 반품 클레임 사본의 실시간). KST로 읽으면 9시간 앞당겨져
     # 주문목록 날짜필터(paid_at)에서 전날 주문으로 잘못 분류된다.
     # 정각 15:00:00일 때만 UTC로 해석해 KST 자정으로 복원.
-    if "GS" in site_name.upper() and str(order_date_raw).strip().endswith(
-        " 15:00:00"
-    ):
+    if "GS" in site_name.upper() and str(order_date_raw).strip().endswith(" 15:00:00"):
         from datetime import datetime as _pa_dt, timezone as _pa_tz
 
         try:
