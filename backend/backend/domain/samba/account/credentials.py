@@ -186,11 +186,21 @@ def esm_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
 
 
 def kream_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
-    """KREAM — token + cookie (additional_fields 에 저장)."""
+    """KREAM — 공식 API(apiService/apiKey/apiSecret) + 확장앱 경로(token/cookie).
+
+    공식 파트너 API(v1.6.0)는 헤더 3개를 모두 요구한다:
+      x-kream-partner-api-service / -api-key / -api-secret
+    apiService 는 판매자센터 [서비스 연동 관리] 발급값 — 컬럼이 없어 additional_fields 에 저장.
+    apiKey/apiSecret 은 additional_fields fallback 유지 — 컬럼 매핑 추가 이전에
+    저장된 계정은 additional_fields 에만 값이 있다(SSG 와 동일 패턴).
+    """
     if account is None:
         return {}
     ext = _extras(account)
     return {
+        "apiService": ext.get("apiService", "") or "",
+        "apiKey": account.api_key or ext.get("apiKey", "") or "",
+        "apiSecret": account.api_secret or ext.get("apiSecret", "") or "",
         "token": ext.get("token", ""),
         "cookie": ext.get("cookie", ""),
     }
@@ -266,7 +276,9 @@ _FORM_TO_COLUMNS: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] 
     "auction": ("apiKey", None, "sellerId"),
     "gmarket": ("apiKey", None, "sellerId"),
     "esm": ("apiKey", None, "sellerId"),
-    "kream": (None, None, None),
+    # 크림 공식 API 허가(2026-07-15) — apiKey/apiSecret 은 컬럼 저장.
+    # storeId 는 기존 계정 호환 위해 additional_fields 유지(seller_id 이관 안 함).
+    "kream": ("apiKey", "apiSecret", None),
     "musinsa": (None, None, None),
     "toss": ("apiKey", "apiSecret", None),
 }

@@ -386,9 +386,12 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiKey', label: 'OPEN API KEY', type: 'text', placeholder: '발급받은 키 입력' },
     { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
   ]},
-  { key: 'kream', label: 'KREAM', guideUrl: 'https://kream.co.kr/login', fields: [
+  { key: 'kream', label: 'KREAM', authField: 'apiKey', guideUrl: 'https://kream.co.kr/login', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '스토어 ID', type: 'text' },
+    { name: 'apiService', label: 'API Service', type: 'text', placeholder: '예: direct (직연동) / hubnet (허브넷)' },
+    { name: 'apiKey', label: 'API Key', type: 'text', placeholder: '크림 발급 API 키' },
+    { name: 'apiSecret', label: 'API Secret', type: 'password', placeholder: '크림 발급 시크릿' },
   ]},
   { key: 'poison', label: '포이즌', authField: 'apiKey', guideUrl: 'https://open.poizon.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
