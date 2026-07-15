@@ -1144,6 +1144,33 @@ class SambaShipmentService:
                     await self.session.flush()
                     return shipment
 
+        # 옵션 미수집 방어 — 옵션 그룹(option_group_names)이 있는데 옵션이 비어 있으면
+        # 아직 수집이 안 된 상태다. 그대로 전송하면 EMP/마켓이 옵션 없는 상품으로 등록해
+        # 대표단품(=상품명)이 옵션 자리에 들어가는 사고가 난다(11번가 "기본" 단일옵션
+        # 사고와 동일 뿌리). 옵션이 수집된 뒤 전송되도록 이번 회차는 보류(skip)한다.
+        _ogn = product_row.option_group_names or []
+        _price_stock_only = bool(update_items) and set(update_items) <= {
+            "price",
+            "stock",
+        }
+        if _ogn and not (product_row.options or []) and not _price_stock_only:
+            logger.warning(
+                f"[전송] 옵션 미수집 — 전송 보류: {(product_row.name or '')[:30]} "
+                f"(옵션그룹={_ogn})"
+            )
+            shipment = SambaShipment(
+                product_id=product_id,
+                status="skipped",
+                update_result={"refresh": refresh_status} if refresh_status else None,
+                transmit_result={},
+                transmit_error={
+                    "_all": f"옵션 미수집(그룹 {_ogn}) — 옵션 수집 후 재전송"
+                },
+            )
+            self.session.add(shipment)
+            await self.session.flush()
+            return shipment
+
         # 이미지/상세페이지 전송 판단
         is_price_stock_only = bool(update_items) and set(update_items) <= {
             "price",
