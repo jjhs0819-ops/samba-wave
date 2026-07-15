@@ -11538,7 +11538,24 @@ def _parse_playauto_order(
     from backend.utils import kst_str_to_utc
 
     order_date_raw = ro.get("OrderDate", "") or ""
-    paid_at = kst_str_to_utc(order_date_raw)
+    # GS이숍 예외 — EMP가 GS이숍 신규주문류의 OrderDate를 UTC 자정
+    # ("YYYY-MM-DD 15:00:00" = KST 다음날 00:00)으로 내려준다(실측 10/12건,
+    # 나머지 2건은 반품 클레임 사본의 실시간). KST로 읽으면 9시간 앞당겨져
+    # 주문목록 날짜필터(paid_at)에서 전날 주문으로 잘못 분류된다.
+    # 정각 15:00:00일 때만 UTC로 해석해 KST 자정으로 복원.
+    if "GS" in site_name.upper() and str(order_date_raw).strip().endswith(
+        " 15:00:00"
+    ):
+        from datetime import datetime as _pa_dt, timezone as _pa_tz
+
+        try:
+            paid_at = _pa_dt.strptime(
+                str(order_date_raw).strip(), "%Y-%m-%d %H:%M:%S"
+            ).replace(tzinfo=_pa_tz.utc)
+        except ValueError:
+            paid_at = kst_str_to_utc(order_date_raw)
+    else:
+        paid_at = kst_str_to_utc(order_date_raw)
 
     # 주소 분리 — 플레이오토는 RecipientAddress 한 필드에 도로명+상세를 통째로 내려줌
     # (openapi.json 확인: 별도 상세주소 필드 없음). 휴리스틱으로 기본/상세 분리.
