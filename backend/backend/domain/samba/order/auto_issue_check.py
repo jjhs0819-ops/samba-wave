@@ -424,6 +424,23 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                 _p = product_map.get(_pid)
                 if not _p:
                     continue
+                # SNKRDUNK(스니덩크) 리셀 매칭상품은 절대 자동삭제 금지.
+                # C2C 다중셀러라 원소싱 품절돼도 곧 재입고됨 → 삭제하면 크림 리스팅·주문연결이
+                # 통째로 끊긴다(주문 collected_product_id='DELETED' 사고). 재고없음 태그만 남기고
+                # 상품·마켓 삭제는 건너뛴다. lock_delete 여부와 무관하게 소싱처 기준으로 차단.
+                if (getattr(_p, "source_site", "") or "").upper() == "SNKRDUNK":
+                    logger.info(
+                        "[주문이슈체크] SNKRDUNK 리셀상품 자동삭제 제외 pid=%s (재입고 대비)",
+                        _pid,
+                    )
+                    continue
+                # 삭제잠금(크림 매칭 등 보호 대상)은 소싱처 무관하게 자동삭제에서 제외.
+                if getattr(_p, "lock_delete", False):
+                    logger.info(
+                        "[주문이슈체크] lock_delete=True 상품 자동삭제 제외 pid=%s",
+                        _pid,
+                    )
+                    continue
                 _reg_accounts = list(getattr(_p, "registered_accounts", None) or [])
                 try:
                     async with _gws2() as _del_sess:
