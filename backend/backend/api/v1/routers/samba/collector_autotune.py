@@ -17,8 +17,8 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from sqlalchemy import cast, func, or_, update as sa_update  # noqa: F401
-from sqlalchemy.dialects.postgresql import JSONB as _JSONB  # noqa: F401
+from sqlalchemy import cast, func, or_, String as _String, update as sa_update  # noqa: F401
+from sqlalchemy.dialects.postgresql import ARRAY as _PGARRAY, JSONB as _JSONB  # noqa: F401
 from sqlalchemy.orm import defer
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -961,6 +961,21 @@ def register_pc_allowed_sites(
         _pc_site_history[dev] = {new_set: now}
         prev = _pc_allowed_sites.get(dev)
         changed = prev != set(new_set)
+        # 진단 로그 (2026-07-13) — 사이트가 갑자기 빠지는(prev 에 있었는데 new_set 에
+        # 없는) 경우 호출 스택 기록. LOTTEON 배정 원인불명 소실 사고 추적용. 원인
+        # 확정되면 제거.
+        if prev and (prev - set(new_set)):
+            import traceback as _tb
+
+            logging.getLogger("autotune").warning(
+                "[register_pc_allowed_sites][진단] dev=%s 사이트 소실: %s "
+                "(prev=%s new=%s)\n%s",
+                dev[:30],
+                sorted(prev - set(new_set)),
+                sorted(prev),
+                sorted(new_set),
+                "".join(_tb.format_stack()[-6:-1]),
+            )
         _pc_allowed_sites[dev] = set(new_set)
         _pc_last_seen[dev] = now
         return changed
@@ -1091,7 +1106,11 @@ async def restore_pc_allowed_sites_from_db() -> int:
         count = 0
         dirty = False
         now = time.time()
-        _block = {s.upper() for s in DAEMON_ONLY_SITES}
+        # LOTTEON 예외 (2026-07-14) — register_pc_allowed_sites 의 동일 strip 과
+        # 짝 맞춤. 이 함수는 서버 재시작마다 실행되는 자가치유 루틴이라, 예외를
+        # 안 맞추면 재배포할 때마다 롯데ON 이 비데몬 device 에서 지워지고 그대로
+        # DB 에 재저장돼버림 (재발 3회 확인, 2026-07-13~14).
+        _block = {s.upper() for s in DAEMON_ONLY_SITES} - {"LOTTEON"}
         for dev, sites in data.items():
             if not isinstance(dev, str) or not isinstance(sites, list):
                 continue
@@ -1465,14 +1484,17 @@ async def _site_autotune_loop(device_id: str, site: str):
                         )
                         _elig_ids = [r[0] for r in _elig_res.all()]
                         if _elig_ids:
+                            # 2026-07-13 사고: cast(f'["{id}"]', JSONB) 는 SQLAlchemy가
+                            # 파이썬 str을 JSONB 바인드로 이중 인코딩 → registered_accounts
+                            # @> 가 "[\"ma_...\"]" 라는 JSON 스칼라 문자열과 비교돼 영원히
+                            # 0건. 전 소싱처 오토튠이 "대상 상품 없음"만 반복하며 완전 정지
+                            # (verify_sql.py 로 raw asyncpg 대조 검증: 이 조건 하나로 5808건
+                            # →0건 재현). ARRAY(String) 바인드는 이 이중인코딩 경로를 안 타므로
+                            # `?|`(배열 원소 중 하나라도 일치) 로 교체 — project_orm_cast_
+                            # jsonb_double_encoding 과 동일 계열 함정, @> 대신 연산자 자체를 바꿔 회피.
                             _market_filter_where = [
-                                or_(
-                                    *[
-                                        _CP.registered_accounts.op("@>")(
-                                            cast(f'["{_eid}"]', _JSONB)
-                                        )
-                                        for _eid in _elig_ids
-                                    ]
+                                _CP.registered_accounts.op("?|")(
+                                    cast(_elig_ids, _PGARRAY(_String))
                                 )
                             ]
                             log.debug(
@@ -5412,7 +5434,9 @@ class PcAllowedSitesRequest(BaseModel):
 
 
 @router.post("/autotune/pc-allowed-sites")
-async def autotune_pc_allowed_sites_set(body: PcAllowedSitesRequest):
+async def autotune_pc_allowed_sites_set(
+    body: PcAllowedSitesRequest, request: Request = None
+):
     """PC 분담 등록 — 이 PC가 처리할 사이트 목록. 변경 시 DB 영속화.
 
     UI 명시 POST 는 모두 authoritative — 사용자가 체크박스로 직접 지정한 값을 폴링
@@ -5427,6 +5451,22 @@ async def autotune_pc_allowed_sites_set(body: PcAllowedSitesRequest):
     dev = (body.device_id or "").strip()
     if not dev:
         return {"ok": False, "error": "device_id 필수"}
+
+    # 진단 로그 (2026-07-13) — LOTTEON 배정이 원인 불명으로 반복 소실되는 사고
+    # 추적용. 어떤 클라이언트가 이 device 에 어떤 sites 를 authoritative POST
+    # 하는지 매 호출 기록. 원인 확정되면 제거.
+    try:
+        _client_host = request.client.host if request and request.client else "?"
+        _ua = (request.headers.get("user-agent", "?") if request else "?")[:80]
+        logging.getLogger("autotune").warning(
+            "[pc-allowed-sites][진단] dev=%s sites=%s from=%s ua=%s",
+            dev[:30],
+            body.sites,
+            _client_host,
+            _ua,
+        )
+    except Exception:
+        pass
 
     # device_id active 검증 — samba_extension_key 에 revoke 안 된 키 존재해야 함.
     # 단 빈 분담 [] 로 등록 해제는 항상 허용 (사용자가 PC 분담 비우기).
@@ -5634,7 +5674,7 @@ class CancelCycleRequest(BaseModel):
 
 
 @router.post("/autotune/cancel-cycle")
-async def autotune_cancel_cycle(body: CancelCycleRequest):
+async def autotune_cancel_cycle(body: CancelCycleRequest, request: Request = None):
     """특정 (device_id, site) cycle 즉시 중단.
 
     (2026-05-27) 즉시 재spawn 버그 fix.
@@ -5651,6 +5691,22 @@ async def autotune_cancel_cycle(body: CancelCycleRequest):
     site = (body.site or "").strip()
     if not dev or not site:
         return {"ok": False, "error": "device_id 와 site 필수"}
+
+    # 진단 로그 (2026-07-13) — LOTTEON 배정이 원인 불명으로 반복 소실되는 사고
+    # 추적용. pc-allowed-sites POST/register 진단에 안 잡혀서 이 endpoint 도 로깅.
+    # 원인 확정되면 제거.
+    try:
+        _client_host = request.client.host if request and request.client else "?"
+        _ua = (request.headers.get("user-agent", "?") if request else "?")[:80]
+        logging.getLogger("autotune").warning(
+            "[cancel-cycle][진단] dev=%s site=%s from=%s ua=%s",
+            dev[:30],
+            site,
+            _client_host,
+            _ua,
+        )
+    except Exception:
+        pass
 
     # 0) 재spawn 억제 — allowed_sites 가 비어있거나(확장앱) 불일치해도 중단 보장.
     #    코디네이터 spawn / 사이트 루프 CancelledError 핸들러가 이 플래그를 확인해

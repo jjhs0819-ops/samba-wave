@@ -195,6 +195,33 @@ class AbcMartPlugin(SourcingPlugin):
                     if _alt_sale > 0:
                         detail = _alt_detail
 
+            # 프록시 자체가 죽어있으면 primary/fallback 채널 둘 다 같은 죽은 프록시로
+            # 실패함 — 다른 프록시로 1회 더 재시도 (로테이팅 프록시가 배치 도중
+            # 죽는 경우 해당 20건 전체가 실패로 빠지던 문제, 2026-07-14).
+            if not detail and _proxy:
+                from backend.domain.samba.collector.refresher import (
+                    get_autotune_proxies,
+                )
+
+                _alt_proxies = [p for p in get_autotune_proxies() if p != _proxy]
+                if _alt_proxies:
+                    logger.warning(
+                        f"[ABCmart] 프록시 재시도(다른 프록시로 전환): {site_product_id}"
+                    )
+                    _retry_proxy = _alt_proxies[0]
+
+                    async def _fetch_retry(channel: str | None) -> dict:
+                        _client = ARTSourcingClient(
+                            channel=channel, proxy_pool=[_retry_proxy]
+                        )
+                        return await self.safe_call(
+                            _client.get_product_detail(
+                                site_product_id, refresh_only=True
+                            )
+                        )
+
+                    detail = await _fetch_retry(primary_channel)
+
             if not detail:
                 return RefreshResult(
                     product_id=product_id,

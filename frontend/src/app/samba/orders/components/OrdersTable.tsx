@@ -421,9 +421,13 @@ export default function OrdersTable(props: OrdersTableProps) {
                         onChange={async (e) => {
                           const val = e.target.value
                           try {
-                            await orderApi.update(o.id, { sourcing_account_id: val || undefined } as Partial<SambaOrder>)
+                            // 빈값 선택(계정 해제)은 undefined가 아니라 명시적 null을 보내야
+                            // 서버(exclude_unset)가 해제로 인식함 — undefined는 "변경 없음" 처리됨
+                            await orderApi.update(o.id, { sourcing_account_id: (val || null) as unknown as string } as Partial<SambaOrder>)
                             patchOrder(o.id, { sourcing_account_id: val || undefined })
-                          } catch { /* ignore */ }
+                          } catch (err) {
+                            showAlert(`주문계정 저장 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`, 'error')
+                          }
                         }}
                         style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
                       >
@@ -434,8 +438,9 @@ export default function OrdersTable(props: OrdersTableProps) {
                           const sites = allSites.sort((a, b) => (siteOrder[a] ?? 99) - (siteOrder[b] ?? 99) || a.localeCompare(b))
                           return sites.map(site => (
                             <optgroup key={site} label={site}>
+                              {/* select 닫힘 상태에선 optgroup 라벨이 안 보여 계정만 노출됨 → 소싱처를 option 텍스트에 함께 표기 */}
                               {sourcingAccounts.filter(sa => sa.site_name === site).map(sa => (
-                                <option key={sa.id} value={sa.id}>{sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
+                                <option key={sa.id} value={sa.id}>{site} · {sa.account_label ? `${sa.account_label}(${sa.username})` : sa.username}</option>
                               ))}
                             </optgroup>
                           ))

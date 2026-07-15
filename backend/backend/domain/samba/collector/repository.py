@@ -276,12 +276,19 @@ class SambaCollectedProductRepository(BaseRepository[SambaCollectedProduct]):
         account_id: registered_accounts 배열에서 확인할 계정 ID 문자열
         """
 
+        from sqlalchemy import String as _String
+        from sqlalchemy.dialects.postgresql import ARRAY as _PGARRAY
+
         stmt = select(SambaCollectedProduct).where(
             self._tenant_filter(tenant_id),
             cast(SambaCollectedProduct.market_names, JSONB)[market_key].astext
             == product_name,
-            SambaCollectedProduct.registered_accounts.op("@>")(
-                cast(f'["{account_id}"]', JSONB)
+            # cast(f'["{id}"]', JSONB) 는 SQLAlchemy가 이중 인코딩(json.dumps) 해
+            # registered_accounts @> 가 영원히 0건 반환 — 중복상품 감지가 항상
+            # "없음"으로 나와 무한 중복등록 유발. ARRAY(String)+`?|` 로 회피.
+            # (project_orm_cast_jsonb_double_encoding 동일 계열, 2026-07-13 재발견)
+            SambaCollectedProduct.registered_accounts.op("?|")(
+                cast([account_id], _PGARRAY(_String))
             ),
         )
         if exclude_product_id is not None:
