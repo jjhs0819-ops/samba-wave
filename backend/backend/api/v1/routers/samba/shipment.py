@@ -1103,6 +1103,205 @@ async def cleanup_smartstore_orphans(
     }
 
 
+@router.post("/lottehome/backfill-goodsno")
+async def backfill_lottehome_goodsno(
+    account_id: str = Query(..., description="backfill할 롯데홈 계정 id"),
+    dry_run: bool = Query(
+        True, description="true면 매칭 분류만, false면 실제 매핑 저장"
+    ),
+    max_fill: int = Query(
+        5000, ge=0, le=100000, description="한 번에 복원할 최대 개수"
+    ),
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """롯데홈 goods_no backfill — 마켓엔 판매진행인데 삼바 매핑 없는 유령 재연결.
+
+    유령 등록해제(7/13)가 PO 대조 기준 ABSENT 를 과신한 결과, 이후 재승인되어
+    판매 중인 리스팅의 매핑까지 끊긴 사례가 실측됐다(7/15, 판매진행 유령 1,769).
+    매핑 없이 재전송하면 같은 상품이 신규 등록돼 마켓에 중복 리스팅이 생기므로,
+    재전송 대신 searchStockList 덤프의 상품명 끝 원상품번호(site_product_id)로
+    삼바 상품을 역매칭해 market_product_nos[account]를 복원한다.
+
+    - 판매진행(SaleStatCd=10)만 대상. 품절/중단 리스팅은 재연결 이득이 없고
+      오연결 시 위험만 커서 제외.
+    - 매칭키: GoodsNm 끝 숫자토큰(5자리 이상) == site_product_id 정확일치.
+      이름 유사도 매칭은 하지 않는다(오연결 = 남의 리스팅에 주문·재고 위임 사고).
+    - 이미 해당 계정 매핑을 가진 상품은 건드리지 않음(conflict 로 보고만).
+    - 같은 상품에 goods_no 2개 이상 매칭 = 마켓 중복 리스팅 → 스킵·보고
+      (어느 쪽을 살릴지는 수동 판단).
+    ⚠ 최초 dry_run=true 로 확인 후 실행. 대상 상품 재전송 금지 상태에서 실행.
+    """
+    import json as _json
+    import re as _re
+
+    from sqlalchemy import bindparam as _bindparam
+    from sqlalchemy import text as _text
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.lottehome_ghost_reconciler import (
+        _fetch_db_mapping,
+        _get_client_for,
+        _stream_stocklist_names,
+    )
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type != "lottehome":
+        raise HTTPException(
+            status_code=400, detail=f"롯데홈 계정이 아닙니다: {acc.market_type}"
+        )
+    tenant_id = acc.tenant_id
+
+    client = await _get_client_for(tenant_id)
+    if client is None:
+        raise HTTPException(status_code=400, detail="lottehome_credentials 없음")
+
+    # 전량 스트리밍(~90초) 동안 세션이 idle-in-tx 로 커넥션 물지 않도록 먼저 종료
+    await session.commit()
+    dump = await _stream_stocklist_names(client)
+    db_gnos, _ = await _fetch_db_mapping(account_id)
+
+    # 유령: 판매진행인데 DB 매핑 없음 → 이름 끝 원상품번호 추출
+    _TOKEN_RE = _re.compile(r"(\d{5,})\s*$")
+    ghost_token: dict[str, str] = {}  # goods_no -> site_product_id 후보
+    no_token: list[dict[str, Any]] = []
+    for g, (stat, name) in dump.items():
+        if stat != "10" or g in db_gnos:
+            continue
+        m = _TOKEN_RE.search(name)
+        if m:
+            ghost_token[g] = m.group(1)
+        else:
+            no_token.append({"goods_no": g, "name": name[:60]})
+
+    # site_product_id 정확일치 조회 (IN 청크)
+    tokens = sorted(set(ghost_token.values()))
+    by_spid: dict[str, list[Any]] = {}
+    # tid는 None 가능 → asyncpg 타입 추론 위해 .bindparams 명시 (issue #202 패턴),
+    # IN 목록은 expanding bindparam (asyncpg 는 list 를 그대로 못 받음)
+    _spid_sql = _text(
+        "SELECT id, site_product_id, market_product_nos, "
+        "       registered_accounts, status, name "
+        "FROM samba_collected_product "
+        "WHERE site_product_id IN :spids "
+        "  AND (:tid IS NULL OR tenant_id = :tid)"
+    ).bindparams(_bindparam("spids", expanding=True), tid=tenant_id)
+    for i in range(0, len(tokens), 1000):
+        chunk = tokens[i : i + 1000]
+        rows = (await session.execute(_spid_sql, {"spids": chunk})).all()
+        for r in rows:
+            by_spid.setdefault(r[1], []).append(r)
+
+    # goods_no → 상품 매칭 확정
+    filled: list[dict[str, Any]] = []
+    conflicts: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
+    unmatched: list[dict[str, Any]] = []
+    pid_gnos: dict[str, list[str]] = {}  # 같은 상품 복수 gno 감지
+    for g, tok in sorted(ghost_token.items()):
+        cands = by_spid.get(tok) or []
+        if not cands:
+            unmatched.append({"goods_no": g, "spid": tok})
+            continue
+        if len(cands) > 1:
+            ambiguous.append(
+                {"goods_no": g, "spid": tok, "product_ids": [c[0] for c in cands]}
+            )
+            continue
+        pid_gnos.setdefault(cands[0][0], []).append(g)
+
+    dup_products: list[dict[str, Any]] = []
+    for pid, gnos in pid_gnos.items():
+        row = next(
+            c for cs in by_spid.values() for c in cs if c[0] == pid
+        )
+        _, spid, mpn_raw, regs_raw, status, name = row
+        if len(gnos) > 1:
+            # 마켓에 같은 상품 리스팅 2개 이상 — 자동 복원 부적합
+            dup_products.append({"product_id": pid, "goods_nos": gnos, "spid": spid})
+            continue
+        mpn = dict(mpn_raw or {})
+        if str(mpn.get(account_id) or "").strip():
+            conflicts.append(
+                {"product_id": pid, "goods_no": gnos[0], "cur": mpn.get(account_id)}
+            )
+            continue
+        filled.append(
+            {
+                "product_id": pid,
+                "goods_no": gnos[0],
+                "spid": spid,
+                "name": (name or "")[:30],
+                "mpn": mpn,
+                "regs": list(regs_raw or []),
+                "status": status,
+            }
+        )
+
+    filled = filled[:max_fill]
+    applied = 0
+    if not dry_run:
+        for f in filled:
+            mpn = f["mpn"]
+            mpn[account_id] = f["goods_no"]
+            regs = f["regs"]
+            if account_id not in regs:
+                regs.append(account_id)
+            await session.execute(
+                _text(
+                    "UPDATE samba_collected_product "
+                    "SET market_product_nos = CAST(:nos AS jsonb), "
+                    "    registered_accounts = CAST(:regs AS jsonb), "
+                    "    status = 'registered' "
+                    "WHERE id = :id"
+                ).bindparams(
+                    nos=_json.dumps(mpn, ensure_ascii=False),
+                    regs=_json.dumps(regs, ensure_ascii=False),
+                    id=f["product_id"],
+                )
+            )
+            applied += 1
+            if applied % 500 == 0:
+                await session.commit()
+        await session.commit()
+        logger.info(
+            f"[lottehome_backfill] {account_id} 매핑 복원 {applied}건 "
+            f"(dump 판매진행 유령 {len(ghost_token) + len(no_token)}건 중)"
+        )
+
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "dump_total": len(dump),
+        "dump_selling": sum(1 for s, _ in dump.values() if s == "10"),
+        "db_mapped": len(db_gnos),
+        "ghosts_selling": len(ghost_token) + len(no_token),
+        "backfilled": applied if not dry_run else len(filled),
+        "backfilled_sample": [
+            {k: v for k, v in f.items() if k in ("product_id", "goods_no", "name")}
+            for f in filled[:20]
+        ],
+        "conflicts": len(conflicts),
+        "ambiguous_spid": ambiguous[:20],
+        "dup_listings": dup_products[:50],
+        "unmatched": len(unmatched),
+        "unmatched_sample": unmatched[:20],
+        "no_token": len(no_token),
+        "no_token_sample": no_token[:10],
+        "max_fill": max_fill,
+    }
+
+
 @router.get("/ghost-summary")
 async def ghost_summary(
     hours: int = Query(48, ge=1, le=720, description="최근 N시간 내 이벤트 집계"),

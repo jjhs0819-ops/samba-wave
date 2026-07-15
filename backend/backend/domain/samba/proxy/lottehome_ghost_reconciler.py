@@ -157,6 +157,49 @@ async def _stream_stocklist(client: LotteHomeClient) -> dict[str, str]:
     return stat_of
 
 
+# 이름 포함 행: <GoodNo>..</GoodNo><GoodsNm><![CDATA[..]]></GoodsNm>...<SaleStatCd>NN</SaleStatCd>
+# GoodsNm 끝의 원상품번호(site_product_id)가 backfill 역매칭 키라 이름까지 수확한다.
+_ROW_NM_RE = re.compile(
+    rb"<GoodNo>(\d+)</GoodNo><GoodsNm><!\[CDATA\[(.*?)\]\]></GoodsNm>"
+    rb".*?<SaleStatCd>(\d+)</SaleStatCd>",
+    re.S,
+)
+
+
+async def _stream_stocklist_names(
+    client: LotteHomeClient,
+) -> dict[str, tuple[str, str]]:
+    """searchStockList 전량 스트리밍 → {goods_no: (sale_stat_cd, goods_nm)}.
+
+    _stream_stocklist 와 동일 수신 경로에 GoodsNm 캡처만 추가
+    (backfill-goodsno 의 원상품번호 역매칭용). 행 경계 이월 4KB 동일.
+    """
+    cert = await client._ensure_auth()
+    base = client.PROD_BASE if client.env == "prod" else client.TEST_BASE
+    url = base + "searchStockList.lotte"
+    rows: dict[str, tuple[str, str]] = {}
+    timeout = httpx.Timeout(STREAM_TIMEOUT, connect=15)
+    kw: dict[str, Any] = {"timeout": timeout}
+    if client.proxy_url:
+        kw["proxy"] = client.proxy_url
+    async with httpx.AsyncClient(**kw) as hc:
+        async with hc.stream("GET", url, params={"subscriptionId": cert}) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"searchStockList HTTP {resp.status_code}")
+            tail = b""
+            async for chunk in resp.aiter_bytes(1024 * 256):
+                buf = tail + chunk
+                for m in _ROW_NM_RE.finditer(buf):
+                    g = m.group(1).decode()
+                    if g not in rows:
+                        rows[g] = (
+                            m.group(3).decode(),
+                            m.group(2).decode("euc-kr", errors="replace"),
+                        )
+                tail = buf[-4096:]
+    return rows
+
+
 async def _log_event(
     account_id: str,
     account_label: str,
