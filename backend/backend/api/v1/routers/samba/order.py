@@ -12930,6 +12930,23 @@ async def _kream_cost_backfill_from_shopmine(
     }
 
 
+@router.post("/kream-api-sync")
+async def sync_kream_orders_api(
+    dry_run: bool = True,
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """KREAM 공식 파트너 API 주문 수집 — 발송완료 엑셀 업로드 대체용.
+
+    기존 `/kream-excel` 은 그대로 둔다(이관 검증 전까지 병행). 생성 전용이라
+    이미 있는 주문은 건드리지 않는다 — 정산/원가/송장 덮어쓰기 사고 방지.
+
+    dry_run=True(기본) 면 쓰지 않고 생성 예정 목록만 반환.
+    """
+    from backend.domain.samba.order.kream_api_sync import sync_kream_orders_from_api
+
+    return await sync_kream_orders_from_api(tenant_id=tenant_id, dry_run=dry_run)
+
+
 @router.post("/kream-excel")
 async def import_kream_excel(
     file: UploadFile = File(...),
