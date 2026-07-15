@@ -212,7 +212,21 @@ class LotteHomeClient:
         자동 재시도 — HTTP 응답을 받은 뒤의 재시도가 아니므로 API 에러코드
         처리·중복 발급 회수 로직에는 영향 없음. transport 지정 시 proxy 인자가
         무시되므로 프록시도 transport 쪽에 함께 넣는다.
+
+        ⚠ 재시도와 프록시는 공존하지 않는다 (httpx 0.28 제약, 실측 확인):
+        `_transports/default.py` 가 `proxy is None` 일 때만 retries 를
+        httpcore 풀에 전달하고, http/https 프록시면 `AsyncHTTPProxy(...)` 를
+        retries 없이(=0) 만든다. httpcore 쪽은 retries 를 지원하지만 httpx 가
+        넘겨주지 않는다. 즉 LOTTEHOME_PROXY_URL 을 켜면 연결 재시도는 꺼진다.
+        프록시는 "직접연결이 계속 막힐 때" 쓰는 비상 스위치이고 그때는 재시도가
+        아니라 경로 자체를 바꾸는 게 목적이므로 그대로 둔다. 둘 다 필요해지면
+        httpcore.AsyncHTTPProxy 를 직접 구성해야 한다(사설 API).
         """
+        if self.proxy_url:
+            logger.warning(
+                "[롯데홈] 프록시 우회 활성(LOTTEHOME_PROXY_URL) — "
+                "httpx 제약으로 연결 재시도(retries=3)는 비활성 상태로 동작합니다"
+            )
         return {
             "timeout": timeout,
             "transport": httpx.AsyncHTTPTransport(
