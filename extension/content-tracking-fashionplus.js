@@ -94,31 +94,50 @@
       .replace(/timeout/gi, 't-out')
   }
 
-  // 배송 관련 영역만 발췌해 실측 로그로 남긴다(전체 body 는 과도).
+  // 배송/송장 위치를 특정하기 위한 실측 발췌. 광고 배너("무료배송/쿠폰")는 제외하고
+  // ①현재 URL/제목 ②배송조회·goodsflow 버튼/링크(href·onclick) ③정확한 배송정보 라벨 영역
+  // 순으로 담는다. (송장은 대개 배송조회 버튼/goodsflow trace 링크에 파라미터로 존재)
   function deliveryDebugSnippet() {
     try {
       const parts = []
-      // 배송/송장/택배 키워드 근처 요소 텍스트
-      const kw = /배송|송장|운송장|택배|goodsflow|배송조회/i
-      const els = Array.from(document.querySelectorAll('dl, table, li, div, section, p'))
+      parts.push(`URL=${location.pathname}`)
+      const title = (document.title || '').replace(/\s+/g, ' ').trim()
+      if (title) parts.push(`T=${title.slice(0, 30)}`)
+
+      // ① 배송조회/goodsflow/trace 버튼·링크 — href/onclick 원문(송장 파라미터가 여기 있을 확률 높음)
+      const btnKw = /송장|운송장|배송조회|배송추적|goodsflow|good's?flow|trace|delivery|tracking|invoice|wbl|dvry/i
+      const btns = Array.from(document.querySelectorAll('a[href], [onclick], button'))
+        .map(a => {
+          const h = a.getAttribute('href') || a.getAttribute('onclick') || ''
+          const t = (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 16)
+          return { h, t }
+        })
+        .filter(x => btnKw.test(x.h) || btnKw.test(x.t))
+        .slice(0, 5)
+      if (btns.length) {
+        parts.push('BTN=' + btns.map(x => `${x.t}[${x.h.slice(0, 70)}]`).join(' ; '))
+      }
+
+      // ② 정확한 배송정보 라벨 영역 (광고 배너 제외)
+      const labelKw = /운송장|송장번호|택배사|배송조회|배송상태|배송현황|출고|배송중|배송완료|수령|택배/
+      const adKw = /쿠폰|무료배송|할인|적립|이벤트|좋아요|추가하기/
+      const els = Array.from(document.querySelectorAll('dl, table, tr, li, div, section, p, span'))
         .filter(el => {
           const t = (el.innerText || '').trim()
-          return t && t.length < 300 && kw.test(t)
+          return t && t.length < 200 && labelKw.test(t) && !adKw.test(t)
         })
       const seen = new Set()
       for (const el of els) {
         const t = (el.innerText || '').replace(/\s+/g, ' ').trim()
         if (t && !seen.has(t)) { seen.add(t); parts.push(t) }
-        if (parts.length >= 6) break
+        if (parts.length >= 8) break
       }
-      // 배송조회 관련 링크 href 도 첨부
-      const links = Array.from(document.querySelectorAll('a[href], [onclick]'))
-        .map(a => a.getAttribute('href') || a.getAttribute('onclick') || '')
-        .filter(h => /goodsflow|trace|delivery|tracking|배송|invoice|wbl/i.test(h))
-        .slice(0, 3)
-      let out = parts.join(' | ')
-      if (links.length) out += ` || LINKS: ${links.join(' , ')}`
-      return out.slice(0, 500)
+
+      // ③ 페이지 내 9~13자리 숫자(송장 후보) 존재 여부 — 파싱 힌트
+      const nums = (document.body?.innerText || '').match(/\b\d{9,13}\b/g)
+      if (nums && nums.length) parts.push('NUMS=' + Array.from(new Set(nums)).slice(0, 4).join(','))
+
+      return parts.join(' | ').slice(0, 500)
     } catch (e) {
       return `snippet_error:${String(e?.message || e).slice(0, 80)}`
     }
