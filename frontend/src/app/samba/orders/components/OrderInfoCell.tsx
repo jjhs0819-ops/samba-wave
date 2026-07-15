@@ -165,6 +165,16 @@ export default function OrderInfoCell(props: Props) {
             <span style={{ fontSize: '0.72rem', color: c.text, fontWeight: 700 }}>{fmtDate(o.paid_at, '.')}</span>
           </div>
         )}
+        {/* 이베이 도착기한 — Exp(빠른배송)는 강조 표시 (St/Exp에 따라 기한 상이) */}
+        {o.estimated_delivery_at && (
+          <span style={{
+            fontSize: '0.72rem', fontWeight: 700,
+            color: (o.shipping_service_code || '').toLowerCase().includes('expedited') ? c.danger : c.textMuted,
+          }}>
+            도착기한 {fmtDate(o.estimated_delivery_at, '.')}
+            {(o.shipping_service_code || '').toLowerCase().includes('expedited') ? ' (Exp)' : o.shipping_service_code ? ' (St)' : ''}
+          </span>
+        )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{fmtDate(o.created_at, '.')}</span>
           <button onClick={() => handleDelete(o.id)} style={{ ...btn('danger'), padding: '0.125rem 0.5rem', fontSize: '0.7rem' }}>삭제</button>

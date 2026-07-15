@@ -7514,7 +7514,14 @@ async def sync_orders_from_markets(
                             net_usd = tx_map[oid]["net"]
                             gross_usd = tx_map[oid]["gross"]
                             fee_usd = tx_map[oid]["fee"]
-                            od["revenue"] = int(round(net_usd * ebay_exchange_rate))
+                            # 달러→원 환전수수료 1.2% 차감 반영 (2026-07-15 사용자 지시)
+                            od["revenue"] = int(
+                                round(
+                                    net_usd
+                                    * ebay_exchange_rate
+                                    * (1 - _EBAY_FX_FEE_RATE)
+                                )
+                            )
                             # gross(가격+배송비 등 실제 결제 총액)로 sale_price도 함께 갱신.
                             # pricingSummary.total만 쓰면 수량>1 주문에서 총액이 아닌
                             # 축소된 값으로 남는 사고가 있었음(2026-07-14).
@@ -7526,6 +7533,7 @@ async def sync_orders_from_markets(
                             od["notes"] = (
                                 f"gross ${gross_usd:.2f} - fee ${fee_usd:.2f} "
                                 f"= net ${net_usd:.2f} @ {ebay_exchange_rate:.2f}원/USD "
+                                f"- 환전 {_EBAY_FX_FEE_RATE * 100:.1f}% "
                                 f"(Finance API)"
                             )
                             matched += 1
@@ -10283,6 +10291,9 @@ async def sync_orders_from_markets(
                         "cancel_reason_category2",
                         "cancel_fault_by",
                         "cancel_requested_at",
+                        # 이베이 도착기한/배송서비스 — 기존 주문 백필 (2026-07-15)
+                        "estimated_delivery_at",
+                        "shipping_service_code",
                     ):
                         _cv = order_data.get(_cf)
                         if _cv is not None and _cv != getattr(existing, _cf, None):
@@ -11974,6 +11985,10 @@ def _parse_elevenst_order(item: dict, account_id: str, label: str) -> dict:
     }
 
 
+# 이베이 달러→원 환전수수료율 — 정산금액(revenue)에서 차감 (2026-07-15 사용자 지시)
+_EBAY_FX_FEE_RATE = 0.012
+
+
 def _parse_ebay_datetime(val) -> Optional[datetime]:
     """eBay 날짜 필드는 문자열 또는 {"value": "..."} dict 형태."""
     if val is None:
@@ -12002,9 +12017,18 @@ def _parse_ebay_order(
 
     # 배송지
     ship_to: dict[str, Any] = {}
+    # 도착기한/배송서비스 — St/Exp 에 따라 maxEstimatedDeliveryDate 가 달라짐 (2026-07-15)
+    ebay_delivery_deadline = None
+    ebay_shipping_service = ""
     for inst in o.get("fulfillmentStartInstructions") or []:
         step = inst.get("shippingStep") or {}
         ship_to = step.get("shipTo") or {}
+        if not ebay_shipping_service:
+            ebay_shipping_service = step.get("shippingServiceCode", "") or ""
+        if not ebay_delivery_deadline:
+            ebay_delivery_deadline = _parse_ebay_datetime(
+                inst.get("maxEstimatedDeliveryDate")
+            )
         if ship_to:
             break
     contact = ship_to.get("contactAddress") or {}
@@ -12038,7 +12062,10 @@ def _parse_ebay_order(
         )
     except Exception:
         fee_rate = 0
-    revenue = sale_price_krw - marketplace_fee_krw
+    # 달러→원 환전수수료 1.2% 차감 반영 (2026-07-15 사용자 지시)
+    revenue = int(
+        round((sale_price_krw - marketplace_fee_krw) * (1 - _EBAY_FX_FEE_RATE))
+    )
 
     # 상태 매핑
     ff_status = o.get("orderFulfillmentStatus", "") or ""
@@ -12085,6 +12112,8 @@ def _parse_ebay_order(
         "shipping_company": "",
         "tracking_number": "",
         "paid_at": _parse_ebay_datetime(o.get("creationDate")),
+        "estimated_delivery_at": ebay_delivery_deadline,
+        "shipping_service_code": ebay_shipping_service or None,
         "source": "ebay",
         "notes": f"USD {sale_price_usd:.2f} @ {exchange_rate:.2f}원/USD",
     }

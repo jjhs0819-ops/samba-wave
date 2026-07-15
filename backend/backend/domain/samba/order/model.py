@@ -286,6 +286,16 @@ class SambaOrder(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
     )
 
+    # 이베이 도착기한 — maxEstimatedDeliveryDate. St/Exp 배송종류에 따라 달라져
+    # 발송 우선순위 구분에 사용 (2026-07-15)
+    estimated_delivery_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    # 이베이 배송서비스 코드 (예: ExpeditedShippingFromOutsideUS)
+    shipping_service_code: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),
