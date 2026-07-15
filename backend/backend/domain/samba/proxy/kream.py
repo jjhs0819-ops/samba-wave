@@ -863,3 +863,119 @@ class KreamPartnerClient:
         if isinstance(body, dict):
             detail = str(body.get("detail") or body)
         return {"success": False, "status": status, "detail": detail}
+
+    # ── 판매 입찰(ask) ────────────────────────────────────────────────
+    # 가격 하한/상한은 스펙 고정값 — 벗어나면 서버가 422. 미리 걸러 실패를 앞당긴다.
+    ASK_PRICE_MIN = 20_000
+    ASK_PRICE_MAX = 9_999_999_000
+
+    async def list_asks(
+        self,
+        status: str = "live",
+        page: int = 1,
+        per_page: int = 50,
+        **filters: Any,
+    ) -> tuple[int, Any]:
+        """GET /asks — status: live|staged|expiring_today|expired|canceled. per_page 최대 50."""
+        params: dict[str, Any] = {
+            "status": status,
+            "page": page,
+            "per_page": min(per_page, 50),
+        }
+        params.update({k: v for k, v in filters.items() if v not in (None, "")})
+        return await self.request("GET", "/asks", params=params)
+
+    async def create_ask(
+        self,
+        product_id: int,
+        price: int,
+        option: str,
+        is_keep_on_deferred: Optional[bool] = None,
+    ) -> tuple[int, Any]:
+        """POST /asks — 일반 판매 입찰 등록."""
+        body: dict[str, Any] = {
+            "product_id": int(product_id),
+            "price": int(price),
+            "option": option,
+        }
+        if is_keep_on_deferred is not None:
+            body["is_keep_on_deferred"] = bool(is_keep_on_deferred)
+        return await self.request("POST", "/asks", json=body)
+
+    async def update_ask(
+        self, ask_id: int, price: int, is_keep_on_deferred: Optional[bool] = None
+    ) -> tuple[int, Any]:
+        """PATCH /asks/{ask_id} — 입찰가 수정."""
+        body: dict[str, Any] = {"price": int(price)}
+        if is_keep_on_deferred is not None:
+            body["is_keep_on_deferred"] = bool(is_keep_on_deferred)
+        return await self.request("PATCH", f"/asks/{ask_id}", json=body)
+
+    async def delete_ask(self, ask_id: int) -> tuple[int, Any]:
+        """DELETE /asks/{ask_id} — 입찰 삭제."""
+        return await self.request("DELETE", f"/asks/{ask_id}")
+
+    # ── 재고/상품 ────────────────────────────────────────────────────
+    async def list_products(self, page: int = 1, per_page: int = 50) -> tuple[int, Any]:
+        """GET /products — 보유 재고 목록(전문셀러). highest_bid(최고구매입찰가) 포함."""
+        return await self.request(
+            "GET", "/products", params={"page": page, "per_page": min(per_page, 50)}
+        )
+
+    async def get_product(self, product_id: int) -> tuple[int, Any]:
+        """GET /products/{product_id} — 상품 상세."""
+        return await self.request("GET", f"/products/{product_id}")
+
+    async def search_products(self, **filters: Any) -> tuple[int, Any]:
+        """GET /products/search — id/이름/품번/카테고리/브랜드 검색."""
+        return await self.request(
+            "GET",
+            "/products/search",
+            params={k: v for k, v in filters.items() if v not in (None, "")},
+        )
+
+    # ── 주문 ────────────────────────────────────────────────────────
+    async def list_orders(
+        self,
+        order_status: str,
+        page: int = 1,
+        per_page: int = 50,
+        overseas: bool = False,
+        **filters: Any,
+    ) -> tuple[int, Any]:
+        """GET /orders(/overseas) — order_status 필수.
+
+        order_status: payment_completed|preparing_package|delivering|delivered|canceled
+        (없이 호출하면 400 "order_status is required")
+        """
+        params: dict[str, Any] = {
+            "order_status": order_status,
+            "page": page,
+            "per_page": min(per_page, 50),
+        }
+        params.update({k: v for k, v in filters.items() if v not in (None, "")})
+        path = "/orders/overseas" if overseas else "/orders"
+        return await self.request("GET", path, params=params)
+
+    async def set_prepare_package(self, ids: list[int]) -> tuple[int, Any]:
+        """POST /orders/set-prepare-package — 주문 확인(발송 준비)."""
+        return await self.request(
+            "POST", "/orders/set-prepare-package", json={"ids": [int(i) for i in ids]}
+        )
+
+    async def set_delivering(
+        self, items: list[dict[str, Any]], is_update: bool = False
+    ) -> tuple[int, Any]:
+        """POST /orders/set-delivering — 송장 입력.
+
+        items: [{"id": 주문상품id, "logistics_company_id": int, "tracking_code": str}]
+        """
+        return await self.request(
+            "POST",
+            "/orders/set-delivering",
+            json={"items": items, "is_update": bool(is_update)},
+        )
+
+    async def logistics_companies(self) -> tuple[int, Any]:
+        """GET /orders/logistics-companies — 택배사 목록(id/name/tracking_url/검증규칙)."""
+        return await self.request("GET", "/orders/logistics-companies")
