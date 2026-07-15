@@ -6589,16 +6589,20 @@ async def sync_orders_from_markets(
                         )
                     logger.info(f"[주문동기화] 플레이오토: {len(raw_orders)}건 조회")
 
-                    # 롯데홈쇼핑 직접 연동 시 기존 플레이오토 중복 주문 삭제 (최초 1회)
-                    if _has_lottehome:
-                        from sqlalchemy import text as _pa_text
+                    # 롯데홈쇼핑 직접 연동 시 기존 플레이오토 중복 주문 삭제 (최초 1회).
+                    # source_site 는 collected_product 매칭 후 소싱처가 들어가는 컬럼이라
+                    # 몰 이름이 안 담김 — 몰 식별은 sales_channel_alias("롯데아이몰(계정)")
+                    # 와 롯데홈 주문번호 형식("OrdNo 라인번호", 공백 구분)으로 한다.
+                    from sqlalchemy import text as _pa_text
 
+                    if _has_lottehome:
                         _del_result = await session.execute(
                             _pa_text(
                                 "DELETE FROM samba_order "
                                 "WHERE source = 'playauto' "
                                 "AND channel_id = :cid "
-                                "AND (source_site LIKE '%롯데아이몰%' OR source_site LIKE '%롯데홈쇼핑%')"
+                                "AND (source_site LIKE '%롯데아이몰%' OR source_site LIKE '%롯데홈쇼핑%' "
+                                "     OR sales_channel_alias LIKE '%롯데아이몰%' OR sales_channel_alias LIKE '%롯데홈쇼핑%')"
                             ),
                             {"cid": account["id"]},
                         )
@@ -6607,15 +6611,60 @@ async def sync_orders_from_markets(
                                 f"[주문동기화] 플레이오토 롯데홈쇼핑 중복 주문 {_del_result.rowcount}건 삭제"
                             )
 
+                    def _lh_colon_key(ro: dict) -> str:
+                        # EMP OrderCode "20260713G01751 1129595649" → 직수집 키 "…:…"
+                        return str(ro.get("OrderCode", "")).strip().replace(" ", ":", 1)
+
+                    def _is_lotte_mall_order(ro: dict) -> bool:
+                        _s = str(ro.get("SiteName", "") or "")
+                        return "롯데아이몰" in _s or "롯데홈쇼핑" in _s
+
+                    # 직수집 계정이 꺼져 있어도(전환기) 이미 직수집(lottehome)된 주문은
+                    # 플레이오토로 재유입 금지 — 같은 주문이 2행(신규주문 중복)으로 보이는
+                    # 사고(2026-07-14, EMP 롯데아이몰 연동 직후) 재발 차단.
+                    _lh_dup_keys: set[str] = set()
+                    if not _has_lottehome:
+                        _lotte_keys = [
+                            _lh_colon_key(ro)
+                            for ro in raw_orders
+                            if _is_lotte_mall_order(ro) and _lh_colon_key(ro)
+                        ]
+                        if _lotte_keys:
+                            _lh_rows = await session.execute(
+                                _pa_text(
+                                    "SELECT order_number FROM samba_order "
+                                    "WHERE source = 'lottehome' AND order_number = ANY(:nums)"
+                                ),
+                                {"nums": _lotte_keys},
+                            )
+                            _lh_dup_keys = {r[0] for r in _lh_rows}
+                        if _lh_dup_keys:
+                            # 이미 들어와버린 플레이오토 중복행도 자동 정리 (직수집 행이 원본)
+                            _dup_del = await session.execute(
+                                _pa_text(
+                                    "DELETE FROM samba_order "
+                                    "WHERE source = 'playauto' "
+                                    "AND channel_id = :cid "
+                                    "AND REPLACE(order_number, ' ', ':') = ANY(:nums)"
+                                ),
+                                {"cid": account["id"], "nums": list(_lh_dup_keys)},
+                            )
+                            if _dup_del.rowcount:
+                                logger.info(
+                                    f"[주문동기화] 플레이오토 롯데홈쇼핑 중복 주문(직수집 존재) {_dup_del.rowcount}건 정리"
+                                )
+
                     for ro in raw_orders:
                         # 파생 주문 스킵 (사본-취소마감, ★교환주문 — 원주문에 이미 정보 포함)
                         _pname = ro.get("ProdName", "")
                         if _pname.startswith("[사본-") or "★교환주문" in _pname:
                             continue
-                        # 롯데홈쇼핑 직접 연동 계정이 있으면 플레이오토 롯데홈 주문 스킵
-                        if _has_lottehome:
-                            _ro_site = str(ro.get("SiteName", "") or "").strip()
-                            if "롯데아이몰" in _ro_site or "롯데홈쇼핑" in _ro_site:
+                        if _is_lotte_mall_order(ro):
+                            # 롯데홈쇼핑 직접 연동 계정이 있으면 전량 스킵
+                            if _has_lottehome:
+                                continue
+                            # 직접 연동이 꺼져 있어도 직수집 행이 이미 있는 주문은 스킵
+                            if _lh_colon_key(ro) in _lh_dup_keys:
                                 continue
                         orders_data.append(
                             _parse_playauto_order(ro, account["id"], label, alias_map)
