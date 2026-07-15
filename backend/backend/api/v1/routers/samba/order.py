@@ -6752,23 +6752,145 @@ async def sync_orders_from_markets(
                                 f"{len(_orphan_list)}건 중 {_ORPHAN_CAP}건만 재조회 "
                                 f"(나머지 {len(_orphan_list) - _ORPHAN_CAP}건은 다음 sync)"
                             )
-                        _recovered = 0
-                        for _oid in _orphan_list[:_ORPHAN_CAP]:
-                            try:
-                                _sheets = await client.get_ordersheets_by_order_id(_oid)
-                            except Exception as _re:
-                                logger.warning(
-                                    f"[주문동기화] 쿠팡({label}): "
-                                    f"orphan orderId={_oid} 재조회 실패 — {_re}"
+                        # [#641 ①] oid별 receipt 모음 — 같은 receipt 가 (oid,vid)
+                        # 키마다 중복 등록돼 있어 receiptId 로 dedupe
+                        _oid_receipts: dict[int, dict[Any, dict]] = {}
+                        for (_k_oid, _), _k_cr in cancel_map.items():
+                            _oid_receipts.setdefault(_k_oid, {})[
+                                _k_cr.get("receiptId") or id(_k_cr)
+                            ] = _k_cr
+
+                        async def _apply_receipt_direct(_cr: dict) -> int:
+                            """[#641 ①] 종결 receipt → 기존 주문 직접 UPDATE.
+
+                            취소·반품으로 종결된 주문은 ordersheet 단건조회가
+                            HTTP 400(The order has been cancelled or returned)을
+                            반환해 재조회 복원이 구조적으로 실패한다. receipt 의
+                            returnItems/cancelItems[].shipmentBoxId 가 쿠팡
+                            order_number(=shipmentBoxId) 와 동일하므로 재조회 없이
+                            기존 주문 상태만 직접 갱신한다 (롯데ON 교환클레임
+                            직접 업데이트와 동일 패턴). 전이 가드는 중앙 체인과
+                            동일 원칙 유지 (역행·취소상태보호·배송진행보호).
+                            """
+                            _cls = _classify_coupang_claim(_cr)
+                            if not _cls:
+                                return 0
+                            _new_ship, _new_internal = _cls
+                            _cr_items = (
+                                _cr.get("cancelItems") or _cr.get("returnItems") or []
+                            )
+                            _box_ids = {
+                                _it.get("shipmentBoxId")
+                                for _it in (
+                                    _cr_items if isinstance(_cr_items, list) else []
                                 )
+                                if isinstance(_it, dict) and _it.get("shipmentBoxId")
+                            }
+                            _n = 0
+                            from sqlalchemy import text as _sa_text_cp  # noqa: F811
+
+                            for _bid in _box_ids:
+                                _row = (
+                                    await session.execute(
+                                        _sa_text_cp(
+                                            "SELECT id, shipping_status "
+                                            "FROM samba_order "
+                                            "WHERE source = 'coupang' "
+                                            "  AND order_number = :onum LIMIT 1"
+                                        ),
+                                        {"onum": str(_bid)},
+                                    )
+                                ).fetchone()
+                                if not _row:
+                                    continue
+                                _ex_id, _ex_ship = _row[0], str(_row[1] or "")
+                                if _ex_ship == _new_ship:
+                                    continue
+                                # 취소 상태 보호 — 취소 계열을 반품으로 덮지 않음
+                                if _ex_ship in (
+                                    "취소요청",
+                                    "취소처리중",
+                                    "취소완료",
+                                ) and _new_ship in ("반품요청", "반품완료", "반품거부"):
+                                    continue
+                                # 역행 차단 (종결 → 요청)
+                                if _ex_ship == "취소완료" and _new_ship == "취소요청":
+                                    continue
+                                if (
+                                    _ex_ship in ("반품완료", "반품거부")
+                                    and _new_ship == "반품요청"
+                                ):
+                                    continue
+                                # 배송 진행 상태 보호 — 진행중 취소요청은 중앙 체인 담당
+                                if _new_ship == "취소요청" and _ex_ship in (
+                                    "송장전송완료",
+                                    "국내배송중",
+                                    "배송완료",
+                                    "구매확정",
+                                ):
+                                    continue
+                                await svc.update_order(
+                                    _ex_id,
+                                    {
+                                        "shipping_status": _new_ship,
+                                        "status": _new_internal,
+                                    },
+                                )
+                                logger.info(
+                                    f"[주문동기화] 쿠팡({label}): 종결 receipt 직접반영 "
+                                    f"{_bid} {_ex_ship or '(없음)'} → {_new_ship}"
+                                )
+                                _n += 1
+                            return _n
+
+                        _recovered = 0
+                        _direct_applied = 0
+                        for _oid in _orphan_list[:_ORPHAN_CAP]:
+                            _receipts = list((_oid_receipts.get(_oid) or {}).values())
+                            # 종결(COMPLETED) receipt 만 있는 orphan 은 ordersheet
+                            # 단건조회가 400 확정 — 호출 생략하고 직접반영 (400 노이즈 제거)
+                            _all_completed = bool(_receipts) and all(
+                                "COMPLETED" in ((_r.get("receiptStatus") or "").upper())
+                                for _r in _receipts
+                            )
+                            _sheets = []
+                            if not _all_completed:
+                                try:
+                                    _sheets = await client.get_ordersheets_by_order_id(
+                                        _oid
+                                    )
+                                except Exception as _re:
+                                    _re_s = str(_re)
+                                    # 400 = 취소·반품 종결 주문 → 직접반영 폴백
+                                    if not (
+                                        "400" in _re_s
+                                        or "cancelled or returned" in _re_s
+                                    ):
+                                        logger.warning(
+                                            f"[주문동기화] 쿠팡({label}): "
+                                            f"orphan orderId={_oid} 재조회 실패 — {_re}"
+                                        )
+                                        continue
+                            if _sheets:
+                                for _sheet in _sheets:
+                                    raw_orders.append(_sheet)
+                                    _recovered += 1
                                 continue
-                            for _sheet in _sheets:
-                                raw_orders.append(_sheet)
-                                _recovered += 1
-                        if _recovered:
+                            for _cr_direct in _receipts:
+                                try:
+                                    _direct_applied += await _apply_receipt_direct(
+                                        _cr_direct
+                                    )
+                                except Exception as _dae:
+                                    logger.warning(
+                                        f"[주문동기화] 쿠팡({label}): 종결 receipt "
+                                        f"직접반영 실패 orderId={_oid} — {_dae}"
+                                    )
+                        if _recovered or _direct_applied:
                             logger.info(
                                 f"[주문동기화] 쿠팡({label}): "
-                                f"orphan 취소·반품 주문 {_recovered}건 재조회 복원"
+                                f"orphan 취소·반품 재조회 복원 {_recovered}건 / "
+                                f"종결 receipt 직접반영 {_direct_applied}건"
                             )
                     except Exception as orphan_err:
                         logger.warning(
@@ -10857,6 +10979,46 @@ def _pick_real_phone(primary: Any, real: Any) -> str:
     return p or r
 
 
+def _classify_coupang_claim(cancel_info: Optional[dict]) -> Optional[tuple[str, str]]:
+    """쿠팡 returnRequests v6 receipt 1건 → (마켓주문상태, 내부상태) 판정 (#599·#641).
+
+    receiptType 단독 판단 금지 — 출고 여부(releaseStatus)가 권위 신호:
+      Y=출고완료(진짜 반품) / S=출고중지 / N=미출고.
+    쿠팡은 환불을 먼저 종결(RETURNS_COMPLETED)하고 releaseStatus 는 야간 정산에서
+    일괄 갱신하므로(N→S 00:45 일괄 전환 실측), N + RETURNS_COMPLETED 과도기도
+    미출고 취소로 판정해야 한다 — 반품완료로 확정 기록하면 종결 배지 보호 가드에
+    걸려 취소완료 정정이 영구 차단됨 (#641 ③).
+    반환: (market_order_status, internal_status) — 클레임 아니면 None.
+    """
+    if not cancel_info:
+        return None
+    receipt_type = (cancel_info.get("receiptType") or "").upper()
+    _release_status = ""
+    _ci_return_items = cancel_info.get("returnItems") or []
+    if (
+        isinstance(_ci_return_items, list)
+        and _ci_return_items
+        and isinstance(_ci_return_items[0], dict)
+    ):
+        _release_status = (_ci_return_items[0].get("releaseStatus") or "").upper()
+    _release_stop = cancel_info.get("releaseStopStatus") or ""
+    _receipt_status = (cancel_info.get("receiptStatus") or "").upper()
+    _is_completed = "COMPLETED" in _receipt_status
+    # RETURN 인데 미출고(S/N) 또는 출고중지 표기 → 취소로 재분류
+    _return_is_actually_cancel = receipt_type == "RETURN" and (
+        _release_status in ("S", "N") or "출고중지" in _release_stop
+    )
+    if receipt_type == "CANCEL" or _return_is_actually_cancel:
+        if _is_completed:
+            return ("취소완료", "cancelled")
+        return ("취소요청", "cancel_requested")
+    if receipt_type == "RETURN":
+        if _is_completed:
+            return ("반품완료", "returned")
+        return ("반품요청", "return_requested")
+    return None
+
+
 def _parse_coupang_order(
     order: dict,
     account_id: str,
@@ -10893,47 +11055,10 @@ def _parse_coupang_order(
 
     # 클레임 (취소/반품 요청) — returnRequests v6 API 응답으로 판단 (#246)
     # 과거: order["cancelRequests"]/["returnRequests"] 의존했으나 ordersheets v5에 존재 X
-    receipt_type = (
-        ((cancel_info or {}).get("receiptType") or "").upper() if cancel_info else ""
-    )
-    # [#599] 취소/반품 판정 — receiptType 단독 판단 금지.
-    #   쿠팡 returnRequests v6 는 출고중지 취소(상품준비중 고객취소)도
-    #   receiptType=RETURN 으로 내려줌. 출고 여부(releaseStatus)가 권위 신호:
-    #     Y=출고완료(진짜 반품) / S=출고중지 / N=미출고.
-    #   RETURN 이라도 releaseStatus∈{S,N}(미출고) 또는 releaseStopStatus '출고중지'
-    #   표기면 실제로는 '취소'. (SSG classify_ssg_completion 의 shpmtQty 판정과 동일 철학)
-    #   receiptStatus 로 요청/완료 구분 — 실측 RETURNS_COMPLETED → 완료.
-    _ci = cancel_info or {}
-    _release_status = ""
-    _ci_return_items = _ci.get("returnItems") or []
-    if (
-        isinstance(_ci_return_items, list)
-        and _ci_return_items
-        and isinstance(_ci_return_items[0], dict)
-    ):
-        _release_status = (_ci_return_items[0].get("releaseStatus") or "").upper()
-    _release_stop = _ci.get("releaseStopStatus") or ""
-    _receipt_status = (_ci.get("receiptStatus") or "").upper()
-    _is_completed = "COMPLETED" in _receipt_status
-    # RETURN 인데 미출고(S/N) 또는 출고중지 표기 → 취소로 재분류
-    _return_is_actually_cancel = receipt_type == "RETURN" and (
-        _release_status in ("S", "N") or "출고중지" in _release_stop
-    )
-
-    if receipt_type == "CANCEL" or _return_is_actually_cancel:
-        if _is_completed:
-            market_order_status = "취소완료"
-            internal_status = "cancelled"
-        else:
-            market_order_status = "취소요청"
-            internal_status = "cancel_requested"
-    elif receipt_type == "RETURN":
-        if _is_completed:
-            market_order_status = "반품완료"
-            internal_status = "returned"
-        else:
-            market_order_status = "반품요청"
-            internal_status = "return_requested"
+    # [#599] 판정 로직은 _classify_coupang_claim 공용 헬퍼로 이동 (#641 직접반영과 공유)
+    _claim = _classify_coupang_claim(cancel_info)
+    if _claim:
+        market_order_status, internal_status = _claim
     else:
         market_order_status = market_status_map.get(coupang_status, coupang_status)
         internal_status = status_map.get(coupang_status, "pending")
