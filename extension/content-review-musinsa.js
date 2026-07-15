@@ -227,18 +227,17 @@
       try {
         switch (action) {
           case 'samba_review_getPageInfo': {
-            const api = await collectNextApiPage()
-            const paths = api.paths.length ? api.paths : getDomReviewPaths()
-            sendResponse({ generalPaths: paths, apiDone: api.done })
+            // [2026-07-15] orders API(collectNextApiPage)는 작성가능 목록을 0으로 반환해
+            // ('작성가능 후기 757'이 페이지엔 있는데 API는 주문 0/작성가능 0 — 실측 확인)
+            // 리뷰가 '스크롤 없이 대기하다 꺼짐'을 유발했다. 실제 작성가능 후기는 myreview
+            // 가상스크롤 목록에 있고 getDomReviewPaths 가 write 링크를 정확히 찾는다(실측 9건).
+            // → 원래 동작대로 DOM 스크롤 방식을 정식 경로로 사용한다. (API 경로 폐기)
+            sendResponse({ generalPaths: getDomReviewPaths() })
             break
           }
           case 'samba_review_scrollAndCollect': {
-            if (!_apiDone) {
-              const api = await collectNextApiPage()
-              sendResponse({ generalPaths: api.paths, atBottom: api.done })
-            } else {
-              sendResponse(await scrollAndCollect())
-            }
+            // 목록을 한 스텝 스크롤 → 새로 로드된 작성가능 링크 수집(가상스크롤). 바닥이면 atBottom.
+            sendResponse(await scrollAndCollect())
             break
           }
           case 'samba_review_fillAndSubmit':
