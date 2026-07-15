@@ -187,9 +187,7 @@ async def cleanup_ssg_orphans(
                     "GET", "/item/0.1/getItemList.ssg", params=_params
                 )
                 _result = _resp.get("result", _resp) if isinstance(_resp, dict) else {}
-                _items_raw = (
-                    _result.get("items") if isinstance(_result, dict) else None
-                )
+                _items_raw = _result.get("items") if isinstance(_result, dict) else None
                 _iv = (
                     _items_raw.get("item")
                     if isinstance(_items_raw, dict)
@@ -249,6 +247,8 @@ async def backfill_playauto_mastercode(
     매칭해 market_product_nos[account]에 채운다.
     - backfilled: 번호 채운 수 (→ 주문매칭·삭제·오토튠 정상화)
     - missing_in_emp: EMP에도 없음 = 등록 실패/삭제(별도 처리)
+    - ambiguous_in_emp: 같은 품번/상품명의 EMP 상품이 2개 이상 = 중복등록분.
+      오매칭 방지를 위해 건너뜀(수동 확인 대상)
     ⚠ 재전송 금지(mpn null→__AUTO__ 신규등록→EMP 중복생성). 최초 dry_run=true 로 확인.
     """
     import json as _json
@@ -297,8 +297,14 @@ async def backfill_playauto_mastercode(
     finally:
         await client.close()
 
+    # EMP Model = 품번(site_product_id) — proxy/playauto.py `Model` 세팅부 참조.
+    # 같은 품번/상품명에 EMP 상품이 2개 이상이면(=mpn null 재전송으로 생긴 중복 등록)
+    # 어느 쪽이 맞는지 알 수 없으므로 매칭에서 제외한다. 임의로 하나 고르면
+    # 엉뚱한 MasterCode 가 박혀 이후 삭제/오토튠이 남의 상품을 건드린다.
     by_model: dict[str, str] = {}
     by_name: dict[str, str] = {}
+    dup_model: set[str] = set()
+    dup_name: set[str] = set()
     for e in emp or []:
         if not isinstance(e, dict):
             continue
@@ -308,14 +314,22 @@ async def backfill_playauto_mastercode(
         md = _first(e, _MODK)
         nm = _first(e, _NMK)
         if md:
-            by_model.setdefault(md, mc)
+            prev = by_model.get(md)
+            if prev is None:
+                by_model[md] = mc
+            elif prev != mc:
+                dup_model.add(md)
         if nm:
-            by_name.setdefault(nm, mc)
+            prev = by_name.get(nm)
+            if prev is None:
+                by_name[nm] = mc
+            elif prev != mc:
+                dup_name.add(nm)
 
     rows = (
         await session.execute(
             _text(
-                "SELECT id, market_product_nos, name, site_product_id, style_code "
+                "SELECT id, market_product_nos, name, site_product_id "
                 "FROM samba_collected_product "
                 "WHERE registered_accounts @> CAST(:arr AS jsonb)"
             ).bindparams(arr=f'["{account_id}"]')
@@ -324,20 +338,32 @@ async def backfill_playauto_mastercode(
 
     backfilled: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
+    ambiguous: list[dict[str, Any]] = []
     already = 0
-    for rid, mpn_raw, name, spid, scode in rows:
+    for rid, mpn_raw, name, spid in rows:
         mpn = dict(mpn_raw or {})
         if str(mpn.get(account_id) or "").strip():
             already += 1
             continue
+        # 품번(site_product_id)만 매칭 키로 쓴다. style_code 는 Model 로 전송된 적이
+        # 없어(= EMP 에 존재하지 않는 키) 폴백에 넣으면 "다른 상품의 품번과 우연히
+        # 같은 경우"에만 hit 하는 오매칭 경로가 된다.
         mc = ""
-        for key in (spid, scode):
-            if key and str(key).strip() in by_model:
-                mc = by_model[str(key).strip()]
-                break
-        if not mc and name and name in by_name:
-            mc = by_name[name]
-        if mc:
+        is_ambiguous = False
+        key = str(spid).strip() if spid else ""
+        if key:
+            if key in dup_model:
+                is_ambiguous = True
+            else:
+                mc = by_model.get(key, "")
+        if not mc and not is_ambiguous and name:
+            if name in dup_name:
+                is_ambiguous = True
+            else:
+                mc = by_name.get(name, "")
+        if is_ambiguous:
+            ambiguous.append({"id": rid, "name": (name or "")[:30], "spid": spid})
+        elif mc:
             backfilled.append(
                 {"id": rid, "master": mc, "name": (name or "")[:30], "spid": spid}
             )
@@ -347,9 +373,7 @@ async def backfill_playauto_mastercode(
                     _text(
                         "UPDATE samba_collected_product "
                         "SET market_product_nos = CAST(:nos AS jsonb) WHERE id = :id"
-                    ).bindparams(
-                        nos=_json.dumps(mpn, ensure_ascii=False), id=rid
-                    )
+                    ).bindparams(nos=_json.dumps(mpn, ensure_ascii=False), id=rid)
                 )
         else:
             missing.append({"id": rid, "name": (name or "")[:30], "spid": spid})
@@ -365,9 +389,11 @@ async def backfill_playauto_mastercode(
         "already_has_number": already,
         "backfilled": len(backfilled),
         "missing_in_emp": len(missing),
+        "ambiguous_in_emp": len(ambiguous),
         "dry_run": dry_run,
         "backfill_sample": backfilled[:15],
         "missing_sample": missing[:15],
+        "ambiguous_sample": ambiguous[:15],
     }
 
 
