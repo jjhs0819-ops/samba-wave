@@ -41,6 +41,19 @@ def _to_grouped_options(options: list[dict], group_names: list[str]) -> list[dic
             return _split_multi_group_options(options, inferred)
         group_name = group_names[0] if group_names else "사이즈"
         return [{"name": group_name, "values": options}]
+    # group_names 는 2축인데 옵션명이 단일축("55","66")인 상품(무신사 [3PACK]/세트류 등).
+    # 이대로 _split_multi_group_options 에 넘기면 len(parts) != n 으로 전 옵션이 버려져
+    # 빈 그룹만 남고, esmplus 가 그 그룹 dict 를 옵션값으로 강등시켜 "색상"/"사이즈"
+    # 글자 두 개가 실구매 선택지로 등록된다(#649). 구분자 유무로 먼저 판별한다.
+    # (11번가 proxy/elevenst.py 의 has_slash 판별과 동일 취지)
+    if not any(
+        str(o.get("name") or "").count("/") >= len(group_names) - 1 for o in options
+    ):
+        inferred = _infer_group_names(options)
+        if inferred:
+            return _split_multi_group_options(options, inferred)
+        # 축 추론도 안 되면 단일 그룹으로 폴백 — 마지막 그룹명(통상 "사이즈")을 쓴다.
+        return [{"name": group_names[-1], "values": options}]
     return _split_multi_group_options(options, group_names)
 
 
@@ -112,9 +125,11 @@ def _split_multi_group_options(
     axis_seen: list[set] = [set() for _ in range(n)]
     combo_stock_map: dict[str, dict] = {}
 
+    dropped: list[str] = []
     for opt in options:
         parts = [p.strip() for p in opt.get("name", "").split("/", n - 1)]
         if len(parts) != n:
+            dropped.append(str(opt.get("name") or ""))
             continue
         for i, val in enumerate(parts):
             if val not in axis_seen[i]:
@@ -127,6 +142,22 @@ def _split_multi_group_options(
             # per-combo 절대가격 보존 — _build_combination 추가금 차액 환산용(#418②)
             "price": (int(opt["price"]) if opt.get("price") is not None else None),
         }
+
+    # 전량 소실 방어 (#649) — 한 건도 분할되지 않으면 빈 그룹을 반환하지 않는다.
+    # 빈 values 는 esmplus 의 falsy 재래핑에 걸려 그룹명이 옵션값으로 강등되고,
+    # 전면 자유입력(#418)이라 에러 없이 성공 처리돼 조용히 판매된다.
+    if not any(axis_order):
+        logger.warning(
+            f"[지마켓] 옵션 분할 전량 실패 — 단일 그룹 폴백. "
+            f"group_names={group_names} 옵션 예시={dropped[:3]}"
+        )
+        return [{"name": group_names[-1], "values": options}]
+    if dropped:
+        # 부분 소실은 폴백하지 않는다(정상 분할분을 되돌리면 더 나쁨) — 대신 드러낸다.
+        logger.warning(
+            f"[지마켓] 옵션 {len(dropped)}건이 축 분할 실패로 제외됨 — "
+            f"group_names={group_names} 예시={dropped[:3]}"
+        )
 
     result: list[dict] = []
     for i, gname in enumerate(group_names):
