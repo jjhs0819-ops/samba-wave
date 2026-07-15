@@ -301,10 +301,14 @@ async def backfill_playauto_mastercode(
     # 같은 품번/상품명에 EMP 상품이 2개 이상이면(=mpn null 재전송으로 생긴 중복 등록)
     # 어느 쪽이 맞는지 알 수 없으므로 매칭에서 제외한다. 임의로 하나 고르면
     # 엉뚱한 MasterCode 가 박혀 이후 삭제/오토튠이 남의 상품을 건드린다.
+    import re as _re
+
     by_model: dict[str, str] = {}
     by_name: dict[str, str] = {}
+    by_tail: dict[str, str] = {}
     dup_model: set[str] = set()
     dup_name: set[str] = set()
+    dup_tail: set[str] = set()
     for e in emp or []:
         if not isinstance(e, dict):
             continue
@@ -325,6 +329,19 @@ async def backfill_playauto_mastercode(
                 by_name[nm] = mc
             elif prev != mc:
                 dup_name.add(nm)
+            # EMP 상품명 끝 숫자토큰 = 등록 시 이름 뒤에 붙는 품번(site_product_id).
+            # cp.name 이 EMP 전송명과 다른 상품(원상품명으로 수집된 르무통 등)은
+            # 이름 정확일치가 불가능해 여기로만 잡힌다. 5자리 미만 숫자는 사이즈
+            # 등과 혼동될 수 있어 제외, 충돌 키는 dup 가드로 매칭 제외.
+            # (실측 7만 건: 끝토큰 보유 51,668 / 유니크 50,439 / 충돌 1,169)
+            _toks = nm.split()
+            _tail = _toks[-1] if _toks else ""
+            if _re.fullmatch(r"\d{5,}", _tail):
+                prev = by_tail.get(_tail)
+                if prev is None:
+                    by_tail[_tail] = mc
+                elif prev != mc:
+                    dup_tail.add(_tail)
 
     rows = (
         await session.execute(
@@ -361,6 +378,13 @@ async def backfill_playauto_mastercode(
                 is_ambiguous = True
             else:
                 mc = by_name.get(name, "")
+        # ③ 품번 ↔ EMP 상품명 끝 숫자토큰 — Model 부재 계정(by_model 0건)에서
+        #    이름까지 다른 상품(르무통 등)의 유일한 매칭 경로. 충돌 키는 ambiguous.
+        if not mc and not is_ambiguous and key:
+            if key in dup_tail:
+                is_ambiguous = True
+            else:
+                mc = by_tail.get(key, "")
         if is_ambiguous:
             ambiguous.append({"id": rid, "name": (name or "")[:30], "spid": spid})
         elif mc:
