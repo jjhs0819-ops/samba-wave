@@ -19,7 +19,7 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   undeliverable: { label: '발송불가', bg: 'rgba(217,119,6,0.15)', text: '#F59E0B' },
 }
 
-export const SHIPPING_COMPANIES = ['CJ대한통운', '우진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '한진택배', '일양로지스', '천일택배', '허브넷로지스틱스', '시리박스', '딜리박스', 'DHL', '직접배송', '기타']
+export const SHIPPING_COMPANIES = ['CJ대한통운', '우진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '한진택배', '일양로지스', '천일택배', '허브넷로지스틱스', '시리박스', '딜리박스', 'DHL', 'Rincos', 'Korea Post', '직접배송', '기타']
 
 // [2026-07-02] 크림 해외송장용 — 일본 택배사 (input+datalist라 직접입력도 가능)
 export const OVERSEAS_SHIPPING_COMPANIES = ['ヤマト運輸 야마토', '佐川急便 사가와', '日本郵便 일본우편', '西濃運輸 세이노', '福山通運 후쿠야마', 'EMS', 'DHL', 'FedEx', 'UPS', 'SF Express']

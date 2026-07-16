@@ -395,7 +395,15 @@ async def _send_ebay(order, account, courier, tracking, session):
         refresh_token=refresh_token,
         sandbox=bool(extras.get("sandbox", False)),
     )
-    carrier_map = {"USPS": "USPS", "UPS": "UPS", "FedEx": "FEDEX", "DHL": "DHL"}
+    carrier_map = {
+        "USPS": "USPS",
+        "UPS": "UPS",
+        "FedEx": "FEDEX",
+        "DHL": "DHL",
+        "Rincos": "RINCOS",
+        "Korea Post": "KoreaPost",
+        "우체국택배": "KoreaPost",
+    }
     ebay_carrier = carrier_map.get(courier, "KoreaPost")
     ebay_order_id = order.ext_order_number or order.order_number
     try:

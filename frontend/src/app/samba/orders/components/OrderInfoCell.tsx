@@ -165,6 +165,12 @@ export default function OrderInfoCell(props: Props) {
             <span style={{ fontSize: '0.72rem', color: c.text, fontWeight: 700 }}>{fmtDate(o.paid_at, '.')}</span>
           </div>
         )}
+        {/* 이베이 발송기한 — shipByDate */}
+        {o.ship_by_at && (
+          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: c.warn }}>
+            발송기한 {fmtDate(o.ship_by_at, '.')}
+          </span>
+        )}
         {/* 이베이 도착기한 — Exp(빠른배송)는 강조 표시 (St/Exp에 따라 기한 상이) */}
         {o.estimated_delivery_at && (
           <span style={{

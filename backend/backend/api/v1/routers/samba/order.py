@@ -10291,8 +10291,9 @@ async def sync_orders_from_markets(
                         "cancel_reason_category2",
                         "cancel_fault_by",
                         "cancel_requested_at",
-                        # 이베이 도착기한/배송서비스 — 기존 주문 백필 (2026-07-15)
+                        # 이베이 도착기한/발송기한/배송서비스 — 기존 주문 백필 (2026-07-15)
                         "estimated_delivery_at",
+                        "ship_by_at",
                         "shipping_service_code",
                     ):
                         _cv = order_data.get(_cf)
@@ -12031,6 +12032,10 @@ def _parse_ebay_order(
             )
         if ship_to:
             break
+    # 발송기한 — lineItemFulfillmentInstructions.shipByDate (2026-07-15)
+    ebay_ship_by = _parse_ebay_datetime(
+        (first_item.get("lineItemFulfillmentInstructions") or {}).get("shipByDate")
+    )
     contact = ship_to.get("contactAddress") or {}
     # 우편번호 — 화면 확인용으로 별도 컬럼에 저장 (복사 버튼 분리)
     ebay_postal_code = str(contact.get("postalCode", "") or "").strip() or None
@@ -12113,6 +12118,7 @@ def _parse_ebay_order(
         "tracking_number": "",
         "paid_at": _parse_ebay_datetime(o.get("creationDate")),
         "estimated_delivery_at": ebay_delivery_deadline,
+        "ship_by_at": ebay_ship_by,
         "shipping_service_code": ebay_shipping_service or None,
         "source": "ebay",
         "notes": f"USD {sale_price_usd:.2f} @ {exchange_rate:.2f}원/USD",

@@ -221,8 +221,9 @@ export interface SambaOrder {
   action_tag?: string;
   customer_note?: string;
   paid_at?: string;
-  // 이베이 도착기한/배송서비스 (St/Exp 구분, 2026-07-15)
+  // 이베이 도착기한/발송기한/배송서비스 (St/Exp 구분, 2026-07-15)
   estimated_delivery_at?: string | null;
+  ship_by_at?: string | null;
   shipping_service_code?: string | null;
   created_at: string;
   updated_at: string;

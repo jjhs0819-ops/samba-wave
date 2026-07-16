@@ -291,6 +291,10 @@ class SambaOrder(SQLModel, table=True):
     estimated_delivery_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+    # 이베이 발송기한 — lineItems[].lineItemFulfillmentInstructions.shipByDate
+    ship_by_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     # 이베이 배송서비스 코드 (예: ExpeditedShippingFromOutsideUS)
     shipping_service_code: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
