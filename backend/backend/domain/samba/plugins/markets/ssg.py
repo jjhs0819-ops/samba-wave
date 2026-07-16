@@ -531,6 +531,29 @@ class SSGPlugin(MarketPlugin):
         if existing_no:
             data["itemId"] = existing_no
             result = await client.update_product(data)
+            # 신규 옵션(소싱처에 새 사이즈 생김) → updateItem 불가 → 삭제 후 재등록.
+            # SSG updateItem 은 기존 옵션 수정만 되고 신규 옵션 추가가 안 되므로,
+            # 옵션 구성이 바뀐 상품은 기존 등록을 판매중지 후 insertItem 으로 새로 올린다.
+            if result.get("_needs_reregister"):
+                logger.info(
+                    f"[SSG] 옵션 구성 변경(신규 사이즈) → 기존 판매중지 후 재등록: "
+                    f"itemId={existing_no}"
+                )
+                try:
+                    await client.delete_product(existing_no)
+                except Exception as _de:
+                    logger.warning(f"[SSG] 재등록 전 판매중지 실패(무시): {_de}")
+                data.pop("itemId", None)
+                # SSG는 판매중지된 상품이라도 '동일 상품명'이면 재등록을 거부한다
+                # ("동일한 상품이 이미 존재"). 상품명에 고유 접미사를 붙여 회피한다.
+                import datetime as _dt
+
+                _suffix = _dt.datetime.now().strftime("%m%d%H%M")
+                _base_nm = str(data.get("itemNm") or "").strip()[:38]
+                data["itemNm"] = f"{_base_nm} R{_suffix}"
+                logger.info(f"[SSG] 재등록 상품명 고유화: {data['itemNm']}")
+                result = await client.register_product(data)
+                result["_clear_product_no"] = True  # 호출자에서 DB 상품번호 초기화
             # 영구판매중지 상품은 수정 불가 → 상품번호 초기화 후 신규등록
             result_data_chk = result.get("data", {})
             if isinstance(result_data_chk, dict):
@@ -825,8 +848,13 @@ class SSGPlugin(MarketPlugin):
 
         action = "수정" if existing_no else "등록"
         _ret = {"success": True, "message": f"SSG {action} 성공", "data": result}
-        # 멱등가드/수정 경로 — itemId 를 결과에 실어 market_product_nos 백필 보장(#321).
+        # 재등록(옵션구성 변경/영구판매중지)은 새 itemId 로 insertItem 된 것이므로
+        # 옛 existing_no 를 넣으면 안 된다 — _clear_product_no 전파 + product_no 생략해
+        # 호출자의 _extract_market_product_no 가 data(insertItem 응답)의 새 itemId 를 잡게 한다.
+        if result.get("_clear_product_no"):
+            _ret["_clear_product_no"] = True
+        # 멱등가드/순수 수정 경로 — itemId 를 결과에 실어 market_product_nos 백필 보장(#321).
         # (선제검색으로 찾은 itemId 는 DB 미저장 상태이므로 명시 전달 필요)
-        if existing_no:
+        elif existing_no:
             _ret["product_no"] = existing_no
         return _ret

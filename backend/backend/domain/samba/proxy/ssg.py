@@ -359,6 +359,31 @@ class SSGClient:
                     f"[SSG] 옵션명 기반 uitemId 교정 {_fixed}개 "
                     f"(위치매핑 오류→반대옵션 재고 방지)"
                 )
+
+            # DB 옵션 중 SSG에 없는 '신규 옵션'(소싱처에 새 사이즈 생김) 감지.
+            # SSG updateItem은 기존 옵션 수정만 가능하고 신규 옵션 추가는 안 되므로,
+            # updateItem 하면 '매가 1개만'(00003) 등으로 전체 거부된다.
+            # → 재등록 신호를 반환해 호출자(plugin)가 삭제 후 insertItem 하도록 한다.
+            if _ssg_name_to_uid:  # SSG 옵션 조회 성공 시에만 판단(오탐 방지)
+                _db_names = {
+                    _norm_opt(_u.get("uitemOptnNm1", ""))
+                    for _u in _ul
+                    if _u.get("uitemOptnNm1")
+                }
+                _new_opts = _db_names - set(_ssg_name_to_uid.keys())
+                if _new_opts:
+                    logger.info(
+                        f"[SSG] 신규 옵션 {len(_new_opts)}개 감지(SSG에 없음) → "
+                        f"updateItem 불가, 삭제 후 재등록 필요: {sorted(_new_opts)[:5]}"
+                    )
+                    return {
+                        "success": False,
+                        "_needs_reregister": True,
+                        "message": (
+                            f"신규 옵션 {len(_new_opts)}개 — 옵션 구성 변경, "
+                            "삭제 후 재등록 필요"
+                        ),
+                    }
         except Exception as _e:
             logger.warning(f"[SSG] 옵션명 매핑 조회 실패(위치매핑 유지): {_e}")
 
