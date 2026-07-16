@@ -14,14 +14,14 @@ export const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'SNKRDUNK', label: '스니덩크' },
   { id: 'ONITSUKA', label: '오니츠카 타이거' },
   { id: 'BUNJANG', label: '번개장터' },
+  // 백엔드 ENABLE_THEHYUNDAI=1 게이트와 세트 (2026-07-13 운영 활성화)
+  { id: 'THEHYUNDAI', label: '더현대Hi' },
   // 개발예정 (비활성)
   { id: 'DANAWA', label: '다나와', disabled: true },
   { id: 'Adidas', label: 'Adidas', disabled: true },
   { id: 'REXMONDE', label: '렉스몬드', disabled: true },
   { id: 'ElandMall', label: '이랜드몰', disabled: true },
   { id: 'SSF', label: 'SSF샵', disabled: true },
-  // 로컬-only 운영 — 운영 환경 사용자에게 노출하되 비활성 (env var 가드와 함께)
-  { id: 'THEHYUNDAI', label: '더현대Hi', disabled: true },
 ]
 
 // 소싱처 옵션 타입
