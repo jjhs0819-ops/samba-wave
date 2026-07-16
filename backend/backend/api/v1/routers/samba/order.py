@@ -6543,7 +6543,10 @@ async def sync_orders_from_markets(
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta
 
-                from backend.domain.samba.proxy.playauto import PlayAutoClient
+                from backend.domain.samba.proxy.playauto import (
+                    PlayAutoClient,
+                    is_derived_order,
+                )
 
                 api_key = extras.get("apiKey", "") or account["api_key"] or ""
                 if not api_key:
@@ -6605,9 +6608,10 @@ async def sync_orders_from_markets(
                         )
 
                     for ro in raw_orders:
-                        # 파생 주문 스킵 (사본-취소마감, ★교환주문 — 원주문에 이미 정보 포함)
-                        _pname = ro.get("ProdName", "")
-                        if _pname.startswith("[사본-") or "★교환주문" in _pname:
+                        # 파생 주문 스킵 (사본-취소마감/반품마감, ★교환주문 — 원주문에
+                        # 이미 정보 포함). 판정은 is_derived_order 로 통일 — 폴러 등
+                        # 다른 수집 지점과 기준이 갈리면 한 곳만 빠져도 중복이 샌다.
+                        if is_derived_order(ro):
                             continue
                         # 롯데아이몰 주문은 직수집 전용 — 플레이오토 유입 차단
                         _ro_site = str(ro.get("SiteName", "") or "")
@@ -11588,6 +11592,19 @@ def _parse_playauto_order(
     alias_map: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """플레이오토 EMP 주문 → SambaOrder 데이터 변환."""
+
+    # [중복 방어] 파생 주문(사본-취소마감/반품마감)은 수집 지점에서 이미 걸러야 한다.
+    # 여기까지 왔다면 거르지 않는 수집 경로가 있다는 뜻 → 원본+사본 중복의 원인이므로
+    # 경로 규명을 위해 경고로 남긴다. (2026-07-15: 사본 행이 화면에 중복 노출됐는데
+    # 당시 알려진 수집 경로에는 모두 스킵이 있어 유입 경로를 특정하지 못했다.)
+    from backend.domain.samba.proxy.playauto import is_derived_order as _is_derived
+
+    if _is_derived(ro):
+        logger.warning(
+            "[주문동기화] 플레이오토 파생주문이 파서까지 유입 — 스킵 누락 경로 존재 "
+            f"(OrderCode={ro.get('OrderCode')}, Number={ro.get('Number')}, "
+            f"ProdName={str(ro.get('ProdName', ''))[:40]!r})"
+        )
 
     # spec 진단용 — SiteId(별칭)별 첫 1건씩 raw 로깅. MasterCode/MyCateName 등 키별 값 확인.
     _logged_sites = getattr(_parse_playauto_order, "_logged_sites", set())

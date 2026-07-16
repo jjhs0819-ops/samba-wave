@@ -83,7 +83,10 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta
 
-                from backend.domain.samba.proxy.playauto import PlayAutoClient
+                from backend.domain.samba.proxy.playauto import (
+                    PlayAutoClient,
+                    is_derived_order,
+                )
 
                 api_key = extras.get("apiKey", "") or account.api_key or ""
                 if not api_key:
@@ -95,6 +98,12 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
                         start_date=start_date, count=200
                     )
                     for ro in raw_orders:
+                        # 파생 주문(사본-취소마감/반품마감, ★교환)은 주문동기화가
+                        # 수집에서 제외한다 → 폴러도 동일하게 제외해야 한다.
+                        # 안 그러면 사본 OrderCode 가 DB 에 영영 안 들어와서 폴러가
+                        # 매 주기 "신규 주문"으로 오인 → order_sync 잡 무한 발행.
+                        if is_derived_order(ro):
+                            continue
                         oid = str(ro.get("OrderCode", "") or "")
                         if oid:
                             raw_order_numbers.append(oid)

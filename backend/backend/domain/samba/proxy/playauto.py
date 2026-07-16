@@ -20,6 +20,28 @@ def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     return encoded[:max_bytes].decode("utf-8", errors="ignore").strip()
 
 
+def is_derived_order(ro: dict) -> bool:
+    """플레이오토 파생 주문(사본/★교환) 여부 — 삼바 수집 제외 대상.
+
+    플토는 취소마감/반품마감 시 원주문을 지우지 않고 **마이너스 상쇄 전표(사본)**를
+    별도 주문으로 발행한다 (2026-07 실측):
+
+        원본: Number=1025375, OrderCode=...227-002,       Count=+1, Price=+37200
+              ProdName='매장정품 스파오 ...'
+        사본: Number=1025394, OrderCode=...227-002_CY2RA, Count=-1, Price=-37200
+              ProdName='[사본-취소마감#1025375] 매장정품 스파오 ...'
+
+    사본은 OrderCode 에 랜덤 접미사가 붙어 원주문과 다른 키로 들어오므로, 수집하면
+    삼바 화면에 같은 주문이 **원본+사본 2건으로 중복**된다(취소마감/반품마감 전부 해당).
+    ★교환주문도 원주문에 이미 정보가 포함돼 동일하게 제외한다.
+
+    수집 지점(주문동기화·신규주문 폴러 등)마다 개별 판정하면 한 곳만 빠져도 중복이
+    새므로, 판정은 이 함수 하나로 통일한다.
+    """
+    pname = str(ro.get("ProdName", "") or "")
+    return pname.startswith("[사본-") or "★교환주문" in pname
+
+
 class PlayAutoApiError(Exception):
     """플레이오토 API 에러."""
 
