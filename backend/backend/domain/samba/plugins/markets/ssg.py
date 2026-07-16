@@ -57,6 +57,24 @@ class SSGPlugin(MarketPlugin):
                 "_skip_retry": True,
             }
 
+        # 옵션별 가격 불균일 상품은 SSG 전송 제외.
+        # SSG 온라인 상품은 옵션별 다른 매가를 지원하지 않는다("온라인 상품의 매가는
+        # 1개만 입력 가능 (00007)"). 옵션가가 1원이라도 다르면 등록/수정하지 않는다.
+        _opt_prices = {
+            int(o.get("price") or 0)
+            for o in (product.get("options") or [])
+            if isinstance(o, dict) and int(o.get("price") or 0) > 0
+        }
+        if len(_opt_prices) > 1:
+            return {
+                "success": False,
+                "message": (
+                    f"옵션별 가격 상이({len(_opt_prices)}종) — SSG는 옵션별 다른 "
+                    "매가 미지원, 전송 제외"
+                ),
+                "_skip_retry": True,
+            }
+
         # 전시카테고리 미매핑 시 등록 불가 — 명확한 에러 반환
         if not category_id:
             product_name = product.get("name", "")
