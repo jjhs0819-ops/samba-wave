@@ -112,20 +112,36 @@ async def _scan_market_goods(client) -> set[str]:
 
 
 async def _fetch_db_tracked_nos(account_id: str) -> set[str]:
-    """DB에서 이 account_id 로 추적 중인 market_product_nos 값 수집."""
+    """DB에서 이 account_id 로 추적 중인 market_product_nos 값 **전부** 수집.
+
+    market_product_nos 에는 계정당 여러 키가 저장된다:
+      {aid}(평문) / {aid}_master(ESM goodsNo) / {aid}_site(siteGoodsNo) / {aid}_pid / {aid}_origin
+    _scan_market_goods 는 goodsNo(master)+siteGoodsNo 를 둘 다 수집하므로, 추적분도
+    프리픽스로 시작하는 **모든 키의 값**을 모아야 정상 상품 master 가 orphan 으로 오분류돼
+    삭제되는 사고를 막는다 (#656 — 평문키만 봐서 _master/_site 만 있는 상품 전멸 위험).
+
+    주의:
+    - jsonb_each_text 는 object 가 아닌 값(null/array)에 호출 시 에러 → jsonb_typeof 가드 필수
+      (market_product_nos 는 null 2만+, array 100+ 존재 실측). raw SQL 함정.
+    - LIKE 프리픽스의 '_' 는 와일드카드라 ESCAPE 로 리터럴화 (오버매칭 차단).
+    - registered_accounts @> 조건 제거 — 배열 마크 어긋난 행(번호는 있으나 배열 누락)도
+      추적분에 포함해 보수적으로 오삭제 방지.
+    - '__claiming__' 등 __ 표식값 제외.
+    """
+    like_prefix = (
+        account_id.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%") + "%"
+    )
     async with get_write_session() as session:
         rows = (
             await session.execute(
                 text(
-                    "SELECT market_product_nos ->> :aid AS no "
-                    "FROM samba_collected_product "
-                    "WHERE registered_accounts @> CAST(:acct_arr AS jsonb) "
-                    "  AND market_product_nos ? :aid "
-                    "  AND (market_product_nos ->> :aid) NOT LIKE '__claiming__%'"
-                ).bindparams(
-                    aid=account_id,
-                    acct_arr=f'["{account_id}"]',
-                )
+                    "SELECT DISTINCT kv.value AS no "
+                    "FROM samba_collected_product p, "
+                    "     jsonb_each_text(p.market_product_nos::jsonb) kv "
+                    "WHERE jsonb_typeof(p.market_product_nos::jsonb) = 'object' "
+                    "  AND kv.key LIKE :pfx ESCAPE '\\' "
+                    "  AND kv.value NOT LIKE '\\_\\_%' ESCAPE '\\'"
+                ).bindparams(pfx=like_prefix)
             )
         ).all()
     return {str(r[0]) for r in rows if r[0]}
