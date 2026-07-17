@@ -2390,24 +2390,37 @@ async def resolve_esm_brand_no(client: ESMPlusClient, brand_name: str) -> int | 
     return None
 
 
-# 셀러+사이트별 {siteGoodsNo → master goodsNo} 맵 + master 집합 캐시 (TTL 10분).
-# 수정/삭제 API는 마스터번호 필수인데 과거 저장값은 siteGoodsNo라 404 → 역매핑 필요.
-_ESM_MASTER_MAP_CACHE: dict[str, tuple[float, tuple[dict[str, str], set[str]]]] = {}
+# 셀러+사이트별 카탈로그 캐시 (TTL 10분):
+#   ({siteGoodsNo → master}, {master...}, {managedCode → (master, siteGoodsNo)})
+# ① 수정/삭제 API는 마스터번호 필수인데 과거 저장값은 siteGoodsNo라 404 → 역매핑 필요.
+# ② 등록 전 중복 가드(#654): managedCode(=site_product_id, #454에서 등록 시 주입)로
+#    기존 등록 역조회 — search_products가 managedCode 필터를 무시(검증됨)해 전체 페이징 필요.
+_ESM_MASTER_MAP_CACHE: dict[
+    str,
+    tuple[float, tuple[dict[str, str], set[str], dict[str, tuple[str, str]]]],
+] = {}
 _ESM_MASTER_MAP_TTL = 600.0
+
+
+def _esm_cache_key(client: ESMPlusClient) -> str:
+    return f"{client.site}:{client.seller_id}"
 
 
 async def _build_esm_master_map(
     client: ESMPlusClient,
-) -> tuple[dict[str, str], set[str]]:
-    """셀러 전체 카탈로그 페이징 → ({siteGoodsNo: master}, {master...}).
+) -> tuple[dict[str, str], set[str], dict[str, tuple[str, str]]]:
+    """셀러 전체 카탈로그 페이징 → (site_map, masters, managed_map).
 
     search_products 가 managedCode/siteGoodsNo 필터를 무시함(검증됨)이라
     전체 목록을 훑어 매칭. siteGoodsNo 는 {gmkt, iac} 구조 — 사이트별 키만 채택.
+    페이지 상한 200(10,000건) — 실측 최대 계정 1,523건(2026-07-16), rate limit 은
+    client 토큰버킷(30/min)이 보장.
     """
     site_key = client.cfg["siteKey"].lower()  # "iac"(옥션) | "gmkt"(지마켓)
     site_map: dict[str, str] = {}
     masters: set[str] = set()
-    for page in range(1, 41):  # 최대 40페이지(2,000건) 안전상한
+    managed_map: dict[str, tuple[str, str]] = {}
+    for page in range(1, 201):
         try:
             r = await client.search_products({"pageIndex": page, "pageSize": 50})
         except Exception as e:
@@ -2424,9 +2437,79 @@ async def _build_esm_master_map(
             sno = str((it.get("siteGoodsNo") or {}).get(site_key) or "").strip()
             if sno:
                 site_map[sno] = master
+            mcode = str(it.get("managedCode") or "").strip()
+            if mcode:
+                if mcode in managed_map and managed_map[mcode][0] != master:
+                    # 같은 managedCode 리스팅 2개 = 이미 중복등록된 상태.
+                    # 먼저 발견된(목록 앞쪽) 것 유지 — 재연결 대상 하나면 충분.
+                    logger.warning(
+                        f"[ESM] managedCode 중복 리스팅 감지: code={mcode} "
+                        f"기존={managed_map[mcode][0]} 추가={master} (유령 정리 대상)"
+                    )
+                else:
+                    managed_map[mcode] = (master, sno)
         if len(items) < 50:
             break
-    return site_map, masters
+    return site_map, masters, managed_map
+
+
+async def _get_esm_catalog_cached(
+    client: ESMPlusClient,
+) -> tuple[dict[str, str], set[str], dict[str, tuple[str, str]]]:
+    """카탈로그 캐시 조회 — 없거나 stale 이면 전체 스캔 후 갱신."""
+    cache_key = _esm_cache_key(client)
+    now = time.time()
+    cached = _ESM_MASTER_MAP_CACHE.get(cache_key)
+    if cached and (now - cached[0]) < _ESM_MASTER_MAP_TTL:
+        return cached[1]
+    fresh = await _build_esm_master_map(client)
+    _ESM_MASTER_MAP_CACHE[cache_key] = (now, fresh)
+    return fresh
+
+
+def invalidate_esm_catalog_cache(client: ESMPlusClient) -> None:
+    """카탈로그 캐시 무효화 — 등록 타임아웃/응답유실 시 호출(#654).
+
+    ESM 쪽엔 등록됐는데 응답을 못 받은 경우, 다음 등록 가드가 stale 캐시로
+    중복을 놓치지 않도록 다음 조회 때 강제 재스캔시킨다.
+    """
+    _ESM_MASTER_MAP_CACHE.pop(_esm_cache_key(client), None)
+
+
+def note_esm_registered_goods(
+    client: ESMPlusClient, managed_code: str, master: str, site_goods_no: str
+) -> None:
+    """등록 성공 직후 캐시에 즉시 반영(#654) — 같은 배치 내 재시도가
+    TTL 전이라도 가드에 걸리도록."""
+    cached = _ESM_MASTER_MAP_CACHE.get(_esm_cache_key(client))
+    if not cached:
+        return
+    site_map, masters, managed_map = cached[1]
+    if master:
+        masters.add(master)
+        if site_goods_no:
+            site_map[site_goods_no] = master
+        if managed_code:
+            managed_map.setdefault(managed_code, (master, site_goods_no))
+
+
+async def find_esm_goods_by_managed_code(
+    client: ESMPlusClient, managed_code: str
+) -> dict[str, str] | None:
+    """등록 전 중복 가드(#654): managedCode → 기존 리스팅 조회.
+
+    반환: {"goodsNo": master, "siteGoodsNo": sno} 또는 None(미등록).
+    search_products 의 managedCode 필터가 동작하지 않아(검증됨) 전체 페이징
+    카탈로그 캐시(TTL 10분)로 매칭. 쿠팡 find_by_external_sku 가드와 동일 취지.
+    """
+    code = str(managed_code or "").strip()
+    if not code:
+        return None
+    _, _, managed_map = await _get_esm_catalog_cached(client)
+    hit = managed_map.get(code)
+    if not hit:
+        return None
+    return {"goodsNo": hit[0], "siteGoodsNo": hit[1]}
 
 
 async def _esm_targeted_resolve(
@@ -2480,11 +2563,11 @@ async def resolve_esm_master_goods_no(
     if not val:
         return None
     site_key = client.cfg["siteKey"].lower()
-    cache_key = f"{client.site}:{client.seller_id}"
+    cache_key = _esm_cache_key(client)
     now = time.time()
     cached = _ESM_MASTER_MAP_CACHE.get(cache_key)
     if cached and (now - cached[0]) < _ESM_MASTER_MAP_TTL:
-        site_map, masters = cached[1]
+        site_map, masters, _ = cached[1]
         if val in masters:
             return val
         if val in site_map:
@@ -2498,7 +2581,7 @@ async def resolve_esm_master_goods_no(
     # 전체스캔 폴백 (캐시 갱신 겸)
     fresh = await _build_esm_master_map(client)
     _ESM_MASTER_MAP_CACHE[cache_key] = (now, fresh)
-    site_map, masters = fresh
+    site_map, masters, _ = fresh
     if val in masters:
         return val
     return site_map.get(val)

@@ -424,6 +424,42 @@ class AuctionPlugin(MarketPlugin):
             else:
                 _claim_owned = True  # fail-open
 
+        # 등록 전 중복 가드(#654) — 전송 타임아웃 등으로 DB 번호가 유실돼도 ESM에
+        # 이미 리스팅이 있으면 CREATE 대신 기존 번호 백필 + 수정 전환.
+        # transform_product 가 주입하는 managedCode(site_product_id 우선, #454)와
+        # 같은 키로 역조회 (쿠팡 find_by_external_sku 가드와 동일 취지).
+        _mcode = str(product.get("site_product_id") or product.get("id") or "").strip()[
+            :50
+        ]
+        if _mcode:
+            from backend.domain.samba.proxy.esmplus import (
+                find_esm_goods_by_managed_code,
+            )
+
+            try:
+                _dup = await find_esm_goods_by_managed_code(client, _mcode)
+            except Exception as _dup_e:
+                logger.warning(f"[옥션] 중복등록 사전조회 실패 — 등록 진행: {_dup_e}")
+                _dup = None
+            if _dup:
+                _adopt = str(_dup.get("siteGoodsNo") or _dup.get("goodsNo") or "")
+                logger.warning(
+                    f"[옥션] 중복등록 방지 — managedCode={_mcode} 기존 리스팅 존재"
+                    f"(goodsNo={_dup.get('goodsNo')}, siteGoodsNo={_dup.get('siteGoodsNo')})"
+                    f" → 번호 백필 + 수정 전환"
+                )
+                if _pid and _aid:
+                    await self._persist_product_no_immediately(_pid, _aid, _adopt)
+                return await self._update_product(
+                    client,
+                    _adopt,
+                    data,
+                    pending_images,
+                    samba_options=samba_options,
+                    cat_code=category_id,
+                    stock_cap=_stock_cap,
+                )
+
         _reg = await self._register_product(
             client,
             data,
@@ -513,7 +549,18 @@ class AuctionPlugin(MarketPlugin):
         elif samba_options and not cat_code:
             opt_msg = " [옵션 등록 스킵: cat_code 없음]"
 
-        result = await client.register_product(data)
+        from backend.domain.samba.proxy.esmplus import (
+            invalidate_esm_catalog_cache,
+            note_esm_registered_goods,
+        )
+
+        try:
+            result = await client.register_product(data)
+        except Exception:
+            # 타임아웃/응답유실 시 ESM엔 등록됐을 수 있음(#654) — 다음 등록 가드가
+            # stale 캐시로 중복을 놓치지 않도록 카탈로그 캐시 무효화 후 전파
+            invalidate_esm_catalog_cache(client)
+            raise
         goods_no = result.get("goodsNo", "")
         site_goods_no = result.get("siteGoodsNo", "")
 
@@ -526,11 +573,21 @@ class AuctionPlugin(MarketPlugin):
                 f"[옥션] 등록 응답 무효(중복등록 의심): goodsNo={goods_no!r}, "
                 f"siteGoodsNo={site_goods_no!r} → 기존 유효 ID 보존 위해 실패 처리"
             )
+            # 중복 의심 = 마켓 리스팅 상태 불확실 — 재스캔 유도(#654)
+            invalidate_esm_catalog_cache(client)
             return {
                 "success": False,
                 "message": "옥션 중복등록 의심(goodsNo=0 또는 siteGoodsNo 누락) — 기존 등록 확인 필요",
                 "_already_registered": True,
             }
+
+        # 등록 성공 → 카탈로그 캐시 즉시 반영(#654) — 같은 배치 내 재전송도 가드에 걸리게
+        note_esm_registered_goods(
+            client,
+            str((data.get("itemAddtionalInfo") or {}).get("managedCode") or ""),
+            _gno_str,
+            str(site_goods_no or ""),
+        )
 
         # 대표+추가 이미지는 등록 POST 의 images 에 인라인 동봉됨 (transform_product).
         # 사후 update_images(POST /goods/{no}/images)는 색인 전 호출 시 resultCode=0
