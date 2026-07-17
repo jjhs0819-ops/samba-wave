@@ -243,7 +243,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               color: c.text, outline: 'none',
             }}
           />
-          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'LOTTEON_SELLERSHOP' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM') && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'LOTTEON_SELLERSHOP' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM' || selectedSite === 'THEHYUNDAI') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -283,8 +283,8 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                 return
               }
 
-              // 롯데ON / SSG / 패션플러스: 브랜드 탐색 후 선택 모달 표시
-              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus') {
+              // 롯데ON / SSG / 패션플러스 / 더현대: 브랜드 탐색 후 선택 모달 표시
+              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'THEHYUNDAI') {
                 try {
                   const discoverKeyword = keyword || brand
                   const res = await collectorApi.brandDiscover(discoverKeyword, selectedSite)

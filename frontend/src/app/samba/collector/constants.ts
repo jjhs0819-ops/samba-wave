@@ -14,6 +14,8 @@ export const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'SNKRDUNK', label: '스니덩크' },
   { id: 'ONITSUKA', label: '오니츠카 타이거' },
   { id: 'BUNJANG', label: '번개장터' },
+  // 백엔드 ENABLE_THEHYUNDAI=1 게이트와 세트 (2026-07-13 운영 활성화)
+  { id: 'THEHYUNDAI', label: '더현대Hi' },
   // 개발예정 (비활성)
   { id: 'DANAWA', label: '다나와', disabled: true },
   { id: 'Adidas', label: 'Adidas', disabled: true },
@@ -59,6 +61,10 @@ export const SITE_OPTIONS: Record<string, SiteOption[]> = {
   ],
   GSShop: [
     { id: 'maxDiscount', label: '최대혜택가', warn: '수집 속도가 느려집니다' },
+    ...COMMON_OPTIONS,
+  ],
+  THEHYUNDAI: [
+    { id: 'maxDiscount', label: '최대혜택가' },
     ...COMMON_OPTIONS,
   ],
 }

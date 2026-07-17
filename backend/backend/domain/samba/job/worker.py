@@ -2514,6 +2514,7 @@ class JobWorker:
             "SSG",
             "NAVERSTORE",
             "SNKRDUNK",
+            "THEHYUNDAI",
         }
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
@@ -5317,6 +5318,11 @@ class JobWorker:
                 _ctg_lv = qs.get("ctgLv", [""])[0]
                 if _ctg_lv:
                     _search_kwargs["ctg_lv"] = _ctg_lv
+                # 더현대 필터 파라미터 (flBrand=operBrndCd, flCate=catLcd)
+                for _th_k in ("flBrand", "flCate"):
+                    _th_v = qs.get(_th_k, [""])[0]
+                    if _th_v:
+                        _search_kwargs[_th_k] = _th_v
                 # SSG ctgPath 파라미터 → 전시카테고리 전체 경로 (그룹 생성 시 저장)
                 _ctg_path = qs.get("ctgPath", [""])[0]
                 if _ctg_path:
@@ -5418,6 +5424,13 @@ class JobWorker:
             from backend.domain.samba.proxy.snkrdunk import SnkrdunkClient
 
             client = SnkrdunkClient()
+        elif site == "THEHYUNDAI":
+            # 더현대Hi — 순수 httpx 직접 호출 (프록시/확장앱 불요, Referer 헤더는 클라이언트가 처리)
+            from backend.domain.samba.proxy.thehyundai_sourcing import (
+                TheHyundaiSourcingClient,
+            )
+
+            client = TheHyundaiSourcingClient()
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -6123,6 +6136,60 @@ class JobWorker:
                     f"[잡워커] Nike 상세 선취합 완료: {len(_nike_details)}/{len(new_items)}건 성공"
                 )
 
+        # THEHYUNDAI: 저장 전 8건 병렬로 상세 선취합 (직접 httpx — Nike 패턴).
+        # 미적용 시 per-item 직렬 조회(+0.3s sleep)로 다른 직접API 소싱처보다 크게 느림.
+        _thehyundai_details: dict[str, dict[str, Any]] = {}
+        if site == "THEHYUNDAI" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] THEHYUNDAI 상세 선취합 시작: {len(new_items)}건 (8건 병렬)"
+                )
+                _TH_BATCH = 8
+                for batch_start in range(0, len(new_items), _TH_BATCH):
+                    from backend.domain.samba.emergency import (
+                        is_collect_cancel_requested as _icc_th,
+                        is_emergency_stopped as _ies_th,
+                    )
+
+                    if _icc_th() or _ies_th() or await repo.is_cancelled(job.id):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                    batch = new_items[batch_start : batch_start + _TH_BATCH]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(str(it.get("site_product_id", "")))
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] THEHYUNDAI 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _thehyundai_details[pid] = det
+                    done = min(batch_start + _TH_BATCH, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                        job_type="collect",
+                    )
+                    await asyncio.sleep(0.15)
+                logger.info(
+                    f"[잡워커] THEHYUNDAI 상세 선취합 완료: "
+                    f"{len(_thehyundai_details)}/{len(new_items)}건 성공"
+                )
+
         # GSShop: 선취합 + 카테고리 필터 (검색 결과에 이름/카테고리 없으므로 상세 조회 필수)
         _gsshop_details: dict[str, dict[str, Any]] = {}
         if site == "GSShop" and client:
@@ -6591,6 +6658,9 @@ class JobWorker:
             # ABCmart/GrandStage: 선취합된 상세 데이터 사용
             if site in ("ABCmart", "GrandStage") and p_id in _abc_details:
                 detail = _abc_details[p_id]
+            # THEHYUNDAI: 선취합된 상세 데이터 사용
+            if site == "THEHYUNDAI" and p_id in _thehyundai_details:
+                detail = _thehyundai_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: 선취합 미스 시 폴백 조회
             if (
@@ -6689,7 +6759,15 @@ class JobWorker:
             # SSG 카드혜택가는 결제금액 7만원 이상에서만 적용 — 7만원 미만 단품은 카드할인을
             # 못 받으므로 판매가(카드할인 전 표시가)를 원가로 한다(#430).
             _ssg_list_price = int(detail.get("salePrice", 0) or 0) or sale_price
-            if site == "SSG" and 0 < _ssg_list_price < 70000:
+            if site == "THEHYUNDAI":
+                # 더현대 원가 = 상세 new_cost(카드즉시할인 반영 최저가) 정본.
+                # 상세 누락 시 검색 표시가(cost=salePrice) → sale_price 폴백.
+                cost = (
+                    int(detail.get("cost", 0) or 0)
+                    or int(item.get("cost", 0) or 0)
+                    or sale_price
+                )
+            elif site == "SSG" and 0 < _ssg_list_price < 70000:
                 cost = _ssg_list_price
             elif _use_max_discount:
                 _bbp = int(detail.get("bestBenefitPrice", 0) or 0) or int(

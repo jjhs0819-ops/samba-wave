@@ -57,6 +57,32 @@ _CATEGORY_GROUP: dict[str, str] = {
     "야구의류": "wear",
     "바람막이": "wear",
     "자켓": "wear",
+    # 더현대Hi 의류 leaf 어휘 (2026-07-14 전 카테고리 실측 — 미등록 시 etc/sports 오분류)
+    "액티브웨어": "wear",
+    "애슬레저": "wear",
+    "상하의": "wear",
+    "상하복": "wear",
+    "우주복": "wear",
+    "내의": "wear",
+    "후드티": "wear",
+    "후드집업": "wear",
+    "바지": "wear",
+    "레깅스": "wear",
+    "남방": "wear",
+    "블라우스": "wear",
+    "재킷": "wear",
+    "코트": "wear",
+    "패딩": "wear",
+    "점퍼": "wear",
+    "조끼": "wear",
+    "베스트/조끼": "wear",
+    "가디건": "wear",
+    "볼레로": "wear",
+    "파자마": "wear",
+    "로브": "wear",
+    "배냇저고리": "wear",
+    "실외복": "wear",
+    "임부복": "wear",
     # 수영복/비치웨어 — 섬유제품(의류) 고시. 'sports'로 빠지면 SSG cls_id 0000000035
     # 폴백 → 고시항목 불일치로 등록 거부되므로 wear로 명시 분류한다.
     "수영복": "wear",
@@ -96,8 +122,18 @@ _CATEGORY_GROUP: dict[str, str] = {
     "축구화": "shoes",
     "풋살화": "shoes",
     "아쿠아슈즈": "shoes",
+    "테니스화": "shoes",
+    "배드민턴화": "shoes",
+    "테니스/배드민턴화": "shoes",
+    # 더현대Hi 신발 leaf 어휘
+    "하계화": "shoes",
+    "동계화": "shoes",
     # 가방
     "가방": "bag",
+    # 더현대Hi 골프백 계열 (골프(sports) exact 가로채기 방지용 품목 어휘)
+    "골프백": "bag",
+    "캐디백": "bag",
+    "보스턴백": "bag",
     "백팩": "bag",
     "크로스백": "bag",
     "숄더백": "bag",
@@ -129,6 +165,7 @@ _CATEGORY_GROUP: dict[str, str] = {
     "스카프/머플러/숄": "accessories",
     "손수건": "accessories",
     "보석/잡화": "accessories",
+    "패션소품": "accessories",
     "등산모자": "accessories",
     "양말/패션소품": "accessories",
     "기타패션소품": "accessories",
@@ -137,6 +174,20 @@ _CATEGORY_GROUP: dict[str, str] = {
     "수영모자": "accessories",
     "물안경": "accessories",
     "비치볼": "accessories",
+    # 더현대Hi 잡화 leaf 어휘
+    "수모": "accessories",
+    "수경": "accessories",
+    "헤어밴드": "accessories",
+    "버킷햇": "accessories",
+    "볼캡": "accessories",
+    "선캡": "accessories",
+    "바이저": "accessories",
+    "쥬얼리": "accessories",  # "주얼리" 철자 변형 (더현대 "워치/쥬얼리")
+    "귀걸이": "accessories",
+    "목걸이": "accessories",
+    "반지": "accessories",
+    "팔찌": "accessories",
+    "넥타이": "accessories",
     # 데스크/PC 주변 잡화 (마우스패드/키보드 등) — "디지털" 부분매칭으로 electronics에 빠지지 않도록 명시
     "마우스패드": "accessories",
     "마우스": "accessories",
@@ -199,18 +250,30 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     # sports(=35 기타재화)에 빠지는 문제 → cat2/cat3 정확 매칭을 cat1 부분 매칭보다 먼저.
     PRIORITY_GROUPS = ("wear", "shoes", "bag", "accessories")
 
-    # 1) cat2 / cat3 정확 매칭 (가장 구체적인 분류)
+    # 1) cat2 / cat3 / cat4 정확 매칭 (가장 구체적인 분류)
     # cat2="등산"(→sports) 이 cat3="남성등산의류"(→wear) 보다 먼저 평가돼
     # 품목 그룹(wear/shoes/bag/accessories)을 활동 그룹(sports)이 가로채면
     # sports 가 _SSG_NOTICE_TYPE_MAP 미존재 → 0000000035 폴백 → SSG 등록 실패.
     # 정확 매칭 결과 중 품목 그룹(PRIORITY_GROUPS)을 활동 그룹보다 우선 반환한다.
+    # cat4 포함: 4단 트리 소싱처(더현대 "골프>골프백/캐디백>백팩")는 품목이 cat4에 옴.
     _exact_groups = [
-        _CATEGORY_GROUP[cat] for cat in (cat2, cat3) if cat and cat in _CATEGORY_GROUP
+        _CATEGORY_GROUP[cat]
+        for cat in (cat2, cat3, cat4)
+        if cat and cat in _CATEGORY_GROUP
     ]
     for _g in _exact_groups:
         if _g in PRIORITY_GROUPS:
             return _g
     if _exact_groups:
+        # 활동(sports 등)만 정확 매칭된 경우 — 하위 카테고리에 품목 키워드가
+        # 있으면 품목 우선 (예: 더현대 "골프(exact sports) > 모자/헤어밴드").
+        # 없을 때만 활동 그룹 확정. (기존 SSG 근본수정과 동일한 품목>활동 원칙)
+        for _c in (cat2, cat3, cat4):
+            if not _c:
+                continue
+            for keyword, group in _CATEGORY_GROUP.items():
+                if group in PRIORITY_GROUPS and keyword in _c:
+                    return group
         return _exact_groups[0]
 
     # 2) cat1 정확 매칭 (단, 복합 cat1["스포츠/레저","소품"]은 품목이 cat2/cat3에 있으므로
@@ -219,8 +282,12 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     #    확정돼 SSG 고시 불일치로 실패하던 근본버그.)
     # 활동(sports) 그룹은 물리 상품(신발/의류)을 디지털 고시로 오분류시키는 원인이므로
     # 여기서 확정하지 않고 상품명/브랜드 힌트(step 6)로 넘겨 품목을 특정한다.
+    # "레저/스포츠" = 더현대Hi 표기 (SSG "스포츠/레저"의 어순 반전) — 동일 취급.
+    # 미등록 시 데일리>하계화(신발)/골프>모자(잡화)/골프백(가방)이 sports(기타재화)로
+    # 빠져 SSG 고시 불일치 실패 (2026-07-14 더현대 전 카테고리 1,362개 전수 실측).
+    _COMPOSITE_CAT1 = ("스포츠/레저", "레저/스포츠", "소품")
     _sports_fallback = False
-    if cat1 in _CATEGORY_GROUP and cat1 not in ("스포츠/레저", "소품"):
+    if cat1 in _CATEGORY_GROUP and cat1 not in _COMPOSITE_CAT1:
         _g1 = _CATEGORY_GROUP[cat1]
         if _g1 != "sports":
             return _g1
@@ -230,7 +297,7 @@ def detect_notice_group(product: dict[str, Any]) -> str:
     #    일반 키워드 매칭, 최종 etc 폴백.
     #    ★"스포츠" 키워드가 "스포츠신발/스포츠가방"을 sports(→기타재화 0000000035)로
     #    가로채 SSG 고시분류 불일치(디지털 고시 요구)로 등록실패하던 것 방지(#288 연장).
-    if cat1 in ("스포츠/레저", "소품"):
+    if cat1 in _COMPOSITE_CAT1:
         for _c in (cat2, cat3, cat4):
             if not _c:
                 continue
@@ -242,8 +309,8 @@ def detect_notice_group(product: dict[str, Any]) -> str:
                 return group
         return "etc"
 
-    # 4) cat2/cat3에서 의류/신발/가방/잡화 키워드 우선 부분 매칭 (sports로 빠지지 않도록)
-    for cat in (cat2, cat3):
+    # 4) cat2/cat3/cat4에서 의류/신발/가방/잡화 키워드 우선 부분 매칭 (sports로 빠지지 않도록)
+    for cat in (cat2, cat3, cat4):
         if not cat:
             continue
         for keyword, group in _CATEGORY_GROUP.items():
@@ -1296,9 +1363,17 @@ def build_ssg_notice(
     _pol_importer = product.get("_ssg_notice_importer", "") or ""
     importer = _pol_importer or (manufacturer if import_yn == "Y" else fallback)
 
-    # 취급시 주의사항 — 정책값 우선
+    # 취급시 주의사항 — 정책값 > 소싱 데이터(care_instructions) > fallback.
+    # 소싱값은 모호값 필터 + 250자 안전 컷 (더현대 등은 세탁방법 전문이 수백자).
+    # vague 검사는 짧은 값에만 — 긴 실문구는 "…상품 택을 참조하십시오" 처럼
+    # '참조' 키워드가 포함돼도 모호값이 아님 ("상세페이지 참조" 오탐 방지 목적 유지).
     _pol_caution = product.get("_ssg_notice_caution", "") or ""
-    caution = _pol_caution or fallback
+    _raw_caution = (product.get("care_instructions", "") or "").strip()
+    if _raw_caution and (len(_raw_caution) >= 30 or not _is_vague(_raw_caution)):
+        _raw_caution = " ".join(_raw_caution.split())[:250]
+    else:
+        _raw_caution = ""
+    caution = _pol_caution or _raw_caution or fallback
 
     # A/S 책임자 및 전화번호 — 통합 연락처 우선, 없으면 개별 phone/message
     _pol_as_contact = product.get("_ssg_notice_as_contact", "") or ""
