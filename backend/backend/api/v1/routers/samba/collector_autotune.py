@@ -2238,6 +2238,11 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         )
                                         await _partial_update(r.product_id, updates)
                                         return
+                                    # lock_delete=True 는 아래 마켓삭제 블록을 통째로 건너뛰므로
+                                    # 초기화가 블록 안에 있으면 하단 `if _all_markets_deleted:` 에서
+                                    # UnboundLocalError → 콜백 중단 → _partial_update 유실(품절 갱신
+                                    # DB 미저장) + 매 사이클 재크래시. 반드시 블록 밖에서 초기화 (#661)
+                                    _all_markets_deleted = False
                                     if not getattr(product, "lock_delete", False):
                                         product_dict = product.model_dump()
                                         _ok_del_ids: list[str] = []
@@ -2344,7 +2349,6 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                     },
                                                 )
                                         # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
-                                        _all_markets_deleted = False
                                         if _ok_del_ids:
                                             _cycle_deleted_pids.add(r.product_id)
                                             _orig_reg = list(
