@@ -36,12 +36,40 @@
   const isListPage = () => location.href.includes('shopping.naver.com/my/writable-reviews') || location.href.includes('order.pay.naver.com/home/review/reviewable')
   const isPopupPage = () => location.href.includes('/popup/reviews/form') || location.href.includes('/popup/reviews/monthly-form')
 
+  // 리뷰쓰기 버튼 탐지 — 네이버 DOM 변경에 견디도록 다중 전략.
+  //  1) data-shp-area-id="rvwrite" 속성 (원본)
+  //  2) 실패 시 화면에 보이는 a/button/[role=button] 중 '리뷰쓰기'/'한달리뷰쓰기'
+  //     텍스트를 포함(정확일치 X — 뱃지/포인트 텍스트가 붙어도 잡히게)하는 요소
+  // 헤더/네비 오클릭 방지 + 이미 처리한 항목(dataset.sambaReviewed) 제외.
+  const isReviewLabel = (t) => {
+    const s = (t || '').replace(/\s+/g, '')
+    return s.includes('한달리뷰쓰기') || s.includes('리뷰쓰기')
+  }
+  const isVisible = (el) => !!(el.offsetParent || el.getClientRects().length)
   function getReviewButtons() {
-    const cands = [...document.querySelectorAll('[data-shp-area-id="rvwrite"]')]
-    return cands.filter(b => {
+    let cands = [...document.querySelectorAll('[data-shp-area-id="rvwrite"]')]
+      .filter(b => isReviewLabel(b.textContent) && !b.dataset.sambaReviewed)
+    if (cands.length > 0) return cands
+    // 폴백: 속성 셀렉터가 안 먹을 때 텍스트 기반 탐색
+    cands = [...document.querySelectorAll('a, button, [role="button"]')].filter(b => {
+      if (b.dataset.sambaReviewed) return false
+      if (b.closest('header, nav, .header, [class*="gnb"], [class*="nav"]')) return false
+      if (!isVisible(b)) return false
       const t = b.textContent.trim()
-      return (t === '리뷰쓰기' || t === '한달리뷰쓰기') && !b.dataset.sambaReviewed
+      if (t.length > 12) return false // '리뷰쓰기'(+뱃지) 이상 길면 컨테이너 오검출
+      return isReviewLabel(t)
     })
+    return cands
+  }
+  // 진단용: 페이지에서 관측되는 버튼 후보 요약
+  function reviewDiag() {
+    const attr = document.querySelectorAll('[data-shp-area-id="rvwrite"]').length
+    const btns = getReviewButtons()
+    const sample = btns.slice(0, 3).map(b => ({
+      tag: b.tagName, text: b.textContent.trim().slice(0, 20),
+      href: b.getAttribute('href') || b.closest('a')?.getAttribute('href') || null,
+    }))
+    return { url: location.href, attrCount: attr, found: btns.length, sample }
   }
 
   async function fillAndSubmit() {
@@ -127,7 +155,7 @@
     }
     if (!isListPage()) return { success: false, error: `네이버 list 페이지 아님: ${location.pathname}` }
     const btns = getReviewButtons()
-    if (btns.length === 0) return { noItems: true }
+    if (btns.length === 0) return { noItems: true, _diag: reviewDiag() }
     const btn = btns[0]
     btn.dataset.sambaReviewed = 'true'
     // 버튼 클릭 — 새 탭에 팝업 열림 (background 가 onUpdated로 감지하지 못하더라도

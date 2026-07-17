@@ -1039,7 +1039,11 @@ async function _handleReviewJobInner(job) {
           break
         }
         const result = await chrome.tabs.sendMessage(listTabId, { action: 'samba_review_processOne' }).catch(e => ({ success: false, error: e?.message || String(e) }))
-        if (result?._diag) console.log(`[적립금-리뷰][ABC진단] 후기작성버튼=${result._diag.btnTotal} 페이지구매확정=${result._diag.hasConfirm} 블록=${result._diag.blkTag} url=${result._diag.url} 첫블록="${result._diag.sample}"`)
+        if (result?._diag) {
+          const d = result._diag
+          if (d.btnTotal !== undefined) console.log(`[적립금-리뷰][ABC진단] 후기작성버튼=${d.btnTotal} 페이지구매확정=${d.hasConfirm} 블록=${d.blkTag} url=${d.url} 첫블록="${d.sample}"`)
+          else console.log(`[적립금-리뷰][${site}진단]`, JSON.stringify(d))
+        }
         if (result?.noItems || result?.allReviewed) {
           // 더보기 시도
           const more = await chrome.tabs.sendMessage(listTabId, { action: 'samba_review_loadMore' }).catch(() => ({ ok: false }))
