@@ -837,22 +837,42 @@ async def _delete_ssg(
     _pno = (product.get("market_product_no") or {}).get("ssg", "")
     if _pno in ("__exists__", "", "__claiming__"):
         _spl = str(product.get("id") or "")
+        _real = ""
         if _spl:
             try:
                 _real = await client.find_live_item_id_by_spl_ven(_spl)
-                if _real:
-                    logger.info(
-                        f"[SSG] __exists__ 삭제 — splVen={_spl} → 실제 itemId={_real} 역조회"
-                    )
-                    product = {
-                        **product,
-                        "market_product_no": {
-                            **(product.get("market_product_no") or {}),
-                            "ssg": _real,
-                        },
-                    }
             except Exception as _e:
                 logger.warning(f"[SSG] __exists__ itemId 역조회 실패: {_e}")
+        if _real:
+            logger.info(
+                f"[SSG] __exists__ 삭제 — splVen={_spl} → 실제 itemId={_real} 역조회"
+            )
+            product = {
+                **product,
+                "market_product_no": {
+                    **(product.get("market_product_no") or {}),
+                    "ssg": _real,
+                },
+            }
+        else:
+            # 역조회로도 실제 itemId 를 못 찾음 → 이대로 delete_product("__exists__") 를
+            # 보내면 SSG 가 "존재하지 않는 상품" 에러를 주고, _safe_delete 의
+            # ghost_cleanup 이 이를 '삭제 성공'으로 오판한다. 그러면 삼바 상품만 지워지고
+            # SSG 실제 리스팅은 판매중으로 남아 유령이 된다(오삭제 유령의 근본경로).
+            # → 삭제를 보류하고 명시 실패를 반환해 삼바 레코드가 조기삭제되지 않게 한다.
+            #   (실제 유령 정리는 전량나열 기반 ssg_ghost_reconciler 가 안전판정으로 담당.)
+            logger.warning(
+                f"[SSG] itemId 미상(__exists__/빈값, 역조회 실패) → 삭제 보류(삼바 레코드 "
+                f"보존, 유령 방지): splVen={_spl}"
+            )
+            return {
+                "success": False,
+                "message": (
+                    "SSG 실제 itemId 미상 — 삭제 보류(유령 방지). "
+                    "ghost_reconciler 로 정리 대상"
+                ),
+                "_skip_retry": True,
+            }
     return await _safe_delete("SSG", "ssg", product, client.delete_product)
 
 

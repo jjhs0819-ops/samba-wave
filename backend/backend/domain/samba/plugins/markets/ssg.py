@@ -48,11 +48,13 @@ class SSGPlugin(MarketPlugin):
         if not api_key:
             return {"success": False, "message": "SSG 인증키가 비어있습니다."}
 
-        # transmitting stuck으로 인해 itemId가 "__exists__"로 저장된 상품:
+        # transmitting stuck으로 itemId가 "__exists__"/"__claiming__"로 저장된 상품:
         # SSG에는 이미 등록됐지만 실제 itemId를 모름. 아래 멱등가드의
         # 안정키(splVenItemId) 검색으로 실제 itemId를 복구해 수정으로 진행하고,
         # 검색에도 없으면 그때만 차단한다 (즉시 차단하면 영영 복구 불가).
-        _exists_marker = existing_no == "__exists__"
+        # __claiming__ 도 동일 취급 — 전송 클레임 중 중단된 상품이라 SSG엔 이미
+        # 등록됐을 수 있고, 그대로 신규등록하면 중복 itemId 가 생긴다.
+        _exists_marker = existing_no in ("__exists__", "__claiming__")
         if _exists_marker:
             existing_no = ""
 
