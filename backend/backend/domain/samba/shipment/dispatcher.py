@@ -827,6 +827,28 @@ async def _delete_ssg(
         or SSGClient.DEFAULT_SITE_NO
     )
     client = SSGClient(api_key, site_no=store_id)
+    # __exists__/빈 상품번호(transmitting stuck 으로 실제 itemId 미저장)면 SSG 삭제가
+    # 불가 → 삼바에선 삭제됐는데 SSG 판매링크가 유령으로 남는다. splVenItemId(수집상품
+    # id)로 SSG live itemId 를 역조회해 실제 번호로 삭제한다.
+    _pno = (product.get("market_product_no") or {}).get("ssg", "")
+    if _pno in ("__exists__", "", "__claiming__"):
+        _spl = str(product.get("id") or "")
+        if _spl:
+            try:
+                _real = await client.find_live_item_id_by_spl_ven(_spl)
+                if _real:
+                    logger.info(
+                        f"[SSG] __exists__ 삭제 — splVen={_spl} → 실제 itemId={_real} 역조회"
+                    )
+                    product = {
+                        **product,
+                        "market_product_no": {
+                            **(product.get("market_product_no") or {}),
+                            "ssg": _real,
+                        },
+                    }
+            except Exception as _e:
+                logger.warning(f"[SSG] __exists__ itemId 역조회 실패: {_e}")
     return await _safe_delete("SSG", "ssg", product, client.delete_product)
 
 
