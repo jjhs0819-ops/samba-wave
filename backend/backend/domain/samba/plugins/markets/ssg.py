@@ -625,7 +625,9 @@ class SSGPlugin(MarketPlugin):
             for _mng_attempt in range(20):
                 _retry_data = result.get("data", {}) if isinstance(result, dict) else {}
                 _retry_res = (
-                    _retry_data.get("result", {}) if isinstance(_retry_data, dict) else {}
+                    _retry_data.get("result", {})
+                    if isinstance(_retry_data, dict)
+                    else {}
                 )
                 if not isinstance(_retry_res, dict):
                     break

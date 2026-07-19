@@ -33,23 +33,47 @@ FILTER_INFO_FIXTURE = {
     "cateMList": {
         "totalSize": 5,
         "groupInfoList": [
-            {"groupCode": "400029", "groupName": "상의", "groupCnt": 117103,
-             "highGroupCode": "400003"},
-            {"groupCode": "400035", "groupName": "슈즈", "groupCnt": 39507,
-             "highGroupCode": "400003"},
-            {"groupCode": "400064", "groupName": "국내여행", "groupCnt": 35,
-             "highGroupCode": "400008"},
-            {"groupCode": "400067", "groupName": "컬처", "groupCnt": 1100,
-             "highGroupCode": "400007"},
-            {"groupCode": "400071", "groupName": "E쿠폰", "groupCnt": 87,
-             "highGroupCode": "400007"},
+            {
+                "groupCode": "400029",
+                "groupName": "상의",
+                "groupCnt": 117103,
+                "highGroupCode": "400003",
+            },
+            {
+                "groupCode": "400035",
+                "groupName": "슈즈",
+                "groupCnt": 39507,
+                "highGroupCode": "400003",
+            },
+            {
+                "groupCode": "400064",
+                "groupName": "국내여행",
+                "groupCnt": 35,
+                "highGroupCode": "400008",
+            },
+            {
+                "groupCode": "400067",
+                "groupName": "컬처",
+                "groupCnt": 1100,
+                "highGroupCode": "400007",
+            },
+            {
+                "groupCode": "400071",
+                "groupName": "E쿠폰",
+                "groupCnt": 87,
+                "highGroupCode": "400007",
+            },
         ],
     },
     "cateSList": {
         "totalSize": 1,
         "groupInfoList": [
-            {"groupCode": "400251", "groupName": "스니커즈", "groupCnt": 12357,
-             "highGroupCode": "400035"},
+            {
+                "groupCode": "400251",
+                "groupName": "스니커즈",
+                "groupCnt": 12357,
+                "highGroupCode": "400035",
+            },
         ],
     },
     "cateDList": {
@@ -136,8 +160,12 @@ class TestBuildCategoryTree:
         bad_fixture = {
             "cateLList": {
                 "groupInfoList": [
-                    {"groupCode": "X", "groupName": "Loop", "groupCnt": 0,
-                     "highGroupCode": "X"},  # self-reference
+                    {
+                        "groupCode": "X",
+                        "groupName": "Loop",
+                        "groupCnt": 0,
+                        "highGroupCode": "X",
+                    },  # self-reference
                 ],
             },
             "cateMList": {"groupInfoList": []},
@@ -168,8 +196,12 @@ class TestBuildCategoryTree:
             "cateLList": {
                 "groupInfoList": [
                     {"groupCode": "A", "groupName": "TopA", "groupCnt": 10},
-                    {"groupCode": "B", "groupName": "TopB", "groupCnt": 5,
-                     "highGroupCode": ""},
+                    {
+                        "groupCode": "B",
+                        "groupName": "TopB",
+                        "groupCnt": 5,
+                        "highGroupCode": "",
+                    },
                 ],
             },
             "cateMList": {"groupInfoList": []},

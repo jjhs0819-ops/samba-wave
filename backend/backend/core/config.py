@@ -149,6 +149,15 @@ class BackendSettings(BaseSettings):
        Developer Portal에 등록한 값과 동일해야 challenge 응답이 일치.
        시크릿이므로 코드/PR에 노출 금지 — VM의 .env로만 주입."""
 
+    ebay_oauth_client_id: str = ""
+    """신규 판매자계정 OAuth 연동용 App ID(Client ID) — .env 주입."""
+
+    ebay_oauth_client_secret: str = ""
+    """신규 판매자계정 OAuth 연동용 Cert ID(Client Secret) — .env 주입."""
+
+    ebay_oauth_runame: str = ""
+    """신규 판매자계정 OAuth 연동용 RuName(redirect_uri 값) — .env 주입."""
+
     cs_internal_token: str = ""
     """CS 자동화 내부 API(/api/v1/internal/cs/*) 인증 토큰.
        Claude 클라우드 스케줄잡이 X-Internal-Token 헤더로 호출.

@@ -166,7 +166,9 @@ class TestMndrFields:
 class TestInferSex:
     def test_priority_and_values(self) -> None:
         f = TheHyundaiSourcingClient._infer_sex
-        assert f("레저/스포츠 > 스포츠 슈즈 > 여성스포츠화", "V5 RNR (여성)") == "여성용"
+        assert (
+            f("레저/스포츠 > 스포츠 슈즈 > 여성스포츠화", "V5 RNR (여성)") == "여성용"
+        )
         assert f("레저/스포츠 > 일반스포츠 > 남성/공용의류", "카고 쇼츠") == "남성용"
         # 아동이 성별보다 우선 (유아동 카테고리에 여아/남아 혼재)
         assert f("유아동/패밀리 > 토들러패션", "여아 티셔츠") == "아동/주니어공용"

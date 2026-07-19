@@ -63,7 +63,10 @@ class TestNormalizeSearchItem:
         assert out["isSoldOut"] is False
         assert out["sourceUrl"] == f"{BASE_URL}/product/40B0696270"
         assert out["categoryCode"] == "400004"
-        assert out["category"] == "레저/스포츠 > 스포츠 슈즈 > 여성스포츠화 > 러닝/조깅/워킹화"
+        assert (
+            out["category"]
+            == "레저/스포츠 > 스포츠 슈즈 > 여성스포츠화 > 러닝/조깅/워킹화"
+        )
 
     def test_image_url_prefix(self) -> None:
         out = TheHyundaiSourcingClient._normalize_search_item(SAMPLE_SEARCH_ITEM)

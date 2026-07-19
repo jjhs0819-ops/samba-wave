@@ -90,9 +90,7 @@ class TheHyundaiSourcingClient:
     # public API — plugin이 위임
     # ──────────────────────────────────────────────────────────
 
-    async def search(
-        self, keyword: str, max_count: int = 100, **filters: Any
-    ) -> dict:
+    async def search(self, keyword: str, max_count: int = 100, **filters: Any) -> dict:
         """잡워커 공통 수집 인터페이스 — search_products 페이징 집계.
 
         keyword 가 그룹 URL(hi.thehyundai.com/search?q=..&flBrand=..&flCate=..)이면
@@ -200,12 +198,8 @@ class TheHyundaiSourcingClient:
             data = await self._fetch_json(client, SEARCH_RESULT, params)
             if not data:
                 return []
-            product_list = (data.get("productList") or {}).get(
-                "productInfoList"
-            ) or []
-            normalized = [
-                self._normalize_search_item(it) for it in product_list if it
-            ]
+            product_list = (data.get("productList") or {}).get("productInfoList") or []
+            normalized = [self._normalize_search_item(it) for it in product_list if it]
             if not include_sold_out:
                 normalized = [n for n in normalized if not n.get("isSoldOut")]
             return normalized
@@ -293,9 +287,7 @@ class TheHyundaiSourcingClient:
                 price_uncertain = max_bnft is None
         except RateLimitError as e:
             logger.warning(f"[THEHYUNDAI] 차단 ({slitm_cd}): {e}")
-            return RefreshResult(
-                product_id=product_id, error=f"더현대 차단: {e}"
-            )
+            return RefreshResult(product_id=product_id, error=f"더현대 차단: {e}")
         except Exception as e:
             logger.exception(f"[THEHYUNDAI] refresh 실패 {slitm_cd}: {e}")
             return RefreshResult(
@@ -354,7 +346,9 @@ class TheHyundaiSourcingClient:
         keyword: str,
         *,
         brand_ids: Optional[list[str]] = None,
-        selected_brands: Optional[list[str]] = None,  # 시그니처 일관성 (SSG 매개변수 호환)
+        selected_brands: Optional[
+            list[str]
+        ] = None,  # 시그니처 일관성 (SSG 매개변수 호환)
         brand_total: int = 0,
         log_fn: Optional[Callable[[str], None]] = None,
         proxy_urls: Optional[list[str]] = None,
@@ -668,9 +662,7 @@ class TheHyundaiSourcingClient:
             "siteProductId": slitm_cd,
             "site_product_id": slitm_cd,
             "name": (item.get("slitmNm") or "").strip(),
-            "brand": (
-                item.get("expsBrndNm") or item.get("operBrndNm") or ""
-            ).strip(),
+            "brand": (item.get("expsBrndNm") or item.get("operBrndNm") or "").strip(),
             "brandCode": str(item.get("operBrndCd") or "").strip(),
             "originalPrice": sell_prc,
             "salePrice": bnft_prc or sell_prc,
@@ -792,9 +784,7 @@ class TheHyundaiSourcingClient:
             "itemGbcd": detail_data.get("itemGbcd"),
             "itemGbPtcGbCd": detail_data.get("itemGbPtcGbCd"),
             # 성별 — API 무필드, 카테고리+상품명 추정 (빈값이면 워커가 남녀공용 기본)
-            "sex": self._infer_sex(
-                category_path, (detail_data.get("slitmNm") or "")
-            ),
+            "sex": self._infer_sex(category_path, (detail_data.get("slitmNm") or "")),
             # 필수고시 — material/color/manufacturer/origin/care_instructions/
             # quality_guarantee/style_code (잡워커 product_data 가 그대로 저장)
             **self._extract_mndr_fields(mndr_info),
@@ -915,9 +905,7 @@ class TheHyundaiSourcingClient:
         for code, n in nodes.items():
             p = path(code)
             # SKIP — e쿠폰/여행/서비스/컬처 (prefix 매칭, "여행지" 같은 false-positive 방지)
-            if any(
-                p == sk or p.startswith(sk + " > ") for sk in _SKIP_PATH_PREFIXES
-            ):
+            if any(p == sk or p.startswith(sk + " > ") for sk in _SKIP_PATH_PREFIXES):
                 continue
             categories.append(
                 {

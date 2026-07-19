@@ -491,9 +491,7 @@ class SSGClient:
             _soldout = 0
             for _uid in ssg_all_uids:
                 if _uid and _uid not in _ui_present:
-                    _ui.append(
-                        {"uitemId": _uid, "baseInvQty": 0, "useYn": "N"}
-                    )
+                    _ui.append({"uitemId": _uid, "baseInvQty": 0, "useYn": "N"})
                     _soldout += 1
             if _soldout:
                 logger.info(
@@ -552,9 +550,7 @@ class SSGClient:
             )
             r1 = await self._call_api_xml("POST", "/item/0.4/updateItem.ssg", xml_step1)
             r1_code = r1.get("result", {}).get("resultCode")
-            logger.info(
-                f"[SSG] updateItem 1단계 resultCode={r1_code}"
-            )
+            logger.info(f"[SSG] updateItem 1단계 resultCode={r1_code}")
             await _asyncio.sleep(1.5)
             # 2단계: 원래 데이터(새 대표가+옵션가)로 재시도
             result = await self._call_api_xml(

@@ -38,22 +38,37 @@ DETAIL_SINGLE_DIM = {
     "uitmAttrTypeList": [{"uitmAttrTypeNm": "사이즈", "uitmAttrTypeSeq": 1}],
     "uitmAttrList": [
         {
-            "uitmAttrTypeNm": "사이즈", "uitmAttrTypeSeq": 1,
-            "uitmCd": "00001", "uitmNm": "230", "uitmTotNm": "230",
-            "uitmDcPrc": 45350, "uitmSellGbcd": "11",  # 품절
-            "uitmSeq": 1, "sellPossQty": 0,
+            "uitmAttrTypeNm": "사이즈",
+            "uitmAttrTypeSeq": 1,
+            "uitmCd": "00001",
+            "uitmNm": "230",
+            "uitmTotNm": "230",
+            "uitmDcPrc": 45350,
+            "uitmSellGbcd": "11",  # 품절
+            "uitmSeq": 1,
+            "sellPossQty": 0,
         },
         {
-            "uitmAttrTypeNm": "사이즈", "uitmAttrTypeSeq": 1,
-            "uitmCd": "00002", "uitmNm": "235", "uitmTotNm": "235",
-            "uitmDcPrc": 45350, "uitmSellGbcd": "00",
-            "uitmSeq": 2, "sellPossQty": 4,
+            "uitmAttrTypeNm": "사이즈",
+            "uitmAttrTypeSeq": 1,
+            "uitmCd": "00002",
+            "uitmNm": "235",
+            "uitmTotNm": "235",
+            "uitmDcPrc": 45350,
+            "uitmSellGbcd": "00",
+            "uitmSeq": 2,
+            "sellPossQty": 4,
         },
         {
-            "uitmAttrTypeNm": "사이즈", "uitmAttrTypeSeq": 1,
-            "uitmCd": "00003", "uitmNm": "240", "uitmTotNm": "240",
-            "uitmDcPrc": 45350, "uitmSellGbcd": "00",
-            "uitmSeq": 3, "sellPossQty": 12,
+            "uitmAttrTypeNm": "사이즈",
+            "uitmAttrTypeSeq": 1,
+            "uitmCd": "00003",
+            "uitmNm": "240",
+            "uitmTotNm": "240",
+            "uitmDcPrc": 45350,
+            "uitmSellGbcd": "00",
+            "uitmSeq": 3,
+            "sellPossQty": 12,
         },
     ],
     "ostkYn": "0",
@@ -71,10 +86,18 @@ DETAIL_MULTI_DIM = {
     ],
     # 다차원에서 uitmAttrList는 1차원만 열거. uitmCd=null
     "uitmAttrList": [
-        {"uitmAttrTypeNm": "선택(품번)/색상", "uitmCd": None, "uitmSellGbcd": None,
-         "uitmNm": "선택1(1010)/DOR"},
-        {"uitmAttrTypeNm": "선택(품번)/색상", "uitmCd": None, "uitmSellGbcd": None,
-         "uitmNm": "선택2(1020)/LMT"},
+        {
+            "uitmAttrTypeNm": "선택(품번)/색상",
+            "uitmCd": None,
+            "uitmSellGbcd": None,
+            "uitmNm": "선택1(1010)/DOR",
+        },
+        {
+            "uitmAttrTypeNm": "선택(품번)/색상",
+            "uitmCd": None,
+            "uitmSellGbcd": None,
+            "uitmNm": "선택2(1020)/LMT",
+        },
     ],
     "ostkYn": "0",
 }
@@ -118,8 +141,13 @@ MAX_BNFT_NIKE = {
     "step8aBnftList": [],
     "step8bBnftList": [
         # 현대백화점카드 즉시할인 7%
-        {"prmoNm": "현대백화점카드 즉시할인", "dcAmt": 3170, "famtFxrtVal": 7,
-         "crdcCd": "K", "crdcNm": "현대백화점카드"},
+        {
+            "prmoNm": "현대백화점카드 즉시할인",
+            "dcAmt": 3170,
+            "famtFxrtVal": 7,
+            "crdcCd": "K",
+            "crdcNm": "현대백화점카드",
+        },
     ],
 }
 
@@ -151,6 +179,7 @@ MAX_BNFT_RESERVATION = {
 # 테스트 — 옵션 정규화
 # ──────────────────────────────────────────────────────────────
 
+
 class TestNormalizeOptions:
     def test_no_options_returns_single_sku(self) -> None:
         out = TheHyundaiSourcingClient._normalize_options(DETAIL_NO_OPTIONS, None)
@@ -179,8 +208,14 @@ class TestNormalizeOptions:
         detail = {
             **DETAIL_SINGLE_DIM,
             "uitmAttrList": [
-                {"uitmCd": "00001", "uitmNm": "S", "uitmTotNm": "S",
-                 "uitmDcPrc": None, "uitmSellGbcd": "00", "sellPossQty": 5},
+                {
+                    "uitmCd": "00001",
+                    "uitmNm": "S",
+                    "uitmTotNm": "S",
+                    "uitmDcPrc": None,
+                    "uitmSellGbcd": "00",
+                    "sellPossQty": 5,
+                },
             ],
         }
         out = TheHyundaiSourcingClient._normalize_options(detail, None)
@@ -212,6 +247,7 @@ class TestNormalizeOptions:
 # ──────────────────────────────────────────────────────────────
 # 테스트 — new_cost 공식 (G섹션 핵심)
 # ──────────────────────────────────────────────────────────────
+
 
 class TestComputeNewCost:
     def test_nike_card_discount_applied(self) -> None:
@@ -274,13 +310,16 @@ class TestComputeNewCost:
 # 테스트 — 상세 응답 build
 # ──────────────────────────────────────────────────────────────
 
+
 class TestBuildDetail:
     def test_basic_fields_with_max_bnft(self) -> None:
         detail_data = {
             **DETAIL_SINGLE_DIM,
             "brndInfo": {
-                "expsBrndNm": "나이키", "operBrndNm": "나이키",
-                "operBrndCd": "101047", "expsEngBrndNm": "NIKE",
+                "expsBrndNm": "나이키",
+                "operBrndNm": "나이키",
+                "operBrndCd": "101047",
+                "expsEngBrndNm": "NIKE",
                 "luitYn": "0",
             },
             "bnftInfo": {"upntAcmPnt": 90, "tcpPntAcmRate": 1},
@@ -294,9 +333,14 @@ class TestBuildDetail:
             "itemDcsfNm": "데일리/하이브리드",
             "itemDcsfCd": "30020101",
             "dlvFormInfoList": [
-                {"dlvCost": 3000, "baseFee": 30000, "irgnMntrDlvCost": 3000,
-                 "dlvFormGbcd": "10", "dlvcPlcyBsicGbcd": "04",
-                 "dsrvDlvcoNm": "롯데택배"},
+                {
+                    "dlvCost": 3000,
+                    "baseFee": 30000,
+                    "irgnMntrDlvCost": 3000,
+                    "dlvFormGbcd": "10",
+                    "dlvcPlcyBsicGbcd": "04",
+                    "dsrvDlvcoNm": "롯데택배",
+                },
             ],
             "ostkYn": "0",
             "openMktItemYn": "0",
@@ -314,7 +358,10 @@ class TestBuildDetail:
         assert out["isSoldOut"] is False
         assert len(out["images"]) == 2
         assert out["images"][0].startswith("https://image.thehyundai.com")
-        assert out["category"] == "스포츠 슈즈 > 여성스포츠화 > 러닝/조깅/워킹화 > 데일리/하이브리드"
+        assert (
+            out["category"]
+            == "스포츠 슈즈 > 여성스포츠화 > 러닝/조깅/워킹화 > 데일리/하이브리드"
+        )
         assert out["shippingFee"] == 3000
         assert out["freeShippingThreshold"] == 30000
         assert out["remoteAreaFee"] == 3000

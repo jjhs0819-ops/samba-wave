@@ -42,7 +42,7 @@ def test_kids_sneakers_not_matched_to_carseat() -> None:
 
 
 def test_swimwear_token_extraction() -> None:
-    """"반신수영복" 합성어에서 수영복 토큰 추출 → 수영복 카테고리."""
+    """ "반신수영복" 합성어에서 수영복 토큰 추출 → 수영복 카테고리."""
     got = _similarity_match_smartstore(
         "레저/스포츠 > 워터 > 실내수영복 > 반신수영복", _SSG_CANDIDATES
     )

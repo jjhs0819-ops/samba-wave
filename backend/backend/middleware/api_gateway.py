@@ -45,6 +45,9 @@ _EXEMPT_PREFIXES = (
     "/api/v1/samba/proxy/autotune-daemon/",  # 데몬 health/version — 인증無 (오토튠 페이지 + 데몬 부트스트랩)
     "/api/v1/internal/cs/",  # CS 자동화 내부 API — 자체 X-Internal-Token 검증 (Claude 스케줄잡)
     "/api/v1/internal/balju/",  # 발주전자료 내부 API — 자체 X-Internal-Token 검증 (Claude 스케줄잡)
+    "/api/v1/ebay/deletion-notification",  # eBay 마켓플레이스 계정삭제 webhook — eBay가 API키 없이 호출(challenge/POST), SHA-256 검증으로 자체 인증
+    "/api/v1/ebay/oauth-accepted",  # eBay OAuth 동의 콜백 — eBay가 브라우저 redirect(API키 없음), code로 자체 검증
+    "/api/v1/ebay/oauth-declined",  # eBay OAuth 거부 콜백
 )
 
 # 테넌트 키 캐시: key_hash → (tenant_id, is_install_token, bound_device_id, cached_until_monotonic)
