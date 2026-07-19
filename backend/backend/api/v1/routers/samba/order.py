@@ -4247,9 +4247,13 @@ async def approve_cancel_with_shipment(
     body: ApproveCancelWithShipmentBody,
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
-    """쿠팡 이미출고 취소승인 — completedShipment 처리 (#246 PR-4).
+    """쿠팡 이미출고 취소승인 — completedShipment 처리 (#246 PR-4, #662 게이트 수정).
 
-    조건: order.cancel_release_status == 'A'.
+    조건: order.cancel_release_status in ('N', 'A').
+      - 'N'(미출고=출고중지요청 미확인): 이미출고 처리의 실제 전제값. 쿠팡 공식문서 기준
+        RELEASE_STOP_UNCHECKED 또는 (RETURNS_UNCHECKED + releaseStatus='N') 에서 호출.
+      - 'A'(이미출고): 이미 전환이 끝난 결과값. approve_cancel 이 'A'를 이 엔드포인트로
+        리다이렉트하므로 데드락 방지 위해 함께 허용(재호출은 멱등).
     운영자가 실제 발송한 택배사·송장번호를 입력해야 호출 가능.
     주의: 왕복 배송비 판매자 부담.
     """
@@ -4264,12 +4268,13 @@ async def approve_cancel_with_shipment(
         raise HTTPException(status_code=400, detail="마켓 계정 정보가 없습니다")
     if not order.cancel_receipt_id:
         raise HTTPException(status_code=400, detail="쿠팡 취소 receiptId 미수집")
-    if (order.cancel_release_status or "").upper() != "A":
+    if (order.cancel_release_status or "").upper() not in ("N", "A"):
         raise HTTPException(
             status_code=400,
             detail=(
                 f"release_status={order.cancel_release_status or 'None'} — "
-                "이미출고(A) 케이스만 이 엔드포인트 사용. 미출고는 /approve-cancel 호출"
+                "이미출고 전환은 N(미출고)·A(이미출고)만 가능. "
+                "S(출고중지완료)·Y(반품)는 처리 불가"
             ),
         )
 

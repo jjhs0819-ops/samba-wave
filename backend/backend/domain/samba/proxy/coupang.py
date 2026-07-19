@@ -1785,7 +1785,9 @@ class CoupangClient:
         쿠팡 Wing API:
           PATCH /v2/.../vendors/{vendorId}/returnRequests/{receiptId}/completedShipment
 
-        조건: cancel_release_status == 'A' (이미출고).
+        조건: cancel_release_status in ('N', 'A') (#662 수정).
+          'N'(미출고=출고중지요청 미확인)이 실제 전제값 — 공식문서 RELEASE_STOP_UNCHECKED
+          또는 (RETURNS_UNCHECKED + releaseStatus='N'). 'A'는 전환 후 결과값(멱등 재호출 허용).
         주의: 왕복 배송비 판매자 부담.
         """
         path = (

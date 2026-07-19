@@ -233,6 +233,25 @@ export default function OrdersTable(props: OrdersTableProps) {
                     const cat = [o.cancel_reason_category1, o.cancel_reason_category2].filter(Boolean).join(' / ')
                     const isAlreadyShipped = (o.cancel_release_status || '').toUpperCase() === 'A'
                     const isStopped = (o.cancel_release_status || '').toUpperCase() === 'S'
+                    // #662: 이미출고 전제값은 releaseStatus='N'(미출고). 'A'는 전환 후 결과값이라
+                    // 취소요청 단계엔 안 나타남 → 'N' 케이스에도 운영자가 이미출고 처리할 수 있게 전용 버튼 제공.
+                    const isCoupang = !!o.channel_name?.includes('쿠팡')
+                    const showCompletedShipmentBtn = isCoupang && !isStopped && !isAlreadyShipped
+                    const runCompletedShipment = async () => {
+                      const company = window.prompt('이미출고 — 택배사 코드 입력 (예: CJGLS, HANJIN, LOTTE)')
+                      if (!company) return
+                      const invoice = window.prompt('송장번호 입력')
+                      if (!invoice) return
+                      const yes = await showConfirm('이미출고 취소승인 — 왕복 배송비 판매자 부담. 진행하시겠습니까?')
+                      if (!yes) return
+                      try {
+                        const res = await orderApi.approveCancelWithShipment(o.id, company, invoice)
+                        showAlert(res.message || '취소승인 완료', 'success')
+                        loadOrders()
+                      } catch (err) {
+                        showAlert(err instanceof Error ? err.message : '취소승인 실패', 'error')
+                      }
+                    }
                     return (
                       <div style={{
                         marginBottom: '0.5rem', padding: '0.4rem',
@@ -252,19 +271,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           <button
                             onClick={async () => {
                               if (isAlreadyShipped) {
-                                const company = window.prompt('이미출고 — 택배사 코드 입력 (예: CJGLS, HANJIN, LOTTE)')
-                                if (!company) return
-                                const invoice = window.prompt('송장번호 입력')
-                                if (!invoice) return
-                                const yes = await showConfirm('이미출고 취소승인 — 왕복 배송비 판매자 부담. 진행하시겠습니까?')
-                                if (!yes) return
-                                try {
-                                  const res = await orderApi.approveCancelWithShipment(o.id, company, invoice)
-                                  showAlert(res.message || '취소승인 완료', 'success')
-                                  loadOrders()
-                                } catch (err) {
-                                  showAlert(err instanceof Error ? err.message : '취소승인 실패', 'error')
-                                }
+                                await runCompletedShipment()
                               } else {
                                 const yes = await showConfirm('취소승인 — 출고중지 처리하시겠습니까?')
                                 if (!yes) return
@@ -282,6 +289,16 @@ export default function OrdersTable(props: OrdersTableProps) {
                               flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
                             }}
                           >취소 승인</button>
+                          {showCompletedShipmentBtn && (
+                            <button
+                              onClick={runCompletedShipment}
+                              title="실제로 이미 발송한 건 — 반품 전환(왕복 배송비 판매자 부담)"
+                              style={{
+                                ...btn('accent'),
+                                flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
+                              }}
+                            >이미출고</button>
+                          )}
                           <button
                             onClick={async () => {
                               const yes = await showConfirm('취소 거부 — Wing 화면에서 수동 처리 필요. 진행하시겠습니까?')
