@@ -48,14 +48,41 @@ class SSGPlugin(MarketPlugin):
         if not api_key:
             return {"success": False, "message": "SSG 인증키가 비어있습니다."}
 
-        # transmitting stuck으로 인해 itemId가 "__exists__"로 저장된 상품:
-        # SSG에는 이미 등록됐지만 실제 itemId를 모름 → 재등록/수정 차단 + 경고
-        if existing_no == "__exists__":
-            return {
-                "success": False,
-                "message": "SSG itemId 미확인 (신세계몰 셀러센터에서 상품번호 확인 후 수동 입력 필요)",
-                "_skip_retry": True,
-            }
+        # transmitting stuck으로 itemId가 "__exists__"/"__claiming__"로 저장된 상품:
+        # SSG엔 이미 등록됐지만 실제 itemId 미저장 → 과거엔 여기서 "수동 입력 필요"로
+        # 갱신을 통째로 포기해, 가격/재고 자동 갱신이 영구히 SSG에 반영되지 않았다.
+        # 삭제 경로(dispatcher._delete_ssg)·멱등가드(#321)와 동일하게 splVenItemId
+        # (수집상품 id)로 live itemId 를 역조회해 복구하고, 복구되면 그 itemId 로
+        # 정상 updateItem 을 진행한다. (복구 성공 시 아래 순수수정 경로가
+        # product_no=existing_no 를 백필해 "__exists__" 마커를 실제 itemId 로 교체 →
+        # 다음 갱신부터는 역조회 없이 즉시 수정.)
+        if existing_no in ("__exists__", "__claiming__"):
+            _spl_id = str(product.get("id") or "")
+            _recovered = ""
+            if _spl_id:
+                try:
+                    _lookup_client = SSGClient(
+                        api_key, site_no=creds.get("storeId", "6004")
+                    )
+                    _recovered = await _lookup_client.find_live_item_id_by_spl_ven(
+                        _spl_id
+                    )
+                except Exception as _e:
+                    logger.warning(f"[SSG] __exists__ itemId 역조회 실패: {_e}")
+            if _recovered:
+                logger.info(
+                    f"[SSG] __exists__ 갱신 복구 — splVen={_spl_id} → "
+                    f"실제 itemId={_recovered} 역조회 성공, 정상 수정 진행"
+                )
+                existing_no = _recovered
+            else:
+                # 역조회 실패(정말 live 미등록이거나 SSG 조회 일시 오류) — 중복 insert
+                # 리스크를 피해 기존처럼 안전 실패. 다음 갱신 때 재복구 시도.
+                return {
+                    "success": False,
+                    "message": "SSG itemId 미확인 (신세계몰 셀러센터에서 상품번호 확인 후 수동 입력 필요)",
+                    "_skip_retry": True,
+                }
 
         # 옵션별 가격 불균일 상품은 SSG 전송 제외.
         # SSG 온라인 상품은 옵션별 다른 매가를 지원하지 않는다("온라인 상품의 매가는

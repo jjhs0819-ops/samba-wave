@@ -827,19 +827,27 @@ class SSGClient:
                 "splVenItemId": str(spl_ven_item_id),
             },
         )
-        result_obj = resp.get("result", resp) if isinstance(resp, dict) else {}
-        items_raw = result_obj.get("items") if isinstance(result_obj, dict) else None
-        if isinstance(items_raw, dict):
-            iv = items_raw.get("item")
-        else:
-            iv = items_raw
-        if isinstance(iv, dict):
-            items = [iv]
-        elif isinstance(iv, list):
-            items = [x for x in iv if isinstance(x, dict)]
-        else:
-            items = []
-        for it in items:
+        # XStream(XML→dict) 응답은 단일 결과일 때 items.item.item 처럼 item 래퍼가
+        # 한 겹 더 중첩돼 오는 케이스가 있다(2026-07-19 프로덕션 실측 — 세팅 계정,
+        # splVenItemId 필터가 서버측에서 1건으로 정확히 걸러졌으나 실제 필드가
+        # {"item": {...}} 로 한 겹 더 감싸여 반환). 고정 경로(items.item)만 벗기면
+        # 실제 splVenItemId 가 ""로 읽혀 아래 정확일치 방어에 걸려 유효한 결과를
+        # 버렸다 → #321 멱등가드·__exists__ 삭제/수정 복구가 조용히 실패.
+        # itemId 키를 가진 dict 를 재귀로 모두 수집해 중첩 깊이에 무관하게 후보를 찾는다.
+        candidates: list[dict[str, Any]] = []
+
+        def _collect(node: Any) -> None:
+            if isinstance(node, dict):
+                if "itemId" in node:
+                    candidates.append(node)
+                for _v in node.values():
+                    _collect(_v)
+            elif isinstance(node, list):
+                for _v in node:
+                    _collect(_v)
+
+        _collect(resp)
+        for it in candidates:
             # 정확일치 방어 (param 무시 시 오adopt 차단)
             if str(it.get("splVenItemId") or "") != str(spl_ven_item_id):
                 continue
@@ -907,31 +915,36 @@ class SSGClient:
                 "/item/0.1/getItemList.ssg",
                 params={"page": str(page), "pageSize": str(page_size), "siteNo": site},
             )
-            result_obj = resp.get("result", {}) if isinstance(resp, dict) else {}
-            items_raw = (
-                result_obj.get("items", {}) if isinstance(result_obj, dict) else {}
-            )
-            # XStream: items는 dict 래퍼, item은 1개면 dict, 여러 개면 list
-            if isinstance(items_raw, dict):
-                iv = items_raw.get("item", [])
-                items_list = (
-                    [iv]
-                    if isinstance(iv, dict)
-                    else (iv if isinstance(iv, list) else [])
+            # XStream(XML→dict) 응답의 items 중첩이 계정/건수에 따라 3가지로 달라진다:
+            #  (a) result.items.item = {단일 dict}          (1건)
+            #  (b) result.items.item = [dict, ...]           (다건, 평평)
+            #  (c) result.items = [ {"item": [dict, ...]} ]  (다건, item 래퍼 한 겹 더)
+            # (c)는 대량 등록 계정에서 실측된 구조(2026-07-19, 세팅 43k 상품). 고정 경로
+            # 파싱은 (c)에서 전량을 1건으로 오독 → 유령 reconciler 가 0건 진단·정리 불능이
+            # 되어 유령이 무한 누적됐다. itemId 키를 가진 dict 를 재귀 수집해 중첩 형태와
+            # 무관하게 페이지 전량을 확보한다.
+            page_items: list[dict[str, Any]] = []
+
+            def _collect_items(node: Any) -> None:
+                if isinstance(node, dict):
+                    if "itemId" in node:
+                        page_items.append(node)
+                    else:
+                        for _v in node.values():
+                            _collect_items(_v)
+                elif isinstance(node, list):
+                    for _v in node:
+                        _collect_items(_v)
+
+            _collect_items(resp.get("result", {}) if isinstance(resp, dict) else {})
+            for it in page_items:
+                out.append(
+                    {
+                        k: it.get(k)
+                        for k in ("itemId", "splVenItemId", "sellStatCd", "itemNm")
+                    }
                 )
-            elif isinstance(items_raw, list):
-                items_list = items_raw
-            else:
-                items_list = []
-            for it in items_list:
-                if isinstance(it, dict):
-                    out.append(
-                        {
-                            k: it.get(k)
-                            for k in ("itemId", "splVenItemId", "sellStatCd", "itemNm")
-                        }
-                    )
-            if len(items_list) < page_size:
+            if len(page_items) < page_size:
                 break
             page += 1
         return out
