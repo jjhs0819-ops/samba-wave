@@ -1307,10 +1307,22 @@ class ARTSourcingClient:
             )
 
         # 판매 상태
+        # ★2026-07-20 근본수정: 상품레벨 sellStatCode(≠10001)만으로 '전체품절' 판정 금지.
+        # ABC 는 주문 사이즈가 매진되는 순간 상품레벨 상태를 잠깐 비판매(일시품절/재고확인,
+        # ≠10001)로 튕기는데, 이때 재고 남은 사이즈가 있어도 전체품절로 오판 → 오토튠이
+        # SSG 리스팅을 통째 삭제(다른 사이즈까지)하는 사고가 다발했다.
+        # → 주문가능 옵션이 하나라도 있으면 상품레벨 플래그와 무관하게 in_stock 으로 본다.
+        #   전체품절은 '옵션 전부 품절' 또는 '옵션정보 없음+상품레벨 비판매'일 때만 인정.
         sell_stat_code = data.get("sellStatCode") or ""
-        is_out_of_stock = sell_stat_code != "10001" or (
-            bool(options) and all(opt.get("isSoldOut", False) for opt in options)
+        _opts_present = bool(options)
+        _all_opts_sold = _opts_present and all(
+            opt.get("isSoldOut", False) for opt in options
         )
+        _any_opt_in_stock = _opts_present and not _all_opts_sold
+        if _any_opt_in_stock:
+            is_out_of_stock = False
+        else:
+            is_out_of_stock = (sell_stat_code != "10001") or _all_opts_sold
         sale_status = "sold_out" if is_out_of_stock else "in_stock"
 
         # 배송 정보 — freeDlvyYn 또는 판매가 >= 무료배송 기준금액이면 무료
