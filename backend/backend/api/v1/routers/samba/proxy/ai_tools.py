@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, Header, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, Query, Request, UploadFile
 from fastapi.responses import Response
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -1032,19 +1032,33 @@ async def bg_jobs_heartbeat(
 # ═══════════════════════════════════════════════
 
 
+def _to_crlf(text: str) -> str:
+    """Windows 배치/스크립트용 CRLF 정규화.
+
+    Path.read_text()는 universal-newlines로 CRLF를 LF로 변환해 읽으므로,
+    cmd/wscript가 요구하는 CRLF로 되돌린다. LF로 배포되면 install.bat이
+    첫 줄부터 파싱 붕괴('anually'은 내부 명령... 등)한다.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+
+
 @bg_worker_router.get("/bg-jobs/installer")
-async def bg_jobs_installer() -> Response:
+async def bg_jobs_installer(
+    request: Request,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> Response:
     """배경제거 워커 설치 패키지(ZIP) 다운로드.
 
     프론트의 '배경제거' 버튼 클릭 시 워커가 죽어있으면 이 엔드포인트로 안내.
     ZIP 안에:
       - install.bat          : Python 자동설치 + 표준 경로 복사 + 작업 스케줄러 등록 + 즉시 실행
       - local_bg_worker.py   : 워커 본체
-      - bg_worker.env        : 사용자별 백엔드 URL이 자동 주입된 설정
+      - bg_worker.env        : 실제 워커 토큰 + 요청 Host 기준 백엔드 URL이 주입된 설정
     사용자는 ZIP 다운로드 → 압축 풀기 → install.bat 더블클릭 1회로 영구 구동.
     """
     import io
     import os
+    import secrets
     import zipfile
     from pathlib import Path
 
@@ -1061,34 +1075,67 @@ async def bg_jobs_installer() -> Response:
             media_type="text/plain",
         )
 
-    api_url = os.environ.get(
-        "PUBLIC_API_URL",
-        os.environ.get("SAMBA_API_URL", "https://api.samba-wave.co.kr"),
-    )
+    # ④ 백엔드 URL: 명시적 PUBLIC_API_URL override → 요청 Host(프록시 헤더) → prod fallback
+    #   SAMBA_API_URL 환경변수는 컨테이너에 prod로 고정돼 있어 로컬/셀프호스팅에서 오배포됨.
+    api_url = os.environ.get("PUBLIC_API_URL", "").strip()
+    if not api_url:
+        fwd_host = (
+            (
+                request.headers.get("x-forwarded-host")
+                or request.headers.get("host")
+                or ""
+            )
+            .split(",")[0]
+            .strip()
+        )
+        fwd_proto = (
+            (request.headers.get("x-forwarded-proto") or request.url.scheme or "https")
+            .split(",")[0]
+            .strip()
+        )
+        if fwd_host:
+            api_url = f"{fwd_proto}://{fwd_host}"
+        else:
+            api_url = os.environ.get("SAMBA_API_URL", "https://api.samba-wave.co.kr")
+
+    # ③ 워커 토큰: DB에 저장된 실제 토큰을 주입. 없으면 생성·저장(config 부트스트랩과 동일).
+    #   빈 토큰으로 배포하면 DB에 토큰이 이미 있는 재설치 환경에서 인증 실패→크래시 루프.
+    _tid = _default_tenant_id()
+    cfg = await _get_setting(session, "bg_worker", tenant_id=_tid)
+    worker_token = (cfg or {}).get("worker_token", "") if isinstance(cfg, dict) else ""
+    if not worker_token:
+        worker_token = secrets.token_hex(32)
+        await _set_setting(
+            session, "bg_worker", {"worker_token": worker_token}, tenant_id=_tid
+        )
+        os.environ["BG_WORKER_TOKEN"] = worker_token
+        logger.info("[배경제거] installer — 워커 토큰 신규 생성·주입")
+
     env_text = (
         "# Samba Wave Local BG Worker Config\n"
-        "# 자동 생성된 설정 — 백엔드 URL은 다운로드 시점에 주입됨\n"
+        "# 자동 생성된 설정 — 백엔드 URL·토큰은 다운로드 시점에 주입됨\n"
         f"SAMBA_API_URL={api_url}\n"
-        "WORKER_TOKEN=\n"
+        f"WORKER_TOKEN={worker_token}\n"
         "POLL_INTERVAL=5\n"
     )
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("install.bat", install_bat.read_text(encoding="utf-8"))
+        # ① .bat/.vbs/.ps1 은 CRLF 강제 (read_text가 LF로 변환해 읽으므로 되돌림)
+        z.writestr("install.bat", _to_crlf(install_bat.read_text(encoding="utf-8")))
         z.writestr("local_bg_worker.py", worker_py.read_text(encoding="utf-8"))
         z.writestr("bg_worker.env", env_text)
         # 워치독 템플릿 — install.bat이 표준 경로 치환 후 사용
         if watchdog_ps1.exists():
             z.writestr(
                 "bg_worker_watchdog.ps1",
-                watchdog_ps1.read_text(encoding="utf-8"),
+                _to_crlf(watchdog_ps1.read_text(encoding="utf-8")),
             )
         if watchdog_vbs.exists():
             # VBS는 ASCII만 (wscript 한글 주석 파싱 실패 이슈)
             z.writestr(
                 "bg_worker_watchdog.vbs",
-                watchdog_vbs.read_text(encoding="ascii", errors="ignore"),
+                _to_crlf(watchdog_vbs.read_text(encoding="ascii", errors="ignore")),
             )
         z.writestr(
             "README.txt",

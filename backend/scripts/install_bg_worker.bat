@@ -96,9 +96,9 @@ schtasks /Delete /TN "%TASK_NAME_WD%" /F >nul 2>nul
 REM ONLOGON 메인 작업 — 권한 안되면 워치독으로 대체되니 실패해도 진행
 schtasks /Create /TN "%TASK_NAME%" /TR "\"!PYTHON!\" -u \"%WORKER%\"" /SC ONLOGON /RL LIMITED /F >nul 2>nul
 if errorlevel 1 (
-    echo       [skip] On-logon task (admin required) - watchdog will handle boot start
+    echo       [skip] On-logon task ^(admin required^) - watchdog will handle boot start
 ) else (
-    echo       Registered: %TASK_NAME% (on logon)
+    echo       Registered: %TASK_NAME% ^(on logon^)
 )
 
 REM 1분마다 워치독 — 죽으면 자동 부활 (powershell -WindowStyle Hidden 직접 호출, conhost 깜빡임 방지)
