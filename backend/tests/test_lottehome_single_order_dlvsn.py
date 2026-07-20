@@ -98,7 +98,7 @@ class TestSingleOrderCollectionInjectsDlvUnitSn:
 
     def test_single_branch_injects_dlvsn(self) -> None:
         # 단건 else 분기에서 _lh_dlvsn_map 조회 후 ProdInfo 에 DlvUnitSn 주입
-        assert '_dlvsn_list = _lh_dlvsn_map.get(_no_key, [])' in self.src, (
+        assert "_dlvsn_list = _lh_dlvsn_map.get(_no_key, [])" in self.src, (
             "단건 신규주문 수집이 _lh_dlvsn_map 에서 DlvUnitSn 을 조회하지 않음"
         )
         assert '"DlvUnitSn": _real_dsn' in self.src, (
@@ -107,6 +107,11 @@ class TestSingleOrderCollectionInjectsDlvUnitSn:
 
     def test_old_key_registered_for_cleanup(self) -> None:
         # 대체값으로 저장된 기존 레코드를 교체 삭제 대상으로 등록(중복 방지)
-        assert '_lh_replaced_old_keys.append(\n                                            f"{_no_key}:{_cur_dsn}"' in self.src or (
-            "_lh_replaced_old_keys.append" in self.src and '{_no_key}:{_cur_dsn}' in self.src
+        assert (
+            '_lh_replaced_old_keys.append(\n                                            f"{_no_key}:{_cur_dsn}"'
+            in self.src
+            or (
+                "_lh_replaced_old_keys.append" in self.src
+                and "{_no_key}:{_cur_dsn}" in self.src
+            )
         ), "재수집 시 기존 잘못된 레코드가 삭제 대상으로 등록되지 않음"
