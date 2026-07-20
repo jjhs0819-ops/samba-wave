@@ -1714,121 +1714,138 @@ class ImageTransformService:
                     gemini_key, gemini_model_name, img_bytes, gemini_prompt, ref_image
                 )
 
-            # ── 모델 착용 모드: 대표1장 + 추가3장 고정 생성 ──
+            # ── 모델 착용 모드: 대표1장 + 추가2장 생성 ──
+            #    (issue #665: scope 체크 범위만 변환 — 대표/추가 각각 게이팅)
             if mode == "model" and product_images:
-                # 0) 대표이미지 다운로드 (디자인 기준으로 재사용)
-                thumb_bytes: bytes | None = None
-                try:
-                    thumb_bytes = await self._download_image(
-                        product_images[0], client=_dl_client
-                    )
-                except Exception as e:
-                    logger.error(f"[이미지] {pid} 대표이미지 다운로드 실패: {e}")
+                use_thumbnail = scope.get("thumbnail", False)
+                use_additional = scope.get("additional", False)
 
-                # 1) 대표이미지 변환
+                # 1) 대표이미지 변환 (대표 체크 시에만)
                 new_thumb_url = None
-                if thumb_bytes:
+                if use_thumbnail:
+                    thumb_bytes: bytes | None = None
                     try:
-                        transformed = await _transform_ai(thumb_bytes)
-                        new_thumb_url = await self._save_image(
-                            transformed, product_images[0]
+                        thumb_bytes = await self._download_image(
+                            product_images[0], client=_dl_client
                         )
+                    except Exception as e:
+                        logger.error(f"[이미지] {pid} 대표이미지 다운로드 실패: {e}")
+                    if thumb_bytes:
+                        try:
+                            transformed = await _transform_ai(thumb_bytes)
+                            new_thumb_url = await self._save_image(
+                                transformed, product_images[0]
+                            )
+                            product_result["transformed"] += 1
+                        except Exception as e:
+                            logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
+                            product_result["failed"] += 1
+
+                # 2) 추가이미지 생성 (추가 체크 시에만). 미체크 시 원본 추가이미지 유지.
+                new_additional: list[str] = []
+                additional_generated = False
+                if use_additional:
+                    additional_generated = True
+                    # 추가이미지 소스 결정: 추가이미지 있으면 사용, 없으면 상세이미지 참고
+                    raw_additional = (
+                        list(product_images[1:]) if len(product_images) > 1 else []
+                    )
+                    # URL 패턴으로 비상품 이미지(배너/로고) 1차 필터링
+                    additional_sources = [
+                        u for u in raw_additional if self._is_product_image(u)
+                    ]
+                    filtered_count = len(raw_additional) - len(additional_sources)
+                    if filtered_count > 0:
+                        logger.info(
+                            f"[이미지] {pid} 추가이미지 {filtered_count}장 필터링 (배너/로고 제외)"
+                        )
+                    if not additional_sources:
+                        # 상세이미지에서 참고용 소스 가져오기 (상세이미지 자체는 변경 안함)
+                        raw_detail = list(product.detail_images or [])
+                        additional_sources = [
+                            u for u in raw_detail if self._is_product_image(u)
+                        ]
+                        if additional_sources:
+                            logger.info(
+                                f"[이미지] {pid} 추가이미지 없음 → 상세이미지 {len(additional_sources)}장 참고"
+                            )
+
+                    # 소스에서 최대 2개 뽑아 변환 → 추가이미지 2장 생성
+                    #    다운로드 후 이미지 비율도 2차 검증하여 배너 제거
+                    src_idx = 0
+                    attempts = 0
+                    max_attempts = (
+                        max(len(additional_sources) * 2, 6) if additional_sources else 3
+                    )
+                    while len(new_additional) < 2 and attempts < max_attempts:
+                        if additional_sources:
+                            src_url = additional_sources[
+                                src_idx % len(additional_sources)
+                            ]
+                            src_idx += 1
+                        else:
+                            src_url = product_images[0]
+                        attempts += 1
+                        try:
+                            img = await self._download_image(src_url, client=_dl_client)
+                            # 다운로드 후 이미지 비율 2차 검증
+                            if additional_sources and not self._is_product_image(
+                                src_url, img
+                            ):
+                                logger.info(
+                                    f"[이미지] {pid} 비상품 이미지 스킵 (비율 이상): {src_url[:80]}"
+                                )
+                                continue
+                            transformed = await _transform_ai(img)
+                            new_url = await self._save_image(transformed, src_url)
+                            new_additional.append(new_url)
+                            product_result["transformed"] += 1
+                        except Exception as e:
+                            logger.error(
+                                f"[이미지] {pid} 추가이미지({len(new_additional) + 1}/3) 변환 실패: {e}"
+                            )
+                            product_result["failed"] += 1
+                            # 소스 없으면 더 이상 시도 불필요
+                            if not additional_sources:
+                                break
+
+                # 3) 최종 조립. 전부 실패(transformed=0) 시 images 미변경 → 원본 유실 방지.
+                if product_result["transformed"] > 0:
+                    thumb_final = new_thumb_url or product_images[0]
+                    if additional_generated:
+                        # 추가 생성함 → 대표1 + 생성 추가
+                        final_images = [thumb_final] + new_additional
+                    else:
+                        # 추가 미체크 → 원본 추가이미지 보존
+                        final_images = [thumb_final] + list(product_images[1:])
+                    update_data["images"] = final_images
+                # 상세이미지는 그대로 유지 (변경 안함)
+
+            # ── 연출컷 모드 (issue #665: scope 체크 범위만 변환) ──
+            elif mode == "scene" and product_images:
+                use_thumbnail = scope.get("thumbnail", False)
+                use_additional = scope.get("additional", False)
+                use_detail = scope.get("detail", False)
+
+                # 대표이미지 변환 (대표 체크 시에만)
+                if use_thumbnail:
+                    try:
+                        img = await self._download_image(
+                            product_images[0], client=_dl_client
+                        )
+                        transformed = await _transform_ai(img)
+                        new_url = await self._save_image(transformed, product_images[0])
+                        updated_images = list(product_images)
+                        updated_images[0] = new_url
+                        update_data["images"] = updated_images
                         product_result["transformed"] += 1
                     except Exception as e:
                         logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
                         product_result["failed"] += 1
 
-                # 2) 추가이미지 소스 결정: 추가이미지 있으면 사용, 없으면 상세이미지 참고
-                raw_additional = (
-                    list(product_images[1:]) if len(product_images) > 1 else []
-                )
-
-                # URL 패턴으로 비상품 이미지(배너/로고) 1차 필터링
-                additional_sources = [
-                    u for u in raw_additional if self._is_product_image(u)
-                ]
-                filtered_count = len(raw_additional) - len(additional_sources)
-                if filtered_count > 0:
-                    logger.info(
-                        f"[이미지] {pid} 추가이미지 {filtered_count}장 필터링 (배너/로고 제외)"
-                    )
-
-                used_detail_as_ref = False
-                if not additional_sources:
-                    # 상세이미지에서 참고용 소스 가져오기 (상세이미지 자체는 변경 안함)
-                    raw_detail = list(product.detail_images or [])
-                    additional_sources = [
-                        u for u in raw_detail if self._is_product_image(u)
-                    ]
-                    used_detail_as_ref = True
-                    if additional_sources:
-                        logger.info(
-                            f"[이미지] {pid} 추가이미지 없음 → 상세이미지 {len(additional_sources)}장 참고"
-                        )
-
-                # 3) 소스에서 최대 2개 뽑아 변환 → 추가이미지 2장 생성
-                #    다운로드 후 이미지 비율도 2차 검증하여 배너 제거
-                new_additional: list[str] = []
-                src_idx = 0
-                attempts = 0
-                max_attempts = (
-                    max(len(additional_sources) * 2, 6) if additional_sources else 3
-                )
-                while len(new_additional) < 2 and attempts < max_attempts:
-                    if additional_sources:
-                        src_url = additional_sources[src_idx % len(additional_sources)]
-                        src_idx += 1
-                    else:
-                        src_url = product_images[0]
-                    attempts += 1
-                    try:
-                        img = await self._download_image(src_url, client=_dl_client)
-                        # 다운로드 후 이미지 비율 2차 검증
-                        if additional_sources and not self._is_product_image(
-                            src_url, img
-                        ):
-                            logger.info(
-                                f"[이미지] {pid} 비상품 이미지 스킵 (비율 이상): {src_url[:80]}"
-                            )
-                            continue
-                        transformed = await _transform_ai(img)
-                        new_url = await self._save_image(transformed, src_url)
-                        new_additional.append(new_url)
-                        product_result["transformed"] += 1
-                    except Exception as e:
-                        logger.error(
-                            f"[이미지] {pid} 추가이미지({len(new_additional) + 1}/3) 변환 실패: {e}"
-                        )
-                        product_result["failed"] += 1
-                        # 소스 없으면 더 이상 시도 불필요
-                        if not additional_sources:
-                            break
-
-                # 4) 최종: 대표1장 + 추가3장만 남김 (나머지 삭제)
-                final_images = [new_thumb_url or product_images[0]] + new_additional
-                update_data["images"] = final_images
-                # 상세이미지는 그대로 유지 (변경 안함)
-
-            # ── 연출컷 모드 ──
-            elif mode == "scene" and product_images:
-                has_additional = len(product_images) > 1
-                # 대표이미지 변환
-                try:
-                    img = await self._download_image(
-                        product_images[0], client=_dl_client
-                    )
-                    transformed = await _transform_ai(img)
-                    new_url = await self._save_image(transformed, product_images[0])
-                    updated_images = list(product_images)
-                    updated_images[0] = new_url
-                    update_data["images"] = updated_images
-                    product_result["transformed"] += 1
-                except Exception as e:
-                    logger.error(f"[이미지] {pid} 대표이미지 변환 실패: {e}")
-                    product_result["failed"] += 1
-
-                # 추가이미지 변환
-                if has_additional:
+                # 추가이미지 변환 (추가 체크 시에만). "추가 없으면 상세" fallback 제거 —
+                # 체크 안 한 상세이미지가 유료 변환돼 과금되던 문제(issue #665).
+                if use_additional and len(product_images) > 1:
                     base_images = list(update_data.get("images", product_images))
                     for idx in range(1, len(base_images)):
                         try:
@@ -1845,8 +1862,9 @@ class ImageTransformService:
                             logger.error(f"[이미지] {pid} 추가이미지 변환 실패: {e}")
                             product_result["failed"] += 1
                     update_data["images"] = base_images
-                elif product.detail_images:
-                    # 추가이미지 없으면 상세이미지 변환
+
+                # 상세이미지 변환 (상세 체크 시에만)
+                if use_detail and product.detail_images:
                     new_details = []
                     for img_url in product.detail_images or []:
                         try:
@@ -1862,14 +1880,23 @@ class ImageTransformService:
                     update_data["detail_images"] = new_details
 
             # ── 모델→상품 모드: Gemini로 모델 제거 → 상품컷 생성 ──
+            #    (issue #665: scope 체크 범위만 변환 — idx0=대표, idx1+=추가, 상세 별도)
             elif mode == "model_to_product" and product_images:
                 if not gemini_key:
                     product_result["failed"] += 1
                     logger.error(f"[모델→상품] {pid} Gemini 설정 필요")
                 else:
+                    use_thumbnail = scope.get("thumbnail", False)
+                    use_additional = scope.get("additional", False)
+                    use_detail = scope.get("detail", False)
                     m2p_prompt = _get_category_prompt(category, "model_to_product", "")
                     updated_images = list(product_images)
                     for idx, img_url in enumerate(updated_images):
+                        # idx0=대표(thumbnail 체크), idx1+=추가(additional 체크)
+                        if idx == 0 and not use_thumbnail:
+                            continue
+                        if idx >= 1 and not use_additional:
+                            continue
                         try:
                             img = await self._download_image(img_url, client=_dl_client)
                             transformed = await self._transform_image_gemini(
@@ -1884,6 +1911,28 @@ class ImageTransformService:
 
                     if product_result["transformed"] > 0:
                         update_data["images"] = updated_images
+
+                    # 상세이미지 변환 (상세 체크 시에만)
+                    if use_detail and product.detail_images:
+                        new_details = []
+                        for img_url in product.detail_images or []:
+                            try:
+                                img = await self._download_image(
+                                    img_url, client=_dl_client
+                                )
+                                transformed = await self._transform_image_gemini(
+                                    gemini_key, gemini_model_name, img, m2p_prompt, None
+                                )
+                                new_url = await self._save_image(transformed, img_url)
+                                new_details.append(new_url)
+                                product_result["transformed"] += 1
+                            except Exception as e:
+                                logger.error(
+                                    f"[모델→상품] {pid} 상세이미지 변환 실패: {e}"
+                                )
+                                new_details.append(img_url)
+                                product_result["failed"] += 1
+                        update_data["detail_images"] = new_details
 
             # ── 배경제거 등 기본 모드: scope 그대로 사용 ──
             else:

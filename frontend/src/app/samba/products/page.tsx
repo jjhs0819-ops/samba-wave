@@ -2585,7 +2585,8 @@ export default function ProductsPage() {
             setAiJobDone(true)
             setImgFiltering(false)
             const apiCalls = success + fail
-            setLastAiUsage({ calls: apiCalls, tokens: apiCalls * 1000, cost: apiCalls * 15, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
+            // issue #665: 이미지 필터링은 로컬 CLIP(ONNX) 처리 → API 비용 0원
+            setLastAiUsage({ calls: apiCalls, tokens: 0, cost: 0, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
             setSelectedIds(new Set()); setSelectAll(false)
             reloadProducts()
           }}
