@@ -2378,6 +2378,37 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         }
                                     )
 
+                                # ★2026-07-20 오삭제 방지 방어층(전 소싱처 공통):
+                                # sold_out 이라도 주문가능 옵션이 하나라도 남아있으면 전체삭제
+                                # 금지. ABC 등 소싱처가 상품레벨 상태로 순간/부분 품절을 '전체
+                                # 품절'로 오보고할 때, 재고 남은 SSG 리스팅이 통째 삭제(다른
+                                # 사이즈까지 판매중지)되던 사고를 근본 차단한다. 이 경우 품절
+                                # 사이즈의 옵션재고(0)만 반영되고 상품은 in_stock 으로 유지 →
+                                # 정상 per-option 재고 전송 경로를 탄다.
+                                # 소싱처 자체삭제(deleted_from_source=True)는 정상 삭제 유지.
+                                if r.new_sale_status == "sold_out" and not getattr(
+                                    r, "deleted_from_source", False
+                                ):
+                                    _chk_opts = (
+                                        r.new_options
+                                        if r.new_options is not None
+                                        else product.options
+                                    )
+                                    _has_live_opt = bool(_chk_opts) and any(
+                                        isinstance(_o, dict)
+                                        and int(_o.get("stock") or 0) > 0
+                                        and not _o.get("isSoldOut", False)
+                                        for _o in _chk_opts
+                                    )
+                                    if _has_live_opt:
+                                        logger.warning(
+                                            f"[오토튠][오삭제방지] {product.source_site} "
+                                            f"{(product.name or '')[:30]} — sold_out 이나 "
+                                            f"재고옵션 존재 → 전체삭제 취소, in_stock 유지"
+                                        )
+                                        updates["sale_status"] = "in_stock"
+                                        r.new_sale_status = "in_stock"
+
                                 # 품절 → 서킷브레이커 + 즉시 마켓삭제
                                 if r.new_sale_status == "sold_out":
                                     # 변동 감지 즉시 DB 저장 — 사이클 미완주에도 유실 없음
