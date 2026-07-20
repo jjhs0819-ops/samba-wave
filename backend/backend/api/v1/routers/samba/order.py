@@ -8481,6 +8481,32 @@ async def sync_orders_from_markets(
                             if _no_key:
                                 _lh_seen_ordno.add(_no_key)
                         else:
+                            # issue #216 후속 — 단건 신규주문도 합배송과 동일하게
+                            # deliver_list의 진짜 DlvUnitSn을 주입한다. 신규주문 API는
+                            # DlvUnitSn을 안 주고 OrgOrdDtlSn(대체값)만 줘서, 이를 그대로
+                            # ext_order_number에 저장하면 registDeliver.lotte가
+                            # [0005] 필수파라미터 오류(ord_dtl_sn)로 송장전송을 거부한다.
+                            _no_key = str(ro.get("OrdNo", "") or "")
+                            _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
+                            _pi = ro.get("ProdInfo")
+                            if _dlvsn_list and isinstance(_pi, dict) and _no_key:
+                                # 단건 = 상품 1건 → DlvUnitSn 1개(첫 값) 사용
+                                _real_dsn = str(_dlvsn_list[0])
+                                _cur_dsn = str(
+                                    _pi.get("OrdDtlSn")
+                                    or _pi.get("DlvUnitSn")
+                                    or _pi.get("OrgOrdDtlSn")
+                                    or ""
+                                )
+                                if _real_dsn and _cur_dsn != _real_dsn:
+                                    # 기존에 대체값(OrgOrdDtlSn)으로 저장된 레코드 →
+                                    # 새 키와 달라 중복이 남으므로 삭제 대상 등록
+                                    if _cur_dsn:
+                                        _lh_replaced_old_keys.append(
+                                            f"{_no_key}:{_cur_dsn}"
+                                        )
+                                    ro = dict(ro)
+                                    ro["ProdInfo"] = {**_pi, "DlvUnitSn": _real_dsn}
                             _oid = _lh_order_key(ro)
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)
