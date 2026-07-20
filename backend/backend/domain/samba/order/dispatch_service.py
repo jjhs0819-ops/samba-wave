@@ -403,6 +403,11 @@ async def _send_ebay(order, account, courier, tracking, session):
         "Rincos": "RINCOS",
         "Korea Post": "KoreaPost",
         "우체국택배": "KoreaPost",
+        # 롯데택배: eBay 캐리어 목록에 롯데 코드 없음(120개 중 KoreaPost만 존재) →
+        # Fulfillment API 범용값 "Other"로 전송. 송장번호는 올라가지만 국내 롯데
+        # 송장번호는 미국 바이어 쪽에서 추적 링크가 안 뜰 수 있음(국제 추적 미지원).
+        "롯데택배": "Other",
+        "롯데": "Other",
     }
     ebay_carrier = carrier_map.get(courier, "KoreaPost")
     ebay_order_id = order.ext_order_number or order.order_number

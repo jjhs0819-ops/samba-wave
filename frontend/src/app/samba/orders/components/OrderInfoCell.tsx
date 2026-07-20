@@ -194,6 +194,7 @@ export default function OrderInfoCell(props: Props) {
           <img
             src={o.product_image || collectedImage}
             alt=""
+            referrerPolicy="no-referrer"
             onClick={() => handleImageClick(o)}
             style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '6px', border: `1px solid ${c.border}`, flexShrink: 0, cursor: 'pointer' }}
           />

@@ -489,9 +489,11 @@ async def _snkrdunk_remove_match_impl(
 ) -> dict[str, Any]:
     from sqlalchemy import text
 
+    # 후보(kream_candidates)를 남기면 재로드 시 후보 1개 자동선택으로 매칭이 되살아나는
+    # 도돌이 발생 [2026-07-20 라이츄·샤워즈 사고] — 해제 시 함께 삭제
     sql = text("""
         UPDATE samba_collected_product
-        SET resell_matches = resell_matches - 'kream', updated_at = NOW()
+        SET resell_matches = resell_matches - 'kream' - 'kream_candidates', updated_at = NOW()
         WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
@@ -552,6 +554,21 @@ async def _snkrdunk_update_match_impl(
     if kream_name_ko:
         params["kream_name_ko"] = kream_name_ko
     await session.exec(sql.bindparams(**params))  # type: ignore[arg-type]
+    # 확정된 크림 상품은 다른 행의 후보 목록에서 제거 [2026-07-20 사용자 지시] —
+    # 남기면 같은 크림이 여러 스니덩크에 후보로 떠서 이중 매칭 유도
+    cleanup_sql = text("""
+        UPDATE samba_collected_product
+        SET resell_matches = jsonb_set(resell_matches, '{kream_candidates}', (
+            SELECT COALESCE(jsonb_agg(cd), '[]'::jsonb)
+            FROM jsonb_array_elements(resell_matches->'kream_candidates') cd
+            WHERE cd->>'product_id' != :kream_id
+        ), true), updated_at = NOW()
+        WHERE source_site = 'SNKRDUNK' AND site_product_id != :sid
+          AND EXISTS (SELECT 1 FROM jsonb_array_elements(
+                COALESCE(resell_matches->'kream_candidates','[]'::jsonb)) cd
+              WHERE cd->>'product_id' = :kream_id)
+    """)
+    await session.exec(cleanup_sql.bindparams(sid=snkr_id, kream_id=kream_id))  # type: ignore[arg-type]
     await session.commit()
     return {
         "ok": True,

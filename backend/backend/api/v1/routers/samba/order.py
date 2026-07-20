@@ -742,25 +742,42 @@ async def _run_paginated_order_query(
 
         _cp_rows = (
             await session.execute(
-                select(_CP.id, _CP.name, _CP.images, _CP.source_url).where(
-                    _CP.id.in_(_kream_cp_ids)
-                )
+                select(
+                    _CP.id, _CP.name, _CP.images, _CP.source_url, _CP.resell_matches
+                ).where(_CP.id.in_(_kream_cp_ids))
             )
         ).all()
         import json as _json
 
-        _cp_data_map = {r[0]: (r[1], r[2], r[3]) for r in _cp_rows}
+        _cp_data_map = {r[0]: (r[1], r[2], r[3], r[4]) for r in _cp_rows}
         for o in items:
             if o.source_site == "KREAM" and o.collected_product_id:
-                _name, _imgs, _cp_src_url = _cp_data_map.get(
-                    o.collected_product_id, (None, None, None)
+                _name, _imgs, _cp_src_url, _rm = _cp_data_map.get(
+                    o.collected_product_id, (None, None, None, None)
                 )
-                if _name:
+                # 크림 한글명·크림 이미지 우선 [2026-07-20] — cp.name은 스니덩크 원명(영문)이라
+                # 그대로 덮으면 주문이 영문 표시되는 사고 (오늘 오전 한글→영문 뒤집힘 건)
+                if isinstance(_rm, str):
+                    try:
+                        _rm = _json.loads(_rm)
+                    except Exception:
+                        _rm = None
+                _kr = (_rm or {}).get("kream", {}) if isinstance(_rm, dict) else {}
+                _ko_name = _kr.get("name_ko") or ""
+                _kr_img = _kr.get("image") or ""
+                if _ko_name:
+                    o.product_name = _ko_name
+                elif _name and not (o.product_name or "").strip():
                     o.product_name = _name
-                if not o.product_image and _imgs:
-                    _img_list = _json.loads(_imgs) if isinstance(_imgs, str) else _imgs
-                    if _img_list:
-                        o.product_image = _img_list[0]
+                if not o.product_image:
+                    if _kr_img:
+                        o.product_image = _kr_img
+                    elif _imgs:
+                        _img_list = (
+                            _json.loads(_imgs) if isinstance(_imgs, str) else _imgs
+                        )
+                        if _img_list:
+                            o.product_image = _img_list[0]
                 if _cp_src_url:
                     o.source_url = _cp_src_url
 
