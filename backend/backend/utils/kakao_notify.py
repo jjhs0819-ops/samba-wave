@@ -1,4 +1,4 @@
-"""카카오톡 나에게 보내기 알림 유틸."""
+"""주문 알림 유틸 — 슬랙 웹훅(#sambaorder) 우선, 카카오톡 나에게 보내기 폴백."""
 
 import logging
 import os
@@ -25,7 +25,30 @@ async def _get_access_token(api_key: str, refresh_token: str) -> str | None:
             return data.get("access_token")
 
 
+async def _send_slack(text: str) -> bool:
+    """슬랙 웹훅 발송 [2026-07-20 카톡→슬랙 이전] — SLACK_ORDER_WEBHOOK 설정 시 우선."""
+    url = os.environ.get("SLACK_ORDER_WEBHOOK", "")
+    if not url.startswith("https://hooks.slack.com/"):
+        return False
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json={"text": text},
+                headers={"Content-Type": "application/json; charset=utf-8"},
+            ) as resp:
+                if resp.status == 200:
+                    return True
+                logger.warning("[슬랙알림] 전송 실패 status=%s", resp.status)
+                return False
+    except Exception as exc:
+        logger.warning("[슬랙알림] 예외(카톡 폴백): %s", exc)
+        return False
+
+
 async def send_kakao_message(text: str) -> None:
+    if await _send_slack(text):
+        return
     api_key = os.environ.get("KAKAO_API_KEY", "")
     refresh_token = os.environ.get("KAKAO_REFRESH_TOKEN", "")
     if not api_key or not refresh_token:

@@ -689,6 +689,7 @@ async def snkrdunk_compare_all_public(
             -- 최근 가격/재고 확인 시각(KST) — restock/갱신이 snkr price·stock 갱신 시 updated_at=NOW()
             to_char(updated_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS price_checked_at,
             COALESCE(style_code, '') AS style_code,
+            COALESCE(brand, '') AS brand,
             COALESCE(extra_data->>'name_ja', '') AS name_ja,
             COALESCE(extra_data->>'name_en', '') AS name_en,
             COALESCE((images::jsonb)->>0, '') AS snkr_image,
@@ -704,6 +705,9 @@ async def snkrdunk_compare_all_public(
             (COALESCE(resell_matches->'kream'->>'anomaly_flagged', '') = 'true') AS anomaly_flagged,
             -- 이상감지 원인(검수페이지 매입가 아래 표시): "옵션 등록가 X < 시세 Y의 70%"
             COALESCE(resell_matches->'kream'->>'anomaly_reason', '') AS anomaly_reason,
+            -- 다중매칭 후보 [2026-07-19] — 품번 매칭이 후보 여럿(재판/홀로 등)으로 못 가른 상품.
+            -- 검수페이지에서 사용자가 후보 선택 후 일치 확정 (PATCH /match → /verify)
+            COALESCE(resell_matches->'kream_candidates', '[]'::jsonb)::text AS kream_candidates,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
                 FROM jsonb_array_elements(options::jsonb) o
@@ -859,6 +863,17 @@ async def snkrdunk_compare_all_public(
         d["has_stock"] = has_stock
         d["model_no"] = d["kream_style_code"]
         d["kream_name"] = d["kream_name_ko"]
+        # 다중매칭 후보 파싱 (jsonb → list). 실패/없음 = 빈 배열
+        kc = d.get("kream_candidates")
+        if isinstance(kc, str):
+            try:
+                d["kream_candidates"] = json.loads(kc)
+            except Exception:
+                d["kream_candidates"] = []
+        elif not isinstance(kc, list):
+            d["kream_candidates"] = []
+        # 후보선택형(kream_id 비어도 후보 존재)도 '크림매칭'으로 분류 [2026-07-20 사용자 지시]
+        matched = matched or bool(d["kream_candidates"])
         d["cat"] = (1 if has_stock else 2) if matched else (3 if has_stock else 4)
         # DB 실시간 등록여부 (크림에 입찰 존재)
         d["registered"] = bool(d["kream_id"]) and d["kream_id"] in registered_set
