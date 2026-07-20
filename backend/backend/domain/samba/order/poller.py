@@ -24,6 +24,8 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
     (계정 목록 / 롯데홈 자격증명 / 신규판정)만 그때그때 짧은 read 세션으로 감싸고,
     느린 마켓 API 호출 동안에는 DB 세션을 전혀 점유하지 않는다. 이 함수는 SELECT 만 한다.
     """
+    from types import SimpleNamespace
+
     from sqlalchemy import text as _text
     from sqlmodel import select
 
@@ -34,7 +36,24 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
         result = await _acc_session.exec(
             select(SambaMarketAccount).where(SambaMarketAccount.is_active == True)  # noqa: E712
         )
-        accounts = result.all()
+        # [2026-07-21] DetachedInstanceError fix — 세션이 닫힌 뒤 아래 루프에서
+        # account.market_type 등 lazy 속성에 접근하면 refresh 시도가 세션 없음으로
+        # 매 주기 크래시했다(폴러 전면 사망 → 실시간 주문 감지 중단, 시간별 sync만 동작).
+        # 세션 점유를 늘리지 않기 위해(느린 마켓 API 호출 중 DB 세션 미점유 원칙 유지)
+        # 필요한 컬럼만 세션 안에서 plain 스냅샷으로 떠서 detached 접근을 제거한다.
+        accounts = [
+            SimpleNamespace(
+                id=_a.id,
+                tenant_id=_a.tenant_id,
+                market_type=_a.market_type,
+                market_name=_a.market_name,
+                additional_fields=_a.additional_fields,
+                api_key=_a.api_key,
+                api_secret=_a.api_secret,
+                seller_id=_a.seller_id,
+            )
+            for _a in result.all()
+        ]
 
     new_by_market: dict[str, list[str]] = defaultdict(list)
     tenant_ids_with_new: set[str | None] = set()
