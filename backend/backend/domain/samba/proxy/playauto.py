@@ -11,6 +11,11 @@ EMP_BASE_URL = "https://playauto-api.playauto.co.kr/emp/v1"
 # 공통 API 기본 URL
 COMMON_BASE_URL = "https://playapi.api.plto.com/restApi/empapi"
 
+# {api_key: (monotonic_ts, {ProdName: MasterCode})} — 중복등록 사전조회용.
+# 대량 전송 중 매 건마다 전체 목록을 조회하지 않도록 60초 캐시.
+_NAME_MASTER_CACHE: dict[str, tuple[float, dict[str, str]]] = {}
+_NAME_MASTER_CACHE_TTL = 60.0
+
 
 def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     """UTF-8 바이트 기준 안전 절단 — 멀티바이트(한글) 경계 보호."""
@@ -270,6 +275,54 @@ class PlayAutoClient:
             params["MyCateName"] = my_cate_name
         result = await self._call_api("GET", url, params=params or None)
         return result if isinstance(result, list) else [result]
+
+    async def build_name_master_map(
+        self, force_refresh: bool = False
+    ) -> dict[str, str]:
+        """전체 상품 목록 → {ProdName: MasterCode} 맵 (계정별 60초 캐시).
+
+        신규등록 전 중복 사전조회와 타임아웃/코드미회신 역확인에 사용.
+        등록 API를 다시 호출하면 EMP에 중복 상품이 생기므로, 등록 여부는
+        반드시 이 조회로 확인해야 한다. 같은 이름이 여러 건이면(기존 중복)
+        첫 항목의 코드를 유지한다.
+        """
+        import time as _time
+
+        cached = _NAME_MASTER_CACHE.get(self.api_key)
+        if (
+            not force_refresh
+            and cached
+            and _time.monotonic() - cached[0] < _NAME_MASTER_CACHE_TTL
+        ):
+            return cached[1]
+        items = await self.get_products()
+        name_map: dict[str, str] = {}
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            name = str(
+                it.get("ProdName") or it.get("prodName") or it.get("prod_name") or ""
+            ).strip()
+            code = str(
+                it.get("MasterCode")
+                or it.get("masterCode")
+                or it.get("master_code")
+                or ""
+            ).strip()
+            if name and code:
+                name_map.setdefault(name, code)
+        _NAME_MASTER_CACHE[self.api_key] = (_time.monotonic(), name_map)
+        return name_map
+
+    async def find_master_code_by_name(
+        self, prod_name: str, force_refresh: bool = False
+    ) -> str:
+        """상품명으로 마스터코드 조회. 못 찾으면 빈 문자열."""
+        name = str(prod_name or "").strip()
+        if not name:
+            return ""
+        name_map = await self.build_name_master_map(force_refresh=force_refresh)
+        return name_map.get(name, "")
 
     # ── 주문 API ──
 
