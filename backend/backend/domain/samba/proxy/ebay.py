@@ -918,6 +918,22 @@ class EbayClient:
                 aspects.setdefault("Set", ["Promo Cards"])
                 aspects.setdefault("Rarity", ["Promo"])
 
+        # 하자/상태 자유서술(conditionDescription) — USED 계열 condition일 때만 유효.
+        # 소싱처 하자 안내(예: 뒷면 미세 찍힘)를 영문으로 담아 구매자 클레임을 예방.
+        # 우선순위: product["ebay_condition_description"] → extra_data["ebay_condition_description"].
+        # (2026-07-21 번장 냐옹ex 리리스팅 요청으로 추가)
+        _cond_desc = ""
+        if isinstance(product, dict):
+            _cond_desc = str(product.get("ebay_condition_description") or "").strip()
+            if not _cond_desc:
+                _ed = product.get("extra_data") or {}
+                if isinstance(_ed, dict):
+                    _cond_desc = str(
+                        _ed.get("ebay_condition_description") or ""
+                    ).strip()
+        if _cond_desc and str(inventory_item.get("condition", "")).startswith("USED"):
+            inventory_item["conditionDescription"] = _cond_desc[:1000]
+
         # Offer 포맷 (정책 ID는 kwargs 또는 계정 creds에서 전달)
         listing_policies: dict[str, str] = {}
         if kwargs.get("fulfillment_policy_id"):
