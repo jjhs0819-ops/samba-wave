@@ -11,6 +11,14 @@ EMP_BASE_URL = "https://playauto-api.playauto.co.kr/emp/v1"
 # 공통 API 기본 URL
 COMMON_BASE_URL = "https://playapi.api.plto.com/restApi/empapi"
 
+# {api_key: (monotonic_ts, {ProdName: (MasterCode, WriteDate)})}
+# 중복등록 사전조회·코드 회수용. lookupProd 전체(수만 건)를 매 건 조회하지
+# 않도록 계정별 60초 캐시. 동명(중복이름)이면 WriteDate 최신 항목을 유지한다
+# (방금 등록한 상품 = WriteDate 최신). lookupProd 응답 필드는 실측상
+# MasterCode/ProdName/WriteDate 3개뿐이라 품번 매칭은 불가, 이름이 유일 키다.
+_NAME_MASTER_CACHE: dict[str, tuple[float, dict[str, tuple[str, str]]]] = {}
+_NAME_MASTER_CACHE_TTL = 60.0
+
 
 def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     """UTF-8 바이트 기준 안전 절단 — 멀티바이트(한글) 경계 보호."""
@@ -270,6 +278,60 @@ class PlayAutoClient:
             params["MyCateName"] = my_cate_name
         result = await self._call_api("GET", url, params=params or None)
         return result if isinstance(result, list) else [result]
+
+    async def build_name_master_map(
+        self, force_refresh: bool = False
+    ) -> dict[str, tuple[str, str]]:
+        """전체 상품 → {ProdName: (MasterCode, WriteDate)} 맵 (계정별 60초 캐시).
+
+        동명(중복이름)이면 WriteDate가 더 최신인 항목을 유지한다. 방금 등록한
+        상품은 WriteDate가 가장 최신이므로, 코드 미회신 회수 시 이 맵에서 최신
+        항목을 고르면 방금 만든 상품의 MasterCode를 정확히 집어낼 수 있다.
+
+        주의: 등록 여부 확인 목적으로만 사용한다. register API를 다시 호출하면
+        EMP에 중복이 생기므로, '이미 있나?'는 반드시 이 조회로 판단해야 한다.
+        타임아웃(응답 못 받음)에는 절대 이 조회로 성공을 추론하지 않는다
+        (금지 규칙 — false success 유발).
+        """
+        import time as _time
+
+        cached = _NAME_MASTER_CACHE.get(self.api_key)
+        if (
+            not force_refresh
+            and cached
+            and _time.monotonic() - cached[0] < _NAME_MASTER_CACHE_TTL
+        ):
+            return cached[1]
+        items = await self.get_products()
+        name_map: dict[str, tuple[str, str]] = {}
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            name = str(it.get("ProdName") or "").strip()
+            code = str(it.get("MasterCode") or "").strip()
+            wdate = str(it.get("WriteDate") or "")
+            if not name or not code:
+                continue
+            prev = name_map.get(name)
+            # 동명이면 WriteDate(문자열 'YYYY-MM-DD HH:MM:SS' 사전식=시간순) 최신 유지
+            if prev is None or wdate > prev[1]:
+                name_map[name] = (code, wdate)
+        _NAME_MASTER_CACHE[self.api_key] = (_time.monotonic(), name_map)
+        return name_map
+
+    async def find_master_code_by_name(
+        self, prod_name: str, force_refresh: bool = False
+    ) -> str:
+        """상품명 정확일치로 MasterCode 조회(동명이면 WriteDate 최신). 없으면 "".
+
+        절단된 ProdName을 그대로 넘긴다(저장명도 같은 절단본이라 정확일치 성립).
+        """
+        name = str(prod_name or "").strip()
+        if not name:
+            return ""
+        name_map = await self.build_name_master_map(force_refresh=force_refresh)
+        found = name_map.get(name)
+        return found[0] if found else ""
 
     # ── 주문 API ──
 

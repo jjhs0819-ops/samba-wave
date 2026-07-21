@@ -175,6 +175,30 @@ class PlayAutoPlugin(MarketPlugin):
                     logger.info(f"[플레이오토] 기존 상품 수정(PATCH): {existing_no}")
                     results = await client.update_product([emp_data])
                 else:
+                    # 중복등록 원천차단: 같은 ProdName이 이미 EMP에 있으면 등록하지
+                    # 않고 기존 MasterCode(동명이면 WriteDate 최신)에 재연결한다.
+                    # 타임아웃으로 실패 처리된 상품을 재전송할 때마다 EMP 복제본이
+                    # 쌓이던 문제를 등록 '전' 사전확인으로 차단한다.
+                    # (타임아웃 자체를 성공으로 보는 금지 패턴과 무관)
+                    _prod_name = str(emp_data.get("ProdName", "")).strip()
+                    _dup_code = ""
+                    try:
+                        _dup_code = await client.find_master_code_by_name(_prod_name)
+                    except Exception as _pre_e:
+                        logger.warning(
+                            f"[플레이오토] 중복 사전조회 실패(등록 계속): {_pre_e}"
+                        )
+                    if _dup_code:
+                        logger.warning(
+                            f"[플레이오토] 중복등록 방지 — 기등록 재연결: "
+                            f"{_prod_name[:30]} → {_dup_code}"
+                        )
+                        return {
+                            "success": True,
+                            "product_no": _dup_code,
+                            "message": "플레이오토 기등록 재연결 (중복등록 차단)",
+                            "data": {"market_product_no": _dup_code},
+                        }
                     logger.info("[플레이오토] 신규 등록(POST)")
                     results = await client.register_product([emp_data])
 
@@ -190,6 +214,40 @@ class PlayAutoPlugin(MarketPlugin):
 
             if status == "true":
                 master_code = msg if not existing_no else existing_no
+                # 신규등록인데 EMP가 성공(status=true)만 주고 MasterCode(msg)를
+                # 비워 주는 경우가 있다(실측 56건). 빈 코드로 저장되면 이후 수정/
+                # 품절/삭제가 전부 불가 → status=true(EMP가 명시한 확정 성공)일
+                # 때만 이름조회로 방금 만든 코드를 회수한다(WriteDate 최신=방금 등록).
+                # 타임아웃(응답 없음)에는 이 회수를 하지 않는다(금지 패턴).
+                if not existing_no and not str(master_code or "").strip():
+                    _prod_name = str(emp_data.get("ProdName", "")).strip()
+                    try:
+                        master_code = await client.find_master_code_by_name(
+                            _prod_name, force_refresh=True
+                        )
+                    except Exception as _rc_e:
+                        logger.error(f"[플레이오토] 마스터코드 회수 조회 실패: {_rc_e}")
+                        master_code = ""
+                    if master_code:
+                        logger.info(
+                            f"[플레이오토] 코드 미회신 → 이름조회로 회수: "
+                            f"{_prod_name[:30]} → {master_code}"
+                        )
+                    else:
+                        # 회수 실패 → 빈 코드 저장 금지. 실패로 명시해 다음 전송이
+                        # 사전조회로 기존 상품에 재연결하도록 한다.
+                        logger.error(
+                            f"[플레이오토] 등록 성공인데 코드 미회신+회수 실패: "
+                            f"{_prod_name[:30]}"
+                        )
+                        return {
+                            "success": False,
+                            "message": (
+                                "플레이오토 등록됐으나 마스터코드 미회신 — "
+                                "재전송 시 사전조회로 재연결됩니다."
+                            ),
+                            "data": result,
+                        }
                 logger.info(
                     f"[플레이오토] {'수정' if existing_no else '등록'} 성공: "
                     f"{master_code}"
