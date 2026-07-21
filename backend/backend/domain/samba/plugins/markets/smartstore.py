@@ -913,6 +913,27 @@ class SmartStorePlugin(MarketPlugin):
                             or _existing.get("originProduct", {}).get("id", "")
                             or ""
                         )
+                        # origin 없이 재연결되면 채널번호만 저장돼 이후
+                        # 삭제/판매중지 API(originProductNo 필수)가 전부 403으로 실패
+                        _chs = _existing.get("channelProducts") or []
+                        if not _origin_no:
+                            for _ch in _chs:
+                                if _ch.get("originProductNo"):
+                                    _origin_no = str(_ch["originProductNo"])
+                                    break
+                        if not _origin_no and _chs and _chs[0].get("channelProductNo"):
+                            try:
+                                _origin_no = await client.get_origin_no_by_channel(
+                                    str(_chs[0]["channelProductNo"])
+                                )
+                            except Exception as _lookup_e:
+                                logger.error(
+                                    f"[스마트스토어] 재연결 원상품번호 역조회 실패: {_lookup_e}"
+                                )
+                        if not _origin_no:
+                            logger.error(
+                                f"[스마트스토어] 재연결 상품의 원상품번호 확인 불가 — sellerManagementCode={_mgmt_code} (삭제 불가 상태로 저장됨)"
+                            )
                         logger.warning(
                             f"[스마트스토어] 중복등록 방지 — sellerManagementCode={_mgmt_code} 이미 존재: originProductNo={_origin_no}"
                         )
@@ -925,6 +946,41 @@ class SmartStorePlugin(MarketPlugin):
                         }
                 r = await _register_product_with_fallback(d, product_copy, category_id)
                 return {"success": True, "message": "스마트스토어 등록 성공", "data": r}
+
+        async def _ensure_origin_no(res: dict[str, Any]) -> dict[str, Any]:
+            """성공 응답에 originProductNo 보장 — 누락 시 채널번호로 역조회.
+
+            origin 없이 저장되면 채널번호만 남아 이후 삭제/판매중지 API
+            (originProductNo 필수)가 전부 403으로 실패한다.
+            """
+            if not res.get("success") or res.get("_already_registered"):
+                return res
+            raw = res.get("data")
+            api = raw.get("data", raw) if isinstance(raw, dict) else None
+            if isinstance(api, list):
+                api = api[0] if api and isinstance(api[0], dict) else None
+            if not isinstance(api, dict) or api.get("originProductNo"):
+                return res
+            channel_no = str(api.get("smartstoreChannelProductNo") or "")
+            if not channel_no:
+                return res
+            try:
+                origin_no = await client.get_origin_no_by_channel(channel_no)
+            except Exception as e:
+                logger.error(
+                    f"[스마트스토어] 원상품번호 역조회 예외 — channel={channel_no}: {e}"
+                )
+                return res
+            if origin_no:
+                api["originProductNo"] = origin_no
+                logger.info(
+                    f"[스마트스토어] 원상품번호 역조회로 보완 — channel={channel_no} → origin={origin_no}"
+                )
+            else:
+                logger.error(
+                    f"[스마트스토어] 원상품번호 역조회 실패 — channel={channel_no} (삭제/판매중지 불가 상태로 저장됨)"
+                )
+            return res
 
         # 태그사전 미등록 태그 사전 필터링 (누적 DB 기반)
         try:
@@ -963,7 +1019,7 @@ class SmartStorePlugin(MarketPlugin):
 
         try:
             result = await _try_send(data)
-            return result
+            return await _ensure_origin_no(result)
         except Exception as e:
             err_msg = str(e)
             # 등록불가 단어 에러 → 해당 태그 제거 후 재시도 + DB 저장
@@ -1078,7 +1134,7 @@ class SmartStorePlugin(MarketPlugin):
                         logger.info(
                             f"[스마트스토어] 금지 태그 {banned} 제거 후 재시도 ({len(old_tags)}→{len(new_tags)}개)"
                         )
-                        return await _try_send(data)
+                        return await _ensure_origin_no(await _try_send(data))
             raise
         finally:
             # 공유 httpx 클라이언트 정리
