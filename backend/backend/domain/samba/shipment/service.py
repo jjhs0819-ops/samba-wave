@@ -35,6 +35,10 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "homeand": "홈앤쇼핑",
     "hmall": "HMALL",
     "kream": "KREAM",
+    # eBay 누락 시 calc_market_price가 policy_key=""로 market_policies["eBay"]를
+    # 못 찾아 수수료(feeRate)·마켓마진 그로스업을 통째로 스킵 → 전 eBay 리스팅이
+    # 원가+공통마진만 반영된 저가로 등록됨. (2026-07-21 냐옹ex $28.32 저가등록 사고)
+    "ebay": "eBay",
     "playauto": "플레이오토",
 }
 
@@ -674,6 +678,7 @@ class SambaShipmentService:
             "homeand": "홈앤쇼핑",
             "hmall": "HMALL",
             "kream": "KREAM",
+            "ebay": "eBay",
             "playauto": "플레이오토",
         }
         policy = None
