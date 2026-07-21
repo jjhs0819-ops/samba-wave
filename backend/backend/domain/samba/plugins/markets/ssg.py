@@ -49,13 +49,12 @@ class SSGPlugin(MarketPlugin):
             return {"success": False, "message": "SSG 인증키가 비어있습니다."}
 
         # transmitting stuck으로 인해 itemId가 "__exists__"로 저장된 상품:
-        # SSG에는 이미 등록됐지만 실제 itemId를 모름 → 재등록/수정 차단 + 경고
-        if existing_no == "__exists__":
-            return {
-                "success": False,
-                "message": "SSG itemId 미확인 (신세계몰 셀러센터에서 상품번호 확인 후 수동 입력 필요)",
-                "_skip_retry": True,
-            }
+        # SSG에는 이미 등록됐지만 실제 itemId를 모름. 아래 멱등가드의
+        # 안정키(splVenItemId) 검색으로 실제 itemId를 복구해 수정으로 진행하고,
+        # 검색에도 없으면 그때만 차단한다 (즉시 차단하면 영영 복구 불가).
+        _exists_marker = existing_no == "__exists__"
+        if _exists_marker:
+            existing_no = ""
 
         # 옵션별 가격 불균일 상품은 SSG 전송 제외.
         # SSG 온라인 상품은 옵션별 다른 매가를 지원하지 않는다("온라인 상품의 매가는
@@ -526,6 +525,27 @@ class SSGPlugin(MarketPlugin):
                         existing_no = _found
                 except Exception as e:
                     logger.warning(f"[SSG] splVenItemId 선제검색 실패(무시): {e}")
+
+        # __exists__ 마커 상품이 안정키 검색에도 없으면 신규등록으로 넘기지 않는다
+        # — SSG에 이미 있는 것이 확실한 상품이라 insertItem 하면 중복이 생긴다.
+        if _exists_marker and not existing_no:
+            logger.warning(
+                f"[SSG] __exists__ 상품 itemId 복구 실패 — splVenItemId 검색 미발견: "
+                f"product={product.get('id')}"
+            )
+            return {
+                "success": False,
+                "message": (
+                    "SSG itemId 미확인 — 안정키 검색에도 없음 "
+                    "(신세계몰 셀러센터에서 상품번호 확인 후 수동 입력 필요)"
+                ),
+                "_skip_retry": True,
+            }
+        if _exists_marker and existing_no:
+            logger.info(
+                f"[SSG] __exists__ 상품 itemId 자동 복구: product={product.get('id')} "
+                f"→ itemId={existing_no}"
+            )
 
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         if existing_no:
