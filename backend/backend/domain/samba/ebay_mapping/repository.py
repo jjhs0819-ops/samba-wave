@@ -59,9 +59,18 @@ class SambaEbayMappingRepository:
             en_value=en_value,
             source=source,
         )
-        self.session.add(row)
-        await self.session.flush()
-        return row
+        # find()는 ORM 자동 tenant 필터로 다른 tenant/NULL로 저장된 전역행을 놓칠 수 있음.
+        # 그 상태로 add+flush 하면 (category,kr_value) unique 충돌 → 세션 전체 오염
+        # (PendingRollbackError로 배치 후속 전부 실패). savepoint로 격리해 충돌 시
+        # 세이브포인트만 롤백하고 세션은 보존. (2026-07-22 가격배치 사고)
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            async with self.session.begin_nested():
+                self.session.add(row)
+            return row
+        except IntegrityError:
+            return row
 
     async def delete(self, mapping_id: str) -> bool:
         """매핑 삭제."""
