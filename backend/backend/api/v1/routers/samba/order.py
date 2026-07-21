@@ -8397,6 +8397,10 @@ async def sync_orders_from_markets(
                 }
                 _lh_dlv_cache: dict[str, list[dict]] = {}
                 _lh_dlvsn_map: dict[str, list[str]] = {}  # OrdNo → [DlvUnitSn, ...]
+                # 4개 상태 조회가 모두 성공해야 유령 정리를 실행한다.
+                # 하나라도 실패(부분응답)하면 실배송라인이 집합에서 빠져
+                # 정상 주문을 유령으로 오인 삭제할 수 있으므로 정리를 건너뛴다.
+                _lh_dlv_fetch_ok = True
                 for _lh_stat in ["15", "16", "17", "18"]:
                     try:
                         _cached = await lh_client.search_deliver_list(
@@ -8433,6 +8437,7 @@ async def sync_orders_from_markets(
                             f"[주문동기화] {label}: 배송조회(stat={_lh_stat}) 수집 실패: {_dlv_pre_e}"
                         )
                         _lh_dlv_cache[_lh_stat] = []
+                        _lh_dlv_fetch_ok = False
 
                 _new_ord_status_map = {
                     "01": ("pending", "주문접수"),
@@ -10407,6 +10412,55 @@ async def sync_orders_from_markets(
                     await session.rollback()
                     logger.warning(
                         f"[주문동기화] 롯데홈쇼핑 교체 레코드 삭제 실패(무시): {_orp_e}"
+                    )
+
+            # 롯데홈쇼핑 유령(과거 pre-delivery 스냅샷) 정리 — 배송조회(라이브) 기준.
+            # 배송조회는 배송흐름 상태(출고지시/배송대기/배송완료/구매확정)의 실제
+            # 배송라인만 DlvUnitSn과 함께 돌려준다. 그 집합에 없는데도 배송흐름
+            # 상태로 남은 pending 행 = 대체돼 버려진 유령이다.
+            # 안전장치(오삭제 방지):
+            #  - _lh_dlv_fetch_ok: 4개 상태 조회가 모두 성공한 사이클만 실행
+            #  - status='pending' + shipping_status 화이트리스트: 취소완료/반품요청/
+            #    회수확정/교환중(exchanging) 등 클레임 상태는 원천 제외해 보존
+            #  - 송장 없음: 실제 배송된 라인(송장 있음)은 어차피 집합에 있어 유지
+            #  - 라이브 DlvUnitSn 행은 남으므로 그룹이 통째로 비지 않는다
+            if market_type == "lottehome" and _lh_dlv_fetch_ok and _lh_dlvsn_map:
+                try:
+                    _lh_ghost_deleted = 0
+                    for _g_ordno, _g_dsns in _lh_dlvsn_map.items():
+                        if not _g_ordno or not _g_dsns:
+                            continue
+                        _g_ph = ", ".join(f":g_{_i}" for _i in range(len(_g_dsns)))
+                        _g_prm: dict = {f"g_{_i}": _v for _i, _v in enumerate(_g_dsns)}
+                        _g_prm["cid"] = account["id"]
+                        _g_prm["pfx"] = f"{_g_ordno}:%"
+                        _g_res = await session.execute(
+                            _sa_text(
+                                "DELETE FROM samba_order "
+                                "WHERE source = 'lottehome' "
+                                "AND channel_id = :cid "
+                                "AND order_number LIKE :pfx "
+                                f"AND SPLIT_PART(order_number, ':', 2) "
+                                f"NOT IN ({_g_ph}) "
+                                "AND COALESCE(status, '') = 'pending' "
+                                "AND COALESCE(shipping_status, '') IN "
+                                "('출고지시', '배송대기중', '배송완료', '구매확정') "
+                                "AND COALESCE(tracking_number, '') = ''"
+                            ),
+                            _g_prm,
+                        )
+                        _lh_ghost_deleted += _g_res.rowcount or 0
+                    if _lh_ghost_deleted:
+                        await session.commit()
+                        logger.info(
+                            f"[주문동기화] {label}: 롯데홈쇼핑 유령 "
+                            f"{_lh_ghost_deleted}건 정리"
+                        )
+                except Exception as _lh_ghost_e:
+                    await session.rollback()
+                    logger.warning(
+                        f"[주문동기화] {label}: 롯데홈쇼핑 유령 정리 실패(무시): "
+                        f"{_lh_ghost_e}"
                     )
 
             total_synced += synced
