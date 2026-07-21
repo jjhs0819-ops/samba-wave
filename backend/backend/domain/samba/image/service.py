@@ -316,10 +316,32 @@ class ImageTransformService:
         self._mirror_memo: dict[str, str] = {}
 
     async def _get_setting(self, key: str) -> dict[str, Any] | None:
+        """설정 조회 — 멀티테넌트 '{tenant_id}:{key}' 네임스페이스 대응.
+
+        프론트 PUT /forbidden/settings/{key} 는 '{tenant_id}:{key}' 로 저장하는데
+        과거 이 메서드는 bare 키만 읽어, 스테일 bare 행(옛 키)을 물고 신규 저장값을
+        못 읽는 사고 발생(2026-07-21 Gemini 키 갱신 무반영). _helpers._get_setting 과
+        동일하게 composite 우선 → bare → '%:key' LIKE 폴백.
+        """
+        from sqlalchemy import select
+
+        from backend.core.tenant_context import current_tenant_id
+        from backend.domain.samba.forbidden.model import SambaSettings
         from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 
         repo = SambaSettingsRepository(self.session)
-        row = await repo.find_by_async(key=key)
+        tid = current_tenant_id.get()
+        row = None
+        if tid:
+            row = await repo.find_by_async(key=f"{tid}:{key}")
+        if row is None:
+            row = await repo.find_by_async(key=key)
+        # bare 미존재(또는 HTTP 컨텍스트 없는 워커/플러그인) → 테넌트 prefixed 자동 폴백
+        if row is None:
+            stmt = (
+                select(SambaSettings).where(SambaSettings.key.like(f"%:{key}")).limit(1)
+            )
+            row = (await self.session.execute(stmt)).scalars().first()
         if row and isinstance(row.value, dict):
             return row.value
         return None
