@@ -102,6 +102,7 @@ class PlayAutoPlugin(MarketPlugin):
             product = await self._upload_images_to_r2(session, product)
 
         client = PlayAutoClient(api_key)
+        emp_data: dict[str, Any] | None = None
 
         try:
             # ── 경량 PATCH 모드 (오토튠 가격/재고만) ─────────────────────
@@ -175,6 +176,28 @@ class PlayAutoPlugin(MarketPlugin):
                     logger.info(f"[플레이오토] 기존 상품 수정(PATCH): {existing_no}")
                     results = await client.update_product([emp_data])
                 else:
+                    # 중복등록 방지: 같은 상품명이 이미 EMP에 있으면 등록하지 않고
+                    # 기존 마스터코드에 재연결. (타임아웃으로 실패 처리된 상품을
+                    # 재전송할 때마다 EMP에 복제본이 쌓이던 문제의 원천 차단)
+                    _prod_name = str(emp_data.get("ProdName", "")).strip()
+                    _dup_code = ""
+                    try:
+                        _dup_code = await client.find_master_code_by_name(_prod_name)
+                    except Exception as _pre_e:
+                        logger.warning(
+                            f"[플레이오토] 중복 사전조회 실패 (등록 계속 진행): {_pre_e}"
+                        )
+                    if _dup_code:
+                        logger.warning(
+                            f"[플레이오토] 중복등록 방지 — 기등록 재연결: "
+                            f"{_prod_name[:30]} → {_dup_code}"
+                        )
+                        return {
+                            "success": True,
+                            "product_no": _dup_code,
+                            "message": "플레이오토 기등록 상품 재연결 (중복등록 차단)",
+                            "data": {"market_product_no": _dup_code},
+                        }
                     logger.info("[플레이오토] 신규 등록(POST)")
                     results = await client.register_product([emp_data])
 
@@ -190,6 +213,35 @@ class PlayAutoPlugin(MarketPlugin):
 
             if status == "true":
                 master_code = msg if not existing_no else existing_no
+                # EMP가 status=true인데 msg(마스터코드)를 비워 주는 경우가 있음.
+                # 번호 없이 저장되면 이후 수정/품절/삭제가 전부 불가 → 역조회로 보완
+                if not existing_no and not str(master_code or "").strip():
+                    _prod_name = str((emp_data or {}).get("ProdName", "")).strip()
+                    try:
+                        master_code = await client.find_master_code_by_name(
+                            _prod_name, force_refresh=True
+                        )
+                    except Exception as _rc_e:
+                        logger.error(f"[플레이오토] 마스터코드 역조회 실패: {_rc_e}")
+                        master_code = ""
+                    if master_code:
+                        logger.info(
+                            f"[플레이오토] 마스터코드 미회신 → 역조회로 보완: "
+                            f"{_prod_name[:30]} → {master_code}"
+                        )
+                    else:
+                        logger.error(
+                            f"[플레이오토] 등록 성공인데 마스터코드 미회신+역조회 실패: "
+                            f"{_prod_name[:30]}"
+                        )
+                        return {
+                            "success": False,
+                            "message": (
+                                "플레이오토 등록은 됐으나 마스터코드 미회신 — "
+                                "잠시 후 재전송하면 사전조회가 기존 상품에 재연결합니다."
+                            ),
+                            "data": result,
+                        }
                 logger.info(
                     f"[플레이오토] {'수정' if existing_no else '등록'} 성공: "
                     f"{master_code}"
@@ -221,6 +273,35 @@ class PlayAutoPlugin(MarketPlugin):
                 }
 
         except PlayAutoApiError as e:
+            # 신규등록 타임아웃: EMP는 응답만 못 줬을 뿐 등록을 끝까지 처리하는
+            # 경우가 많다. 실패로만 기록하면 재전송이 신규등록으로 나가 복제본이
+            # 생기므로, 대기 후 실제 등록 여부를 역확인해 코드를 회수한다.
+            if not existing_no and "타임아웃" in e.message:
+                _prod_name = str(
+                    (emp_data or {}).get("ProdName") or product.get("name", "")
+                ).strip()
+                for _wait in (20, 20, 20):
+                    await asyncio.sleep(_wait)
+                    try:
+                        _code = await client.find_master_code_by_name(
+                            _prod_name, force_refresh=True
+                        )
+                    except Exception as _tr_e:
+                        logger.warning(
+                            f"[플레이오토] 타임아웃 역확인 조회 실패: {_tr_e}"
+                        )
+                        _code = ""
+                    if _code:
+                        logger.warning(
+                            f"[플레이오토] 타임아웃이었지만 등록 확인됨: "
+                            f"{_prod_name[:30]} → {_code}"
+                        )
+                        return {
+                            "success": True,
+                            "product_no": _code,
+                            "message": "플레이오토 등록 성공 (타임아웃 후 역확인)",
+                            "data": {"market_product_no": _code},
+                        }
             logger.error(f"[플레이오토] API 에러: {e.message}")
             return {
                 "success": False,
