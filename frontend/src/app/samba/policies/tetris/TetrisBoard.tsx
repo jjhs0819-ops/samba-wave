@@ -4,7 +4,7 @@ import { accountApi, tetrisApi } from '@/lib/samba/api'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { fmtNum } from '@/lib/samba/styles'
 import { useTetris } from './useTetris'
-import MarketColumn from './MarketColumn'
+import MarketColumn, { columnPixelHeight } from './MarketColumn'
 import UnassignedPool from './UnassignedPool'
 import type { TetrisAccountBlock, TetrisBrandBlock } from '@/lib/samba/api/tetris'
 import type { BrandAssignment } from './UnassignedPool'
@@ -42,12 +42,16 @@ function computeScaleStep(pixelsPerUnit: number, targetPx = 20): number {
 function ScaleRuler({
   globalMax,
   pixelsPerUnit,
+  boardHeight,
 }: {
   globalMax: number
   pixelsPerUnit: number
+  boardHeight: number
 }) {
   const c = useTheme()
-  const totalHeight = Math.max(globalMax * pixelsPerUnit, 60)
+  // 눈금자 높이 = 보드 공통 높이 — 0점이 모든 컬럼 바닥선과 일치해야 함
+  // (블록 최소 24px 보장 때문에 컬럼 픽셀 높이가 globalMax*ppu 보다 클 수 있음)
+  const totalHeight = Math.max(boardHeight, 60)
   const scaleStep = computeScaleStep(pixelsPerUnit)
 
   const marks: number[] = []
@@ -157,6 +161,15 @@ export default function TetrisBoard() {
     )
     return Math.max(1000, ...columnTotals)
   }, [board])
+
+  // 보드 공통 높이 = max(눈금 높이, 가장 긴 컬럼의 실제 픽셀 높이)
+  // 블록 최소 24px 보장 때문에 블록 수 많은 컬럼(플레이오토 등)은 픽셀 높이가
+  // 눈금 높이를 초과 — 이 값으로 모든 컬럼·눈금자를 통일해야 바닥선(0점)이 맞는다
+  const boardHeight = useMemo(() => {
+    if (!board) return 60
+    const maxColumnPx = Math.max(0, ...board.markets.map(m => columnPixelHeight(m.accounts, pixelsPerUnit)))
+    return Math.max(60, Math.round(globalMax * pixelsPerUnit), maxColumnPx)
+  }, [board, globalMax, pixelsPerUnit])
 
   // 미배치 브랜드별 배치 현황 맵 (sourceSite::brandName → BrandAssignment[])
   const assignmentsByBrand = useMemo(() => {
@@ -491,6 +504,7 @@ export default function TetrisBoard() {
         <ScaleRuler
           globalMax={globalMax}
           pixelsPerUnit={pixelsPerUnit}
+          boardHeight={boardHeight}
         />
         <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
           {/* 좌우 스크롤 화살표 */}
@@ -524,7 +538,7 @@ export default function TetrisBoard() {
               key={market.market_name}
               market={market}
               pixelsPerUnit={pixelsPerUnit}
-              globalMax={globalMax}
+              boardHeight={boardHeight}
               policies={policies}
               dragState={dragState}
               onDragStart={handleDragStart}

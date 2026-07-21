@@ -11,10 +11,34 @@ interface Policy {
   color: string
 }
 
+// 계정 박스 실제 픽셀 높이 — AccountBlock 의 블록 높이 계산(MIN_BLOCK_PX=24 + marginBottom 2)과
+// 동일 기준. TetrisBoard 가 보드 전체 높이(가장 긴 컬럼)를 구할 때도 이 함수를 써야
+// 컬럼별 바닥선이 어긋나지 않는다 (블록 최소 24px 보장 때문에 눈금 높이와 픽셀 높이가 다름)
+const MIN_BLOCK_PX = 24
+export function accountPixelHeight(account: TetrisAccountBlock, pixelsPerUnit: number): number {
+  const scaledCapacityHeight = account.max_count > 0
+    ? Math.max(1, Math.round(account.max_count * pixelsPerUnit))
+    : 0
+  const baseCapacity = scaledCapacityHeight > 0
+    ? scaledCapacityHeight
+    : account.total_collected > 0
+      ? Math.max(1, Math.round(account.total_collected * pixelsPerUnit))
+      : 60
+  const blocksTotalHeight = account.assignments.reduce((sum, b) =>
+    sum + (b.collected_count > 0
+      ? Math.max(MIN_BLOCK_PX, Math.round(b.collected_count * pixelsPerUnit))
+      : MIN_BLOCK_PX) + 2, 0)
+  return Math.max(baseCapacity, blocksTotalHeight + 16)
+}
+
+export function columnPixelHeight(accounts: TetrisAccountBlock[], pixelsPerUnit: number): number {
+  return accounts.reduce((sum, a) => sum + accountPixelHeight(a, pixelsPerUnit), 0)
+}
+
 interface Props {
   market: TetrisMarketGroup
   pixelsPerUnit: number
-  globalMax: number
+  boardHeight: number
   policies: Policy[]
   dragState: DragState
   onDragStart: (block: TetrisBrandBlock, accountId: string) => void
@@ -61,7 +85,7 @@ function AccountSlot({
 export default function MarketColumn({
   market,
   pixelsPerUnit,
-  globalMax,
+  boardHeight,
   policies,
   dragState,
   onDragStart,
@@ -89,7 +113,8 @@ export default function MarketColumn({
     })
   }, [market.accounts])
 
-  const columnHeight = Math.max(60, Math.round(globalMax * pixelsPerUnit))
+  // 보드 전체 공통 높이(가장 긴 컬럼 픽셀 기준) — 모든 컬럼 바닥선을 하나로 맞춘다
+  const columnHeight = Math.max(60, boardHeight)
   const isAccountDragging = draggedAccountId !== null
 
   const handleAccountDrop = async (targetIndex: number) => {
@@ -136,24 +161,9 @@ export default function MarketColumn({
             />
           )}
           {orderedAccounts.map((account, index) => {
-            const scaledCapacityHeight = account.max_count > 0
-              ? Math.max(1, Math.round(account.max_count * pixelsPerUnit))
-              : 0
-            const baseCapacity = scaledCapacityHeight > 0
-              ? scaledCapacityHeight
-              : account.total_collected > 0
-                ? Math.max(1, Math.round(account.total_collected * pixelsPerUnit))
-                : 60
-            // 배치된 브랜드 블록의 실제 높이 합이 박스(max_count 기준)보다 크면
-            // AccountBlock 의 overflow:hidden 으로 큰 브랜드가 잘려 안 보인다.
-            // 박스 높이를 블록 합 이상으로 보장해 모든 블록이 보이게 한다.
-            // (AccountBlock 의 블록 높이 계산 MIN_BLOCK_PX=24 + marginBottom 2 와 동일 기준)
-            const MIN_BLOCK_PX = 24
-            const blocksTotalHeight = account.assignments.reduce((sum, b) =>
-              sum + (b.collected_count > 0
-                ? Math.max(MIN_BLOCK_PX, Math.round(b.collected_count * pixelsPerUnit))
-                : MIN_BLOCK_PX) + 2, 0)
-            const capacityHeight = Math.max(baseCapacity, blocksTotalHeight + 16)
+            // 블록 합이 박스(max_count 기준)보다 크면 overflow:hidden 으로 잘리므로
+            // 박스 높이를 블록 합 이상으로 보장 — 계산은 accountPixelHeight 공용 함수
+            const capacityHeight = accountPixelHeight(account, pixelsPerUnit)
 
             return (
               <div key={account.account_id}>
