@@ -1039,9 +1039,30 @@ async def _start_tetris_sync_scheduler() -> None:
     _pc_sync_task = asyncio.create_task(_pc_sync_loop())
     _pc_cleanup_task = asyncio.create_task(_pc_cleanup_loop())
     _daemon_poll_watch_task = asyncio.create_task(_daemon_poll_watch_loop())
+    # 크림 오토튠 이식 섀도(Phase2) — KREAM_SHADOW=1 일 때만. 쓰기·POST 없이 target 계산 로그만.
+    if os.environ.get("KREAM_SHADOW") == "1":
+        asyncio.create_task(_kream_shadow_loop())
     logging.getLogger("backend.lifecycle").info(
         "[lifecycle] 테트리스 sync + PC 분담 sync + cleanup + 데몬 폴링 감시 스케줄러 시작"
     )
+
+
+async def _kream_shadow_loop() -> None:
+    """크림 섀도(Phase2) 주기 루프 — 20분마다 target 계산 로그. 쓰기·POST 절대 없음."""
+    import asyncio as _asyncio
+
+    _log = logging.getLogger("backend.lifecycle")
+    await _asyncio.sleep(90)  # 서버 기동 대기
+    while True:
+        try:
+            from backend.domain.samba.warroom.kream_shadow import run_kream_shadow_once
+
+            await run_kream_shadow_once()
+        except _asyncio.CancelledError:
+            return
+        except Exception as exc:
+            _log.warning("[크림섀도] 루프 오류(무시): %s", exc)
+        await _asyncio.sleep(1200)
 
 
 async def _order_auto_sync_loop() -> None:

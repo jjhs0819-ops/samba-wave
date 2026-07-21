@@ -9,7 +9,7 @@ import {
   analyticsApi,
   type SourcingRoi, type ProductPerformance, type BrandSales,
 } from '@/lib/samba/api/operations'
-import { SOURCE_SITES, UNREGISTERED_SITE } from '../constants'
+import { SOURCE_SITES, UNREGISTERED_SITE, aggregateSiteKey } from '../constants'
 
 interface Args {
   searchYear: number
@@ -17,7 +17,7 @@ interface Args {
   selectedMarkets: string[]
   selectedSites: string[]
   selectedStatuses: string[]
-  setSelectedSites: (v: string[]) => void
+  setSelectedSites: (v: string[] | ((prev: string[]) => string[])) => void
   setSelectedMarkets: (v: string[]) => void
   hasStoredMarkets: boolean
   hasStoredSites: boolean
@@ -94,13 +94,30 @@ export function useAnalyticsData({
         if (allData) {
           const collectedSites = (allData.sites || []).filter((s: string) => SOURCE_SITES.includes(s))
           // 미등록상품도 기본 체크 — 기존처럼 소싱처별 통계에 포함 유지
-          if (collectedSites.length > 0) setSelectedSites([...collectedSites, UNREGISTERED_SITE])
+          // 함수형 병합 — aggregate 기반 자동 추가와 경합해도 서로 안 덮어씀
+          if (collectedSites.length > 0) setSelectedSites(prev => [...new Set([...prev, ...collectedSites, UNREGISTERED_SITE])])
         }
       }
     }
     init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 소싱처 자동 추가: aggregate에 실제 존재하는 소싱처가 저장된 선택값에 없으면 자동 체크
+  // (신규 소싱처가 생겨도 체크박스만 생기고 영영 미체크로 남아 통계에서 누락되던 문제 방지)
+  const initialSiteSet = useRef(false)
+  useEffect(() => {
+    if (!initialSiteSet.current && aggregate.length > 0) {
+      initialSiteSet.current = true
+      const seen = new Set<string>()
+      for (const r of aggregate) seen.add(aggregateSiteKey(r.channel_name, r.source_site))
+      setSelectedSites(prev => {
+        const toAdd = [...seen].filter(s => !prev.includes(s))
+        return toAdd.length > 0 ? [...prev, ...toAdd] : prev
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aggregate])
 
   // 마켓 기본값: aggregate에서 채널명 추출
   // - 저장값 없으면 전체 초기화

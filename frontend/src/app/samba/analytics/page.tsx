@@ -9,8 +9,9 @@ import { useTheme } from '@/lib/samba/useTheme'
 import { btn } from '@/lib/samba/buttons'
 import { RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
 import {
-  SOURCE_SITES, SITE_FILTER_OPTIONS, UNREGISTERED_SITE,
+  SITE_FILTER_OPTIONS,
   ORDER_STATUSES, DEFAULT_STATUSES,
+  channelToMarket, aggregateSiteKey,
   type AnalyticsSearch, type MonthlyCell,
 } from './constants'
 import { useAnalyticsData } from './hooks/useAnalyticsData'
@@ -41,7 +42,8 @@ export default function AnalyticsPage() {
   const setSearchYear = (v: number) => setSearch(prev => ({ ...prev, year: v }))
   const setSearchMonth = (v: number) => setSearch(prev => ({ ...prev, month: v }))
   const setSelectedMarkets = useCallback((v: string[]) => setSearch(prev => ({ ...prev, markets: v })), [setSearch])
-  const setSelectedSites = useCallback((v: string[]) => setSearch(prev => ({ ...prev, sites: v })), [setSearch])
+  // 함수형 업데이트 지원 — 초기값 채우기/신규 소싱처 자동 추가가 서로 덮어쓰지 않게 병합
+  const setSelectedSites = useCallback((v: string[] | ((prev: string[]) => string[])) => setSearch(prev => ({ ...prev, sites: typeof v === 'function' ? v(prev.sites) : v })), [setSearch])
   const setSelectedStatuses = (v: string[]) => setSearch(prev => ({ ...prev, statuses: v }))
 
   const toggleItem = (arr: string[], setArr: (v: string[]) => void, item: string) => {
@@ -59,12 +61,6 @@ export default function AnalyticsPage() {
     hasStoredSites: selectedSites.length > 0,
   })
 
-  const channelToMarket = (name: string | undefined): string => {
-    if (!name) return '기타'
-    const idx = name.indexOf('(')
-    return (idx > 0 ? name.substring(0, idx) : name).trim()
-  }
-
   // 기간 + 마켓 + 소싱처 + 주문상태 필터링 (paid_at KST 기준)
   // aggregate row.date 형식: 'YYYY-MM-DD' (백엔드에서 KST 변환 완료)
   const filteredRows: AnalyticsAggregateRow[] = aggregate.filter(r => {
@@ -80,8 +76,7 @@ export default function AnalyticsPage() {
       if (!selectedMarkets.includes(channelToMarket(r.channel_name))) return false
     }
     if (selectedSites.length > 0 && selectedSites.length < SITE_FILTER_OPTIONS.length) {
-      const siteKey = r.source_site && SOURCE_SITES.includes(r.source_site) ? r.source_site : UNREGISTERED_SITE
-      if (!selectedSites.includes(siteKey)) return false
+      if (!selectedSites.includes(aggregateSiteKey(r.channel_name, r.source_site))) return false
     }
     return true
   })
@@ -108,7 +103,7 @@ export default function AnalyticsPage() {
   const filteredSourcingRoi = (() => {
     const map: Record<string, { source_site: string; total_revenue: number; total_cost: number; total_profit: number; order_count: number }> = {}
     for (const r of filteredRows) {
-      const site = r.source_site || '미분류'
+      const site = aggregateSiteKey(r.channel_name, r.source_site)
       if (!map[site]) map[site] = { source_site: site, total_revenue: 0, total_cost: 0, total_profit: 0, order_count: 0 }
       map[site].total_revenue += r.sales || 0
       map[site].total_cost += r.cost || 0
@@ -154,11 +149,7 @@ export default function AnalyticsPage() {
   // 마켓별 통계
   const marketTable = buildTable(r => channelToMarket(r.channel_name))
   // 소싱처별 통계
-  const siteTable = buildTable(r => {
-    const site = r.source_site
-    if (!site || !SOURCE_SITES.includes(site)) return UNREGISTERED_SITE
-    return site
-  })
+  const siteTable = buildTable(r => aggregateSiteKey(r.channel_name, r.source_site))
   // 주문상태별 통계
   const statusLabelMap: Record<string, string> = {}
   for (const s of ORDER_STATUSES) statusLabelMap[s.key] = s.label

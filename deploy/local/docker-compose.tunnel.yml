@@ -65,6 +65,7 @@ services:
       READ_DB_PORT: "5432"
       WEB_CONCURRENCY: "1"
       PROCESS_ROLE: api
+      KREAM_SHADOW: "1"  # 크림 오토튠 이식 섀도(Phase2) — target 계산 로그만, 쓰기 없음
       WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
       AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
       AUTOTUNE_QUEUE_CAP: "0"
