@@ -27,10 +27,13 @@ logger = logging.getLogger(__name__)
 _SYNC_STATUSES = ("payment_completed", "preparing_package", "delivering", "delivered")
 
 # KREAM order_status → (samba status, shipping_status)
+# 크림 delivering 은 크림 바이어측 배송흐름일 뿐, 우리(셀러)는 아직 발송 처리 전 → samba pending
+# (미발송 뷰에 떠야 함). delivering→shipping 으로 박으면 미발송 뷰에서 빠져 안 보임
+# [2026-07-21 사고: delivering 중 수집된 주문 다수가 shipping 으로 숨겨짐].
 _STATUS_MAP: dict[str, tuple[str, str]] = {
     "payment_completed": ("pending", "결제완료"),
     "preparing_package": ("wait_ship", "배송준비중"),
-    "delivering": ("shipping", "배송중"),
+    "delivering": ("pending", "결제완료"),
     "delivered": ("delivered", "배송완료"),
 }
 
@@ -99,6 +102,12 @@ async def sync_kream_orders_from_api(
         if not kream_acc:
             summary["errors"].append("KREAM 계정 없음 — 설정>스토어연결에서 등록 필요")
             return summary
+
+        # tenant_id 미지정(자동수집 루프 lifecycle.py 가 인자 없이 호출) 시 KREAM 계정의
+        # tenant 로 채운다. 안 하면 생성 주문 tenant_id=None → 테넌트 필터 주문페이지에 안 보임
+        # [2026-07-21 사고: 자동수집분 6건 tenant None 으로 숨겨짐].
+        if tenant_id is None:
+            tenant_id = kream_acc.tenant_id
 
         ext = (
             kream_acc.additional_fields

@@ -1173,6 +1173,26 @@ async def _order_auto_sync_loop() -> None:
                     _log.info(f"[주문 auto sync] order_sync 잡 종료: {status}")
                     break
 
+            # 2-c) KREAM 공식 API 주문 자동수집 [2026-07-21] — 생성전용(없는 주문만 INSERT).
+            #      order_sync 잡(타 마켓) 종료 후 실행 → 60분 '주문 자동실행' 사이클에 통합.
+            #      (송장수집·허브넷입력은 웨일/허브넷탭 필요 → 아직 호스트 스크립트 담당)
+            try:
+                from backend.domain.samba.order.kream_api_sync import (
+                    sync_kream_orders_from_api,
+                )
+
+                _kr = await sync_kream_orders_from_api()
+                _log.info(
+                    f"[주문 auto sync] KREAM 주문수집: 생성 {_kr.get('created', 0)} / "
+                    f"스킵 {_kr.get('skipped_exists', 0)} / 미매칭 {_kr.get('unmatched_product', 0)}"
+                )
+                if _kr.get("errors"):
+                    _log.warning(
+                        f"[주문 auto sync] KREAM 주문수집 경고: {_kr['errors']}"
+                    )
+            except Exception as _kr_e:
+                _log.warning(f"[주문 auto sync] KREAM 주문수집 실패: {_kr_e}")
+
             # 2-b) 역마진(가격X)/재고없음(재고X) 자동 판정 + 상품갱신 + 메모 기록.
             #      자동주문수집 본 경로(이 루프)에서 sync 끝난 직후 실행.
             try:

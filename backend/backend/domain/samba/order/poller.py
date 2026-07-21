@@ -386,7 +386,22 @@ async def start_order_poller() -> None:
             # CS 문의 동기화는 주문 자동수집 루프(lifecycle._order_auto_sync_loop)로
             # 이관됨 — 여기 30분 폴러에서는 더 이상 cs_sync 잡을 만들지 않는다.
 
-            if new_by_market and not is_night:
+            # '주문 자동실행'(인터벌) 이 켜져있으면 수집은 그 루프(_order_auto_sync_loop)가
+            # 설정한 시간(예: 60분)마다 담당한다. 그때 이 30분 폴러가 order_sync 를 또
+            # 만들면 30분마다 수집돼 설정이 무시되는 문제 → 자동실행 ON 이면 폴러는 감지·알림만.
+            # (자동실행 OFF 일 때만 폴러가 즉시 수집 위임 — 폴백) [2026-07-21]
+            auto_sync_on = False
+            try:
+                from backend.api.v1.routers.samba.proxy._helpers import _get_setting
+                from backend.db.orm import get_read_session
+
+                async with get_read_session() as _rs:
+                    _iv = await _get_setting(_rs, "order_auto_sync_interval_minutes")
+                auto_sync_on = _iv is not None and int(_iv) > 0
+            except Exception:
+                auto_sync_on = False
+
+            if new_by_market and not is_night and not auto_sync_on:
                 # api 루프 블로킹 방지 — 직접 동기화 대신 전송워커(B)에 order_sync 잡 위임
                 # (구 _run_direct_order_sync 인라인 경로 제거, 2026-06-26)
                 await _enqueue_order_sync_jobs(tenant_ids)
@@ -399,6 +414,8 @@ async def start_order_poller() -> None:
 
                 if is_night:
                     lines.append("\n동기화 버튼을 눌러 주문을 확인하세요.")
+                elif auto_sync_on:
+                    lines.append("\n설정한 자동실행 간격에 맞춰 수집됩니다.")
                 else:
                     lines.append("\n자동 동기화를 시작했습니다.")
 
