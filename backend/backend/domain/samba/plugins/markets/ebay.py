@@ -404,6 +404,8 @@ class EbayPlugin(MarketPlugin):
         ebay_min_margin_usd = 0.0
         ebay_ad_enabled = False  # General 광고 사용 여부(정책)
         ebay_ad_rate = 0.0  # General 광고 수수료율(%)
+        ebay_description_html = ""  # 정책별 고정 상세설명 HTML(템플릿 top_html)
+        ebay_tpl_id = ""  # 정책이 지정한 상세 템플릿 ID
         policy_id = (
             product.get("applied_policy_id") if isinstance(product, dict) else None
         )
@@ -420,6 +422,14 @@ class EbayPlugin(MarketPlugin):
                     ebay_min_margin_usd = float(ebay_mp.get("minMarginUsd", 0) or 0)
                     ebay_ad_enabled = bool(ebay_mp.get("adEnabled"))
                     ebay_ad_rate = float(ebay_mp.get("adRate", 0) or 0)
+                    # 정책이 지정한 상세 템플릿 ID(정책관리 UI의 상단/상세페이지 선택).
+                    # market_detail_templates["eBay"] 우선 → detail_template_id → 없으면 기본배너.
+                    _ext = getattr(policy, "extras", None) or {}
+                    ebay_tpl_id = (
+                        (_ext.get("market_detail_templates") or {}).get("eBay")
+                        or _ext.get("detail_template_id")
+                        or ""
+                    )
                     if ebay_ship_usd_raw > 0:
                         if 0 < fee_rate < 100:
                             ebay_shipping_grossed_usd = ebay_ship_usd_raw / (
@@ -434,20 +444,29 @@ class EbayPlugin(MarketPlugin):
         # 판매자별 안내문구(최소주문금액 등 국내 C2C 전용 지침)가 섞여있어 그대로 노출하면
         # 안 됨. 상단 배너(조건/포장/배송/관부가세/반품 안내) 고정 사용.
         # (2026-07-14 실 리스팅에 번장 원문 한글 설명이 그대로 노출된 사고 확인)
+        # 정책이 지정한 상세 템플릿 사용. top_html(HTML) 있으면 상세설명으로, 없으면
+        # top_image_s3_key(배너이미지). 정책에 템플릿 미지정 시 기본 이베이 배너 폴백.
+        # (2026-07-22 앨범정책이 상단 포켓몬배너 하드코딩되던 버그 → 정책 템플릿 존중)
         ebay_notice_banner_url = ""
+        _use_tpl = ebay_tpl_id or "dt_01KXD39BCZACRDC1VP23TBP2MS"
         if session:
             try:
                 from sqlalchemy import text as _sa_text
 
                 _tpl = await session.execute(
                     _sa_text(
-                        "SELECT top_image_s3_key FROM samba_detail_template "
-                        "WHERE id = 'dt_01KXD39BCZACRDC1VP23TBP2MS'"
-                    )
+                        "SELECT top_image_s3_key, top_html FROM samba_detail_template "
+                        "WHERE id = :tid"
+                    ),
+                    {"tid": _use_tpl},
                 )
                 _tpl_row = _tpl.first()
                 if _tpl_row:
-                    ebay_notice_banner_url = _tpl_row[0] or ""
+                    _top_html = (_tpl_row[1] or "").strip()
+                    if _top_html:
+                        ebay_description_html = _top_html
+                    else:
+                        ebay_notice_banner_url = _tpl_row[0] or ""
             except Exception as e:
                 logger.warning("[eBay] 상세페이지 배너 템플릿 조회 실패: %s", e)
 
@@ -587,6 +606,7 @@ class EbayPlugin(MarketPlugin):
             ebay_locked_price_usd=ebay_locked_price_usd,
             account_id=str(getattr(account, "id", "") or ""),
             ebay_notice_banner_url=ebay_notice_banner_url,
+            ebay_description_html=ebay_description_html,
         )
 
         try:

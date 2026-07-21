@@ -32,12 +32,20 @@ def utf8_stdout():
     )
 
 
-def _new_whale_tab():
-    import websocket  # noqa: F401
+def _whale_tab():
+    """번장 탭 재사용 — 기존 m.bunjang.co.kr 탭 있으면 그거, 없으면 1개만 새로.
 
+    매번 새 탭 열면 브라우저에 탭 수십개 쌓임(2026-07-22 사용자 지적). 재사용 필수.
+    """
+    tabs = json.loads(urllib.request.urlopen(CDP + "/json", timeout=5).read())
+    for t in tabs:
+        if t.get("type") == "page" and "bunjang.co.kr" in t.get("url", ""):
+            return t["webSocketDebuggerUrl"]
     new = json.loads(
         urllib.request.urlopen(
-            urllib.request.Request(CDP + "/json/new?https://m.bunjang.co.kr/", method="PUT"),
+            urllib.request.Request(
+                CDP + "/json/new?https://m.bunjang.co.kr/", method="PUT"
+            ),
             timeout=5,
         ).read()
     )
@@ -51,7 +59,7 @@ class Whale:
         import websocket
 
         self.ws = websocket.create_connection(
-            _new_whale_tab(), timeout=60, suppress_origin=True
+            _whale_tab(), timeout=60, suppress_origin=True
         )
         self._id = 0
         self._cmd("Runtime.enable")

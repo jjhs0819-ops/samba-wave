@@ -938,11 +938,16 @@ class EbayClient:
         # imageUrls(갤러리)로 표시되므로 설명에 중복 삽입하지 않음.
         # (2026-07-14 번장 원문 한글 노출 사고 + 대표이미지 중복 삽입 제거 요청)
         ebay_notice_banner_url = kwargs.get("ebay_notice_banner_url", "")
+        # 정책별 고정 상세설명 HTML(예: K-pop 앨범 정책) — 있으면 배너보다 우선.
+        # (2026-07-22 이베이_앨범 정책: 헤비셀러식 신뢰/배송/포장 안내 고정설명)
+        ebay_description_html = kwargs.get("ebay_description_html", "")
         img_tags = "".join(
             f'<div style="text-align:center;"><img src="{img}" style="max-width:860px;width:100%;" /></div>'
             for img in all_images
         )
-        if ebay_notice_banner_url:
+        if ebay_description_html:
+            description = ebay_description_html
+        elif ebay_notice_banner_url:
             description = (
                 f'<div style="text-align:center;"><img src="{ebay_notice_banner_url}" '
                 f'style="max-width:860px;width:100%;" /></div>'
