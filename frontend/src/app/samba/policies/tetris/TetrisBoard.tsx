@@ -148,11 +148,14 @@ export default function TetrisBoard() {
     })
   }, [board])
 
-  // 단일 계정 기준 최대값 (합산 아님 — 스케일이 실제 데이터에 맞도록)
+  // 컬럼(마켓) 단위 계정 합산 최대값 — 눈금이 컬럼 전체 스택 높이를 커버해야
+  // flex-end 바닥 쌓기에서 위쪽 블록이 잘리지 않는다 (단일 계정 기준이면 합산 컬럼이 눈금을 넘침)
   const globalMax = useMemo(() => {
     if (!board) return 70000
-    const allAccounts = board.markets.flatMap(m => m.accounts)
-    return Math.max(1000, ...allAccounts.map(a => Math.max(a.max_count, a.total_collected)))
+    const columnTotals = board.markets.map(m =>
+      m.accounts.reduce((s, a) => s + Math.max(a.max_count, a.total_collected), 0)
+    )
+    return Math.max(1000, ...columnTotals)
   }, [board])
 
   // 미배치 브랜드별 배치 현황 맵 (sourceSite::brandName → BrandAssignment[])
@@ -513,7 +516,8 @@ export default function TetrisBoard() {
           ref={contentScrollRef}
           className="tetris-scroll-x"
           onScroll={onContentScroll}
-          style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 200px)', display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
+          // 내부 세로 스크롤 금지 — 눈금자는 페이지 스크롤을 타므로 컬럼만 따로 스크롤되면 0점이 어긋난다
+          style={{ overflowX: 'auto', display: 'flex', gap: COLUMN_GAP, alignItems: 'flex-start' }}
         >
           {sortedMarkets.map(market => (
             <MarketColumn

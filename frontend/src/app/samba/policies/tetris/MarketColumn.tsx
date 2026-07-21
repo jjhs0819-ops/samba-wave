@@ -119,13 +119,13 @@ export default function MarketColumn({
         padding: '0 6px',
       }}>
         <div style={{
-          height: columnHeight,
+          // 테트리스 바닥 쌓기 — 0점(바닥)부터 블록이 쌓이도록 아래정렬.
+          // globalMax가 컬럼 합산 기준이라 내용이 눈금을 넘지 않고,
+          // 혹시 넘치면 minHeight라 박스가 늘어나 잘림 없음 (고정 height 금지)
           minHeight: columnHeight,
           display: 'flex',
           flexDirection: 'column',
-          // 위정렬(아래로 뻗음) — 컬럼이 넘칠 때 위쪽 계정/블록이 잘려 안 보이던 문제 수정.
-          // (아래정렬 flex-end는 위로 넘쳐 상단이 뷰포트 밖으로 잘림)
-          justifyContent: 'flex-start',
+          justifyContent: 'flex-end',
         }}>
           {isAccountDragging && (
             <AccountSlot
