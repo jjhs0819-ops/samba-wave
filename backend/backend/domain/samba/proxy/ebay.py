@@ -234,6 +234,92 @@ class EbayClient:
         logger.info("[eBay] Application Token 발급 완료")
         return self._app_token
 
+    async def _get_marketing_token(self) -> str:
+        """sell.marketing scope 전용 Access Token (Promoted Listings API용).
+
+        공용 _get_access_token 은 marketing scope 미포함(모든 계정 공용이라 넣으면
+        marketing 미승인 계정 토큰발급이 통째로 깨짐). 광고 기능만 별도 토큰 사용.
+        refresh token에 marketing 미승인이면 invalid_scope로 raise → 호출부가 무시.
+        """
+        now = time.time()
+        if (
+            getattr(self, "_mkt_token", None)
+            and now < getattr(self, "_mkt_token_exp", 0.0) - 60
+        ):
+            return self._mkt_token  # type: ignore[attr-defined]
+        headers = {
+            "Authorization": f"Basic {self._basic_auth()}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        data = {
+            "grant_type": "refresh_token",
+            "refresh_token": self.refresh_token,
+            "scope": "https://api.ebay.com/oauth/api_scope/sell.marketing",
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(self._token_url, headers=headers, data=data)
+        if resp.status_code != 200:
+            raise EbayApiError(
+                f"marketing 토큰 발급 실패({resp.status_code}): {resp.text[:150]}"
+            )
+        result = resp.json()
+        self._mkt_token = result["access_token"]  # type: ignore[attr-defined]
+        self._mkt_token_exp = now + result.get("expires_in", 7200)  # type: ignore[attr-defined]
+        return self._mkt_token  # type: ignore[attr-defined]
+
+    async def ensure_general_ad(self, sku: str, bid_percentage: str = "3.0") -> bool:
+        """SKU를 General(COST_PER_SALE) 캠페인에 광고 등록 — bid_percentage%.
+
+        RUNNING COST_PER_SALE 캠페인을 찾아 inventory reference 광고 생성.
+        이미 광고 있으면 그대로 두고, 캠페인 없거나 marketing 미승인이면 조용히 skip.
+        """
+        if not sku:
+            return False
+        token = await self._get_marketing_token()  # 미승인 시 raise → 호출부 무시
+        base = "https://api.ebay.com/sell/marketing/v1"
+        h = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        async with httpx.AsyncClient(timeout=30) as hc:
+            r = await hc.get(f"{base}/ad_campaign?limit=50", headers=h)
+            camps = r.json().get("campaigns", []) if r.status_code == 200 else []
+            camp = next(
+                (
+                    c
+                    for c in camps
+                    if c.get("fundingStrategy", {}).get("fundingModel")
+                    == "COST_PER_SALE"
+                    and c.get("campaignStatus") == "RUNNING"
+                ),
+                None,
+            )
+            if not camp:
+                logger.info("[eBay] General 캠페인 없음 — 광고 skip sku=%s", sku)
+                return False
+            cid = camp["campaignId"]
+            body = {
+                "requests": [
+                    {
+                        "inventoryReferenceId": sku,
+                        "inventoryReferenceType": "INVENTORY_ITEM",
+                        "bidPercentage": str(bid_percentage),
+                    }
+                ]
+            }
+            r2 = await hc.post(
+                f"{base}/ad_campaign/{cid}/bulk_create_ads_by_inventory_reference",
+                headers=h,
+                json=body,
+            )
+            if r2.status_code not in (200, 201, 207):
+                logger.warning(
+                    "[eBay] 광고 등록 응답 %s sku=%s: %s",
+                    r2.status_code,
+                    sku,
+                    r2.text[:120],
+                )
+                return False
+            logger.info("[eBay] 광고 %s%% 활성 sku=%s", bid_percentage, sku)
+            return True
+
     async def _headers(self) -> dict[str, str]:
         token = await self._get_access_token()
         return {

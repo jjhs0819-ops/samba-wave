@@ -402,6 +402,8 @@ class EbayPlugin(MarketPlugin):
         ebay_shipping_grossed_usd = 0.0
         ebay_ship_usd_raw = 0.0
         ebay_min_margin_usd = 0.0
+        ebay_ad_enabled = False  # General 광고 사용 여부(정책)
+        ebay_ad_rate = 0.0  # General 광고 수수료율(%)
         policy_id = (
             product.get("applied_policy_id") if isinstance(product, dict) else None
         )
@@ -416,6 +418,8 @@ class EbayPlugin(MarketPlugin):
                     ebay_ship_usd_raw = float(ebay_mp.get("shippingCost", 0) or 0)
                     fee_rate = float(ebay_mp.get("feeRate", 0) or 0)
                     ebay_min_margin_usd = float(ebay_mp.get("minMarginUsd", 0) or 0)
+                    ebay_ad_enabled = bool(ebay_mp.get("adEnabled"))
+                    ebay_ad_rate = float(ebay_mp.get("adRate", 0) or 0)
                     if ebay_ship_usd_raw > 0:
                         if 0 < fee_rate < 100:
                             ebay_shipping_grossed_usd = ebay_ship_usd_raw / (
@@ -590,6 +594,19 @@ class EbayPlugin(MarketPlugin):
                 # 기존 상품 수정: existing_no = listingId (offer 조회에 SKU 사용)
                 data["existing_offer_id"] = ""  # SKU로 자동 조회
                 result = await client.update_product(data)
+                # 광고 자동활성(General) — 정책 adEnabled면 adRate%로. marketing 미승인
+                # 계정/캠페인 없으면 조용히 skip.
+                if ebay_ad_enabled and ebay_ad_rate > 0:
+                    try:
+                        await client.ensure_general_ad(
+                            data.get("sku", ""), str(ebay_ad_rate)
+                        )
+                    except Exception as _ad_e:
+                        logger.warning(
+                            "[eBay] 광고 자동활성 skip sku=%s: %s",
+                            data.get("sku", ""),
+                            _ad_e,
+                        )
                 return {
                     "success": True,
                     "message": "eBay 수정 성공",
@@ -635,6 +652,19 @@ class EbayPlugin(MarketPlugin):
                     merchant_location_key=merchant_location_key,
                 )
                 listing_id = result.get("listingId", "")
+                # 광고 자동활성(General) — 정책 adEnabled면 adRate%로. marketing 미승인
+                # 계정/캠페인 없으면 조용히 skip.
+                if ebay_ad_enabled and ebay_ad_rate > 0:
+                    try:
+                        await client.ensure_general_ad(
+                            data.get("sku", ""), str(ebay_ad_rate)
+                        )
+                    except Exception as _ad_e:
+                        logger.warning(
+                            "[eBay] 광고 자동활성 skip sku=%s: %s",
+                            data.get("sku", ""),
+                            _ad_e,
+                        )
                 return {
                     "success": True,
                     "message": "eBay 등록 성공",

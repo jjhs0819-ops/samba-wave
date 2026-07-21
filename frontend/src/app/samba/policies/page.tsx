@@ -141,6 +141,8 @@ interface MarketPolicyForm {
   kreamForwardingFee?: number         // 배대지비용(원)
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
+  adEnabled?: boolean // eBay General 광고 사용 여부 — 등록/수정 시 자동 활성
+  adRate?: number // eBay General 광고 수수료율(%) — 판매당 과금(COST_PER_SALE)
 }
 
 
@@ -1644,6 +1646,20 @@ export default function PoliciesPage() {
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소마진</span>
                   <NumInput value={mp.minMarginUsd ?? 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, minMarginUsd: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="$" />
                   <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>최종가에서 원가+배송비 빼고 남는 마진이 이 금액보다 작으면 차액만큼 최종가 인상</span>
+                </div>
+              )}
+              {marketPolicyTab === 'eBay' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>General 광고</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: c.text }}>
+                    <input type="checkbox" checked={!!mp.adEnabled} onChange={(e) => { setCurrentMarketPolicy({ ...mp, adEnabled: e.target.checked }); triggerAutoSave() }} /> 사용
+                  </label>
+                  {mp.adEnabled && (
+                    <>
+                      <NumInput value={mp.adRate ?? 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, adRate: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="%" />
+                      <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>등록/수정 시 자동으로 이 %로 General(판매당 과금) 광고 활성</span>
+                    </>
+                  )}
                 </div>
               )}
               {/* 11번가는 판매자 계정의 발송예정일 템플릿을 사용하므로 정책 출고일 미사용 / 롯데홈쇼핑·신세계몰은 자체 블록에서 출고일 표시 / 이베이는 Business Policy(배송정책)가 출고일 대신함 */}
