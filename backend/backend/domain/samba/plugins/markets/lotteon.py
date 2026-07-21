@@ -3701,7 +3701,15 @@ class LotteonPlugin(MarketPlugin):
             # 이미 종료/삭제된 상품 — 마켓 측 정리는 끝났으므로 우리도 success로 간주해
             # registered_accounts에서 정리되도록 한다 (테트리스 브랜드 블럭 삭제 차단 방지).
             # 8888 = 판매종료된 상품, 9999 = 존재하지 않는 상품 등
-            _ghost_signals = ("8888", "판매종료 된 상품", "존재하지 않", "이미 삭제")
+            # "판매중지가 된 상품" = 상위 패널티(금칙어)로 이미 판매중지된 상태.
+            # 롯데ON은 dispatcher가 아닌 이 자체 목록을 쓰므로 여기에도 등재 (#666)
+            _ghost_signals = (
+                "8888",
+                "판매종료 된 상품",
+                "존재하지 않",
+                "이미 삭제",
+                "판매중지가 된 상품",
+            )
             if any(sig in err for sig in _ghost_signals):
                 logger.warning(
                     f"[롯데ON] 이미 종료/삭제된 상품 — 정리 완료로 처리: {err}"
