@@ -10409,59 +10409,6 @@ async def sync_orders_from_markets(
                         f"[주문동기화] 롯데홈쇼핑 교체 레코드 삭제 실패(무시): {_orp_e}"
                     )
 
-            # 롯데홈쇼핑 유령 중복 정리(재발방지):
-            # 신규주문 초기엔 OrgOrdDtlSn(대체값)으로 저장됐다가 배송단계에서
-            # DlvUnitSn 으로 order_number 뒷자리가 바뀌며 남는 고아 레코드를 삭제한다.
-            # 기존 _lh_replaced_old_keys 삭제는 "이번 sync 응답의 현재값"만 지워
-            # 과거에 다른 값으로 저장된 행이 유령으로 남는 문제가 있었다.
-            # 여기서는 배송조회로 확보한 DlvUnitSn 집합(_lh_dlvsn_map)을 기준으로,
-            # 그 집합에 없는 뒷자리의 lottehome 행을 OrdNo 단위로 삭제한다.
-            # 안전장치: 송장 없음 + 클레임(취소/반품/교환) 아님 인 행만 삭제 →
-            # 진짜 수량N 주문(각 DlvUnitSn 이 모두 집합에 존재)은 유지된다.
-            # upsert 이후 실행이라 정식 DlvUnitSn 행은 이미 DB에 존재(행 0개 순간 없음).
-            if market_type == "lottehome" and _lh_dlvsn_map:
-                try:
-                    _lh_orphan_deleted = 0
-                    for _o_ordno, _o_dlvsns in _lh_dlvsn_map.items():
-                        if not _o_ordno or not _o_dlvsns:
-                            continue
-                        _o_ph = ", ".join(f":d_{_i}" for _i in range(len(_o_dlvsns)))
-                        _o_prm: dict = {
-                            f"d_{_i}": _v for _i, _v in enumerate(_o_dlvsns)
-                        }
-                        _o_prm["cid"] = account["id"]
-                        _o_prm["pfx"] = f"{_o_ordno}:%"
-                        _o_res = await session.execute(
-                            _sa_text(
-                                f"DELETE FROM samba_order "
-                                f"WHERE source = 'lottehome' "
-                                f"AND channel_id = :cid "
-                                f"AND order_number LIKE :pfx "
-                                f"AND SPLIT_PART(order_number, ':', 2) "
-                                f"NOT IN ({_o_ph}) "
-                                f"AND (tracking_number IS NULL "
-                                f"OR tracking_number = '') "
-                                f"AND COALESCE(shipping_status, '') "
-                                f"!~ '취소|반품|교환' "
-                                f"AND COALESCE(status, '') "
-                                f"!~ 'cancel|return|refund'"
-                            ),
-                            _o_prm,
-                        )
-                        _lh_orphan_deleted += _o_res.rowcount or 0
-                    if _lh_orphan_deleted:
-                        await session.commit()
-                        logger.info(
-                            f"[주문동기화] {label}: 롯데홈쇼핑 유령 중복 "
-                            f"{_lh_orphan_deleted}건 정리"
-                        )
-                except Exception as _lh_orphan_e:
-                    await session.rollback()
-                    logger.warning(
-                        f"[주문동기화] {label}: 롯데홈쇼핑 유령 정리 실패(무시): "
-                        f"{_lh_orphan_e}"
-                    )
-
             total_synced += synced
             if market_type == "smartstore":
                 confirmed_count = len(unconfirmed_ids)
