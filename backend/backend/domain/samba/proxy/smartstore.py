@@ -1383,6 +1383,41 @@ class SmartStoreClient:
             logger.warning(f"[스마트스토어] sellerManagementCode 조회 실패 (무시): {e}")
             return None
 
+    async def get_origin_no_by_channel(self, channel_product_no: str) -> str:
+        """채널상품번호로 원상품번호(originProductNo) 역조회. 못 찾으면 빈 문자열.
+
+        삭제/판매중지 API는 originProductNo가 필수라서, 등록 응답에 origin이
+        누락됐을 때 이 역조회로 반드시 채워야 한다.
+        """
+        try:
+            no = int(str(channel_product_no).strip())
+        except (TypeError, ValueError):
+            return ""
+        result = await self._call_api(
+            "POST",
+            "/v1/products/search",
+            body={"page": 1, "size": 5, "channelProductNos": [no]},
+        )
+        if isinstance(result, list):
+            contents = result
+        elif isinstance(result, dict):
+            contents = result.get("contents") or result.get("data") or []
+        else:
+            contents = []
+        for item in contents:
+            origin = str(
+                item.get("originProductNo")
+                or item.get("originProduct", {}).get("id", "")
+                or ""
+            )
+            for cp in item.get("channelProducts") or []:
+                if str(cp.get("channelProductNo", "")) == str(no):
+                    origin = str(cp.get("originProductNo") or "") or origin
+                    break
+            if origin:
+                return origin
+        return ""
+
     async def update_product(
         self, product_no: str, product_data: dict[str, Any]
     ) -> dict[str, Any]:
