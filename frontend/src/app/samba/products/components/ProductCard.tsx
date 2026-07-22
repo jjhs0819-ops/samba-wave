@@ -718,19 +718,23 @@ const ProductCard = React.memo(function ProductCard({
     const kShipCard = Number(kp.kreamShippingFeeCard ?? 300)
     const kShipBox = Number(kp.kreamShippingFeeBox ?? 900)
     const kFwd = Number(kp.kreamForwardingFee ?? 8000)
-    // 카드/박스 판정 — PSA 옵션 있으면 카드(배송 300엔), 없으면 박스·카드팩(배송 900엔).
-    // 옵션 없으면 상품명으로 추정. 백엔드 calc_base: 비카드(박스)는 원가 5% 가산 + 박스 배송비.
+    // 로컬 봇과 동일 — 배송비(is_box)와 5%가산(is_card)은 별개 축:
+    //  · 배송비: PSA 단품 카드 = 300엔, 그외(박스/카드팩/신발) = 900엔 (옵션 유형)
+    //  · 5% 가산: 비(非)트레이딩카드=신발/의류만. 카드·카드박스는 미적용 (snkr_type 축)
     const _kOpts = Array.isArray(p.options) ? (p.options as Array<{ name?: string }>) : []
     const _hasPSA = _kOpts.some(o => String(o?.name || '').toUpperCase().includes('PSA'))
     const _nameBox = /박스|box|부스터|booster|etb|트레이너|카드\s*팩|\bpack\b|パック|ボックス/i.test(p.name || '')
-    const kIsCard = _kOpts.length > 0 ? _hasPSA : !_nameBox
-    const kShip = kIsCard ? kShipCard : kShipBox
-    const kCostEff = kIsCard ? cost : Math.round(cost * 1.05) // 비카드 원가 5% 가산(백엔드 동일)
+    // 신발 = cm/mm 사이즈 옵션(예: "26.5cm" / "265"). 이 경우만 원가 5% 가산.
+    const _isShoe = _kOpts.some(o => /^\d+(?:\.\d+)?\s*cm$|^\d{3}$/i.test(String(o?.name || '').trim()))
+    // PSA 단품이 하나라도 있으면 카드 배송(300), 아니면 박스 배송(900). 옵션 없으면 상품명 추정.
+    const kIsCardShip = _kOpts.length > 0 ? _hasPSA : !_nameBox
+    const kShip = kIsCardShip ? kShipCard : kShipBox
+    const kCostEff = _isShoe ? Math.round(cost * 1.05) : cost // 신발/의류만 원가 5% 가산
     const kBase = (kCostEff + kShip) * jpyRate + kFwd
     const kMarginAmt = Math.max(kMinMargin, kBase * kComp / 100)
     const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
     const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp / 100) / 1000) * 1000
-    const kKindLabel = kIsCard ? '카드' : '박스'
+    const kKindLabel = _isShoe ? '신발' : kIsCardShip ? '카드' : '박스'
     const kCalcStr = cost > 0
       ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}+${kKindLabel}배송 ¥${fmt(kShip)})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
       : '원가 없음'
