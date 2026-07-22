@@ -65,7 +65,7 @@ services:
       READ_DB_PORT: "5432"
       WEB_CONCURRENCY: "1"
       PROCESS_ROLE: api
-      KREAM_SHADOW: "1"  # 크림 오토튠 이식 섀도(Phase2) — target 계산 로그만, 쓰기 없음
+      # 크림 섀도는 전용 프로세스(samba-kream, PROCESS_ROLE=kream)로 분리 — api 격리(503 방지)
       WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
       AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
       AUTOTUNE_QUEUE_CAP: "0"
@@ -163,6 +163,43 @@ services:
       # netns 공유 → api(8080)/worker(8081)와 분리
       RECONCILER_BIND_PORT: "8082"
       # 풀 축소 — api(80)+worker(8×30=240)+reconciler(30)=350 < max_connections(400)
+      DB_WRITE_POOL_SIZE: "10"
+      DB_WRITE_MAX_OVERFLOW: "10"
+      DB_READ_POOL_SIZE: "5"
+      DB_READ_MAX_OVERFLOW: "5"
+
+  # 크림 오토튠 전용 프로세스(2세대 리셀) — 스니덩크 원가·재고 전수순회 → 크림 입찰
+  # 갱신+리스톡+삭제 통합 루프. 28k 전수스캔이 무거워 api(HTTP 503)·worker(전송)와 격리.
+  # 단일 인스턴스(중복 입찰 방지). KREAM_SHADOW=1=섀도(로그만), KREAM_SHADOW_EXECUTE 미설정=하드오프.
+  samba-kream:
+    image: local-samba-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      wireguard:
+        condition: service_started
+    network_mode: "service:wireguard"
+    env_file: [./local.env]
+    environment:
+      ENVIRONMENT: production
+      DB_SSL_REQUIRED: "false"
+      WRITE_DB_HOST: postgres
+      WRITE_DB_PORT: "5432"
+      READ_DB_HOST: postgres
+      READ_DB_PORT: "5432"
+      PROCESS_ROLE: kream
+      KREAM_SHADOW: "1"  # 섀도 모드 — target 계산·로그만, 실제 입찰 쓰기 없음(하드오프)
+      KREAM_UNIFIED: "1"  # [Step 3] 스니덩크 전수순회 통합(갱신+리스톡+삭제). 미설정=구 ask단위 섀도
+      KREAM_UNIFIED_BATCH: "1500"  # 사이클당 배치(로테이션). 1,500 + 90초 대기 ≈ 40분/전카탈로그 1회전
+      KREAM_LOOP_SLEEP: "90"  # 사이클 간 대기(초). 사이클 자체가 수십초라 짧게 — 시세 추종용
+      KREAM_SHADOW_EXECUTE: "1"  # [Step 5] 실행 전환 — 실제 크림 PATCH/POST/DELETE (로컬 정지·가드 검증 완료 2026-07-22)
+      KREAM_EXEC_BOX: "1"  # [A] 박스(해외배송) 갱신/삭제 실행 — 섀도 검증 완료(175건 계산정확)
+      # netns 공유 → api(8080)/worker(8081)/reconciler(8082)와 분리
+      KREAM_BIND_PORT: "8083"
+      # 크림 루프는 반드시 돌아야 하므로 BG 비활성 금지 (0 고정)
+      DISABLE_BACKGROUND_WORKERS: "0"
+      # 풀 축소 — api(80)+worker(8×30=240)+reconciler(30)+kream(20)=370 < max_connections(400)
       DB_WRITE_POOL_SIZE: "10"
       DB_WRITE_MAX_OVERFLOW: "10"
       DB_READ_POOL_SIZE: "5"

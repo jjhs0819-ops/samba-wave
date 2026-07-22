@@ -84,6 +84,17 @@ exit(0 if r else 1)
     exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:"$_RBP" --timeout 600 --graceful-timeout 600
   fi
 
+  # ── 프로세스 분리: 크림 오토튠 전용 kream(2세대 리셀) ──
+  # PROCESS_ROLE=kream 이면 마이그레이션/스키마픽스를 스킵하고(이들은 API 프로세스 A 가 담당)
+  # 곧바로 크림 통합 루프(원가·재고 전수순회 → 갱신+리스톡+삭제)만 기동한다.
+  # 반드시 단일 인스턴스(-w 1)로 띄운다 — 중복 실행 시 동일 옵션 중복 입찰 사고.
+  # netns 공유 시 api(8080)/worker(8081)/reconciler(8082)와 포트 분리(8083).
+  if [ "$PROCESS_ROLE" = "kream" ]; then
+    _KBP=${KREAM_BIND_PORT:-8083}
+    echo "Starting KREAM autotune (PROCESS_ROLE=kream, gunicorn -w 1, port=$_KBP)..."
+    exec uv run --no-dev -m gunicorn -w 1 -k uvicorn.workers.UvicornWorker backend.main:app --bind 0.0.0.0:"$_KBP" --timeout 600 --graceful-timeout 600
+  fi
+
   # Emergency schema fixes — alembic_version=873871a20399 stamp 상태에서 누락된 테이블/컬럼 수동 보완
   # (2026-04-17 사고 이후 stamp-DB 간극 해소용. 신규 누락 항목은 여기 추가)
   #
@@ -167,6 +178,17 @@ async def fix():
             )'''),
         ('idx_search_cache_source_site', 'CREATE INDEX IF NOT EXISTS ix_samba_search_cache_source_site ON samba_search_cache (source_site)'),
         ('idx_search_cache_tenant_id', 'CREATE INDEX IF NOT EXISTS ix_samba_search_cache_tenant_id ON samba_search_cache (tenant_id)'),
+        # 크림 오토튠 전용 프로세스(PROCESS_ROLE=kream) → api UI 로그 브리지 테이블.
+        # kream 프로세스가 INSERT, api 테일러(_kream_log_tailer)가 폴링해 UI 버퍼 주입.
+        ('create_kream_refresh_log', '''CREATE TABLE IF NOT EXISTS kream_refresh_log (
+                id BIGSERIAL PRIMARY KEY,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                site TEXT NOT NULL DEFAULT 'KREAM',
+                product_id TEXT NOT NULL DEFAULT '',
+                msg TEXT NOT NULL,
+                level TEXT NOT NULL DEFAULT 'info',
+                device_id TEXT NOT NULL DEFAULT ''
+            )'''),
         ('alembic_version_dedup', '''DELETE FROM alembic_version
             WHERE version_num = \'39f5332d495f\'
               AND EXISTS (

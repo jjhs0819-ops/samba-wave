@@ -489,6 +489,26 @@ async def _snkrdunk_remove_match_impl(
 ) -> dict[str, Any]:
     from sqlalchemy import text
 
+    # 거부목록 기록 [2026-07-22] — 매칭해제한 (snkr, kream) 쌍을 영구 거부 등록.
+    # 안 하면 다음날 _match.py 가 같은 쌍을 다시 후보로 투입(도돌이). 수동 재매칭 시 해제됨.
+    await session.exec(
+        text("""
+        CREATE TABLE IF NOT EXISTS kream_snkr_rejected (
+            snkr_id text NOT NULL, kream_pid text NOT NULL,
+            reason text, rejected_at timestamptz DEFAULT now(),
+            PRIMARY KEY (snkr_id, kream_pid))
+    """)
+    )  # type: ignore[arg-type]
+    await session.exec(
+        text("""
+        INSERT INTO kream_snkr_rejected (snkr_id, kream_pid, reason)
+        SELECT :sid, resell_matches->'kream'->>'product_id', '검수 매칭해제'
+        FROM samba_collected_product
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+          AND COALESCE(resell_matches->'kream'->>'product_id', '') <> ''
+        ON CONFLICT (snkr_id, kream_pid) DO NOTHING
+    """).bindparams(sid=snkr_id)
+    )  # type: ignore[arg-type]
     # 후보(kream_candidates)를 남기면 재로드 시 후보 1개 자동선택으로 매칭이 되살아나는
     # 도돌이 발생 [2026-07-20 라이츄·샤워즈 사고] — 해제 시 함께 삭제
     sql = text("""
@@ -569,6 +589,12 @@ async def _snkrdunk_update_match_impl(
               WHERE cd->>'product_id' = :kream_id)
     """)
     await session.exec(cleanup_sql.bindparams(sid=snkr_id, kream_id=kream_id))  # type: ignore[arg-type]
+    # 수동 재매칭 = 거부목록 해제 [2026-07-22] — 사용자가 직접 이 쌍을 맺었으니 재허용.
+    await session.exec(
+        text(
+            "DELETE FROM kream_snkr_rejected WHERE snkr_id = :sid AND kream_pid = :kream_id"
+        ).bindparams(sid=snkr_id, kream_id=kream_id)
+    )  # type: ignore[arg-type]
     await session.commit()
     return {
         "ok": True,
@@ -628,6 +654,13 @@ async def get_kream_margin_policy_public(
                 "shipping_fee_box": k.get("kreamShippingFeeBox", 900),
                 # 배대지비용(원, 배대지→한국). 원가에 별도 가산.
                 "forwarding_fee": k.get("kreamForwardingFee", 8000),
+                # 박스/카드팩(PSA제외 실링) 원가 추가마진율(%).
+                "box_pack_margin_rate": k.get("kreamBoxPackMarginRate", 0),
+                # 나머지(신발/의류 등) 원가 추가마진율(%). PSA 카드는 미적용.
+                "non_card_margin_rate": k.get("kreamNonCardMarginRate", 5),
+                # 해외판매(박스·카드팩) 정산 수수료 — 기본수수료(원) + 판매가 비율(%).
+                "overseas_base_fee": k.get("kreamOverseasBaseFee", 1370),
+                "overseas_fee_rate": k.get("kreamOverseasFeeRate", 3.3),
             }
     raise HTTPException(status_code=404, detail="KREAM 정책 설정 없음")
 

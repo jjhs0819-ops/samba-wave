@@ -542,6 +542,38 @@ def clear_refresh_logs() -> None:
     _refresh_log_total = 0
 
 
+def ingest_kream_log(
+    site: str,
+    product_id: str,
+    msg: str,
+    level: str = "info",
+    device_id: str = "",
+) -> None:
+    """크림 전용 프로세스(PROCESS_ROLE=kream)가 DB에 남긴 로그를 api 프로세스의
+    in-memory 링 버퍼에 주입 — 오토튠 UI 실시간 로그에 노출용.
+
+    크림 루프는 별도 프로세스라 이 버퍼(api-local)에 직접 append 못 함. api 쪽
+    테일러(lifecycle `_kream_log_tailer`)가 kream_refresh_log 테이블을 폴링해 신규
+    행마다 이 함수를 호출한다. source='autotune' 고정(get_refresh_logs 필터 통과),
+    device_id='' 글로벌(어느 PC 필터에서도 노출).
+    """
+    global _refresh_log_total
+    now = datetime.now(timezone.utc)
+    _refresh_log_buffer.append(
+        {
+            "ts": now.isoformat(),
+            "site": site,
+            "product_id": str(product_id or ""),
+            "name": "",
+            "msg": msg,
+            "level": level,
+            "source": "autotune",
+            "device_id": device_id or "",
+        }
+    )
+    _refresh_log_total += 1
+
+
 def get_refresh_logs(
     since_idx: int = 0,
     source_filter: str = "",

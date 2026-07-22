@@ -5668,6 +5668,50 @@ async def autotune_active_cycles():
                     "last_seen_ago_sec": last_seen_ago,
                 }
             )
+    # ── 크림 오토튠(스니덩크→크림) — 별도 프로세스(samba-kream)라 in-memory 코디네이터에
+    # 없음. DB(kream_cycle_status)로 브리지 — 최근 갱신(<5분)이면 활성 표시.
+    try:
+        from backend.api.v1.routers.samba.proxy import _get_setting
+        from backend.db.orm import get_read_session as _grs
+
+        async with _grs() as _ks:
+            _kstat = await _get_setting(_ks, "kream_cycle_status")
+        if isinstance(_kstat, dict) and _kstat.get("updated_at"):
+            _upd = datetime.fromisoformat(
+                str(_kstat["updated_at"]).replace("Z", "+00:00")
+            )
+            _ago = int((datetime.now(timezone.utc) - _upd).total_seconds())
+            # 체크박스가 PC분담에 SNKRDUNK 등록 → 비활성 분담행 중복 생성됨. 제거 후 권위값 1개만.
+            cycles[:] = [c for c in cycles if c.get("site") != "SNKRDUNK"]
+            _st_iso = _kstat.get("started_at")
+            _elapsed = None
+            if _st_iso:
+                _elapsed = int(
+                    (
+                        datetime.now(timezone.utc)
+                        - datetime.fromisoformat(str(_st_iso).replace("Z", "+00:00"))
+                    ).total_seconds()
+                )
+            cycles.append(
+                {
+                    "device_id": "samba-kream",
+                    "site": "SNKRDUNK",
+                    "status": "active" if _ago < 1800 else "inactive",
+                    "idx": int(_kstat.get("idx") or 0),
+                    "total": int(_kstat.get("total") or 0),
+                    "avg_sec_per_item": None,
+                    "cycle_count": int(_kstat.get("cycle_count") or 0),
+                    "price_count": int(_kstat.get("price_count") or 0),
+                    "stock_count": 0,
+                    "soldout_count": int(_kstat.get("delete_count") or 0),
+                    "started_at": _st_iso,
+                    "elapsed_sec": _elapsed,
+                    "heartbeat_ago_sec": _ago,
+                    "last_seen_ago_sec": _ago,
+                }
+            )
+    except Exception as _kexc:
+        logger.warning(f"[active-cycles] SNKRDUNK 주입 실패: {_kexc}")
     cycles.sort(key=lambda c: (c["status"] != "active", c["device_id"], c["site"]))
     return {"count": len(cycles), "cycles": cycles}
 
@@ -5996,6 +6040,13 @@ async def autotune_get_filters():
             )
             mk_result = await session.execute(mk_stmt)
             mkts = sorted([r[0] for r in mk_result.all() if r[0]])
+        # 크림 오토튠(스니덩크→크림)은 별도 프로세스(samba-kream)라 등록상품 스캔에 안 잡힘.
+        # 체크박스 노출 위해 수동 주입 — 체크상태(saved_sources/markets)는 크림 프로세스가
+        # 읽어 on/off(kream_shadow). 메인 오토튠은 SNKRDUNK/KREAM registered 0개라 no-op(안전).
+        if "SNKRDUNK" not in srcs:
+            srcs.append("SNKRDUNK")
+        if "KREAM" not in mkts:
+            mkts.append("KREAM")
         return srcs, mkts
 
     # available_* — stale-while-revalidate. cache 있으면 즉시 반환(stale 포함),

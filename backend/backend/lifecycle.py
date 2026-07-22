@@ -1039,9 +1039,10 @@ async def _start_tetris_sync_scheduler() -> None:
     _pc_sync_task = asyncio.create_task(_pc_sync_loop())
     _pc_cleanup_task = asyncio.create_task(_pc_cleanup_loop())
     _daemon_poll_watch_task = asyncio.create_task(_daemon_poll_watch_loop())
-    # 크림 오토튠 이식 섀도(Phase2) — KREAM_SHADOW=1 일 때만. 쓰기·POST 없이 target 계산 로그만.
-    if os.environ.get("KREAM_SHADOW") == "1":
-        asyncio.create_task(_kream_shadow_loop())
+    # 크림 섀도/갱신 루프는 전용 프로세스(PROCESS_ROLE=kream)로 분리됨 — api 이벤트루프
+    # 대량스캔 과부하(HTTP 503) 방지. 여기(api)서는 그 프로세스가 DB(kream_refresh_log)에
+    # 남긴 로그만 테일링해 오토튠 UI 실시간 로그 버퍼에 주입한다(별도 메모리 브리지).
+    asyncio.create_task(_kream_log_tailer())
     logging.getLogger("backend.lifecycle").info(
         "[lifecycle] 테트리스 sync + PC 분담 sync + cleanup + 데몬 폴링 감시 스케줄러 시작"
     )
@@ -1053,16 +1054,57 @@ async def _kream_shadow_loop() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
+    _unified = os.environ.get("KREAM_UNIFIED") == "1"
     while True:
         try:
-            from backend.domain.samba.warroom.kream_shadow import run_kream_shadow_once
+            if _unified:
+                # [Step 3] 스니덩크 전수순회 통합(갱신+리스톡+삭제)
+                from backend.domain.samba.warroom.kream_shadow import (
+                    run_kream_unified_once,
+                )
 
-            await run_kream_shadow_once()
+                await run_kream_unified_once()
+            else:
+                from backend.domain.samba.warroom.kream_shadow import (
+                    run_kream_shadow_once,
+                )
+
+                await run_kream_shadow_once()
         except _asyncio.CancelledError:
             return
         except Exception as exc:
             _log.warning("[크림섀도] 루프 오류(무시): %s", exc)
-        await _asyncio.sleep(1200)
+        # 배치 로테이션 주기 — 사이클 자체는 수십초라 대기가 길면 전 카탈로그 1회전이 수십시간.
+        # 90초 + 배치 1,500 → 약 40분/1회전 (로컬 봇 수준의 시세 추종).
+        await _asyncio.sleep(int(os.environ.get("KREAM_LOOP_SLEEP") or 90))
+
+
+async def _kream_log_tailer() -> None:
+    """[api 프로세스] 크림 전용 프로세스가 DB(kream_refresh_log)에 남긴 로그를 4초마다
+    폴링해 오토튠 UI 실시간 로그 버퍼(refresher._refresh_log_buffer)에 주입.
+
+    전용 kream 프로세스는 api 와 별도 메모리라 그 버퍼에 직접 못 씀 → DB 경유 브리지.
+    시작점은 현재 max(id) — 과거 로그 replay 방지(인메모리 버퍼도 재시작 시 초기화라 동일 의미)."""
+    import asyncio as _asyncio
+
+    _log = logging.getLogger("backend.lifecycle")
+    await _asyncio.sleep(20)  # 서버 기동 + 테이블 생성(emergency fix) 대기
+    try:
+        from backend.domain.samba.warroom.kream_shadow import kream_log_max_id
+
+        last_id = await kream_log_max_id()
+    except Exception:
+        last_id = 0
+    while True:
+        try:
+            from backend.domain.samba.warroom.kream_shadow import tail_kream_logs
+
+            last_id = await tail_kream_logs(last_id)
+        except _asyncio.CancelledError:
+            return
+        except Exception as exc:
+            _log.warning("[크림로그테일러] 오류(무시): %s", exc)
+        await _asyncio.sleep(4)
 
 
 async def _order_auto_sync_loop() -> None:
@@ -2136,6 +2178,19 @@ async def lifespan(app: FastAPI):
         await _start_lottehome_ghost_reconciler()
         await _start_tracking_dispatch_sweep()
         await _start_soldout_cleanup()
+        worker_runtime = WorkerRuntime(
+            worker=None, worker_task=None, watchdog_task=None
+        )
+    elif _process_role == "kream":
+        # 크림 오토튠 전용 프로세스(2세대 리셀) — 스니덩크 원가·재고 전수순회 → 크림
+        # 입찰 갱신+리스톡+삭제 통합 루프만 단일 인스턴스로 기동. 28k 전수스캔이 무거워
+        # api 이벤트루프(HTTP 503)·워커(전송)와 격리한다. JobWorker/오토튠/리컨실러 비활성.
+        startup_logger.warning(
+            "[startup] PROCESS_ROLE=kream — 크림 오토튠 전용 모드. "
+            "(크림 섀도/갱신 루프만 기동, JobWorker/오토튠/리컨실러 비활성)"
+        )
+        if os.environ.get("KREAM_SHADOW") == "1":
+            asyncio.create_task(_kream_shadow_loop())
         worker_runtime = WorkerRuntime(
             worker=None, worker_task=None, watchdog_task=None
         )
