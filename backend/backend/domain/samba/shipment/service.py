@@ -390,6 +390,56 @@ STATUS_LABELS: dict[str, str] = {
 }
 
 
+# 소싱처(쇼핑몰)가 직접 운영하는 이미지 CDN.
+# 여기 올라온 사진은 소싱처가 직접 찍거나 검수해 올린 상품컷이다.
+# 이 목록 **밖**의 호스트는 대부분 브랜드 자사몰이며(헬리한센 cafe24, 라코스테
+# pdpcloud, 디스커버리·데상트·스노우피크 자사 CDN 등) 브랜드가 제작한 홍보물이라
+# 그대로 재게시하면 지재권 문제가 된다.
+# 실측(2026-07-22, 수집분 1,212장): 목록 밖 363장 = 30%.
+#   SSG 217/217·롯데온 158/158 은 전량 자사 CDN(영향 없음),
+#   GS 174/633, 무신사 194/204 가 목록 밖이다. 무신사는 브랜드 입점 마켓이라
+#   상세를 브랜드가 올리는 구조 — 제거돼도 대표/추가(image.msscdn.net)는 남는다.
+_SOURCING_CDN_HOSTS: tuple[str, ...] = (
+    "ssgcdn.com",      # SSG
+    "ssg.com",
+    "lotteon.com",     # 롯데온
+    "lotteimall.com",  # 롯데아이몰
+    "ellotte.com",     # 롯데백화점
+    "lotteeps.com",
+    "m-gs.kr",         # GS샵
+    "gsshop.com",
+    "hmall.com",       # 현대홈쇼핑
+    "thehyundai.com",  # 현대백화점
+    "musinsa.com",     # 무신사
+    "msscdn.net",
+    "elandrs.com",     # 이랜드
+    "akamaized.net",   # 소싱처 공용 가속 CDN
+)
+
+
+def _is_sourcing_cdn(url: str) -> bool:
+    """소싱처 자체 CDN 이미지인지 (호스트 기준)."""
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    return any(host == d or host.endswith("." + d) or d in host for d in _SOURCING_CDN_HOSTS)
+
+
+def _drop_brand_host_images(urls: list[str]) -> tuple[list[str], int]:
+    """브랜드 자사몰 호스트 이미지를 제거. (남은 URL, 제거 수) 반환.
+
+    AI 분류와 달리 결정적이라 같은 입력이면 항상 같은 결과다. 지재권 위험이
+    가장 큰 부류(브랜드 제작 홍보물)를 판단 없이 확실하게 걷어낸다.
+    소싱처 CDN 안에 있는 배너("24SS 신상품" 텍스트 이미지 등)는 이 규칙으로는
+    걸러지지 않는다 — 그건 이미지 분류기(ImageFilterService)의 몫이다.
+    """
+    kept = [u for u in urls if _is_sourcing_cdn(u)]
+    return kept, len(urls) - len(kept)
+
+
 def _usable_image_urls(urls: Any) -> list[str]:
     """마켓에 URL 로 넘길 수 있는 이미지만 남긴다 (순서·중복 유지).
 
@@ -3305,6 +3355,17 @@ class SambaShipmentService:
         detail_imgs = images if img_checks.get("sub", False) else images[:1]
 
         detail_images = _usable_image_urls(product.get("detail_images"))
+        # 브랜드 자사몰 이미지 제거 (지재권) — 상세에 들어가는 detail_images 에만
+        # 적용한다. images(대표/추가)는 소싱처 CDN 이라 영향이 없고, 만에 하나
+        # 걸리면 상품이 대표이미지 0장이 되어 등록 자체가 깨지므로 건드리지 않는다.
+        if detail_images:
+            detail_images, _dropped = _drop_brand_host_images(detail_images)
+            if _dropped:
+                logger.info(
+                    f"[상세HTML] 브랜드 자사몰 이미지 {_dropped}장 제거 "
+                    f"(남은 상세이미지 {len(detail_images)}장)"
+                )
+
         # main/sub 에서 출력될 URL을 추적 → detail에서 중복 제외
         # 단, 실제로 출력되는 항목만 넣는다(detail만 단독 사용일 때 무필터 정상 노출).
         # main 을 빼먹으면 GS처럼 images == detail_images 인 소싱처에서 대표이미지가
