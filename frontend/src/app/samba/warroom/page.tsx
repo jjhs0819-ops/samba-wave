@@ -1430,7 +1430,7 @@ export default function WarroomPage() {
             <span style={{ fontSize: '0.75rem', color: clr.textSub, fontWeight: 600, whiteSpace: 'nowrap' }}>소싱처</span>
             {availSources.filter(src => src !== 'manual').map(src => {
               const checked = filterSources === null || filterSources.includes(src)
-              const labelMap: Record<string, string> = { MUSINSA: '무신사', KREAM: 'KREAM', DANAWA: '다나와', FashionPlus: '패션플러스', Nike: 'Nike', Adidas: 'Adidas', ABCmart: 'ABC마트', REXMONDE: '렉스몬드', SSG: 'SSG', LOTTEON: '롯데ON', GSShop: 'GSShop', ElandMall: '이랜드몰', SSF: 'SSF샵' }
+              const labelMap: Record<string, string> = { MUSINSA: '무신사', KREAM: 'KREAM', SNKRDUNK: '스니덩크', DANAWA: '다나와', FashionPlus: '패션플러스', Nike: 'Nike', Adidas: 'Adidas', ABCmart: 'ABC마트', REXMONDE: '렉스몬드', SSG: 'SSG', LOTTEON: '롯데ON', GSShop: 'GSShop', ElandMall: '이랜드몰', SSF: 'SSF샵' }
               return (
                 <label key={src} style={{ display: 'flex', alignItems: 'center', gap: '2px', cursor: 'pointer' }}>
                   <input
