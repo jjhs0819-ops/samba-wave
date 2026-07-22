@@ -107,10 +107,13 @@ export default function ProductsPage() {
 
   const [allProducts, setAllProducts] = useState<SambaCollectedProduct[]>([]);
   const [usdRate, setUsdRate] = useState(1400);
+  const [jpyRate, setJpyRate] = useState(9.5);
   useEffect(() => {
     forbiddenApi.getExchangeRates().then(r => {
       const rate = r?.currencies?.USD?.effectiveRate
       if (rate && rate > 0) setUsdRate(rate)
+      const jpy = r?.currencies?.JPY?.effectiveRate
+      if (jpy && jpy > 0) setJpyRate(jpy)
     }).catch(() => {})
   }, []);
   const [policies, setPolicies] = useState<SambaPolicy[]>([]);
@@ -3050,6 +3053,7 @@ export default function ProductsPage() {
                 filters={searchFilters}
                 detailTemplates={detailTemplates}
                 usdRate={usdRate}
+                jpyRate={jpyRate}
               />
             </div>
           ))}

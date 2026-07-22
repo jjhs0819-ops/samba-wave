@@ -51,6 +51,11 @@ export const MARKETS = [
   { id: 'playauto', name: '플레이오토', url: '', searchUrl: '' },
 ]
 
+// 리셀 판매처(KREAM/POIZON/StockX) — resellRows 에서 매칭·정책계산으로 별도 표시하므로
+// 일반 마켓가격 행/이름편집 행에서는 제외(중복 방지). 키=정책 market_policies 키(마켓명).
+const RESELL_MARKET_KEYS = new Set(['KREAM', 'POIZON', '포이즌', 'StockX'])
+const RESELL_MARKET_IDS = new Set(['kream', 'poison', 'stockx'])
+
 // 마켓별 상품명 글자수 제한
 const MARKET_NAME_LIMITS: Record<string, number> = {
   '스마트스토어': 49,
@@ -414,6 +419,7 @@ interface ProductCardProps {
   filters?: SambaSearchFilter[]
   detailTemplates: SambaDetailTemplate[]
   usdRate?: number
+  jpyRate?: number
   compact?: boolean
   expanded?: boolean
   onToggleExpand?: () => void
@@ -422,7 +428,7 @@ interface ProductCardProps {
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
-  catMappingMap, filters, detailTemplates, usdRate = 1400, compact, expanded, onToggleExpand,
+  catMappingMap, filters, detailTemplates, usdRate = 1400, jpyRate = 9.5, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
@@ -550,8 +556,9 @@ const ProductCard = React.memo(function ProductCard({
 
   // 마켓별 개별 가격 계산 (useMemo 캐싱)
   const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; minMarginUsd?: number; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
+  // 리셀 판매처(KREAM/POIZON)는 아래 resellRows 에서 별도 표시(매칭·정책계산) → 일반 마켓행 중복 제거.
   const marketPriceList = useMemo(() => Object.entries(mp)
-    .filter(([, v]) => v.accountId)
+    .filter(([marketName, v]) => v.accountId && !RESELL_MARKET_KEYS.has(marketName))
     .flatMap(([marketName, v]) => {
       // GS샵: 연결 계정(마놀/캐논 등)별로 행을 펼쳐 각 계정 판매수수료(gsSettingsByAccount[계정].feeRate)로 판매가 계산.
       // 계정마다 수수료가 다르므로(마놀 25% / 캐논 13%) 판매가도 계정별로 달라진다.
@@ -697,10 +704,34 @@ const ProductCard = React.memo(function ProductCard({
       { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
       { key: 'stockx', name: 'StockX' },
     ]
+    // 크림(리셀) 전용 정책 — 원가는 스니덩크 엔화라 환율 적용 필수. 일반 마켓 calcPrice(환율 없음)로
+    // 계산하면 엔 원가에 원 마진을 그냥 더해 값이 틀리고 통화도 ¥로 오표기됨. 크림 정책(경쟁/무경쟁
+    // 마진·카드/박스 배송비·배대지)으로 원화(₩) 판매가 계산. 백엔드 kream_shadow calc_min_price와 동일 공식.
+    const kp = (mp['KREAM'] ?? {}) as {
+      kreamCompetitiveMarginRate?: number; kreamNoCompetitionMarginRate?: number
+      kreamMinMarginAmount?: number; kreamShippingFeeCard?: number
+      kreamShippingFeeBox?: number; kreamForwardingFee?: number
+    }
+    const kComp = Number(kp.kreamCompetitiveMarginRate ?? 13)
+    const kNoComp = Number(kp.kreamNoCompetitionMarginRate ?? 40)
+    const kMinMargin = Number(kp.kreamMinMarginAmount ?? 9000)
+    const kShipCard = Number(kp.kreamShippingFeeCard ?? 300)
+    const kFwd = Number(kp.kreamForwardingFee ?? 8000)
+    // cost = 스니덩크 엔화 원가. 대부분 PSA 카드라 카드 배송비(300엔) 기준. base=(엔+배송엔)×환율+배대지(원)
+    const kBase = (cost + kShipCard) * jpyRate + kFwd
+    const kMarginAmt = Math.max(kMinMargin, kBase * kComp / 100)
+    const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
+    const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp / 100) / 1000) * 1000
+    const kCalcStr = cost > 0
+      ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(cost)}+배송 ¥${fmt(kShipCard)})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
+      : '원가 없음'
     return PLAT.map(pl => {
       const m = rm[pl.key]
       const id = m?.product_id ? String(m.product_id) : ''
-      const r = calcPrice(cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym)
+      const isK = pl.key === 'kream'
+      const r = isK
+        ? { price: kMinPrice, calcStr: kCalcStr }
+        : calcPrice(cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym)
       return {
         key: pl.key, name: pl.name, id,
         url: id && pl.url ? pl.url(id) : '',
@@ -709,10 +740,11 @@ const ProductCard = React.memo(function ProductCard({
         name_ko: m?.name_ko,
         anomalyFlagged: !!m?.anomaly_flagged,
         anomalyReason: m?.anomaly_reason || '',
+        sym: isK ? '₩' : curSym,
         price: r.price, calcStr: r.calcStr,
       }
     })
-  }, [p.resell_matches, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
+  }, [p.resell_matches, mp, jpyRate, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
 
   // 크림 이상감지 승인 — 검수페이지와 동일 DB 필드(resell_matches.kream.anomaly_ok) 토글.
   // 승인=이상감지 우회(동적가격 등록/갱신). 검수페이지 체크와 양방향 연동됨.
@@ -1987,7 +2019,7 @@ const ProductCard = React.memo(function ProductCard({
                   <td style={tdVal}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ color: c.text, fontWeight: 600 }}>{curSym}{fmt(rr.price)}</span>
+                        <span style={{ color: c.text, fontWeight: 600 }}>{rr.sym}{fmt(rr.price)}</span>
                         {rr.id ? (
                           rr.url ? (
                             <button
@@ -2035,8 +2067,8 @@ const ProductCard = React.memo(function ProductCard({
                     .map(m => MARKETS.find(mk => m.marketName.includes(mk.name))?.id)
                     .filter((id): id is string => !!id)
                 )
-                // 등록된 스토어 중 마켓가격 행이 없는 것만 추출
-                const extraStores = registeredMarkets.filter(rm => !priceMarketIds.has(rm.marketId))
+                // 등록된 스토어 중 마켓가격 행이 없는 것만 추출 (리셀 판매처는 resellRows 담당 → 제외)
+                const extraStores = registeredMarkets.filter(rm => !priceMarketIds.has(rm.marketId) && !RESELL_MARKET_IDS.has(rm.marketId))
                 if (extraStores.length === 0) return null
                 return extraStores.map(rm => {
                   const mkt = MARKETS.find(m => m.id === rm.marketId)
