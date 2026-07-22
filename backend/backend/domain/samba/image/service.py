@@ -819,9 +819,16 @@ class ImageTransformService:
         #    대표/추가이미지가 placeholder 로 대체되는 문제 해결)
         # 3) 정사각형 아니면 흰 배경 padding (마켓별 정사각형 요구 호환)
         try:
-            from PIL import Image
+            from PIL import Image, ImageOps
 
             img = Image.open(io.BytesIO(image_bytes))
+            # [중요] 폰/카카오톡 사진은 EXIF Orientation(=6 등)으로 회전 정보를 갖고 있는데
+            # 픽셀만 저장하면 마켓에서 사진이 옆으로 눕는다(2026-07-22 재고상품 7건 사고).
+            # 회전을 실제 픽셀에 적용하고 태그는 제거한다. EXIF 없으면 원본 그대로 반환.
+            try:
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
             if img.mode in ("RGBA", "LA"):
                 bg = Image.new("RGB", img.size, (255, 255, 255))
                 rgba = img.convert("RGBA")

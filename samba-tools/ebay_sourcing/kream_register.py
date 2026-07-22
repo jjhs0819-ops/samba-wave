@@ -46,6 +46,7 @@ async def main():
     pol_id = _opt("--policy", GOODS_POLICY)
     stock = int(_opt("--stock", "3"))
     price_key = _opt("--pricekey", "lowest_95_price")
+    cost_override = _opt("--cost")  # 재고보유분: 실제 매입원가 직접 지정
 
     tok = current_tenant_id.set(TENANT)
     try:
@@ -73,6 +74,8 @@ async def main():
                 cost = o.get(price_key) or o.get("lowest_normal_price") or o.get("lowest_100_price")
                 if cost:
                     break
+            if cost_override:
+                cost = float(cost_override)
             style = body.get("model_number") if body.get("model_number") not in ("-", "", None) else None
             print(f"KREAM: {name_en} | 원가={cost} | img={'Y' if img_url else 'N'} | style={style}")
             if not (name_en and img_url and cost):
