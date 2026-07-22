@@ -1008,6 +1008,16 @@ class EbayClient:
             if "promo" in name.lower():
                 aspects.setdefault("Set", ["Promo Cards"])
                 aspects.setdefault("Rarity", ["Promo"])
+            # Card Number(품번) — 번장 제목의 콜렉터 번호 패턴 파싱
+            # 예: "040/M-P"(프로모), "087/063"(세트). 추측 없이 제목에 있을 때만.
+            import re  # noqa: F811
+
+            _cardno_m = re.search(
+                r"(\d{1,3}\s*/\s*[0-9A-Za-z]{1,5}(?:-[0-9A-Za-z]{1,3})?)", name
+            )
+            if _cardno_m:
+                _cardno = _cardno_m.group(1).replace(" ", "").upper()
+                aspects.setdefault("Card Number", [_cardno])
 
         # 하자/상태 자유서술(conditionDescription) — USED 계열 condition일 때만 유효.
         # 소싱처 하자 안내(예: 뒷면 미세 찍힘)를 영문으로 담아 구매자 클레임을 예방.
