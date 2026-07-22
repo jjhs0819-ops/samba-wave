@@ -3322,6 +3322,56 @@ async def delete_order(
 # ══════════════════════════════════════════════
 
 
+async def _lh_imps_with_dtl_sn_heal(
+    client, svc, order_id: str, ord_no: str, ord_dtl_sn: str
+):
+    """롯데홈쇼핑 발송불가(imps) 처리 — [1000] 시 실제 상세순번 역조회 후 재시도.
+
+    신규주문 수집 폴백이 상품코드를 상세순번(ord_dtl_sn) 자리에 저장한 주문은
+    registDeliver가 "[1000] 주문이 존재하지 않습니다"로 실패한다. 이때 배송조회로
+    실제 순번을 역조회해 재시도하고, 성공하면 order_number/ext_order_number를
+    보정해 이후 송장전송·배송처리도 정상화한다.
+
+    Returns: (res, 사용된 ord_dtl_sn)
+    """
+    from backend.domain.samba.proxy.lottehome import LotteApiError
+
+    try:
+        return await client.register_deliver(ord_no, ord_dtl_sn, "imps"), ord_dtl_sn
+    except LotteApiError as e:
+        not_found = e.code == "1000" or "존재하지 않" in (e.lotte_msg or "")
+        if not not_found:
+            raise
+        lines = await client.resolve_ord_dtl_sns(ord_no)
+        # 잘못 저장된 값은 대개 해당 라인의 상품코드 → 상품번호 일치 라인 우선,
+        # 매칭 실패 시 단일 라인 주문일 때만 채택 (다중 라인 추측 금지 — 오취소 방지)
+        cand = [
+            ln
+            for ln in lines
+            if ln.get("goods_no") and ln["goods_no"] == str(ord_dtl_sn)
+        ]
+        if not cand and len(lines) == 1:
+            cand = lines
+        if not cand or cand[0]["sn"] == str(ord_dtl_sn):
+            raise
+        real_sn = cand[0]["sn"]
+        logger.warning(
+            f"[롯데홈쇼핑] 상세순번 보정 재시도: {ord_no} {ord_dtl_sn} → {real_sn}"
+        )
+        res = await client.register_deliver(ord_no, real_sn, "imps")
+        if res.get("ok"):
+            corrected = f"{ord_no}:{real_sn}"
+            try:
+                await svc.update_order(
+                    order_id,
+                    {"order_number": corrected, "ext_order_number": corrected},
+                )
+                logger.info(f"[롯데홈쇼핑] 상세순번 DB 보정 완료: {corrected}")
+            except Exception as _ue:
+                logger.warning(f"[롯데홈쇼핑] 보정 순번 DB 저장 실패(무시): {_ue}")
+        return res, real_sn
+
+
 @router.post("/{order_id}/approve-cancel")
 async def approve_cancel(
     order_id: str,
@@ -3668,7 +3718,9 @@ async def approve_cancel(
 
         client = LotteHomeClient(user_id, password, agnc_no, env)
         try:
-            res = await client.register_deliver(ord_no, ord_dtl_sn, "imps")
+            res, ord_dtl_sn = await _lh_imps_with_dtl_sn_heal(
+                client, svc, order_id, ord_no, ord_dtl_sn
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"롯데홈쇼핑 발송불가 처리 실패: {e}"
@@ -4169,7 +4221,9 @@ async def seller_cancel(
 
         client = LotteHomeClient(user_id, password, agnc_no, env)
         try:
-            res = await client.register_deliver(ord_no, ord_dtl_sn, "imps")
+            res, ord_dtl_sn = await _lh_imps_with_dtl_sn_heal(
+                client, svc, order_id, ord_no, ord_dtl_sn
+            )
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"롯데홈쇼핑 발송불가 처리 실패: {e}"

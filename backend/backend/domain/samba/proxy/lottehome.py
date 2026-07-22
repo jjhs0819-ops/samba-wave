@@ -1116,6 +1116,59 @@ class LotteHomeClient:
             orders = [orders]
         return orders if isinstance(orders, list) else []
 
+    async def resolve_ord_dtl_sns(self, ord_no: str) -> list[dict[str, str]]:
+        """ord_no의 실제 배송단위순번(DlvUnitSn/OrdDtlSn) 라인 목록 역조회.
+
+        신규주문 수집 폴백이 상품코드를 상세순번 자리에 저장한 주문은
+        registDeliver가 [1000]으로 실패한다. ord_no 앞 8자리(YYYYMMDD) 기준
+        ±1일 범위의 배송조회(상태 15/16/17)에서 실제 순번을 찾는다.
+
+        Returns: [{"sn": 실제순번, "goods_no": 상품번호}] — goods_no는 라인 특정용.
+        """
+        from datetime import datetime as _dt, timedelta as _td
+
+        date8 = str(ord_no or "")[:8]
+        if not (len(date8) == 8 and date8.isdigit()):
+            return []
+        try:
+            base = _dt.strptime(date8, "%Y%m%d")
+        except ValueError:
+            return []
+        start = (base - _td(days=1)).strftime("%Y%m%d")
+        end = (base + _td(days=1)).strftime("%Y%m%d")
+        lines: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for stat in ("15", "16", "17"):
+            try:
+                rows = await self.search_deliver_list(start, end, ord_dtl_stat_cd=stat)
+            except Exception as e:
+                logger.warning(f"[롯데홈] 순번 역조회 stat={stat} 실패(계속): {e}")
+                continue
+            for ro in rows:
+                if str(ro.get("OrdNo", "") or "") != str(ord_no):
+                    continue
+                pi = ro.get("ProdInfo")
+                prods = (
+                    pi
+                    if isinstance(pi, list)
+                    else ([pi] if isinstance(pi, dict) else [])
+                )
+                for p in prods:
+                    if not isinstance(p, dict):
+                        continue
+                    sn = str(p.get("DlvUnitSn") or p.get("OrdDtlSn") or "")
+                    if sn and sn not in seen:
+                        seen.add(sn)
+                        lines.append(
+                            {
+                                "sn": sn,
+                                "goods_no": str(
+                                    p.get("GoodsNo") or p.get("ProdCode") or ""
+                                ),
+                            }
+                        )
+        return lines
+
     async def search_cancel_orders(
         self, start_date: str, end_date: str
     ) -> list[dict[str, Any]]:
