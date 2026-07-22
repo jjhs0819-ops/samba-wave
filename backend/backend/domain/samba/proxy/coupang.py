@@ -395,6 +395,8 @@ class CoupangClient:
             "Authorization": authorization,
             "Content-Type": "application/json;charset=UTF-8",
             "X-Requested-By": "samba-wave",
+            # 2026-07 쿠팡 API 필수화 — 미전송 시 전 요청 HTTP 400 (KR=한국 마켓)
+            "X-MARKET": "KR",
         }
 
         async with httpx.AsyncClient(timeout=settings.http_timeout_default) as client:
