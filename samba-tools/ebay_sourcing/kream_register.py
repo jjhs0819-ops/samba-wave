@@ -98,9 +98,22 @@ async def main():
             img_bytes = httpx.get(img_url, timeout=30, headers={"User-Agent": "Mozilla/5.0"}).content
             url = await svc._save_image(img_bytes, img_url)
 
+            # [최우선] 판매가 = 정책 계산가 (sale_price=원가 두면 마진0 적자)
+            from backend.domain.samba.shipment.service import calc_market_price
+
+            _pr, _mp = (
+                await s.execute(
+                    t("SELECT pricing,market_policies FROM samba_policy WHERE id=:i"),
+                    {"i": pol_id},
+                )
+            ).first()
+            _pr = _pr if isinstance(_pr, dict) else json.loads(_pr or "{}")
+            _mp = _mp if isinstance(_mp, dict) else json.loads(_mp or "{}")
+            sale = float(calc_market_price(float(cost), _pr, "ebay", _mp) or cost)
+
             p = SambaCollectedProduct(
                 source_site="KREAM", name=name_ko, name_en=name_en,
-                original_price=float(cost), sale_price=float(cost), cost=float(cost),
+                original_price=float(cost), sale_price=sale, cost=float(cost),
                 status="active", sale_status="in_stock",
                 source_url=f"https://kream.co.kr/products/{kream_id}",
                 site_product_id=str(kream_id), images=[url],

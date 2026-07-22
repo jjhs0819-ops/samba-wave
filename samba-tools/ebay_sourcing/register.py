@@ -31,6 +31,65 @@ def _opt(flag, default=None):
     return sys.argv[sys.argv.index(flag) + 1] if flag in sys.argv else default
 
 
+async def _fetch_live_titles(session, acc_id: str) -> list[str]:
+    """eBay 활성 리스팅 제목 전체 (Trading GetMyeBaySelling ActiveList).
+
+    Inventory API 만으로는 레거시 리스팅이 안 잡혀 중복을 놓친다.
+    """
+    import xml.etree.ElementTree as ET
+
+    import httpx
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.account.resolver import resolve_market_creds
+    from backend.domain.samba.proxy.ebay import EbayClient
+    from sqlmodel import select
+
+    ns = {"e": "urn:ebay:apis:eBLBaseComponents"}
+    acc = (
+        await session.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
+    ).scalars().first()
+    ax = getattr(acc, "additional_fields", None) or {}
+    cr = await resolve_market_creds(session, TENANT, market_type="ebay", store_key="store_ebay") or {}
+    ec = EbayClient(
+        cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+        cr.get("devId") or ax.get("devId", ""),
+        cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
+        cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""),
+    )
+    token = await ec._get_access_token()
+    headers = {
+        "X-EBAY-API-CALL-NAME": "GetMyeBaySelling",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+        "X-EBAY-API-IAF-TOKEN": token,
+        "Content-Type": "text/xml",
+    }
+    titles: list[str] = []
+    page = 1
+    while True:
+        xml = (
+            '<?xml version="1.0" encoding="utf-8"?>'
+            '<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
+            "<ActiveList><Include>true</Include>"
+            f"<Pagination><EntriesPerPage>100</EntriesPerPage><PageNumber>{page}</PageNumber></Pagination>"
+            "</ActiveList></GetMyeBaySellingRequest>"
+        )
+        async with httpx.AsyncClient(timeout=40) as c:
+            r = await c.post(f"{ec._base_url}/ws/api.dll", content=xml, headers=headers)
+        if r.status_code != 200:
+            break
+        root = ET.fromstring(r.text)
+        titles += [
+            (it.findtext("e:Title", "", ns) or "")
+            for it in root.findall(".//e:ActiveList/e:ItemArray/e:Item", ns)
+        ]
+        total = root.findtext(".//e:ActiveList/e:PaginationResult/e:TotalNumberOfPages", "1", ns)
+        if page >= int(total or 1):
+            break
+        page += 1
+    return titles
+
+
 async def main():
     import backend.main  # noqa: F401
     from backend.core.tenant_context import current_tenant_id
@@ -53,7 +112,24 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            # dedup: 같은 name_en 이 이 계정에 이미 등록됐으면 중단
+            # dedup [최우선]: DB만 보면 안 된다. DB 행이 없어도 eBay에 라이브인
+            # 리스팅이 있을 수 있음(2026-07-22 잉어킹 $117 중복등록 사고).
+            # → eBay 활성 리스팅 제목과 직접 대조한다.
+            import re as _re
+
+            def _kw(x: str) -> set:
+                stop = {"pokemon", "card", "game", "korean", "korea", "ver",
+                        "sealed", "new", "the", "of", "and", "tcg", "official"}
+                return set(_re.findall(r"[a-z0-9]+", (x or "").lower())) - stop
+
+            live_titles = await _fetch_live_titles(s, acc_id)
+            k = _kw(name_en)
+            for lt in live_titles:
+                lk = _kw(lt)
+                if k and lk and len(k & lk) / len(k | lk) >= 0.55:
+                    print(f"!! 이미 eBay에 라이브: '{lt[:60]}' → 신규등록 금지(revise 하세요)")
+                    return
+            # DB 보조 체크
             dup = await s.execute(
                 t(
                     "SELECT id FROM samba_collected_product WHERE name_en=:n "
@@ -72,9 +148,23 @@ async def main():
                 open("/tmp/postit.jpg", "rb").read(),
                 f"https://media.bunjang.co.kr/product/{bpid}_1.jpg",
             )
+            # [최우선] 판매가 = 정책 계산가. sale_price 를 원가로 두면 플러그인이
+            # 그대로 판매가로 써서 마진·수수료 0 = 전량 적자 (2026-07-22 사고).
+            from backend.domain.samba.shipment.service import calc_market_price
+
+            _pr, _mp = (
+                await s.execute(
+                    t("SELECT pricing,market_policies FROM samba_policy WHERE id=:i"),
+                    {"i": pol_id},
+                )
+            ).first()
+            _pr = _pr if isinstance(_pr, dict) else json.loads(_pr or "{}")
+            _mp = _mp if isinstance(_mp, dict) else json.loads(_mp or "{}")
+            sale = float(calc_market_price(float(cost), _pr, "ebay", _mp) or cost)
+
             p = SambaCollectedProduct(
                 source_site="BUNJANG", name=name, name_en=name_en,
-                original_price=cost, sale_price=cost, cost=cost,
+                original_price=cost, sale_price=sale, cost=cost,
                 status="active", sale_status="in_stock",
                 source_url=f"https://m.bunjang.co.kr/products/{bpid}",
                 site_product_id=bpid, images=[url],
