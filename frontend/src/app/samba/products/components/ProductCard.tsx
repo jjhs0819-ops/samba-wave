@@ -716,14 +716,23 @@ const ProductCard = React.memo(function ProductCard({
     const kNoComp = Number(kp.kreamNoCompetitionMarginRate ?? 40)
     const kMinMargin = Number(kp.kreamMinMarginAmount ?? 9000)
     const kShipCard = Number(kp.kreamShippingFeeCard ?? 300)
+    const kShipBox = Number(kp.kreamShippingFeeBox ?? 900)
     const kFwd = Number(kp.kreamForwardingFee ?? 8000)
-    // cost = 스니덩크 엔화 원가. 대부분 PSA 카드라 카드 배송비(300엔) 기준. base=(엔+배송엔)×환율+배대지(원)
-    const kBase = (cost + kShipCard) * jpyRate + kFwd
+    // 카드/박스 판정 — PSA 옵션 있으면 카드(배송 300엔), 없으면 박스·카드팩(배송 900엔).
+    // 옵션 없으면 상품명으로 추정. 백엔드 calc_base: 비카드(박스)는 원가 5% 가산 + 박스 배송비.
+    const _kOpts = Array.isArray(p.options) ? (p.options as Array<{ name?: string }>) : []
+    const _hasPSA = _kOpts.some(o => String(o?.name || '').toUpperCase().includes('PSA'))
+    const _nameBox = /박스|box|부스터|booster|etb|트레이너|카드\s*팩|\bpack\b|パック|ボックス/i.test(p.name || '')
+    const kIsCard = _kOpts.length > 0 ? _hasPSA : !_nameBox
+    const kShip = kIsCard ? kShipCard : kShipBox
+    const kCostEff = kIsCard ? cost : Math.round(cost * 1.05) // 비카드 원가 5% 가산(백엔드 동일)
+    const kBase = (kCostEff + kShip) * jpyRate + kFwd
     const kMarginAmt = Math.max(kMinMargin, kBase * kComp / 100)
     const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
     const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp / 100) / 1000) * 1000
+    const kKindLabel = kIsCard ? '카드' : '박스'
     const kCalcStr = cost > 0
-      ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(cost)}+배송 ¥${fmt(kShipCard)})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
+      ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}+${kKindLabel}배송 ¥${fmt(kShip)})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
       : '원가 없음'
     return PLAT.map(pl => {
       const m = rm[pl.key]
@@ -744,7 +753,7 @@ const ProductCard = React.memo(function ProductCard({
         price: r.price, calcStr: r.calcStr,
       }
     })
-  }, [p.resell_matches, mp, jpyRate, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
+  }, [p.resell_matches, p.options, p.name, mp, jpyRate, cost, marginRate, shippingCost, feeRate, extraCharge, minMarginAmount, ssMRate, ssMAmount, curSym])
 
   // 크림 이상감지 승인 — 검수페이지와 동일 DB 필드(resell_matches.kream.anomaly_ok) 토글.
   // 승인=이상감지 우회(동적가격 등록/갱신). 검수페이지 체크와 양방향 연동됨.
