@@ -37,6 +37,150 @@ _EXECUTE = os.environ.get("KREAM_SHADOW_EXECUTE") == "1"
 _EXEC_BOX = os.environ.get("KREAM_EXEC_BOX") == "1"
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
+# 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
+# 웹훅 URL은 비밀이라 local.env(KREAM_SLACK_WEBHOOK)로만 주입(리포지토리 비커밋).
+_SLACK_WEBHOOK = os.environ.get("KREAM_SLACK_WEBHOOK", "")
+
+
+async def _send_slack(msg: str) -> None:
+    """사이클 요약 슬랙 발송. 실패해도 무시(알림 유실만, 입찰 동작 무관)."""
+    if not _SLACK_WEBHOOK.startswith("https://hooks.slack.com/"):
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as cli:
+            await cli.post(_SLACK_WEBHOOK, json={"text": msg})
+    except Exception as exc:
+        logger.warning("[크림통합] 슬랙 발송 실패(무시): %s", exc)
+
+
+# 매수추천/원가오염 감시 상태 — {kid: {"h": 고점엔, "a": 매수알림함, "sa": 오염알림함}}
+_SET_WATCH = "kream_snkr_watch"
+
+
+async def _unfulfilled_count() -> int:
+    """미이행(판매됐으나 소싱 전) 크림 주문 건수 — '소싱 필요' 알림용."""
+    try:
+        async with get_read_session() as s:
+            r = await s.execute(
+                _text(
+                    "SELECT count(*) FROM samba_order "
+                    "WHERE order_number LIKE 'A-LI%' "
+                    "AND COALESCE(sourcing_order_number,'')='' "
+                    "AND COALESCE(product_id,'')<>'' "
+                    "AND status NOT IN ('cancelled','cancel_requested',"
+                    "'cancel_completed','cancel_release')"
+                )
+            )
+            return int(r.scalar_one() or 0)
+    except Exception as exc:
+        logger.warning("[크림통합] 미이행 조회 실패(무시): %s", exc)
+        return 0
+
+
+async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
+    """방치입찰(매칭 없는 live ask) — 갱신이 가격조정을 못 해 체결 시 손실위험.
+    로컬 봇과 동일: 30건 이하면 자동삭제, 초과면 오탐 우려로 알림만(수동 확인)."""
+
+    # 관리 대상(PSA 카드 / 해외배송 박스)만 판정 — 신발(mm 사이즈)은 오니츠카라
+    # 스니덩크 매칭맵에 없는 게 정상. 이를 방치로 오판하면 정상 입찰이 삭제된다.
+    def _managed(opt: str) -> bool:
+        o = str(opt or "").upper()
+        return o.startswith("PSA") or "해외배송" in str(opt or "")
+
+    orphans = [
+        a
+        for a in asks
+        if _managed(a.get("option"))
+        and str(a.get("product_id") or "") not in kid_to_snkr
+    ]
+    if not orphans:
+        return ""
+    kids = {str(a.get("product_id")) for a in orphans}
+    total = sum(int(a.get("price") or 0) for a in orphans)
+    msg = (
+        f"⚠️ 방치입찰(매칭없음) {len(orphans):,}건 / 상품 {len(kids):,}개 "
+        f"/ 노출 {total:,}원\n"
+    )
+    for a in sorted(orphans, key=lambda x: -int(x.get("price") or 0))[:10]:
+        _nm = str(a.get("product_name_kr") or a.get("product_name") or "")[:22]
+        msg += (
+            f"🔸 크림{a.get('product_id')} {a.get('option')} "
+            f"{int(a.get('price') or 0):,}원 {_nm}\n"
+        )
+    if len(orphans) > 10:
+        msg += f"외 {len(orphans) - 10:,}건\n"
+    if len(orphans) > 30:
+        msg += "※ 30건 초과 — 오탐 가능성으로 자동삭제 보류(수동 확인 필요)\n"
+    elif _EXECUTE:
+        ok = fail = 0
+        async with httpx.AsyncClient(timeout=25) as cli:
+            for a in orphans:
+                if a.get("id") and await _exec_delete_ask(cli, h, a.get("id")):
+                    ok += 1
+                else:
+                    fail += 1
+                await asyncio.sleep(0.1)
+        msg += f"🧹 자동삭제 {ok:,}건" + (f" / 실패 {fail:,}건" if fail else "") + "\n"
+    msg += "※ 가격 무관리 — 매칭 연결 또는 입찰취소 필요\n"
+    return msg
+
+
+async def _buy_watch(snapshot: list) -> str:
+    """매수추천 — 스니덩 PSA10 고점대비 30%↓ + 거래10건↑ + 재고有. 1회 알림, 회복 시 재무장.
+    원가오염 의심(등급역전 / 단일리스팅 급락)도 함께. 상태는 DB(kream_snkr_watch)에 유지."""
+    if not snapshot:
+        return ""
+    prev = await _load_setting_map(_SET_WATCH)
+    drops: list = []
+    suspects: list = []
+    new_state: dict = {}
+    for kid, sid, p10, s10, p9, s9 in snapshot:
+        if p10 <= 0:
+            continue
+        st = prev.get(str(kid)) or {}
+        if not isinstance(st, dict):
+            st = {"h": st}
+        high = int(st.get("h") or 0) or p10
+        alerted = bool(st.get("a"))
+        if p10 > high:  # 신고점 → 기준 갱신 + 재무장
+            high, alerted = p10, False
+        if p10 > high * 0.7:  # 고점 30% 이내 회복 → 재무장
+            alerted = False
+        traded10 = _g_trade_counts.get(str(kid), 0) >= 10
+        if p10 <= high * 0.7 and not alerted and traded10 and s10 > 0:
+            drops.append((kid, sid, high, p10, s10))
+            alerted = True
+        sus = None
+        if p9 > 0 and p10 < p9 and s10 <= 2 and s9 >= 3:
+            sus = f"등급역전 PSA10 {p10:,}엔 < PSA9 {p9:,}엔 (PSA10재고 {s10:,})"
+        elif s10 <= 1 and p10 <= high * 0.5:
+            sus = f"단일리스팅 급락 고점 {high:,}엔→{p10:,}엔 재고{s10:,}"
+        sus_alerted = bool(st.get("sa"))
+        if sus and not sus_alerted:
+            suspects.append((kid, sid, sus))
+            sus_alerted = True
+        elif not sus:
+            sus_alerted = False  # 정상 회복 시 재무장
+        new_state[str(kid)] = {"h": high, "a": alerted, "sa": sus_alerted}
+    await _save_setting_map(_SET_WATCH, {**prev, **new_state})
+    out = ""
+    if drops:
+        out += f"🚨💰 매수추천! 스니덩 PSA10 고점대비 30%↓ {len(drops):,}건\n"
+        for kid, sid, hi, cu, stk in drops[:15]:
+            pct = int((1 - cu / hi) * 100)
+            out += (
+                f"🟢 고점¥{hi:,}→¥{cu:,} (-{pct}%, 재고{stk:,}) "
+                f"크림 https://kream.co.kr/products/{kid} | "
+                f"스니덩 https://snkrdunk.com/apparels/{sid}\n"
+            )
+        if len(drops) > 15:
+            out += f"외 {len(drops) - 15:,}건\n"
+    if suspects:
+        out += f"🧪 원가오염 의심 {len(suspects):,}건 (눈으로 확인 필요)\n"
+        for kid, sid, s in suspects[:8]:
+            out += f"• 크림{kid}: {s}\n"
+    return out
+
 
 # 가격정책 — 로컬 _kream_ask_adjust.py POLICY 포팅(동일 기본값). 추후 마진설정 API 로 교체 가능.
 POLICY = {
@@ -1327,6 +1471,17 @@ async def run_kream_unified_once() -> dict:
                 return r
             r["snkr_ok"] = 1
             r["card"] = 1
+            # 매수추천/원가오염 감시용 스냅샷 (PSA10 고점대비 급락 판정)
+            _p10 = live.get("PSA 10") or {}
+            _p9 = live.get("PSA 9") or {}
+            r["psa"] = (
+                kid,
+                snkr_id,
+                int(_p10.get("price") or 0),
+                int(_p10.get("stock") or 0),
+                int(_p9.get("price") or 0),
+                int(_p9.get("stock") or 0),
+            )
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
@@ -1418,6 +1573,7 @@ async def run_kream_unified_once() -> dict:
     pend_restock: list = []  # (kid, nm, target, pname)
     pend_delete: list = []  # (kid, nm)
     rs = {"recent": 0, "failed": 0, "miss": 0, "trade": 0, "hold": 0, "ok": 0}
+    psa_snapshot: list = []  # 매수추천/원가오염 감시용 (kid, snkr_id, p10가, p10재고, p9가, p9재고)
 
     for res in results:
         if isinstance(res, Exception) or not isinstance(res, dict):
@@ -1428,6 +1584,8 @@ async def run_kream_unified_once() -> dict:
         counts["snkr_fail"] += res["snkr_fail"]
         counts["noncard"] += res.get("noncard", 0)
         counts["cards"] += res.get("card", 0)
+        if res.get("psa"):
+            psa_snapshot.append(res["psa"])
         for kind, act, kid, nm, cur, target, adjusting, pname, is_nc in res["rows"]:
             counts["options"] += 1
             acts[act] += 1
@@ -1616,6 +1774,29 @@ async def run_kream_unified_once() -> dict:
         rest_total,
         counts["renew"] + box.get("renew", 0),
         counts["delete"] + box.get("delete", 0),
+    )
+    # ── 슬랙 알림 [로컬 봇 이식] — 사이클마다 실행 요약. 무변동이어도 발송(로컬과 동일).
+    # 로컬과 동일한 구성: 미이행 + 방치입찰(고아) + 매수추천/원가오염 + 실행요약.
+    _mode = "실행" if _EXECUTE else "섀도"
+    _unf = await _unfulfilled_count()
+    _pre = f"⚠️ 미이행 크림주문 {_unf:,}건 (소싱 필요)\n" if _unf > 0 else ""
+    try:
+        _pre += await _orphan_report(asks, kid_to_snkr, h)
+    except Exception as _oe:
+        logger.warning("[크림통합] 방치입찰 알림 실패(무시): %s", _oe)
+    try:
+        _pre += await _buy_watch(psa_snapshot)
+    except Exception as _be:
+        logger.warning("[크림통합] 매수추천 알림 실패(무시): %s", _be)
+    await _send_slack(
+        _pre + f"[크림 오토튠·{_mode}] 사이클 완료\n"
+        f"• 실행: 갱신 {exec_patch:,} / 신규등록 {exec_post:,} / 삭제 {exec_del:,} "
+        f"/ 복귀 {exec_revert:,} / 실패 {exec_fail:,}\n"
+        f"• 박스(해외배송): 갱신 {box.get('patch', 0):,} / 삭제 {box.get('del', 0):,}\n"
+        f"• 대상: live {len(live_products):,} 전량 + 리스톡탐색 "
+        f"{min(_unified_offset, rest_total):,}/{rest_total:,}\n"
+        f"• 리스톡 보류: 2연속대기 {rs.get('miss', 0):,} / 거래게이트 {rs.get('trade', 0):,} "
+        f"/ 이행대기 {rs.get('hold', 0):,}"
     )
     return {
         "ok": True,
