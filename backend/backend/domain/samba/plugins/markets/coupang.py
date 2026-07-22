@@ -112,6 +112,37 @@ class CoupangPlugin(MarketPlugin):
 
         client = CoupangClient(access_key, secret_key, vendor_id)
 
+        # ── 소명 브랜드 가드 ──
+        # 쿠팡은 유통경로 소명 없이 특정 브랜드를 팔면 판매정지를 건다.
+        # 주 계정은 정지 이력이 있어 재발 시 타격이 크므로, 등록 전에 막는다.
+        # 판정 불가(unknown)도 차단한다 — 못 판 손해보다 정지가 훨씬 비싸다.
+        # 기존 등록 상품의 가격/재고 경량 업데이트는 새로 노출되는 것이 아니므로
+        # 가드를 태우지 않는다(이미 승인된 상품을 되레 못 고치게 되는 것 방지).
+        if not existing_no:
+            from backend.domain.samba.brand.service import BrandGuardService
+
+            _guard = await BrandGuardService(session).check(
+                product.get("brand") or "",
+                coupang_client=client,
+                tenant_id=getattr(account, "tenant_id", None),
+            )
+            if _guard.blocked:
+                _pname = (product.get("name") or "")[:40]
+                logger.warning(
+                    f"[업로드차단] 소명/지재권 브랜드 — {_guard.brand!r} "
+                    f"({_guard.verdict}: {_guard.reason}) / {_pname}"
+                )
+                return {
+                    "success": False,
+                    "blocked_by_brand": True,
+                    "brand": _guard.brand,
+                    "brand_verdict": _guard.verdict,
+                    "message": (
+                        f"소명/지재권 브랜드로 업로드 차단: "
+                        f"{_guard.brand} — {_guard.reason}"
+                    ),
+                }
+
         # ── 등록된 상품 가격/재고 업데이트 — 부분 endpoint(vendor-items) ──
         # 쿠팡 spec 상 update_product PUT(/seller-products/{id})는 정의되지 않아 404.
         # 가격/재고는 vendor-items 부분 endpoint로 가야 함. 이미지/이름 등 다른

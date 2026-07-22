@@ -358,9 +358,10 @@ class CoupangClient:
         200  # 카테고리 200개 한도 (의류/신발/가방 등 메인 leaf 충분)
     )
 
-    # 브랜드명 → brandId 캐시 (2026-08-01 쿠팡 brandId 의무화 대응)
-    # 정규화된 brand_key → (brandId | "", timestamp). "" 는 검색 실패(=brand 문자열만 사용) 캐시.
-    _brand_id_cache: dict[str, tuple[str, float]] = {}
+    # 브랜드명 → 브랜드정보 캐시 (brandId + 소명 필요 여부).
+    # 소문자 브랜드명 → ({"brand_id","uid_required","matched"}, timestamp).
+    # 실패도 캐시한다(빈 정보) — 없는 브랜드를 매번 재조회하지 않기 위해.
+    _brand_info_cache: dict[str, tuple[dict[str, Any], float]] = {}
     _BRAND_ID_CACHE_TTL = 86400  # 24시간 (브랜드 ID는 거의 안 바뀜)
     _BRAND_ID_CACHE_MAX = 2000
 
@@ -598,29 +599,41 @@ class CoupangClient:
     # 브랜드 검색 (2026-08-01 brandId 의무화 대응)
     # ------------------------------------------------------------------
 
-    async def search_brand_id(self, brand_name: str) -> str:
-        """쿠팡 표준 브랜드 라이브러리에서 brandId 조회 (TTL 캐시, 실패 시 "" 캐시).
+    async def search_brand_info(self, brand_name: str) -> dict[str, Any]:
+        """쿠팡 브랜드 라이브러리 조회 — brandId + 소명(정품코드) 필요 여부.
 
         POST /v2/providers/seller_api/apis/api/v1/marketplace/brands/search
-        브랜드명 → brandId(예: "KR-5") 매핑. 8/1부터 신규/기존 상품 등록 시 권장 필드.
+        body {"brandName": ..., "countPerPage": 10, "page": 1}
+          ※ countPerPage 최대 10 (20 을 보내면 400)
 
-        성공/실패 모두 캐시 (실패=빈 문자열). 브랜드 검색 API 호출 빈도 최소화.
+        응답 data.items[] 의 **isUIDRequired** 가 판별 신호다:
+          True  → 정품코드(GTIN/MPN) 필수 = 유통경로 소명 대상
+          False → 자유 판매
+        실측(2026-07-22): 나이키 True / 아떼가르송 False.
+
+        `matched` 는 **정확일치** 여부다. 부분일치는 엉뚱한 브랜드를 잡으므로
+        (해칭룸→해피룸, 모이에토이파리스→아미파리스) 소명 판정 근거로 쓰면 안 된다.
+        matched=False 면 uid_required 는 None 이고, 호출부는 '판단 불가'로 다뤄야 한다.
+
+        Returns:
+            {"brand_id": str, "uid_required": bool|None, "matched": bool}
         """
         import time
 
         key = (brand_name or "").strip().lower()
+        empty: dict[str, Any] = {"brand_id": "", "uid_required": None, "matched": False}
         if not key:
-            return ""
+            return empty
 
         now = time.time()
-        cached = self._brand_id_cache.get(key)
+        cached = self._brand_info_cache.get(key)
         if cached:
-            bid, ts = cached
+            info, ts = cached
             if now - ts < self._BRAND_ID_CACHE_TTL:
-                return bid
-            del self._brand_id_cache[key]
+                return dict(info)
+            del self._brand_info_cache[key]
 
-        brand_id = ""
+        info = dict(empty)
         try:
             res = await self._call_api(
                 "POST",
@@ -630,7 +643,6 @@ class CoupangClient:
             data = res.get("data") if isinstance(res, dict) else None
             items = (data or {}).get("items") if isinstance(data, dict) else None
             if isinstance(items, list) and items:
-                # 정확 일치 우선, 없으면 첫 결과
                 target_lower = brand_name.strip().lower()
                 exact = next(
                     (
@@ -641,23 +653,38 @@ class CoupangClient:
                     ),
                     None,
                 )
+                # brandId 는 종전대로 부분일치 폴백을 허용한다(등록 권장 필드일 뿐).
+                # 소명 판정(uid_required)은 정확일치일 때만 신뢰한다.
                 chosen = exact or (items[0] if isinstance(items[0], dict) else None)
                 if isinstance(chosen, dict):
-                    brand_id = str(chosen.get("brandId", "") or "")
+                    info["brand_id"] = str(chosen.get("brandId", "") or "")
+                if exact is not None:
+                    info["matched"] = True
+                    _uid = exact.get("isUIDRequired")
+                    if isinstance(_uid, bool):
+                        info["uid_required"] = _uid
         except Exception as e:
             logger.info(
                 f"[쿠팡 brand search] '{brand_name}' 조회 실패 — brand 문자열만 사용: {e}"
             )
 
-        self._brand_id_cache[key] = (brand_id, now)
+        self._brand_info_cache[key] = (dict(info), now)
 
         # 캐시 한도 초과 시 가장 오래된 절반 제거
-        if len(self._brand_id_cache) > self._BRAND_ID_CACHE_MAX:
-            sorted_items = sorted(self._brand_id_cache.items(), key=lambda x: x[1][1])
+        if len(self._brand_info_cache) > self._BRAND_ID_CACHE_MAX:
+            sorted_items = sorted(self._brand_info_cache.items(), key=lambda x: x[1][1])
             for k, _ in sorted_items[: self._BRAND_ID_CACHE_MAX // 2]:
-                del self._brand_id_cache[k]
+                del self._brand_info_cache[k]
 
-        return brand_id
+        return dict(info)
+
+    async def search_brand_id(self, brand_name: str) -> str:
+        """브랜드명 → brandId. 2026-08-01 brandId 의무화 대응.
+
+        search_brand_info 와 캐시를 공유하므로, 같은 브랜드에 대해 소명 판정과
+        brandId 를 각각 요청해도 API 호출은 1회다.
+        """
+        return (await self.search_brand_info(brand_name)).get("brand_id", "")
 
     # ------------------------------------------------------------------
     # 출고지 / 반품지 조회
