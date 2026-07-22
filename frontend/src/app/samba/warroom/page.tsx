@@ -37,8 +37,9 @@ const extractSiteFromLog = (msg: string): string | null => {
 // - [...] = 해당 사이트만 표시 (태그 없는 글로벌 메시지는 표시 — A/B PC가 사이클 진행 알림 보도록)
 const shouldShowLog = (msg: string, filterSources: string[] | null): boolean => {
   if (filterSources === null) return true
-  if (filterSources.length === 0) return false  // C PC: 글로벌 메시지도 숨김
   const site = extractSiteFromLog(msg)
+  if (site === 'KREAM') return true  // KREAM(크림 오토튠)은 PC분담과 무관한 백엔드 흐름 — 항상 노출
+  if (filterSources.length === 0) return false  // C PC: 글로벌 메시지도 숨김
   if (!site) return true  // A/B PC: 사이클 완료/쿠키 로테이션 등 글로벌 메시지는 보임
   return filterSources.includes(site)
 }
