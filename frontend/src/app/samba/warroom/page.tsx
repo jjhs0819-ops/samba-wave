@@ -156,7 +156,12 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
             // slice 전에 선택된 소싱처 필터 적용 — 다른 소싱처 로그가 30개 버퍼 채워 밀려나는 현상 방지
             const fs = filterSourcesRef.current
             const kept = fs && fs.length > 0 ? next.filter(l => shouldShowLog(l.msg, fs)) : next
-            return kept.slice(-30)
+            // KREAM(크림 오토튠)은 5분 주기로 몰아서 찍히는 백엔드 흐름 — 타 사이트가 초당 여러 줄
+            // 쏟아내면 30줄 창에서 즉시 밀려나 "활성인데 로그 없음"으로 보임. 별도로 최근 20줄 보존.
+            const isK = (m: string) => extractSiteFromLog(m) === 'KREAM'
+            const kreamLines = kept.filter(l => isK(l.msg)).slice(-20)
+            const others = kept.filter(l => !isK(l.msg)).slice(-30)
+            return [...others, ...kreamLines].sort((a, b) => (a.__seq ?? 0) - (b.__seq ?? 0))
           })
           requestAnimationFrame(() => {
             if (containerRef.current) {
