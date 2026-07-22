@@ -26,24 +26,70 @@ from backend.core.config import settings
 logger = logging.getLogger(__name__)
 
 # Claude Vision 분류 프롬프트
-CLASSIFY_PROMPT = """아래 상품 이미지들을 각각 분류하세요:
+CLASSIFY_PROMPT = """아래 상품 이미지들을 각각 분류하세요.
+
+우리는 소싱처에서 긁어온 상세페이지 이미지 중 **상품 사진만** 남기고 나머지를
+전부 버립니다. 남긴 이미지는 우리 쇼핑몰 상세페이지에 그대로 게시되므로,
+브랜드사가 만든 홍보물이 섞이면 지식재산권 문제가 됩니다.
+**애매하면 "other"** — 상품컷 몇 장을 잃는 것보다 배너 한 장이 새는 게 훨씬 나쁩니다.
 
 - "product": 사람의 신체가 전혀 보이지 않고, 단색 또는 단순 배경에 상품만 단독 촬영된 사진
   (행거컷, 평놓기, 마네킹, 각도별 촬영, 디테일 클로즈업, 밑창 등)
-- "other": 그 외 모든 이미지
+- "other": 그 외 **모든** 이미지
 
 "other"로 분류해야 하는 경우 (하나라도 해당하면 other):
 - 사람의 신체 일부가 보임 (발, 다리, 팔, 손, 몸통 등 — 배경색 무관)
 - 모델이 상품을 착용/신고 있음 (신발 신은 발, 옷 입은 모습 등)
 - 연출/라이프스타일 사진 (야외, 실내 인테리어, 소품 등)
 - 브랜드 배너, 사이즈표, 스펙표, 로고, 텍스트 이미지
+- **브랜드 로고나 브랜드명이 이미지 위에 얹혀 있음** — 상품이 함께 찍혀 있어도 other.
+  브랜드사가 제작한 홍보물이라는 신호다.
+- **다른 상품·다른 페이지로 유도하는 배너** ("다른상품 보러가기", "공식 판매처",
+  "상품 더보기", 상품 여러 개를 격자로 나열한 모음컷 등)
+- **문구가 이미지의 주된 내용인 것** ("24SS 신상품", "DETAIL", "NOTICE",
+  누적 판매량·후기 수 같은 실적 문구, 리뷰 캡처)
+- 배송·교환·반품 안내, 고객센터 안내
 
 "product"로 분류하는 경우:
 - 상품 자체에 사람이 프린팅/인쇄된 경우는 "product"
 - 배경이 단색(흰색, 회색, 검정 등)이고 상품만 있고 신체가 없으면 "product"
+- 배경이 단색 컬러(초록, 베이지 등)라도 상품만 단독으로 찍혔으면 "product"
+  — 흰 배경이 아니라는 이유만으로 other 로 보내지 말 것
 
-이미지 순서대로 JSON 배열로만 답변 (다른 텍스트 없이):
-[{"index": 0, "type": "product"}, {"index": 1, "type": "other"}, ...]"""
+각 이미지를 순서대로(index 0부터) 분류해 전부 답하세요."""
+
+# 분류 응답 스키마 — 구조화 출력으로 강제한다.
+# 이전에는 모델이 마크다운 코드블록이나 설명문을 섞어 보내 json.loads 가 깨지면
+# 청크 전체가 product 로 폴백(=필터링 실패)했다. 스키마를 걸면 파싱이 결정적이다.
+CLASSIFY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "classifications": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "index": {"type": "integer"},
+                    "type": {"type": "string", "enum": ["product", "other"]},
+                },
+                "required": ["index", "type"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["classifications"],
+    "additionalProperties": False,
+}
+
+# 분류 전용 모델. 상세페이지에 남는 이미지를 결정하므로 오분류 비용이
+# (지재권·계정정지) API 비용보다 크다 — 2026-07-22 사용자가 Opus 로 확정.
+CLASSIFY_MODEL = "claude-opus-4-8"
+
+# 분류용 이미지 최대 변 길이(px).
+# 원본 그대로 보내면 장당 ~1500~4700 토큰이지만, "상품컷이냐 배너냐" 판별에는
+# 이 해상도면 충분하고 장당 ~350 토큰으로 떨어진다. 1만개(≈7만장) 기준에서
+# 이 축소 하나가 비용의 대부분을 결정한다.
+CLASSIFY_MAX_DIM = 512
 
 # ── CLIP ONNX 모델 싱글턴 캐시 ──
 _CLIP_MODEL_DIR = os.environ.get("CLIP_MODEL_DIR", "/app/models/clip")
@@ -114,8 +160,13 @@ class ImageFilterService:
         self,
         url: str,
         client: httpx.AsyncClient | None = None,
+        max_dim: int | None = None,
     ) -> tuple[str, str, int, int]:
-        """이미지 URL -> 바이트 다운로드 -> 5MB 초과 시 리사이즈 -> base64 인코딩.
+        """이미지 URL -> 바이트 다운로드 -> 리사이즈 -> base64 인코딩.
+
+        max_dim: 지정 시 긴 변을 이 값으로 축소해 인코딩한다(분류 전용).
+            반환하는 width/height 는 축소 전 **원본** 크기 — 호출부가 종횡비
+            같은 원본 속성으로 판단할 수 있어야 하므로 축소값을 돌려주지 않는다.
 
         Returns:
           (base64_data, media_type, width, height) 튜플
@@ -152,9 +203,16 @@ class ImageFilterService:
             # Claude Vision 제한: base64 5MB + 해상도 8000px → 초과 시 리사이즈
             img = Image.open(BytesIO(img_bytes))
             w, h = img.size
-            if len(img_bytes) > 3_500_000 or w > 7999 or h > 7999:
-                img.thumbnail((1500, 1500), Image.LANCZOS)
-                if img.mode == "RGBA":
+            _oversized = len(img_bytes) > 3_500_000 or w > 7999 or h > 7999
+            if max_dim and max(w, h) > max_dim:
+                _target = (max_dim, max_dim)
+            elif _oversized:
+                _target = (1500, 1500)
+            else:
+                _target = ()
+            if _target:
+                img.thumbnail(_target, Image.LANCZOS)
+                if img.mode in ("RGBA", "LA", "P"):
                     img = img.convert("RGB")
                 buf = BytesIO()
                 img.save(buf, format="JPEG", quality=85)
@@ -220,7 +278,7 @@ class ImageFilterService:
                 for attempt in range(2):
                     try:
                         b64, media_type, w, h = await self._download_and_encode(
-                            url, client=client
+                            url, client=client, max_dim=CLASSIFY_MAX_DIM
                         )
                         encoded.append((idx, url, b64, media_type))
                         break  # 성공 시 재시도 루프 탈출
@@ -264,8 +322,14 @@ class ImageFilterService:
                 for attempt in range(3):
                     try:
                         response = await client.messages.create(
-                            model="claude-sonnet-4-20250514",
-                            max_tokens=1024,
+                            model=CLASSIFY_MODEL,
+                            max_tokens=2048,
+                            output_config={
+                                "format": {
+                                    "type": "json_schema",
+                                    "schema": CLASSIFY_SCHEMA,
+                                }
+                            },
                             messages=[{"role": "user", "content": content}],
                         )
                         break
@@ -276,12 +340,16 @@ class ImageFilterService:
                             await asyncio.sleep(60 * (attempt + 1))
                         else:
                             raise
-                # 응답 파싱
-                text = response.content[0].text.strip()
-                # JSON 배열 추출 (앞뒤 마크다운 코드블록 제거)
-                if text.startswith("```"):
-                    text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-                classifications = json.loads(text)
+                # 구조화 출력이라 첫 블록은 스키마를 만족하는 JSON 텍스트가 보장된다
+                # (마크다운 코드블록 제거 같은 방어 로직 불필요).
+                _text_block = next(
+                    (b for b in response.content if b.type == "text"), None
+                )
+                if _text_block is None:
+                    raise ValueError(
+                        f"분류 응답에 text 블록 없음 (stop_reason={response.stop_reason})"
+                    )
+                classifications = json.loads(_text_block.text)["classifications"]
 
                 # Claude의 index 값 기반으로 정확한 매핑
                 for item in classifications:
@@ -416,6 +484,17 @@ class ImageFilterService:
     async def classify_images_gemma(self, urls: list[str]) -> list[dict[str, Any]]:
         """Gemma 4 비전으로 이미지 분류 (무료 API 티어).
 
+        ⚠ 실사용 부적합 — 상세페이지 이미지 선별에는 쓰지 말 것.
+        2026-07-22 라벨링 표본 24장(무신사/롯데온/SSG/GS) 실측:
+          - 옛 프롬프트: 24장 중 23장을 product 판정 = 사실상 무필터.
+            배너 유출 12/19, 정답률 37%.
+          - 아래 개선 프롬프트: 배너 유출은 2/19 로 줄었으나 흰 배경 상품컷
+            7장을 버림(롯데온 6장 전량). 정답률 53%.
+          - 재현성 없음: 동일 이미지·동일 프롬프트를 두 번 돌리면 답이 바뀐다.
+        프롬프트를 어떻게 쓰든 "거의 다 통과" ↔ "거의 다 차단" 으로 쏠릴 뿐
+        판별을 못 한다. 규칙 자체가 아니라 모델 성능 한계다.
+        상세페이지용 선별은 `classify_images`(CLASSIFY_MODEL) 를 쓸 것.
+
         Returns:
           [{"url": "...", "type": "product"/"other"}, ...]
         """
@@ -425,12 +504,33 @@ class ImageFilterService:
         )
 
         api_key = await _get_gemma_api_key(self.session)
+        # CLASSIFY_PROMPT(Claude용)과 동일한 판정 기준을 1장 단위로 옮긴 것.
+        # 기존 3줄 프롬프트는 브랜드 배너를 product 로 통과시키고(지재권 유출),
+        # 흰 배경이 아닌 상품컷을 other 로 버렸다(실측 12장 중 4장 오분류).
         prompt = (
-            'Classify this image as either "product" or "other".\n'
-            '"product": item only on a plain background, no person visible '
-            "(hanger shot, flat lay, mannequin, detail close-up, sole).\n"
-            '"other": everything else — person wearing/using item, '
-            "lifestyle photo, banner, size chart, brand logo, text image.\n"
+            'Classify this image as either "product" or "other".\n\n'
+            "Context: we scrape supplier detail-page images and keep ONLY genuine "
+            "product photos. Kept images get republished on our own store page, so "
+            "any brand-made promotional material is an IP risk. "
+            'When uncertain, answer "other" — losing a product photo is far cheaper '
+            "than leaking a brand banner.\n\n"
+            '"product": the item alone, no human body visible, on a plain or simple '
+            "background (hanger shot, flat lay, mannequin, angle shot, detail "
+            "close-up, sole). A solid colored backdrop (green, beige, etc.) still "
+            'counts as "product" — do not reject it just for not being white. '
+            'An item with a person printed on the item itself is still "product".\n\n'
+            '"other": everything else. In particular:\n'
+            "- any part of a human body visible, or a model wearing/using the item\n"
+            "- lifestyle / styled photo (outdoors, room interior, props)\n"
+            "- a brand logo or brand name overlaid on the image, EVEN IF the product "
+            "is also shown — that signals brand-made promotional material\n"
+            "- a banner linking elsewhere (\"see other products\", \"official store\", "
+            "\"more items\"), or a grid/collage of several different products\n"
+            "- text is the main content (season copy like \"24SS NEW\", \"DETAIL\", "
+            "\"NOTICE\", sales-count or review-count claims, review screenshots)\n"
+            "- size chart, spec table, measurement diagram\n"
+            "- shipping / exchange / return notices, customer-service info\n"
+            "- blank or near-empty image\n\n"
             "Reply with ONLY one word: product or other"
         )
 
