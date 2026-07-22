@@ -524,10 +524,10 @@ class ImageFilterService:
             "- lifestyle / styled photo (outdoors, room interior, props)\n"
             "- a brand logo or brand name overlaid on the image, EVEN IF the product "
             "is also shown — that signals brand-made promotional material\n"
-            "- a banner linking elsewhere (\"see other products\", \"official store\", "
-            "\"more items\"), or a grid/collage of several different products\n"
-            "- text is the main content (season copy like \"24SS NEW\", \"DETAIL\", "
-            "\"NOTICE\", sales-count or review-count claims, review screenshots)\n"
+            '- a banner linking elsewhere ("see other products", "official store", '
+            '"more items"), or a grid/collage of several different products\n'
+            '- text is the main content (season copy like "24SS NEW", "DETAIL", '
+            '"NOTICE", sales-count or review-count claims, review screenshots)\n'
             "- size chart, spec table, measurement diagram\n"
             "- shipping / exchange / return notices, customer-service info\n"
             "- blank or near-empty image\n\n"

@@ -45,13 +45,17 @@ async def main(apply: bool, limit: int) -> int:
     async with get_write_session() as session:
         # 활성 쿠팡 계정
         acct = (
-            await session.execute(
-                select(SambaMarketAccount).where(
-                    SambaMarketAccount.market_type == "coupang",
-                    SambaMarketAccount.is_active == True,  # noqa: E712
+            (
+                await session.execute(
+                    select(SambaMarketAccount).where(
+                        SambaMarketAccount.market_type == "coupang",
+                        SambaMarketAccount.is_active == True,  # noqa: E712
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         if not acct or not acct.api_key or not acct.api_secret:
             logger.error("활성 쿠팡 계정(api_key/secret)이 없습니다.")
             return 1
@@ -110,7 +114,9 @@ async def main(apply: bool, limit: int) -> int:
             )
             dist[r.verdict] += 1
             results.append((brand, cnt, r.verdict, r.reason))
-            mark = {"allowed": "허용", "blocked": "차단", "unknown": "미확인"}[r.verdict]
+            mark = {"allowed": "허용", "blocked": "차단", "unknown": "미확인"}[
+                r.verdict
+            ]
             logger.info(
                 f"  {i:3d}/{len(targets)}  {mark}  {brand[:24]:24s} "
                 f"(상품 {cnt:2d}개)  {r.reason[:44]}"
@@ -120,13 +126,19 @@ async def main(apply: bool, limit: int) -> int:
 
         logger.info("")
         logger.info("=== 판별 결과 ===")
-        for v, label in (("allowed", "허용"), ("blocked", "차단"), ("unknown", "미확인")):
+        for v, label in (
+            ("allowed", "허용"),
+            ("blocked", "차단"),
+            ("unknown", "미확인"),
+        ):
             logger.info(f"  {label:4s} {dist.get(v, 0):3d}종")
 
         freed = [r for r in results if r[2] == "allowed"]
         if freed:
             logger.info("")
-            logger.info(f"=== 새로 풀린 브랜드 {len(freed)}종 (상품 {sum(r[1] for r in freed)}개) ===")
+            logger.info(
+                f"=== 새로 풀린 브랜드 {len(freed)}종 (상품 {sum(r[1] for r in freed)}개) ==="
+            )
             for brand, cnt, _, _ in sorted(freed, key=lambda x: -x[1]):
                 logger.info(f"  {brand[:28]:28s} 상품 {cnt}개")
 
@@ -148,6 +160,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true", help="판별 결과를 DB에 기록")
     ap.add_argument("--dry-run", action="store_true", help="조회만 (기본값)")
-    ap.add_argument("--limit", type=int, default=0, help="조회할 브랜드 수 제한(0=전체)")
+    ap.add_argument(
+        "--limit", type=int, default=0, help="조회할 브랜드 수 제한(0=전체)"
+    )
     args = ap.parse_args()
     sys.exit(asyncio.run(main(apply=args.apply, limit=args.limit)))

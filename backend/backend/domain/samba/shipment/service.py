@@ -400,20 +400,20 @@ STATUS_LABELS: dict[str, str] = {
 #   GS 174/633, 무신사 194/204 가 목록 밖이다. 무신사는 브랜드 입점 마켓이라
 #   상세를 브랜드가 올리는 구조 — 제거돼도 대표/추가(image.msscdn.net)는 남는다.
 _SOURCING_CDN_HOSTS: tuple[str, ...] = (
-    "ssgcdn.com",      # SSG
+    "ssgcdn.com",  # SSG
     "ssg.com",
-    "lotteon.com",     # 롯데온
+    "lotteon.com",  # 롯데온
     "lotteimall.com",  # 롯데아이몰
-    "ellotte.com",     # 롯데백화점
+    "ellotte.com",  # 롯데백화점
     "lotteeps.com",
-    "m-gs.kr",         # GS샵
+    "m-gs.kr",  # GS샵
     "gsshop.com",
-    "hmall.com",       # 현대홈쇼핑
+    "hmall.com",  # 현대홈쇼핑
     "thehyundai.com",  # 현대백화점
-    "musinsa.com",     # 무신사
+    "musinsa.com",  # 무신사
     "msscdn.net",
-    "elandrs.com",     # 이랜드
-    "akamaized.net",   # 소싱처 공용 가속 CDN
+    "elandrs.com",  # 이랜드
+    "akamaized.net",  # 소싱처 공용 가속 CDN
 )
 
 
@@ -425,7 +425,9 @@ def _is_sourcing_cdn(url: str) -> bool:
         return False
     if not host:
         return False
-    return any(host == d or host.endswith("." + d) or d in host for d in _SOURCING_CDN_HOSTS)
+    return any(
+        host == d or host.endswith("." + d) or d in host for d in _SOURCING_CDN_HOSTS
+    )
 
 
 def _drop_brand_host_images(urls: list[str]) -> tuple[list[str], int]:
@@ -3407,7 +3409,8 @@ class SambaShipmentService:
                 # 출력한 이미지를 그대로 다시 붙여 중복을 만든다.
                 if detail_emitted == 0:
                     fallback_imgs = [
-                        u for u in (detail_imgs[1:] or detail_imgs[:1])
+                        u
+                        for u in (detail_imgs[1:] or detail_imgs[:1])
                         if u not in sub_set
                     ]
                     for s_img in fallback_imgs:

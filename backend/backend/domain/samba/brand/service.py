@@ -164,9 +164,7 @@ class BrandGuardService:
         if not key:
             # 브랜드가 비었으면 판단 근거가 없다. 노브랜드 상품일 수도 있으나
             # 소명 대상인지 확인할 방법이 없으므로 통과시키지 않는다.
-            return BrandGuardResult(
-                VERDICT_UNKNOWN, "브랜드명 없음", raw, "none"
-            )
+            return BrandGuardResult(VERDICT_UNKNOWN, "브랜드명 없음", raw, "none")
 
         row = await self._find(key, tenant_id)
 

@@ -100,16 +100,18 @@ def parse_excel(path: Path) -> list[dict[str, Any]]:
         markets = _split_markets(r[3] if len(r) > 3 else None)
         note = str(r[4]).strip() if len(r) > 4 and r[4] else ""
         verdict, reason = _decide(soomyeong, ipr)
-        rows.append({
-            "brand": raw,
-            "soomyeong": soomyeong or None,
-            "ipr": ipr or None,
-            "markets": markets,
-            "note": note or None,
-            "verdict": verdict,
-            "reason": reason,
-            "rownum": rownum,
-        })
+        rows.append(
+            {
+                "brand": raw,
+                "soomyeong": soomyeong or None,
+                "ipr": ipr or None,
+                "markets": markets,
+                "note": note or None,
+                "verdict": verdict,
+                "reason": reason,
+                "rownum": rownum,
+            }
+        )
     logger.info(f"엑셀 파싱: 브랜드 {len(rows)}건 (금지어·구분선 {skipped}행 건너뜀)")
     return rows
 
@@ -162,16 +164,28 @@ async def main(path: Path, apply: bool) -> int:
         }
 
         for key, row in by_key.items():
-            detail = {"excel_row": row["rownum"], "file": path.name, "reason": row["reason"]}
+            detail = {
+                "excel_row": row["rownum"],
+                "file": path.name,
+                "reason": row["reason"],
+            }
             cur = existing.get(key)
             if cur is None:
-                session.add(SambaBrandRestriction(
-                    brand=row["brand"], brand_key=key, verdict=row["verdict"],
-                    soomyeong=row["soomyeong"], ipr=row["ipr"],
-                    markets=row["markets"], note=row["note"],
-                    source="excel", source_detail=detail,
-                    created_at=now, updated_at=now,
-                ))
+                session.add(
+                    SambaBrandRestriction(
+                        brand=row["brand"],
+                        brand_key=key,
+                        verdict=row["verdict"],
+                        soomyeong=row["soomyeong"],
+                        ipr=row["ipr"],
+                        markets=row["markets"],
+                        note=row["note"],
+                        source="excel",
+                        source_detail=detail,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
                 created += 1
                 continue
 

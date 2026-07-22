@@ -55,7 +55,9 @@ def upgrade() -> None:
         sa.Column("coupang_matched", sa.Boolean(), nullable=True),
         sa.Column("coupang_checked_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("source", sa.Text(), nullable=False, server_default="manual"),
-        sa.Column("source_detail", postgresql.JSON(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "source_detail", postgresql.JSON(astext_type=sa.Text()), nullable=True
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
     )

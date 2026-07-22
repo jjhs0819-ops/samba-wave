@@ -92,7 +92,10 @@ async def _upload_banner(session: Any, path: Path) -> str:
             io.BytesIO(data),
             bucket_name,
             key,
-            ExtraArgs={"ContentType": content_type, "CacheControl": "public, max-age=31536000"},
+            ExtraArgs={
+                "ContentType": content_type,
+                "CacheControl": "public, max-age=31536000",
+            },
         )
     )
     return f"{public_url}/{key}"
@@ -115,7 +118,9 @@ async def main(
             logger.error(f"배너 파일 없음: {p}")
             return 1
     logger.info(f"상단 배너: {top_path.name} ({top_path.stat().st_size / 1024:.0f} KB)")
-    logger.info(f"하단 배너: {bottom_path.name} ({bottom_path.stat().st_size / 1024:.0f} KB)")
+    logger.info(
+        f"하단 배너: {bottom_path.name} ({bottom_path.stat().st_size / 1024:.0f} KB)"
+    )
 
     async with get_write_session() as session:
         # --top-url/--bottom-url 로 이미 호스팅된 URL 을 주면 업로드를 건너뛴다
@@ -138,12 +143,16 @@ async def main(
 
         # 템플릿 조회/생성 (이름 기준 멱등)
         tpl = (
-            await session.execute(
-                select(SambaDetailTemplate).where(
-                    SambaDetailTemplate.name == TEMPLATE_NAME
+            (
+                await session.execute(
+                    select(SambaDetailTemplate).where(
+                        SambaDetailTemplate.name == TEMPLATE_NAME
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
 
         if tpl:
             logger.info(f"\n기존 템플릿 갱신: {tpl.id}")
@@ -159,15 +168,15 @@ async def main(
         tpl.gallery_include_sub = True
 
         # 쿠팡 정책에 연결
-        policies = (
-            (await session.execute(select(SambaPolicy))).scalars().all()
-        )
+        policies = (await session.execute(select(SambaPolicy))).scalars().all()
         targets = [p for p in policies if "쿠팡" in (p.name or "")] or list(policies)
         for pol in targets:
             extras = dict(pol.extras or {})
             extras["detail_template_id"] = tpl.id
             pol.extras = extras
-            logger.info(f"정책 연결: {pol.id} ({pol.name}) → detail_template_id={tpl.id}")
+            logger.info(
+                f"정책 연결: {pol.id} ({pol.name}) → detail_template_id={tpl.id}"
+            )
 
         if not apply:
             logger.info("\n[dry-run] 저장하지 않았습니다. --apply 로 실행하세요.")
@@ -191,8 +200,12 @@ if __name__ == "__main__":
         action="store_true",
         help="상단 배너를 리뷰 섹션 제거 버전으로 등록 (기본값은 쇼팡 제공 원본)",
     )
-    ap.add_argument("--top-url", default="", help="이미 호스팅된 상단 배너 URL (업로드 생략)")
-    ap.add_argument("--bottom-url", default="", help="이미 호스팅된 하단 배너 URL (업로드 생략)")
+    ap.add_argument(
+        "--top-url", default="", help="이미 호스팅된 상단 배너 URL (업로드 생략)"
+    )
+    ap.add_argument(
+        "--bottom-url", default="", help="이미 호스팅된 하단 배너 URL (업로드 생략)"
+    )
     args = ap.parse_args()
     sys.exit(
         asyncio.run(

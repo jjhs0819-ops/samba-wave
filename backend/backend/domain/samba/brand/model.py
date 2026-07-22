@@ -58,7 +58,9 @@ class SambaBrandRestriction(SQLModel, table=True):
 
     # ── 판정 근거 ──
     # 소명 | 비소명 | None(미기재)
-    soomyeong: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    soomyeong: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
     # 지재권 | 절대금지 | None
     ipr: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     # 이 브랜드를 금지어로 잡은 마켓들 (예: ["쿠팡", "스스"])
@@ -114,6 +116,8 @@ def normalize_brand(name: str) -> str:
         return ""
     s = str(name).strip()
     # 소싱처가 붙이는 괄호 수식어 제거 — 브랜드 정체성과 무관
-    s = re.sub(r"[\(\[【]\s*(백화점|행사|프리미엄|정품|공식|본사|직영)\s*[\)\]】]", "", s)
+    s = re.sub(
+        r"[\(\[【]\s*(백화점|행사|프리미엄|정품|공식|본사|직영)\s*[\)\]】]", "", s
+    )
     s = re.sub(r"\s+", "", s)
     return s.lower()
