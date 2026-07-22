@@ -48,6 +48,7 @@ async def main():
     locked = _opt("--locked")
     stock = int(_opt("--stock", "1"))
     acc_id = _opt("--account", KV)
+    pol_id = _opt("--policy", POLICY)  # 기본=이베이_카드, 앨범은 --policy pol_01KY2VR2...
 
     tok = current_tenant_id.set(TENANT)
     try:
@@ -77,7 +78,7 @@ async def main():
                 status="active", sale_status="in_stock",
                 source_url=f"https://m.bunjang.co.kr/products/{bpid}",
                 site_product_id=bpid, images=[url],
-                applied_policy_id=POLICY, tenant_id=TENANT, registered_accounts=[],
+                applied_policy_id=pol_id, tenant_id=TENANT, registered_accounts=[],
             )
             if locked:
                 p.price_locked = True
