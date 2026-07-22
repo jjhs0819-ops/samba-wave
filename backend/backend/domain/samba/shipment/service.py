@@ -8,6 +8,7 @@ import re
 import time
 from datetime import UTC, datetime
 from typing import Any, Awaitable, Callable, Optional
+from urllib.parse import urlparse
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -387,6 +388,31 @@ STATUS_LABELS: dict[str, str] = {
     "partial": "부분완료",
     "failed": "실패",
 }
+
+
+def _usable_image_urls(urls: Any) -> list[str]:
+    """마켓에 URL 로 넘길 수 있는 이미지만 남긴다 (순서·중복 유지).
+
+    마켓은 이미지를 URL 로 받아 자기 서버가 직접 가지러 간다. 따라서 http(s)
+    절대 URL 이 아닌 것은 전송하면 그대로 등록 실패 또는 깨진 상세가 된다.
+    실측(수집분 174개): `detail_images` 에 base64 `data:image/png;...` 가 5건
+    섞여 있었다 — 소싱처 상세 HTML 을 파싱할 때 인라인 이미지가 그대로 들어온 것.
+
+    프로토콜 상대경로(`//host/x.jpg`)는 버리지 않고 https 로 보정한다.
+    """
+    out: list[str] = []
+    for u in urls or []:
+        if not isinstance(u, str):
+            continue
+        u = u.strip()
+        if not u:
+            continue
+        if u.startswith("//"):
+            u = "https:" + u
+        if not u.startswith(("http://", "https://")):
+            continue
+        out.append(u)
+    return out
 
 
 class SambaShipmentService:
@@ -3258,7 +3284,7 @@ class SambaShipmentService:
             else:
                 logger.warning(f"[상세HTML] 템플릿 {template_id} 조회 실패")
 
-        images = product.get("images") or []
+        images = _usable_image_urls(product.get("images"))
         # 대표이미지 선택 (#309) — main_image_index가 가리키는 이미지를 맨 앞으로.
         # 상세HTML main / 마켓 썸네일 대표이미지 일치. 갤러리·상세 공통 적용.
         if images and 0 < main_image_index < len(images):
@@ -3278,11 +3304,16 @@ class SambaShipmentService:
         # product["images"](갤러리 소스)는 건드리지 않고 로컬 복사본으로만 단일화.
         detail_imgs = images if img_checks.get("sub", False) else images[:1]
 
-        detail_images = product.get("detail_images") or []
-        # 추가이미지(sub)에서 출력된 URL을 추적 → detail에서 중복 제외
-        # 단, sub가 실제로 출력되는 경우에만 필터링(detail만 단독 사용일 때 무필터 정상 노출)
-        sub_will_emit = img_checks.get("sub", False) and len(detail_imgs) > 1
-        sub_set = set(detail_imgs[1:]) if sub_will_emit else set()
+        detail_images = _usable_image_urls(product.get("detail_images"))
+        # main/sub 에서 출력될 URL을 추적 → detail에서 중복 제외
+        # 단, 실제로 출력되는 항목만 넣는다(detail만 단독 사용일 때 무필터 정상 노출).
+        # main 을 빼먹으면 GS처럼 images == detail_images 인 소싱처에서 대표이미지가
+        # 상세에 두 번 박힌다(실측: 라코스테 쇼퍼백 — 2번째와 8번째가 동일 URL).
+        sub_set: set[str] = set()
+        if img_checks.get("main", False) and detail_imgs:
+            sub_set.add(detail_imgs[0])
+        if img_checks.get("sub", False) and len(detail_imgs) > 1:
+            sub_set.update(detail_imgs[1:])
 
         # img_order 순서대로, img_checks가 True인 항목만 생성
         for item_id in img_order:
@@ -3309,9 +3340,15 @@ class SambaShipmentService:
                     parts.append(img_tag.format(url=d_img))
                     detail_emitted += 1
                 # 폴백: detail에 1장도 안 들어갔으면 추가이미지(detail_imgs[1:])로 채움
-                # — detail_images 비어있거나 모두 sub_set와 중복인 경우 대비
+                # — detail_images 가 비어있는 경우 대비.
+                # 이미 main/sub 로 나간 이미지는 제외한다. 안 그러면 detail_images 가
+                # images 의 부분집합일 때(전부 걸러져 detail_emitted==0) 폴백이 방금
+                # 출력한 이미지를 그대로 다시 붙여 중복을 만든다.
                 if detail_emitted == 0:
-                    fallback_imgs = detail_imgs[1:] or detail_imgs[:1]
+                    fallback_imgs = [
+                        u for u in (detail_imgs[1:] or detail_imgs[:1])
+                        if u not in sub_set
+                    ]
                     for s_img in fallback_imgs:
                         parts.append(img_tag.format(url=s_img))
                     if fallback_imgs:
@@ -3537,6 +3574,11 @@ class SambaShipmentService:
         product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
         # 실측 사이즈표 — extra_data는 제외되므로 row에서 직접 주입 (#실측표)
         product_dict["actual_size"] = (product_row.extra_data or {}).get("actualSize")
+
+        # 상세 HTML 재생성 — 정상 전송 경로(line 2083)와 동일. 이게 빠져 있으면
+        # 재전송 때만 소싱처 원문 detail_html 이 그대로 마켓에 나간다
+        # (지재권 위험 + 원문이 비면 상세 텅 빔 + 상단/하단 배너 누락).
+        product_dict["detail_html"] = await self._build_detail_html(product_dict)
 
         # 재전송
         await self.repo.update_async(shipment_id, status="transmitting")

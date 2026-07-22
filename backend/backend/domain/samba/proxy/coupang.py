@@ -235,7 +235,16 @@ def _parse_option_color_size(opt_name: str, default_color: str) -> tuple[str, st
 
 
 def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
-    """상세 HTML에서 IMAGE/TEXT 혼합 contentDetails 생성."""
+    """상세 HTML에서 IMAGE/TEXT 혼합 contentDetails 생성.
+
+    상세 HTML 은 상세 템플릿(`ShipmentService._build_detail_html`)이 만든
+    [상단배너] + [대표/추가/상세 이미지] + [하단배너] 구조를 전제한다.
+    각 이미지는 `<div style="text-align:center;"><img src=...></div>` 로 감싸여
+    있어 img 태그로 split 하면 이미지 사이마다 `</div><div ...>` 같은
+    **껍데기 TEXT 조각**이 남는다. 이를 그대로 TEXT contentDetails 로 보내면
+    쿠팡 상세에 빈 블록이 줄줄이 박히므로, 태그를 벗겨 실제 글자가 없는
+    조각은 버린다.
+    """
     if not detail_html:
         return [{"content": "", "detailType": "TEXT"}]
     img_pattern = re.compile(
@@ -250,6 +259,9 @@ def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
         if not segment:
             continue
         if i % 2 == 0:
+            # 태그·공백만 남은 조각(</div><div ...> 등)은 버린다
+            if not _strip_tags(segment):
+                continue
             details.append({"content": segment, "detailType": "TEXT"})
         else:
             url = segment
@@ -257,6 +269,15 @@ def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
                 url = "https:" + url
             details.append({"content": url, "detailType": "IMAGE"})
     return details if details else [{"content": detail_html, "detailType": "TEXT"}]
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_ENTITY_WS_RE = re.compile(r"&(nbsp|#160|#xa0);", re.IGNORECASE)
+
+
+def _strip_tags(html: str) -> str:
+    """HTML 태그/공백 엔티티를 제거한 순수 텍스트 (비어있음 판정용)."""
+    return _ENTITY_WS_RE.sub(" ", _TAG_RE.sub("", html)).strip()
 
 
 # GSShop 자사 CDN 화이트리스트 — 쿠팡 검증 거절(외부 호스트 이미지) 방지용
