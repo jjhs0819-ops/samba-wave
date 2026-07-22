@@ -139,6 +139,7 @@ interface MarketPolicyForm {
   kreamShippingFeeCard?: number       // 스니덩크배송비(카드, 엔)
   kreamShippingFeeBox?: number        // 스니덩크배송비(박스, 엔)
   kreamForwardingFee?: number         // 배대지비용(원)
+  kreamNonCardMarginRate?: number     // 비카드(신발/의류) 원가 추가마진율 (%)
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
   adEnabled?: boolean // eBay General 광고 사용 여부 — 등록/수정 시 자동 활성
@@ -1615,6 +1616,11 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>무경쟁 최소마진율</span>
                     <NumInput value={mp.kreamNoCompetitionMarginRate ?? 40} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamNoCompetitionMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>1순위·경쟁 없을 때 원가 대비 배수(예: 40 → 원가×1.4)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>비카드 추가마진율</span>
+                    <NumInput value={mp.kreamNonCardMarginRate ?? 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamNonCardMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>트레이딩카드 제외(신발·의류 등) 상품 원가에 추가 가산(예: 5 → 원가×1.05). 카드·카드박스는 미적용</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(카드)</span>

@@ -711,6 +711,7 @@ const ProductCard = React.memo(function ProductCard({
       kreamCompetitiveMarginRate?: number; kreamNoCompetitionMarginRate?: number
       kreamMinMarginAmount?: number; kreamShippingFeeCard?: number
       kreamShippingFeeBox?: number; kreamForwardingFee?: number
+      kreamNonCardMarginRate?: number
     }
     const kComp = Number(kp.kreamCompetitiveMarginRate ?? 13)
     const kNoComp = Number(kp.kreamNoCompetitionMarginRate ?? 40)
@@ -718,6 +719,7 @@ const ProductCard = React.memo(function ProductCard({
     const kShipCard = Number(kp.kreamShippingFeeCard ?? 300)
     const kShipBox = Number(kp.kreamShippingFeeBox ?? 900)
     const kFwd = Number(kp.kreamForwardingFee ?? 8000)
+    const kNonCard = Number(kp.kreamNonCardMarginRate ?? 5) // 비카드(신발/의류) 추가마진율(%)
     // 로컬 봇과 동일 — 배송비(is_box)와 5%가산(is_card)은 별개 축:
     //  · 배송비: PSA 단품 카드 = 300엔, 그외(박스/카드팩/신발) = 900엔 (옵션 유형)
     //  · 5% 가산: 비(非)트레이딩카드=신발/의류만. 카드·카드박스는 미적용 (snkr_type 축)
@@ -729,7 +731,7 @@ const ProductCard = React.memo(function ProductCard({
     // PSA 단품이 하나라도 있으면 카드 배송(300), 아니면 박스 배송(900). 옵션 없으면 상품명 추정.
     const kIsCardShip = _kOpts.length > 0 ? _hasPSA : !_nameBox
     const kShip = kIsCardShip ? kShipCard : kShipBox
-    const kCostEff = _isShoe ? Math.round(cost * 1.05) : cost // 신발/의류만 원가 5% 가산
+    const kCostEff = _isShoe ? Math.round(cost * (1 + kNonCard / 100)) : cost // 신발/의류만 정책 추가마진율 가산
     const kBase = (kCostEff + kShip) * jpyRate + kFwd
     const kMarginAmt = Math.max(kMinMargin, kBase * kComp / 100)
     const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
