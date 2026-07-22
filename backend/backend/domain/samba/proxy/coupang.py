@@ -394,7 +394,9 @@ class CoupangClient:
         headers = {
             "Authorization": authorization,
             "Content-Type": "application/json;charset=UTF-8",
-            "X-Requested-By": "samba-wave",
+            # 쿠팡이 X-Requested-By == 실제 업체코드(vendorId) 검증 강화 —
+            # 고정 문자열이면 "업체[...]는 다른 업체[...]의 상품을 등록할 수 없습니다" 400
+            "X-Requested-By": self.vendor_id or "samba-wave",
             # 2026-07 쿠팡 API 필수화 — 미전송 시 전 요청 HTTP 400 (KR=한국 마켓)
             "X-MARKET": "KR",
         }
