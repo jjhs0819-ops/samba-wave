@@ -1,8 +1,9 @@
 'use client'
 
-import { Dispatch, SetStateAction } from 'react'
+import { Dispatch, SetStateAction, useState, useEffect } from 'react'
 import {
   orderApi,
+  policyApi,
   type SambaOrder,
   type SambaChannel,
 } from '@/lib/samba/api/commerce'
@@ -53,6 +54,36 @@ interface Args {
 }
 
 export function useOrderActions(args: Args) {
+  // 크림 해외판매 수수료(정책설정) — 기본수수료(원) + 판매가 비율(%). 하드코딩 금지.
+  // 옵션이 '해외배송'(박스/카드팩)인 크림 주문 정산금액에서 차감 표시. PSA 카드는 미적용.
+  const [kreamOverseasFee, setKreamOverseasFee] = useState({ base: 1370, rate: 3.3 })
+  useEffect(() => {
+    policyApi.list(0, 200).then((pols) => {
+      for (const p of pols) {
+        const k = ((p.market_policies || {}) as Record<string, { kreamOverseasBaseFee?: number; kreamOverseasFeeRate?: number }>)['KREAM']
+        if (k && (k.kreamOverseasBaseFee != null || k.kreamOverseasFeeRate != null)) {
+          setKreamOverseasFee({ base: Number(k.kreamOverseasBaseFee ?? 1370), rate: Number(k.kreamOverseasFeeRate ?? 3.3) })
+          break
+        }
+      }
+    }).catch(() => {})
+  }, [])
+
+  // 크림 해외배송(박스/카드팩) 주문의 실제 정산금액 = 판매가 − (기본수수료 + 판매가×수수료율).
+  // 크림 주문은 revenue=판매가(수수료 미차감 저장)라 표시 시점에 차감. 그 외 마켓/PSA는 원본 revenue.
+  const getRevenue = (o: SambaOrder): number => {
+    const isKream = String(o.source_site || '').toUpperCase().includes('KREAM')
+      || String(o.sales_channel_alias || '').toUpperCase().includes('KREAM')
+    const isOverseas = String(o.product_option || '').includes('해외배송')
+    const rev = o.revenue || 0
+    if (isKream && isOverseas && rev > 0) {
+      // 크림 수수료 = 기본수수료 + 판매가×수수료율, 10원 단위 절사(크림 정산 표기와 일치)
+      const fee = Math.floor((kreamOverseasFee.base + rev * kreamOverseasFee.rate / 100) / 10) * 10
+      return rev - fee
+    }
+    return rev
+  }
+
   const {
     channels, form, emptyForm, editingId,
     setShowForm, setEditingId, setForm,
@@ -146,7 +177,7 @@ export function useOrderActions(args: Args) {
   const calcProfit = (o: SambaOrder) => {
     const costVal = resolveEditingNumber(editingCosts[o.id], o.cost)
     const shipFeeVal = resolveEditingNumber(editingShipFees[o.id], o.shipping_fee)
-    return o.revenue - costVal - shipFeeVal
+    return getRevenue(o) - costVal - shipFeeVal
   }
 
   const calcProfitRate = (o: SambaOrder) => {
@@ -158,7 +189,7 @@ export function useOrderActions(args: Args) {
   const calcFeeRate = (o: SambaOrder) => {
     const paymentAmount = o.total_payment_amount ?? o.sale_price
     if (paymentAmount <= 0) return '0.0'
-    return (((paymentAmount - o.revenue) / paymentAmount) * 100).toFixed(1)
+    return (((paymentAmount - getRevenue(o)) / paymentAmount) * 100).toFixed(1)
   }
 
   const handleCopyOrderNumber = (orderNumber: string) => {
@@ -246,7 +277,7 @@ export function useOrderActions(args: Args) {
   return {
     handleSubmit, handleStatusChange, handleDelete,
     handleCostSave, handleShipFeeSave,
-    calcProfit, calcProfitRate, calcFeeRate,
+    calcProfit, calcProfitRate, calcFeeRate, getRevenue,
     handleCopyOrderNumber, handleDanawa, handleNaver, handleTracking,
     toggleAction, handleBulkAction, fmtNumStr,
     bulkUpdating,

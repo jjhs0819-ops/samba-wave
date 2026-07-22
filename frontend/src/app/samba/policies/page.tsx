@@ -141,6 +141,8 @@ interface MarketPolicyForm {
   kreamForwardingFee?: number         // 배대지비용(원)
   kreamBoxPackMarginRate?: number     // 박스/카드팩(PSA제외 실링) 원가 추가마진율 (%)
   kreamNonCardMarginRate?: number     // 나머지(신발/의류 등) 원가 추가마진율 (%)
+  kreamOverseasBaseFee?: number       // 해외판매 기본수수료 (원) — 정산 차감
+  kreamOverseasFeeRate?: number       // 해외판매 수수료율 (%) — 판매가 대비, 정산 차감
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
   adEnabled?: boolean // eBay General 광고 사용 여부 — 등록/수정 시 자동 활성
@@ -1641,6 +1643,16 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배대지비용</span>
                     <NumInput value={mp.kreamForwardingFee ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamForwardingFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>배대지→한국 배송비(원). 원가에 별도 가산. 원가=(snkr엔+배송엔)×환율+배대지</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 기본수수료</span>
+                    <NumInput value={mp.kreamOverseasBaseFee ?? 1370} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasBaseFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송(박스·카드팩) 주문 정산에서 차감하는 크림 기본수수료</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 수수료율</span>
+                    <NumInput value={mp.kreamOverseasFeeRate ?? 3.3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송 주문 판매가 대비 수수료율. 정산=판매가−(기본수수료+판매가×이율)</span>
                   </div>
                 </>
               )}

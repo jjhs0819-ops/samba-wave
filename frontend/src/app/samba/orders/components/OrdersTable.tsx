@@ -68,6 +68,7 @@ interface OrdersTableProps {
   calcProfit: (o: SambaOrder) => number
   calcProfitRate: (o: SambaOrder) => string
   calcFeeRate: (o: SambaOrder) => string
+  getRevenue: (o: SambaOrder) => number
   splitCustomerAddress: (
     address: string | null | undefined,
     detailColumn?: string | null,
@@ -115,7 +116,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
     setLogMessages,
-    calcProfit, calcProfitRate, calcFeeRate, splitCustomerAddress,
+    calcProfit, calcProfitRate, calcFeeRate, getRevenue, splitCustomerAddress,
     renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
     handleDanawa, handleNaver, handleSourceLink, handleMarketLink,
@@ -322,7 +323,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                   })()}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>결제</span><span>{fmtNum(o.total_payment_amount ?? o.sale_price)}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>정산</span><span>{fmtNum(Math.round(o.revenue))}</span></div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>정산</span><span>{fmtNum(Math.round(getRevenue(o)))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수수료율</span><span style={{ color: c.textMuted }}>{liveFeeRate}%</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수익률</span><span style={{ color: c.textMuted }}>{liveProfitRate}%</span></div>

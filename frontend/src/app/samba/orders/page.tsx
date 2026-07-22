@@ -455,7 +455,7 @@ export default function OrdersPage() {
 
   const {
     handleSubmit, handleStatusChange, handleDelete,
-    handleCostSave, handleShipFeeSave, calcProfit, calcProfitRate, calcFeeRate,
+    handleCostSave, handleShipFeeSave, calcProfit, calcProfitRate, calcFeeRate, getRevenue,
     handleCopyOrderNumber, handleDanawa, handleNaver, handleTracking,
     toggleAction, handleBulkAction,
   } = useOrderActions({
@@ -1032,6 +1032,7 @@ export default function OrdersPage() {
         calcProfit={calcProfit}
         calcProfitRate={calcProfitRate}
         calcFeeRate={calcFeeRate}
+        getRevenue={getRevenue}
         splitCustomerAddress={splitCustomerAddress}
         renderCopyableText={renderCopyableText}
         handleDelete={handleDelete}
