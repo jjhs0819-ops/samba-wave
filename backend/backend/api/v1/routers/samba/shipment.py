@@ -1327,8 +1327,9 @@ async def backfill_lottehome_goodsno(
 
 class LottehomeMappingItem(BaseModel):
     product_id: str
-    goods_no: str
-    expected_current: str = ""  # 교체 모드: 현재 매핑값 일치 시에만 교체
+    goods_no: str = ""  # remove=True 면 무시
+    expected_current: str = ""  # 교체/삭제 모드: 현재 매핑값 일치 시에만 수행
+    remove: bool = False  # True: 이 계정 매핑 삭제 (재등록 준비용)
 
 
 class LottehomeSetMappingRequest(BaseModel):
@@ -1350,9 +1351,13 @@ async def set_lottehome_goodsno_mappings(
     매핑 교체(실측 22건)는 잡지 못한다. 파트너오피스 대조로 확정한
     (product_id, goods_no) 쌍을 명시적으로 받아 보정한다.
 
+    remove=True 항목은 이 계정 매핑 삭제 — 옵션 결함 리스팅 교체(재등록) 준비용.
+    reset-registration 과 달리 타 마켓 매핑은 보존하고, 본키/_qa/_origin/_reg_lost
+    키만 제거한다 (실측 2026-07-23: 블랙야크 단일상품 1,647건 재등록 준비).
+
     안전장치:
     - 신규 연결: 해당 계정 매핑이 이미 있으면 거부(conflict) —
-      교체는 expected_current 로 현재값을 명시했을 때만 허용(CAS)
+      교체/삭제는 expected_current 로 현재값을 명시했을 때만 허용(CAS)
     - goods_no 가 이미 다른 상품에 매핑돼 있으면 거부(in_use)
     - 요청당 최대 500건, dry_run 기본
     """
@@ -1388,6 +1393,69 @@ async def set_lottehome_goodsno_mappings(
     applied = 0
     results: list[dict[str, str]] = []
     for m in body.mappings:
+        if m.remove:
+            # 삭제 모드 — 재등록 준비용. 이 계정 키만 제거(타 마켓 매핑 보존),
+            # expected_current CAS 필수(다른 세션이 바꾼 매핑 오삭제 방지).
+            row = (
+                await session.execute(
+                    _text(
+                        "SELECT market_product_nos->>:aid "
+                        "FROM samba_collected_product WHERE id = :pid"
+                    ),
+                    {"aid": aid, "pid": m.product_id},
+                )
+            ).first()
+            if row is None:
+                results.append({"product_id": m.product_id, "result": "not_found"})
+                continue
+            current = str(row[0] or "").strip()
+            expected = str(m.expected_current or "").strip()
+            if not current:
+                results.append(
+                    {"product_id": m.product_id, "result": "already_absent"}
+                )
+                continue
+            if not expected or current != expected:
+                results.append(
+                    {"product_id": m.product_id, "result": f"conflict:{current}"}
+                )
+                continue
+            if body.dry_run:
+                results.append(
+                    {"product_id": m.product_id, "result": "would_remove:" + current}
+                )
+                continue
+            await session.execute(
+                _text(
+                    "UPDATE samba_collected_product SET "
+                    "market_product_nos = COALESCE(market_product_nos, '{}'::jsonb) "
+                    "  - CAST(:aid AS text) - CAST(:aid_qa AS text) "
+                    "  - CAST(:aid_org AS text) - CAST(:aid_lost AS text), "
+                    "registered_accounts = "
+                    "  COALESCE(registered_accounts, '[]'::jsonb) "
+                    "  - CAST(:aid AS text), "
+                    "status = CASE "
+                    "  WHEN COALESCE(registered_accounts, '[]'::jsonb) "
+                    "    - CAST(:aid AS text) = '[]'::jsonb "
+                    "  THEN 'collected' ELSE status END "
+                    "WHERE id = :pid AND market_product_nos->>:aid = :cur"
+                ),
+                {
+                    "aid": aid,
+                    "aid_qa": f"{aid}_qa",
+                    "aid_org": f"{aid}_origin",
+                    "aid_lost": f"{aid}_reg_lost",
+                    "pid": m.product_id,
+                    "cur": current,
+                },
+            )
+            applied += 1
+            results.append(
+                {"product_id": m.product_id, "result": "removed:" + current}
+            )
+            if applied % 200 == 0:
+                await session.commit()
+            continue
         gno = str(m.goods_no).strip()
         if not gno.isdigit():
             results.append({"product_id": m.product_id, "result": "bad_goods_no"})
