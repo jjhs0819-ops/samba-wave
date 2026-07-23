@@ -572,6 +572,16 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                     return "fail", None
             if "거래가" in _body or "입찰제한" in _body:
                 _g_limit_cd[f"{pid}|{opt}"] = _now_ts()
+                # 패턴 파악용 수치 — 변동폭이 큰 건에서만 나는지 확인해야 대응 가능
+                _pct = ((int(target) - int(cur)) / int(cur) * 100) if cur else 0
+                logger.info(
+                    "[크림통합] 입찰제한 %s %s: %s→%s (%+.1f%%)",
+                    pid,
+                    opt,
+                    f"{int(cur):,}",
+                    f"{int(target):,}",
+                    _pct,
+                )
             _note_fail(f"HTTP {r.status_code}: {_body}")
             return "fail", None
         rank = (r.json() or {}).get("live_rank")
