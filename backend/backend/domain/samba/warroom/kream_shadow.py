@@ -223,6 +223,10 @@ POLICY = {
     # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외. 로컬 봇의 25만엔 원칙.
     # 초고가 카드(수백만엔)에 입찰이 걸리면 체결 시 그 값으로 소싱해야 해 치명적.
     "max_cost_jpy": 250000,
+    # 조정 데드밴드(%) — 목표가와 현재가 차이가 이 비율 미만이면 조정 생략.
+    # 실시간 원가/시세의 미세변동이 매 사이클 수백 건의 헛조정으로 번지는 것 차단.
+    # 단 '마진 하한 미달(현재가 < 최소가)' 은 손실 방지라 데드밴드와 무관하게 항상 조정.
+    "adjust_deadband_pct": 1.5,
 }
 
 
@@ -270,6 +274,9 @@ async def _load_policy() -> None:
                         ),
                         "max_cost_jpy": k.get(
                             "kreamMaxCostJpy", POLICY["max_cost_jpy"]
+                        ),
+                        "adjust_deadband_pct": k.get(
+                            "kreamAdjustDeadbandPct", POLICY["adjust_deadband_pct"]
                         ),
                     }
                 )
@@ -493,6 +500,14 @@ async def kream_log_max_id() -> int:
         return 0
 
 
+# 갱신 실패 사유 집계 — 사이클마다 초기화, 슬랙/로그에 breakdown 노출(로컬 봇과 동일).
+_fail_reasons: dict = {}
+
+
+def _note_fail(reason: str) -> None:
+    _fail_reasons[reason] = _fail_reasons.get(reason, 0) + 1
+
+
 async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> tuple:
     """실제 PATCH 실행(가격조정) — 응답 live_rank 검증 [Phase4c]. _EXECUTE=1 일 때만 호출.
     무경쟁 인상인데 rank!=1(밀림)이면 원가로 복귀 + 24h 쿨다운 기록(재스윙 방지)."""
@@ -503,6 +518,9 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
             json={"price": int(target)},
         )
         if r.status_code not in (200, 201):
+            # 사유 기록 — 그동안 실패 건수만 보이고 원인을 몰라 대응이 불가했다.
+            _body = " ".join((r.text or "")[:120].split())
+            _note_fail(f"HTTP {r.status_code}: {_body}")
             return "fail", None
         rank = (r.json() or {}).get("live_rank")
         if is_nocomp and rank is not None and rank != 1:
@@ -515,6 +533,7 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
             return "reverted", rank
         return "ok", rank
     except Exception as exc:
+        _note_fail(f"예외 {type(exc).__name__}: {str(exc)[:80]}")
         logger.warning("[크림섀도] PATCH 실패 ask=%s: %s", ask_id, exc)
         return "error", None
 
@@ -1082,6 +1101,11 @@ def _decide_price_action(
         target = max(target, int(cur * (1 - _DROP_CAP)))
     if adjusting and market_low > 0 and target < market_low * _ANOMALY_FLOOR:
         act, target, adjusting = "이상감지차단", cur, False
+    # ── 데드밴드 — 미세 조정 생략(헛조정·API 소음 차단). 마진 하한 미달 복구는 예외.
+    if adjusting and target != cur and cur > 0 and cur >= min_price:
+        _db = float(POLICY.get("adjust_deadband_pct") or 0)
+        if _db > 0 and abs(target - cur) < max(cur * _db / 100, 1000):
+            act, target, adjusting = "데드밴드생략", cur, False
     return act, target, adjusting, is_nocomp
 
 
@@ -1594,6 +1618,7 @@ async def run_kream_unified_once() -> dict:
         return {"ok": False, "reason": f"fetch_error: {exc}"}
 
     await _load_policy()
+    _fail_reasons.clear()  # 사이클 단위 실패사유 집계
     cooldown = await _load_cooldown()
     rate = await _jpy_krw_rate()
     tariff_threshold = int(150 * await _usd_krw_rate())
@@ -2084,6 +2109,12 @@ async def run_kream_unified_once() -> dict:
         + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
     )
+    # 갱신실패 사유 breakdown — 실패 건수만 보이고 원인을 몰라 대응 못 하던 것 보완(로컬 포맷).
+    if _fail_reasons:
+        _top = sorted(_fail_reasons.items(), key=lambda kv: -kv[1])[:5]
+        _msg += "\n\n⚠️ 갱신실패 사유:\n  " + "\n  ".join(
+            f"{k}: {v:,}건" for k, v in _top
+        )
     if counts["anomaly"]:
         _msg += f"\n\n⚠️ 이상감지(가격오류 의심·갱신차단) {counts['anomaly']:,}건"
     await _send_slack(_pre + _restock_sec + _msg)
