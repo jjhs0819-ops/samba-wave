@@ -636,3 +636,4 @@ local.env
 
 deploy/local/wg/
 deploy/local/*.log
+samba-tools/ebay_sourcing/logs/
