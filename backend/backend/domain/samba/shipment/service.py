@@ -1097,20 +1097,43 @@ class SambaShipmentService:
             and _brand_norm in _AI_REQUIRED_BRANDS
         ):
             if not product_row.ai_image_transformed:
-                _msg = (
-                    f"{product_row.source_site} 나이키 상품은 "
-                    f"AI 이미지 변환 후에만 등록 가능합니다."
-                )
-                logger.info(
-                    f"[전송] AI 변환 미완료 차단: {product_id} "
-                    f"({product_row.source_site}/{product_row.brand})"
-                )
-                await self.repo.update_async(
-                    shipment.id,
-                    status="failed",
-                    transmit_error={"_all": _msg},
-                )
-                return shipment
+                # 예외: 타깃이 전부 플레이오토(EMP 솔루션)면 AI 변환 없이 허용.
+                # 가드 취지는 마켓 직접 등록 시 원본 이미지 노출 차단 — 플레이오토
+                # 단독 전송까지 막을 필요는 없다는 운영 판단(2026-07-23).
+                _tgt_types: set[str] = set()
+                if target_account_ids:
+                    from sqlmodel import select as _ai_sel
+
+                    from backend.domain.samba.account.model import (
+                        SambaMarketAccount as _AI_SMA,
+                    )
+
+                    _ai_res = await self.session.execute(
+                        _ai_sel(_AI_SMA.market_type).where(
+                            _AI_SMA.id.in_(target_account_ids)
+                        )
+                    )
+                    _tgt_types = {str(t) for t in _ai_res.scalars().all()}
+                if _tgt_types and _tgt_types <= {"playauto"}:
+                    logger.info(
+                        f"[전송] AI 변환 미완료지만 플레이오토 단독 전송 → 허용: "
+                        f"{product_id} ({product_row.source_site}/{product_row.brand})"
+                    )
+                else:
+                    _msg = (
+                        f"{product_row.source_site} 나이키 상품은 "
+                        f"AI 이미지 변환 후에만 등록 가능합니다."
+                    )
+                    logger.info(
+                        f"[전송] AI 변환 미완료 차단: {product_id} "
+                        f"({product_row.source_site}/{product_row.brand})"
+                    )
+                    await self.repo.update_async(
+                        shipment.id,
+                        status="failed",
+                        transmit_error={"_all": _msg},
+                    )
+                    return shipment
 
         # OOM 방지: 전송에 불필요한 대용량 필드 제외
         product_dict = product_row.model_dump(exclude={"last_sent_data", "extra_data"})
