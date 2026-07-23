@@ -15,6 +15,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from backend.domain.samba.collector.model import as_market_nos
 from backend.domain.samba.collector.model import (
     FIXED_REQUESTED_COUNT,
     generate_search_cache_id,
@@ -1584,7 +1585,7 @@ class JobWorker:
             prod = prod_map.get(pid)
             if not prod:
                 continue
-            mnos = prod.market_product_nos or {}
+            mnos = as_market_nos(prod.market_product_nos)
             if isinstance(mnos, str):
                 mnos = _json.loads(mnos)
             master_code = mnos.get(acc_id)
@@ -1721,7 +1722,7 @@ class JobWorker:
                 elif _pid in fail_pids:
                     _mc = (
                         prod_map.get(_pid)
-                        and (prod_map[_pid].market_product_nos or {}).get(acc_id)
+                        and as_market_nos(prod_map[_pid].market_product_nos).get(acc_id)
                     ) or "?"
                     await _fr.fail_job(_j.id, f"배치 전송 실패 MasterCode={_mc}")
                 else:

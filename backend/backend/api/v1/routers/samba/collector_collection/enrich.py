@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.domain.samba.collector.model import as_market_nos
 from backend.db.orm import get_write_session_dependency
 from backend.domain.samba.collector.refresher import _site_intervals
 
@@ -96,7 +97,7 @@ async def _retransmit_if_changed(
                 account = acc_map.get(account_id)
                 if not account:
                     continue
-                m_nos = product.market_product_nos or {}
+                m_nos = as_market_nos(product.market_product_nos)
                 raw_no = m_nos.get(account_id, "")
                 if account.market_type == "smartstore":
                     # origin 번호 우선: account_id_origin 키가 있으면 사용
@@ -146,7 +147,7 @@ async def _retransmit_if_changed(
 
             # 삭제 성공 계정을 registered_accounts에서 제거
             if deleted_account_ids:
-                m_nos_orig = product.market_product_nos or {}
+                m_nos_orig = as_market_nos(product.market_product_nos)
                 new_reg = [a for a in reg_accounts if a not in deleted_account_ids]
                 product_repo = SambaCollectedProductRepository(session)
                 # 등록된 모든 마켓 삭제 성공 → 상품 자체 DB 삭제

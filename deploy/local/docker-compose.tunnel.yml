@@ -195,6 +195,8 @@ services:
       KREAM_LOOP_SLEEP: "90"  # 사이클 간 대기(초). 사이클 자체가 수십초라 짧게 — 시세 추종용
       KREAM_SHADOW_EXECUTE: "1"  # [Step 5] 실행 전환 — 실제 크림 PATCH/POST/DELETE (로컬 정지·가드 검증 완료 2026-07-22)
       KREAM_EXEC_BOX: "1"  # [A] 박스(해외배송) 갱신/삭제 실행 — 섀도 검증 완료(175건 계산정확)
+      KREAM_EXEC_SHOE: "1"  # [B] 신발(mm) 갱신/삭제 실행 — 실시간 사이즈시세 이식 후 섀도검증
+                            # (247상품 100% 조회, 갱신198·삭제60, 샘플 전건 인상/삭제·인하 0)
       # netns 공유 → api(8080)/worker(8081)/reconciler(8082)와 분리
       KREAM_BIND_PORT: "8083"
       # 크림 루프는 반드시 돌아야 하므로 BG 비활성 금지 (0 고정)

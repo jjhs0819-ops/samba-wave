@@ -22,6 +22,7 @@ from sqlmodel import select
 
 from backend.db.orm import get_write_session
 from backend.shutdown_state import is_shutting_down
+from backend.domain.samba.collector.model import as_market_nos
 
 
 logger = logging.getLogger("backend.coupang.pid_reconciler")
@@ -112,7 +113,7 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
     failed = 0
 
     for prod in products:
-        nos = prod.market_product_nos or {}
+        nos = as_market_nos(prod.market_product_nos)
         seller_product_id = str(nos.get(account_id) or "").strip()
         if not seller_product_id or not seller_product_id.isdigit():
             continue
@@ -158,7 +159,7 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
                 latest = await session.get(SambaCollectedProduct, prod.id)
                 if latest is None:
                     continue
-                nos2 = dict(latest.market_product_nos or {})
+                nos2 = dict(as_market_nos(latest.market_product_nos))
                 nos2[pid_key] = product_id
                 if vendor_item_id:
                     nos2[f"{account_id}_vid"] = vendor_item_id

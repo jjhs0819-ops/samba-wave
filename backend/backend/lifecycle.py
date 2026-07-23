@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from backend.core.config import settings
 from backend.shutdown_state import clear_shutting_down, mark_shutting_down
+from backend.domain.samba.collector.model import as_market_nos
 
 
 SUPPORTED_PYTHON_VERSION = (3, 12, 3)
@@ -1819,7 +1820,7 @@ async def _soldout_cleanup_loop() -> None:
             # 상품별 마켓 삭제 시도
             for sp in products:
                 sp_reg = list(sp.registered_accounts or [])
-                sp_mnos = dict(sp.market_product_nos or {})
+                sp_mnos = dict(as_market_nos(sp.market_product_nos))
                 ok_ids: list[str] = []
 
                 for acc_id in sp_reg:

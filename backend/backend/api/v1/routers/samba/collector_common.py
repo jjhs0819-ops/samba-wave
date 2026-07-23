@@ -468,3 +468,6 @@ def build_market_registered_conditions(model_class: Any) -> list:
         cast(model_class.market_product_nos, _StrType) != "null",
         cast(model_class.market_product_nos, _StrType) != "{}",
     ]
+
+
+from backend.domain.samba.collector.model import as_market_nos  # noqa: E402,F401

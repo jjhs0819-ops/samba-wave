@@ -14,6 +14,7 @@ from sqlalchemy import or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.domain.samba.collector.model import as_market_nos
 from backend.db.orm import (
     get_read_session,
     get_read_session_dependency,
@@ -2471,7 +2472,7 @@ async def bulk_reset_registration(
         regs = list(product.registered_accounts or [])
         remaining = [aid for aid in regs if aid not in remove_set]
 
-        nos = dict(product.market_product_nos or {})
+        nos = dict(as_market_nos(product.market_product_nos))
         new_nos = {k: v for k, v in nos.items() if not _belongs(k)}
 
         # last_sent_data도 동일하게 정리 (issue #206 유령 등록상품 방지)

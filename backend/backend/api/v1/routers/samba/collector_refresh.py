@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from backend.domain.samba.collector.model import as_market_nos
 from backend.db.orm import get_write_session_dependency
 from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 
@@ -546,7 +547,7 @@ async def refresh_products(
                     account = acc_map.get(account_id)
                     if not account:
                         continue
-                    m_nos = product.market_product_nos or {}
+                    m_nos = as_market_nos(product.market_product_nos)
                     if account.market_type in ("gmarket", "auction"):
                         # ESM 삭제 API는 마스터 goodsNo 필요 — _master 우선
                         _del_no = m_nos.get(f"{account_id}_master") or m_nos.get(
@@ -649,7 +650,7 @@ async def refresh_products(
                 if ok_accs:
                     new_mnos = {
                         k: v
-                        for k, v in (row.market_product_nos or {}).items()
+                        for k, v in as_market_nos(row.market_product_nos).items()
                         if not any(
                             k == d_id or k.startswith(f"{d_id}_") for d_id in ok_accs
                         )

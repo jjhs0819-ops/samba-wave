@@ -564,3 +564,21 @@ class SambaDailyRegisteredSnapshot(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False),
         default_factory=lambda: datetime.now(tz=timezone.utc),
     )
+
+
+def as_market_nos(v) -> dict:
+    """market_product_nos 정규화 — dict 가정 코드가 list 레코드에서 터지던 것 방어.
+
+    프로덕션에 `[null, {"ma_xxx": "1000841722618"}, {...}]` 형태(계정별 dict의 리스트)로
+    저장된 레코드가 존재(105건, 전부 등록상품). 빈 dict 로 뭉개면 상품번호를 잃어 마켓
+    삭제/수정이 실패하므로, list 는 순서대로 병합해 살린다(뒤에 오는 값이 최신).
+    """
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, list):
+        merged: dict = {}
+        for item in v:
+            if isinstance(item, dict):
+                merged.update(item)
+        return merged
+    return {}

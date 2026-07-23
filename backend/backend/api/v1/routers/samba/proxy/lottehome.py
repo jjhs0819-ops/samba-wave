@@ -13,6 +13,7 @@ from backend.domain.samba.proxy.lottehome import LotteApiError, LotteHomeClient
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id
 
 from backend.utils.logger import logger
+from backend.api.v1.routers.samba.collector_common import as_market_nos
 
 from ._helpers import _get_lotte_client, _set_setting
 
@@ -514,7 +515,7 @@ async def lottehome_qa_sync(
     checked = 0
 
     for product in products:
-        m_nos = product.market_product_nos or {}
+        m_nos = as_market_nos(product.market_product_nos)
         pending_accounts = [
             k.replace("_qa", "")
             for k, v in m_nos.items()

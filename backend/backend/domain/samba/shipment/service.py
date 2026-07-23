@@ -18,6 +18,7 @@ from backend.domain.samba.shipment.repository import SambaShipmentRepository
 from backend.utils.logger import logger
 
 import math
+from backend.domain.samba.collector.model import as_market_nos
 
 
 # 마켓타입(영문 코드) → 정책키(한글 표시명) 매핑
@@ -714,7 +715,7 @@ class SambaShipmentService:
             # 기존 단일상품 삭제
             deleted_nos = []
             for p in products:
-                market_nos = p.market_product_nos or {}
+                market_nos = as_market_nos(p.market_product_nos)
                 existing_no = real_market_no(market_nos.get(account_id))
                 origin_no = real_market_no(market_nos.get(f"{account_id}_origin"))
                 delete_no = origin_no or existing_no
@@ -840,7 +841,7 @@ class SambaShipmentService:
                 updates: dict[str, Any] = {"group_product_no": group_product_no}
                 if i < len(product_nos):
                     pno = product_nos[i]
-                    market_nos = dict(p.market_product_nos or {})
+                    market_nos = dict(as_market_nos(p.market_product_nos))
                     market_nos[account_id] = {
                         "originProductNo": pno.get("originProductNo"),
                         "smartstoreChannelProductNo": pno.get(
@@ -2543,7 +2544,7 @@ class SambaShipmentService:
                                             if a is not None
                                         ]
                                         _imm_mpn = dict(
-                                            _pr_now.market_product_nos or {}
+                                            as_market_nos(_pr_now.market_product_nos)
                                         )
                                         _imm_mpn.update(_imm_nos)
                                         from sqlalchemy import update as _imm_upd
@@ -3725,7 +3726,7 @@ class SambaShipmentService:
             product_dict = product_row.model_dump(
                 exclude={"last_sent_data", "extra_data"}
             )
-            market_product_nos = product_row.market_product_nos or {}
+            market_product_nos = as_market_nos(product_row.market_product_nos)
             reg_accounts = product_row.registered_accounts or []
             delete_results: dict[str, str] = {}
 

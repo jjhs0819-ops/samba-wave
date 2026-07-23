@@ -30,6 +30,7 @@ from backend.dtos.samba.order import (
     OrderUpdate,
 )
 from backend.utils.logger import logger
+from backend.api.v1.routers.samba.collector_common import as_market_nos
 
 router = APIRouter(prefix="/orders", tags=["samba-orders"])
 public_router = APIRouter(prefix="/orders", tags=["samba-orders-public"])
@@ -4534,7 +4535,7 @@ async def market_delete_order_product(
             cp_repo = SambaCollectorRepository(session)
             cp = await cp_repo.get_async(order.collected_product_id)
             if cp and cp.market_product_nos:
-                origin_product_no = (cp.market_product_nos or {}).get(
+                origin_product_no = as_market_nos(cp.market_product_nos).get(
                     order.channel_id, ""
                 )
 

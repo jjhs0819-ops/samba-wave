@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
+from backend.domain.samba.collector.model import as_market_nos
 
 # ── test_auth 캐싱 (60초 TTL) — 오토튠 품절 배치 시 인증 API 중복 호출 방지 ──
 _auth_cache: dict[str, tuple[float, Any]] = {}  # {api_key: (timestamp, client)}
@@ -3330,7 +3331,7 @@ class LotteonPlugin(MarketPlugin):
                 if not _pr:
                     return
                 _reg = list(set((_pr.registered_accounts or []) + [account_id]))
-                _mpn = dict(_pr.market_product_nos or {})
+                _mpn = dict(as_market_nos(_pr.market_product_nos))
                 _mpn[account_id] = str(spd_no)
                 await _imm_s.execute(
                     _imm_upd(_ImmCP)

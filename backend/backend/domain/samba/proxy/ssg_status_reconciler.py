@@ -28,6 +28,7 @@ from sqlmodel import select
 
 from backend.db.orm import get_write_session
 from backend.shutdown_state import is_shutting_down
+from backend.domain.samba.collector.model import as_market_nos
 
 
 logger = logging.getLogger("backend.ssg.status_reconciler")
@@ -164,7 +165,7 @@ async def _clean_db_entry(account_id: str, product_id: str) -> bool:
             if prod is None:
                 return False
             changed = False
-            nos = dict(prod.market_product_nos or {})
+            nos = dict(as_market_nos(prod.market_product_nos))
             for k in (account_id, f"{account_id}_origin"):
                 if k in nos:
                     nos.pop(k, None)
@@ -209,7 +210,7 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
 
     targets: list[dict[str, str]] = []
     for p in products:
-        item_id = _extract_item_id(p.market_product_nos or {}, account_id)
+        item_id = _extract_item_id(as_market_nos(p.market_product_nos), account_id)
         if item_id:
             targets.append({"product_id": str(p.id), "item_id": item_id})
 

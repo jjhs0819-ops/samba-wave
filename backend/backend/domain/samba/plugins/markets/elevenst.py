@@ -10,6 +10,7 @@ from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
+from backend.domain.samba.collector.model import as_market_nos
 
 
 # 11번가 PUT 응답 중 "유령 매핑(이미 삭제됨/존재하지 않음)" 으로 판정할 메시지 패턴.
@@ -48,7 +49,7 @@ async def _purge_ghost_mapping(
         if not prod:
             return False
         changed = False
-        nos = dict(prod.market_product_nos or {})
+        nos = dict(as_market_nos(prod.market_product_nos))
         for k in (account_id, f"{account_id}_origin"):
             if k in nos:
                 nos.pop(k, None)
@@ -889,7 +890,7 @@ class ElevenstPlugin(MarketPlugin):
                         )
                         prod = (await session.execute(stmt)).scalars().first()
                         if prod and aid:
-                            nos = dict(prod.market_product_nos or {})
+                            nos = dict(as_market_nos(prod.market_product_nos))
                             nos[aid] = real_prd_no
                             prod.market_product_nos = nos
                             flag_modified(prod, "market_product_nos")

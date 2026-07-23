@@ -25,6 +25,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.api.v1.routers.samba.collector_common import (
     _trim_history,
+    as_market_nos,
 )
 from backend.domain.samba.exchange_rate_service import convert_cost_by_source_site
 
@@ -243,6 +244,7 @@ def _is_stale_conn_error(exc: BaseException) -> bool:
 # ══════════════════════════════════════════════════════════════
 # 오토튠 백그라운드 루프 — PC별 독립 인스턴스
 # ══════════════════════════════════════════════════════════════
+
 
 # PC별 인스턴스 상태 (key = device_id)
 _pc_running: dict[str, asyncio.Event] = {}
@@ -2252,7 +2254,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _del_acc = _account_cache.get(_del_acc_id)
                                             if not _del_acc:
                                                 continue
-                                            m_nos = product.market_product_nos or {}
+                                            m_nos = as_market_nos(
+                                                product.market_product_nos
+                                            )
                                             if _del_acc.market_type == "smartstore":
                                                 pno = m_nos.get(
                                                     f"{_del_acc_id}_origin", ""
@@ -2355,7 +2359,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                                                 product.registered_accounts or []
                                             )
                                             _orig_mnos = dict(
-                                                product.market_product_nos or {}
+                                                as_market_nos(
+                                                    product.market_product_nos
+                                                )
                                             )
                                             _new_reg = [
                                                 a
@@ -2489,7 +2495,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         continue
                                     # market_product_nos에 상품번호가 없는 계정은 스킵
                                     # (등록된 적 없는 계정에 신규 등록 시도하는 것은 오토튠 역할 아님)
-                                    _m_nos = product.market_product_nos or {}
+                                    _m_nos = as_market_nos(product.market_product_nos)
                                     _has_pno = bool(
                                         _m_nos.get(f"{acc_id}_origin")
                                         or _m_nos.get(acc_id)
@@ -2563,9 +2569,11 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         and _lot_verify_count < _lot_verify_cap
                                     ):
                                         _spd_no = str(
-                                            (product.market_product_nos or {}).get(
-                                                acc_id, ""
-                                            )
+                                            (
+                                                as_market_nos(
+                                                    product.market_product_nos
+                                                )
+                                            ).get(acc_id, "")
                                             or ""
                                         )
                                         _api_key_verify = (
@@ -3958,7 +3966,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 # commit 전에 필요 필드 스냅샷 추출 (dict 형태로 보관)
                                 _soldout_snaps: list[dict] = []
                                 for _p in _soldout_products:
-                                    _mnos_raw = _p.market_product_nos or {}
+                                    _mnos_raw = as_market_nos(_p.market_product_nos)
                                     _soldout_snaps.append(
                                         {
                                             "id": _p.id,
@@ -5064,7 +5072,7 @@ async def autotune_refresh_one(body: RefreshOneRequest):
             result = await session.execute(stmt)
             candidates = list(result.scalars().all())
             for c in candidates:
-                nos = c.market_product_nos or {}
+                nos = as_market_nos(c.market_product_nos)
                 if pno in str(nos.values()):
                     product = c
                     break
@@ -5177,7 +5185,7 @@ async def autotune_refresh_one(body: RefreshOneRequest):
             if r.changed and not r.error:
                 try:
                     _reg = product.registered_accounts or []
-                    _market_nos = product.market_product_nos or {}
+                    _market_nos = as_market_nos(product.market_product_nos)
                     if _reg and _market_nos and _market_nos not in ({}, "null"):
                         from backend.domain.samba.job.repository import (
                             SambaJobRepository,

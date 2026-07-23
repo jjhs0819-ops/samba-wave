@@ -13,6 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from backend.db.orm import get_read_session_dependency, get_write_session_dependency
 from backend.domain.samba.tenant.middleware import get_optional_tenant_id, require_admin
+from backend.api.v1.routers.samba.collector_common import as_market_nos
 
 router = APIRouter(prefix="/shipments", tags=["samba-shipments"])
 
@@ -796,7 +797,7 @@ async def cleanup_smartstore_orphans(
         # DB 상품 id → 매핑된 originProductNo (stale 판정용)
         db_origin_map: dict[str, dict] = {}
         for p in all_db_products:
-            nos = p.market_product_nos or {}
+            nos = as_market_nos(p.market_product_nos)
             origin_no_for_p: str = ""
             for k in (account.id, f"{account.id}_origin"):
                 v = nos.get(k)
@@ -1033,7 +1034,7 @@ async def cleanup_smartstore_orphans(
                 relink_result = await session.exec(relink_q)
                 for prod in relink_result.all():
                     r = relink_by_db_id[str(prod.id)]
-                    nos = dict(prod.market_product_nos or {})
+                    nos = dict(as_market_nos(prod.market_product_nos))
                     nos[f"{account.id}_origin"] = r["new_origin_no"]
                     # bare 키는 채널번호 우선 (등록 저장 포맷과 동일 — service.py 참조)
                     nos[account.id] = r["new_channel_no"] or r["new_origin_no"]
@@ -1062,7 +1063,7 @@ async def cleanup_smartstore_orphans(
                 )
                 clear_result = await session.exec(clear_q)
                 for prod in clear_result.all():
-                    nos = dict(prod.market_product_nos or {})
+                    nos = dict(as_market_nos(prod.market_product_nos))
                     changed = False
                     for k in (account.id, f"{account.id}_origin"):
                         if k in nos:
@@ -1487,7 +1488,7 @@ async def cleanup_elevenst_orphans(
 
         targets: list[dict] = []
         for p in products:
-            nos = p.market_product_nos or {}
+            nos = as_market_nos(p.market_product_nos)
             v = nos.get(account.id)
             prd_no = ""
             if isinstance(v, str):
@@ -1554,7 +1555,7 @@ async def cleanup_elevenst_orphans(
             clear_rows = (await session.execute(clear_q)).scalars().all()
             for prod in clear_rows:
                 changed = False
-                nos = dict(prod.market_product_nos or {})
+                nos = dict(as_market_nos(prod.market_product_nos))
                 for k in (account.id, f"{account.id}_origin"):
                     if k in nos:
                         nos.pop(k, None)
@@ -1693,7 +1694,7 @@ async def cleanup_elevenst_missing_prdno(
 
         targets: list[SambaCollectedProduct] = []
         for p in products:
-            nos = p.market_product_nos or {}
+            nos = as_market_nos(p.market_product_nos)
             v = nos.get(account.id)
             prd_no = ""
             if isinstance(v, str):
@@ -1762,7 +1763,7 @@ async def cleanup_elevenst_missing_prdno(
                     continue
 
                 # prdNo 일단 DB에 기록 (중단 시에도 다음 시도에 활용)
-                nos = dict(prod.market_product_nos or {})
+                nos = dict(as_market_nos(prod.market_product_nos))
                 nos[account.id] = prd_no
                 prod.market_product_nos = nos
                 flag_modified(prod, "market_product_nos")
@@ -1794,7 +1795,7 @@ async def cleanup_elevenst_missing_prdno(
                     continue
 
                 # 판매중지 성공 → DB 매핑 제거
-                nos2 = dict(prod.market_product_nos or {})
+                nos2 = dict(as_market_nos(prod.market_product_nos))
                 for k in (account.id, f"{account.id}_origin"):
                     nos2.pop(k, None)
                 prod.market_product_nos = nos2
@@ -1814,7 +1815,7 @@ async def cleanup_elevenst_missing_prdno(
                     prod = next((p for p in targets if p.id == pid), None)
                     if prod is None:
                         continue
-                    nos2 = dict(prod.market_product_nos or {})
+                    nos2 = dict(as_market_nos(prod.market_product_nos))
                     changed = False
                     for k in (account.id, f"{account.id}_origin"):
                         if k in nos2:
@@ -1967,7 +1968,7 @@ async def cleanup_coupang_orphans(
         account_db_spids: set[str] = set()
         db_spid_map: dict[str, dict] = {}  # spid → {db_id, name, ...}
         for p in all_db_products:
-            nos = p.market_product_nos or {}
+            nos = as_market_nos(p.market_product_nos)
             v = nos.get(account.id)
             spid = ""
             if isinstance(v, str):
@@ -2084,7 +2085,7 @@ async def cleanup_coupang_orphans(
                         SambaCollectedProduct.id.in_(db_ids_to_clear)
                     )
                     for prod in (await session.execute(clear_q)).scalars().all():
-                        nos = dict(prod.market_product_nos or {})
+                        nos = dict(as_market_nos(prod.market_product_nos))
                         changed = False
                         for k in (
                             account.id,
@@ -2190,7 +2191,7 @@ async def clear_coupang_stale_mapping(
         return {"ok": False, "cleared": False, "error": "상품 없음"}
 
     changed = False
-    nos = dict(prod.market_product_nos or {})
+    nos = dict(as_market_nos(prod.market_product_nos))
     for k in (
         account.id,
         f"{account.id}_pid",
@@ -2548,7 +2549,7 @@ async def cleanup_elevenst_orphans_v2(
                             SambaCollectedProduct.id.in_(db_ids_to_clear)
                         )
                         for prod in (await session.execute(clear_q)).scalars().all():
-                            nos = dict(prod.market_product_nos or {})
+                            nos = dict(as_market_nos(prod.market_product_nos))
                             changed = False
                             for k in (account.id, f"{account.id}_origin"):
                                 if k in nos:
@@ -2857,7 +2858,7 @@ async def cleanup_lotteon_orphans(
                             SambaCollectedProduct.id.in_(db_ids_to_clear)
                         )
                         for prod in (await session.execute(clear_q)).scalars().all():
-                            nos = dict(prod.market_product_nos or {})
+                            nos = dict(as_market_nos(prod.market_product_nos))
                             changed = False
                             for k in (account.id, f"{account.id}_origin"):
                                 if k in nos:

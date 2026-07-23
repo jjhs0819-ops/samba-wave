@@ -13,6 +13,7 @@ from typing import Any
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils import add_lazy_loading
 from backend.utils.logger import logger
+from backend.domain.samba.collector.model import as_market_nos
 
 # goods_no → {opt_name: item_no} 캐시 (프로세스 내 영구 유지, 재시작 시 1회만 API 조회)
 _item_no_cache: dict[str, dict[str, str]] = {}
@@ -203,7 +204,7 @@ async def _mark_reg_lost(product_id: str, account_id: str) -> None:
             )
             if row is None:
                 return
-            nos = dict(row.market_product_nos or {})
+            nos = dict(as_market_nos(row.market_product_nos))
             nos[f"{account_id}_reg_lost"] = datetime.now(tz=timezone.utc).isoformat()
             row.market_product_nos = nos
             s.add(row)
@@ -240,7 +241,7 @@ async def _clear_reg_lost(product_id: str, account_id: str) -> None:
             )
             if row is None:
                 return
-            nos = dict(row.market_product_nos or {})
+            nos = dict(as_market_nos(row.market_product_nos))
             if nos.pop(f"{account_id}_reg_lost", None) is not None:
                 row.market_product_nos = nos
                 s.add(row)
@@ -280,7 +281,7 @@ async def _persist_goods_no_immediately(
             )
             if row is None:
                 return
-            nos = dict(row.market_product_nos or {})
+            nos = dict(as_market_nos(row.market_product_nos))
             nos[account_id] = goods_no
             nos.pop(f"{account_id}_reg_lost", None)
             row.market_product_nos = nos
@@ -1180,7 +1181,7 @@ class LotteHomePlugin(MarketPlugin):
                     _r = await session.execute(_stmt)
                     _cp = _r.scalars().first()
                     if _cp and account:
-                        _nos = dict(_cp.market_product_nos or {})
+                        _nos = dict(as_market_nos(_cp.market_product_nos))
                         _nos[f"{account.id}_qa"] = "pending"
                         _cp.market_product_nos = _nos
                         session.add(_cp)
@@ -1371,7 +1372,7 @@ class LotteHomePlugin(MarketPlugin):
                         collected.registered_accounts = reg_accts
 
                     # market_product_nos 업데이트
-                    market_nos = dict(collected.market_product_nos or {})
+                    market_nos = dict(as_market_nos(collected.market_product_nos))
                     market_nos[account.id] = goods_no
                     market_nos.pop(f"{account.id}_reg_lost", None)  # 유실마커 해제
                     # skipMdApproval=True면 승인대기 마킹 생략

@@ -21,6 +21,7 @@ from sqlmodel import select
 
 from backend.db.orm import get_write_session
 from backend.shutdown_state import is_shutting_down
+from backend.domain.samba.collector.model import as_market_nos
 
 
 logger = logging.getLogger("backend.elevenst.ghost_reconciler")
@@ -128,7 +129,7 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
 
     targets: list[dict[str, Any]] = []
     for p in products:
-        nos = p.market_product_nos or {}
+        nos = as_market_nos(p.market_product_nos)
         v = nos.get(account_id)
         prd_no = ""
         if isinstance(v, str):
@@ -241,7 +242,7 @@ async def _auto_clean(
                 prod = await session.get(SambaCollectedProduct, pid)
                 if prod is None:
                     continue
-                nos = dict(prod.market_product_nos or {})
+                nos = dict(as_market_nos(prod.market_product_nos))
                 nos[account_id] = prd_no
                 prod.market_product_nos = nos
                 flag_modified(prod, "market_product_nos")
@@ -253,7 +254,7 @@ async def _auto_clean(
                 prod = await session.get(SambaCollectedProduct, pid)
                 if prod is None:
                     continue
-                nos2 = dict(prod.market_product_nos or {})
+                nos2 = dict(as_market_nos(prod.market_product_nos))
                 for k in (account_id, f"{account_id}_origin"):
                     nos2.pop(k, None)
                 prod.market_product_nos = nos2
@@ -286,7 +287,7 @@ async def _auto_clean(
                     prod = await session.get(SambaCollectedProduct, pid)
                     if prod is None:
                         continue
-                    nos2 = dict(prod.market_product_nos or {})
+                    nos2 = dict(as_market_nos(prod.market_product_nos))
                     changed = False
                     for k in (account_id, f"{account_id}_origin"):
                         if k in nos2:
