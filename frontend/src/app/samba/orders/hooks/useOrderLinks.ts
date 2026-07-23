@@ -7,16 +7,48 @@ import {
 } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
 
+// 스니덩크 컨디션(등급) → used 리스팅 필터 파라미터.
+// 실측값(2026-07-23, /v1/apparels/{id}/used?conditionIds=N 응답의 displayShortConditionTitle 확인).
+// 존재하지 않는 id를 넣으면 필터가 무시되고 전체 등급이 노출되므로 매칭 실패 시 변환하지 않는다.
+const SNKR_CONDITION_IDS: Array<[RegExp, number]> = [
+  [/^PSA\s*10\b/i, 22],
+  [/^PSA\s*9\b/i, 23],
+  [/^PSA\s*8/i, 24],
+  [/^BGS\s*10\s*BL/i, 25],
+  [/^BGS\s*10\s*GL/i, 26],
+  [/^BGS\s*9\.5/i, 27],
+  [/^ARS\s*10\s*\+/i, 29],
+  [/^ARS\s*10\b/i, 30],
+  [/^A$/i, 18],
+  [/^B$/i, 19],
+  [/^C$/i, 20],
+  [/^D$/i, 21],
+]
+
+// 스니덩크 상품 URL을 "주문 옵션 등급이 선택된 중고 리스팅" URL로 변환.
+// 예) https://snkrdunk.com/apparels/167350
+//   → https://snkrdunk.com/apparels/167350/used?conditionIds=23  (PSA 9 주문)
+const toSnkrdunkUsedUrl = (url: string, option?: string | null): string => {
+  const m = /^(https?:\/\/snkrdunk\.com(?:\/[a-z]{2})?\/apparels\/\d+)(?:\/used)?\/?(?:[?#].*)?$/i.exec(url)
+  if (!m) return url
+  const opt = (option || '').trim()
+  if (!opt) return url
+  const hit = SNKR_CONDITION_IDS.find(([re]) => re.test(opt))
+  if (!hit) return url
+  return `${m[1]}/used?conditionIds=${hit[1]}`
+}
+
 export function useOrderLinks(accounts: SambaMarketAccount[]) {
   const handleSourceLink = async (o: SambaOrder) => {
+    const open = (url: string) => window.open(toSnkrdunkUsedUrl(url, o.product_option), '_blank')
     // 1. source_url 우선 (구 LotteON productDetail.lotte 형식은 무효 — API 역추적으로 fallback)
     if (o.source_url && !o.source_url.includes('productDetail.lotte')) {
-      window.open(o.source_url, '_blank')
+      open(o.source_url)
       return
     }
     // 2. product_id가 URL이면 직접 열기
     if (o.product_id && o.product_id.startsWith('http')) {
-      window.open(o.product_id, '_blank')
+      open(o.product_id)
       return
     }
     // 3. 마켓 상품번호로 수집상품 역추적
@@ -26,7 +58,7 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
       try {
         const res = await collectorApi.lookupByMarketNo(o.product_id)
         if (res.found && res.original_link) {
-          window.open(res.original_link, '_blank')
+          open(res.original_link)
           return
         }
       } catch { /* ignore */ }
@@ -39,7 +71,7 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
         const cps = await collectorApi.getProductsByIds([o.collected_product_id])
         const cp = cps?.[0]
         if (cp?.source_url) {
-          window.open(cp.source_url, '_blank')
+          open(cp.source_url)
           return
         }
       } catch { /* ignore */ }
