@@ -8552,10 +8552,15 @@ async def sync_orders_from_markets(
                             if _dlvsn_list and isinstance(_pi, dict) and _no_key:
                                 # 단건 = 상품 1건 → DlvUnitSn 1개(첫 값) 사용
                                 _real_dsn = str(_dlvsn_list[0])
+                                # 옛 키 계산은 파서(_parse_lottehome_order)의 폴백 체인과
+                                # 반드시 동일해야 한다 — ProdSeq/ProdCode를 빼면 상품코드
+                                # 키로 저장된 옛 레코드가 삭제 대상에서 빠져 중복이 남음
                                 _cur_dsn = str(
                                     _pi.get("OrdDtlSn")
                                     or _pi.get("DlvUnitSn")
                                     or _pi.get("OrgOrdDtlSn")
+                                    or _pi.get("ProdSeq")
+                                    or _pi.get("ProdCode")
                                     or ""
                                 )
                                 if _real_dsn and _cur_dsn != _real_dsn:
