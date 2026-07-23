@@ -31,6 +31,8 @@ class OrderCreate(BaseModel):
 class OrderUpdate(BaseModel):
     order_number: Optional[str] = None
     ext_order_number: Optional[str] = None
+    # 주문화면 "주문번호" 표시 필드 — 상세순번 오저장 수동 보정용
+    shipment_id: Optional[str] = None
     channel_name: Optional[str] = None
     product_id: Optional[str] = None
     product_name: Optional[str] = None

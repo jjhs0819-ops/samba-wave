@@ -3364,7 +3364,12 @@ async def _lh_imps_with_dtl_sn_heal(
             try:
                 await svc.update_order(
                     order_id,
-                    {"order_number": corrected, "ext_order_number": corrected},
+                    {
+                        "order_number": corrected,
+                        "ext_order_number": corrected,
+                        # 주문화면 "주문번호" 표시가 shipment_id — 함께 보정
+                        "shipment_id": real_sn,
+                    },
                 )
                 logger.info(f"[롯데홈쇼핑] 상세순번 DB 보정 완료: {corrected}")
             except Exception as _ue:
@@ -8499,6 +8504,11 @@ async def sync_orders_from_markets(
                     "02": ("pending", "출하지시"),
                     "03": ("pending", "발송약정"),
                 }
+                # 실순번(DlvUnitSn) 미확보 주문은 이번 사이클에 등록하지 않는다.
+                # 추측 키(상품코드 등)로 먼저 저장하면 실순번 확보 시 키가 바뀌어
+                # 중복·취소불가([1000])의 근원이 됨 — 다음 동기화에서 실순번과 함께
+                # 등록된다 (동기화는 최근 구간을 반복 풀링하므로 누락 없음).
+                _lh_deferred = 0
                 for _lh_sel in ["01", "02", "03"]:
                     try:
                         _lh_orders = await lh_client.search_new_orders(
@@ -8517,6 +8527,12 @@ async def sync_orders_from_markets(
                             _no_key = str(ro.get("OrdNo", "") or "")
                             # deliver_list에서 수집한 DlvUnitSn 사용 → 키 일관성 유지
                             _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
+                            if not _dlvsn_list:
+                                if _lh_dlv_fetch_ok:
+                                    _lh_deferred += 1
+                                    continue
+                                # 배송조회 자체가 실패한 사이클이면 기존 폴백 유지
+                                # (전 주문 등록 지연 방지)
                             for _i, _prod in enumerate(_prod_info_raw):
                                 _flat = dict(ro)
                                 _flat["ProdInfo"] = (
@@ -8549,6 +8565,10 @@ async def sync_orders_from_markets(
                             _no_key = str(ro.get("OrdNo", "") or "")
                             _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
                             _pi = ro.get("ProdInfo")
+                            if not _dlvsn_list and _lh_dlv_fetch_ok:
+                                # 실순번 미확보 — 이번 사이클 등록 보류 (추측 키 금지)
+                                _lh_deferred += 1
+                                continue
                             if _dlvsn_list and isinstance(_pi, dict) and _no_key:
                                 # 단건 = 상품 1건 → DlvUnitSn 1개(첫 값) 사용
                                 _real_dsn = str(_dlvsn_list[0])
@@ -8580,6 +8600,12 @@ async def sync_orders_from_markets(
                                         ro, account["id"], label, _fs, _fss
                                     )
                                 )
+
+                if _lh_deferred:
+                    logger.info(
+                        f"[주문동기화] {label}: 실순번 미확보 신규주문 {_lh_deferred}건 등록 보류 "
+                        f"(다음 사이클에 실순번과 함께 등록)"
+                    )
 
                 # deliver_list 처리: 캐시 재사용 (API 이중 호출 없음).
                 # new_orders에서 이미 처리된 합배송 주문은 상태만 업데이트.
