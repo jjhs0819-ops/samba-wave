@@ -1101,7 +1101,9 @@ class SambaShipmentService:
                 # 가드 취지는 마켓 직접 등록 시 원본 이미지 노출 차단 — 플레이오토
                 # 단독 전송까지 막을 필요는 없다는 운영 판단(2026-07-23).
                 _tgt_types: set[str] = set()
-                if target_account_ids:
+                _tgt_ids = {str(a) for a in (target_account_ids or []) if a}
+                _resolved = 0
+                if _tgt_ids:
                     from sqlmodel import select as _ai_sel
 
                     from backend.domain.samba.account.model import (
@@ -1109,11 +1111,22 @@ class SambaShipmentService:
                     )
 
                     _ai_res = await self.session.execute(
-                        _ai_sel(_AI_SMA.market_type).where(
-                            _AI_SMA.id.in_(target_account_ids)
+                        _ai_sel(_AI_SMA.id, _AI_SMA.market_type).where(
+                            _AI_SMA.id.in_(_tgt_ids)
                         )
                     )
-                    _tgt_types = {str(t) for t in _ai_res.scalars().all()}
+                    _ai_rows = _ai_res.all()
+                    _resolved = len({str(r[0]) for r in _ai_rows})
+                    _tgt_types = {str(r[1]) for r in _ai_rows}
+                # 조회로 해석되지 않은 계정이 하나라도 있으면 차단한다.
+                # 삭제·비활성 등으로 행이 빠지면 남은 타입이 {playauto} 뿐이라
+                # 실제로는 다른 마켓이 섞인 전송인데 예외가 열린다(가드 무력화).
+                if _resolved != len(_tgt_ids):
+                    logger.warning(
+                        f"[전송] AI 가드 예외 판정 불가 — 계정 {len(_tgt_ids)}건 중 "
+                        f"{_resolved}건만 조회됨, 차단 유지: {product_id}"
+                    )
+                    _tgt_types = set()
                 if _tgt_types and _tgt_types <= {"playauto"}:
                     logger.info(
                         f"[전송] AI 변환 미완료지만 플레이오토 단독 전송 → 허용: "
