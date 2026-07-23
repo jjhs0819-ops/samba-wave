@@ -8812,9 +8812,15 @@ async def sync_orders_from_markets(
                             if _bf_cand and len(_bf_cand) == 1:
                                 await session.execute(
                                     _bf_text(
+                                        # COALESCE 는 SQL NULL 만 거른다 — 컬럼에 JSON
+                                        # 'null'(jsonb null)이 들어있으면 그대로 통과하고
+                                        # 'null'::jsonb || {obj} 가 배열([null,{...}])로
+                                        # 변해 dict 가정 코드가 전부 깨진다(실측 87건 오염).
+                                        # jsonb_typeof 로 object 인지까지 확인해야 안전.
                                         "UPDATE samba_collected_product SET "
                                         "market_product_nos = "
-                                        "COALESCE(market_product_nos,'{}'::jsonb) || "
+                                        "(CASE WHEN jsonb_typeof(market_product_nos) = 'object' "
+                                        "      THEN market_product_nos ELSE '{}'::jsonb END) || "
                                         "jsonb_build_object(CAST(:k AS text), "
                                         "to_jsonb(CAST(:v AS text))) WHERE id = :i"
                                     ),
