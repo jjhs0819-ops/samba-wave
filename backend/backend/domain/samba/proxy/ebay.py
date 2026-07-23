@@ -1122,16 +1122,22 @@ class EbayClient:
         except EbayApiError as e:
             if any(err.get("errorId") == 25002 for err in (e.errors or [])):
                 # "Offer entity already exists" — 기존 Offer 삭제 후 재시도
-                logger.info("[eBay] 기존 Offer 존재, 삭제 후 재생성")
+                # withdraw 는 라이브 리스팅을 종료시키므로 쓰지 않는다.
+                # 이미 있는 Offer 를 수정해서 재사용한다(2026-07-23 사고 방지).
+                logger.info("[eBay] 기존 Offer 존재 — 삭제 대신 재사용")
                 existing = await self._call(
                     "GET", "/sell/inventory/v1/offer", params={"sku": sku}
                 )
-                for old_offer in existing.get("offers", []):
-                    old_id = old_offer.get("offerId", "")
-                    if old_offer.get("status") == "PUBLISHED":
-                        await self.withdraw_offer(old_id)
-                    await self._call("DELETE", f"/sell/inventory/v1/offer/{old_id}")
-                offer_id = await self.create_offer(offer_data)
+                offers_ = existing.get("offers", []) or []
+                pub = next((o for o in offers_ if o.get("status") == "PUBLISHED"), None)
+                keep = pub or (offers_[0] if offers_ else None)
+                if not keep:
+                    raise
+                offer_id = keep.get("offerId", "")
+                try:
+                    await self.update_offer(offer_id, offer_data)
+                except Exception as ue:
+                    logger.warning("[eBay] 기존 Offer 수정 실패(그대로 사용): %s", ue)
             else:
                 raise
 
@@ -1208,6 +1214,22 @@ class EbayClient:
                         _offer_id_cache[sku] = offer_id
                         _evict_if_needed(_offer_id_cache)
             except Exception as e:
+                # [최우선] eBay 서버 일시오류(5xx/타임아웃)를 "Offer 없음"으로 오해하면
+                # 아래 폴백이 기존 라이브 Offer 를 withdraw(=리스팅 종료) 해버린다.
+                # 2026-07-23 사고: 조회 500 → 폴백 → 25002 → withdraw → publish 도 500
+                # → 리스팅은 종료되고 미게시 Offer 만 남아 "게시했는데 비활성" 발생.
+                _es = str(e).lower()
+                if (
+                    "500" in str(e)
+                    or "502" in str(e)
+                    or "503" in str(e)
+                    or "internal" in _es
+                    or "system error" in _es
+                    or "timeout" in _es
+                    or "timed out" in _es
+                ):
+                    logger.error("[eBay] Offer 조회 일시오류 — 폴백 금지, 중단: %s", e)
+                    raise
                 logger.warning("[eBay] Offer 조회 실패 (신규 등록으로 폴백): %s", e)
 
         # 재고수량이 1보다 크게 설정된 상품(stock_quantities)은 이미 팔린 수량을
@@ -1235,24 +1257,29 @@ class EbayClient:
                 return await self.create_offer(offer)
             except EbayApiError as ce:
                 if any(err.get("errorId") == 25002 for err in (ce.errors or [])):
-                    logger.info("[eBay] 폴백 중 기존 Offer 존재, 삭제 후 재생성")
+                    # [최우선] 예전에는 기존 Offer 를 withdraw + DELETE 하고 새로 만들었는데,
+                    # withdraw 는 라이브 리스팅을 즉시 종료시킨다. 뒤이은 publish 가 실패하면
+                    # 멀쩡히 팔리던 상품이 비활성으로 떨어진다(2026-07-23 사고).
+                    # 이미 있는 Offer 는 지우지 말고 그대로 수정해서 재사용한다.
+                    logger.info("[eBay] 폴백 중 기존 Offer 존재 — 삭제 대신 재사용")
                     existing = await self._call(
                         "GET", "/sell/inventory/v1/offer", params={"sku": sku_arg}
                     )
-                    for old_offer in existing.get("offers", []):
-                        old_id = old_offer.get("offerId", "")
-                        if old_offer.get("status") == "PUBLISHED":
-                            try:
-                                await self.withdraw_offer(old_id)
-                            except Exception:
-                                pass
-                        try:
-                            await self._call(
-                                "DELETE", f"/sell/inventory/v1/offer/{old_id}"
-                            )
-                        except Exception:
-                            pass
-                    return await self.create_offer(offer)
+                    offers_ = existing.get("offers", []) or []
+                    pub = next(
+                        (o for o in offers_ if o.get("status") == "PUBLISHED"), None
+                    )
+                    keep = pub or (offers_[0] if offers_ else None)
+                    if not keep:
+                        raise
+                    keep_id = keep.get("offerId", "")
+                    try:
+                        await self.update_offer(keep_id, offer)
+                    except Exception as ue:
+                        logger.warning(
+                            "[eBay] 기존 Offer 수정 실패(그대로 사용): %s", ue
+                        )
+                    return keep_id
                 raise
 
         # Offer 없으면 신규 등록으로 폴백

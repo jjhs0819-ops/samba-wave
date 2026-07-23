@@ -220,6 +220,9 @@ POLICY = {
     "forwarding_fee": 8000,  # 배대지비용 — 원
     "box_pack_margin_rate": 0,  # 박스/카드팩(PSA제외 실링) 원가 추가마진율(%) — 정책설정
     "non_card_margin_rate": 5,  # 나머지(신발/의류) 원가 추가마진율(%) — 정책설정, 하드코딩 금지
+    # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외. 로컬 봇의 25만엔 원칙.
+    # 초고가 카드(수백만엔)에 입찰이 걸리면 체결 시 그 값으로 소싱해야 해 치명적.
+    "max_cost_jpy": 250000,
 }
 
 
@@ -264,6 +267,9 @@ async def _load_policy() -> None:
                         ),
                         "non_card_margin_rate": k.get(
                             "kreamNonCardMarginRate", POLICY["non_card_margin_rate"]
+                        ),
+                        "max_cost_jpy": k.get(
+                            "kreamMaxCostJpy", POLICY["max_cost_jpy"]
                         ),
                     }
                 )
@@ -1410,6 +1416,10 @@ async def _process_shoe_asks(
             if price and not (5000 <= price <= 300000):
                 c["hold"] += 1
                 continue
+            # 입찰 최고 원가 초과 — 갱신 제외(체결 시 그 값으로 소싱해야 해 치명적)
+            if price > POLICY["max_cost_jpy"]:
+                c["overcost"] = c.get("overcost", 0) + 1
+                continue
             if stock <= 0 or price <= 0:
                 c["delete"] += 1
                 if _EXEC_SHOE:
@@ -1483,6 +1493,9 @@ async def _process_box_asks(
                     return ("hold", a, 0, False)  # API 실패 — 삭제금지
                 if box["stock"] == 0 or box["price"] <= 0:
                     return ("delete", a, 0, False)
+                # 입찰 최고 원가 초과 — 갱신 대상서 제외(로컬 25만엔 원칙). 삭제는 안 함.
+                if box["price"] > POLICY["max_cost_jpy"]:
+                    return ("overcost", a, 0, False)
                 cur = int(a.get("price") or 0)
                 act, target, adjusting, is_nc = _decide_price_action(
                     cur,
@@ -1516,7 +1529,9 @@ async def _process_box_asks(
             kind, a, target, is_nc = row[0], row[1], row[2], row[3]
             _bact = row[4] if len(row) > 4 else ""
             _bjpy = row[5] if len(row) > 5 else 0
-            if kind == "nocost":
+            if kind == "overcost":
+                c["overcost"] = c.get("overcost", 0) + 1
+            elif kind == "nocost":
                 c["nocost"] += 1
             elif kind == "hold":
                 c["hold"] += 1
@@ -1686,6 +1701,23 @@ async def run_kream_unified_once() -> dict:
                 stock = int(d.get("stock") or 0)
                 ask = ask_index.get((kid, nm))
                 has_ask = ask is not None
+                # 입찰 최고 원가 초과 — 갱신·리스톡 모두 제외(로컬 25만엔 원칙).
+                # 체결되면 그 원가로 소싱해야 해 초고가 카드는 애초에 다루지 않는다.
+                if price > POLICY["max_cost_jpy"]:
+                    r["rows"].append(
+                        (
+                            "overcost",
+                            "원가상한초과",
+                            kid,
+                            nm,
+                            0,
+                            0,
+                            False,
+                            prod["name"],
+                            False,
+                        )
+                    )
+                    continue
                 if has_ask and stock > 0 and price > 0:
                     cur = int(ask.get("price") or 0)
                     low_over = int(ask.get("lowest_overseas_price") or 0)
@@ -1788,7 +1820,9 @@ async def run_kream_unified_once() -> dict:
         for kind, act, kid, nm, cur, target, adjusting, pname, is_nc in res["rows"]:
             counts["options"] += 1
             acts[act] += 1
-            if kind == "renew":
+            if kind == "overcost":
+                counts["overcost"] = counts.get("overcost", 0) + 1
+            elif kind == "renew":
                 counts["renew"] += 1
                 if act == "무경쟁인상(쿨다운보류)":
                     counts["cd_blocked"] += 1
@@ -1995,7 +2029,7 @@ async def run_kream_unified_once() -> dict:
         "",
         f"[통합] 사이클 완료({'실행ON' if _EXECUTE else '섀도'}) — 카드{counts['cards']:,} "
         f"/ 갱신{counts['renew']:,} 리스톡가능{rs['ok']:,}(보류 {counts['restock'] - rs['ok']:,}) "
-        f"삭제{counts['delete']:,} / 실행 갱신{exec_patch:,} 등록{exec_post:,} 삭제{exec_del:,} "
+        f"삭제{counts['delete']:,} 원가상한초과{counts.get('overcost', 0):,} / 실행 갱신{exec_patch:,} 등록{exec_post:,} 삭제{exec_del:,} "
         f"복귀{exec_revert:,} 실패{exec_fail:,} (리스톡탐색 {min(_unified_offset, rest_total):,}/{rest_total:,})",
     )
     await _flush_logs_to_db()

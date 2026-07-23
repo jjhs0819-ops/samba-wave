@@ -141,6 +141,7 @@ interface MarketPolicyForm {
   kreamForwardingFee?: number         // 배대지비용(원)
   kreamBoxPackMarginRate?: number     // 박스/카드팩(PSA제외 실링) 원가 추가마진율 (%)
   kreamNonCardMarginRate?: number     // 나머지(신발/의류 등) 원가 추가마진율 (%)
+  kreamMaxCostJpy?: number            // 입찰 최고 원가 (엔) — 초과 상품은 갱신·리스톡 제외
   kreamOverseasBaseFee?: number       // 해외판매 기본수수료 (원) — 정산 차감
   kreamOverseasFeeRate?: number       // 해외판매 수수료율 (%) — 판매가 대비, 정산 차감
   // 이베이 전용
@@ -1619,6 +1620,11 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>무경쟁 최소마진율</span>
                     <NumInput value={mp.kreamNoCompetitionMarginRate ?? 40} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamNoCompetitionMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>1순위·경쟁 없을 때 원가 대비 배수(예: 40 → 원가×1.4)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>입찰 최고 원가</span>
+                    <NumInput value={mp.kreamMaxCostJpy ?? 250000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamMaxCostJpy: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="엔" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이 원가를 넘는 상품은 갱신·리스톡 모두 제외(체결 시 그 값으로 소싱해야 하므로)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>박스/카드팩 추가마진율</span>

@@ -351,8 +351,36 @@ class EbayPlugin(MarketPlugin):
             if raw and isinstance(raw, dict):
                 settings_creds = raw
 
-        fulfillment_policy_id = extras.get("fulfillmentPolicyId") or settings_creds.get(
-            "fulfillmentPolicyId", ""
+        # 상품 정책이 배송정책을 지정했는지 먼저 확인 (굿즈 = 대형 배송정책)
+        ebay_policy_fulfillment_id = ""
+        _pol_id = (
+            product.get("applied_policy_id") if isinstance(product, dict) else None
+        )
+        if _pol_id and session:
+            try:
+                from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+                _pol = await SambaPolicyRepository(session).get_async(_pol_id)
+                if _pol and _pol.market_policies:
+                    ebay_policy_fulfillment_id = str(
+                        (_pol.market_policies.get("eBay") or {}).get(
+                            "fulfillmentPolicyId", ""
+                        )
+                        or ""
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[eBay] 정책 배송정책 조회 실패(계정 기본값 사용): %s", e
+                )
+
+        # [중요] 배송정책은 상품 정책(samba_policy.market_policies.eBay.fulfillmentPolicyId)이
+        # 있으면 그것을 먼저 쓴다. 계정 기본값만 쓰면 부피 큰 굿즈(응원봉 등)에도 카드용
+        # 저가 배송정책이 붙어 배송비 적자가 난다. 또 상품을 수정할 때마다 계정 기본값으로
+        # 되돌아가 수동으로 바꿔둔 정책이 지워진다(2026-07-23 페루 응원봉 건).
+        fulfillment_policy_id = (
+            ebay_policy_fulfillment_id
+            or extras.get("fulfillmentPolicyId")
+            or settings_creds.get("fulfillmentPolicyId", "")
         )
         payment_policy_id = extras.get("paymentPolicyId") or settings_creds.get(
             "paymentPolicyId", ""
