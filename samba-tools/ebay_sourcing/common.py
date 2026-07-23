@@ -121,3 +121,18 @@ class Whale:
 def img_url(template, cnt=1, res=800):
     """번장 imageUrl 템플릿({cnt}/{res}) → 실제 URL."""
     return template.replace("{cnt}", str(cnt)).replace("{res}", str(res))
+
+
+# 크림 구매 부대비용 — 표시가 외에 배송비 + 구매수수료가 실제로 나간다.
+# 이걸 빼고 표시가만 원가로 잡으면 판매가가 그만큼 덜 붙어 마진이 깎인다.
+# (2026-07-23 확인: BTS 응원봉 ₩77,000 표시가로 등록 → 실매입 ₩84,541)
+KREAM_SHIPPING_FEE = 5000  # 건당 배송비
+KREAM_FEE_RATE = 0.033  # 구매금액 대비 수수료 3.3%
+
+
+def kream_real_cost(display_price) -> float:
+    """크림 표시가 → 실제 매입원가(배송비 + 수수료 포함)."""
+    p = float(display_price or 0)
+    if p <= 0:
+        return 0.0
+    return round(p + KREAM_SHIPPING_FEE + p * KREAM_FEE_RATE)

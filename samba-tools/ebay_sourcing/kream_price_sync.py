@@ -80,7 +80,11 @@ async def main():
                 if not new_cost:
                     print(f"  {p.name_en[:35]} | KREAM 품절/무가격 → 판매중지 필요(수동확인)")
                     continue
+                # [중요] 크림 표시가는 매입 실비가 아니다. 배송비 5,000원 + 수수료 3.3%가
+                # 별도로 나가므로 이걸 더해야 진짜 원가다(common.py::kream_real_cost 와 동일 규칙).
+                # 안 더하면 판매가가 그만큼 덜 붙어 마진이 깎인다(2026-07-23 응원봉 건).
                 new_cost = float(new_cost)
+                new_cost = round(new_cost + 5000 + new_cost * 0.033)
                 delta = new_cost - old_cost
                 if abs(delta) < min_delta:
                     print(f"  {p.name_en[:35]} | 변동없음 (₩{int(old_cost):,})")
@@ -95,8 +99,19 @@ async def main():
                 print(f"  {p.name_en[:35]} | ₩{int(old_cost):,} → ₩{int(new_cost):,} ({'+' if delta>0 else ''}{int(delta):,}) cat={cat}{' [DRY]' if dry else ''}")
                 if dry:
                     continue
+                # [중요] sale_price 에 원가를 그대로 넣으면 원가판매(=적자)가 된다.
+                # 반드시 적용정책 기준 판매가로 계산할 것(2026-07-22 전 리스팅 적자 사고).
+                import json as _json
+
+                from backend.domain.samba.shipment.service import calc_market_price
+
+                _pr, _mp = (await s.execute(
+                    t("SELECT pricing, market_policies FROM samba_policy WHERE id=:i"),
+                    {"i": p.applied_policy_id})).first()
+                _pr = _pr if isinstance(_pr, dict) else _json.loads(_pr or "{}")
+                _mp = _mp if isinstance(_mp, dict) else _json.loads(_mp or "{}")
                 p.cost = new_cost
-                p.sale_price = new_cost
+                p.sale_price = float(calc_market_price(new_cost, _pr, "ebay", _mp) or new_cost)
                 p.original_price = new_cost
                 s.add(p)
                 await s.flush()

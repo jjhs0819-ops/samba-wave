@@ -74,8 +74,13 @@ async def main():
                 cost = o.get(price_key) or o.get("lowest_normal_price") or o.get("lowest_100_price")
                 if cost:
                     break
+            # [중요] 크림 표시가에는 배송비 5,000원 + 구매수수료 3.3%가 빠져 있다.
+            # 실매입가로 보정해야 판매가에 마진이 제대로 붙는다(common.py::kream_real_cost).
+            # --cost 로 직접 넣은 값은 이미 실매입가이므로 보정하지 않는다.
             if cost_override:
                 cost = float(cost_override)
+            elif cost:
+                cost = round(float(cost) + 5000 + float(cost) * 0.033)
             style = body.get("model_number") if body.get("model_number") not in ("-", "", None) else None
             print(f"KREAM: {name_en} | 원가={cost} | img={'Y' if img_url else 'N'} | style={style}")
             if not (name_en and img_url and cost):
