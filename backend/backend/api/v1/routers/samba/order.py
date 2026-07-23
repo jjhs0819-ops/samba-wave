@@ -7683,17 +7683,14 @@ async def sync_orders_from_markets(
                             ),
                             {"pid": _sku},
                         )
-                        try:
-                            _offers = await ebay_client.get_offers_by_sku(_sku)
-                            for _off in _offers:
-                                await ebay_client.withdraw_offer(_off["offerId"])
-                            logger.info(
-                                f"[오버셀방지] {_sku} 판매 감지 → sold_out 처리 + eBay 재고 내림"
-                            )
-                        except Exception as _e:
-                            logger.warning(
-                                f"[오버셀방지] {_sku} eBay 재고 내림 실패: {_e}"
-                            )
+                        # [최우선] 예전엔 여기서 withdraw_offer 로 리스팅을 내렸는데,
+                        # eBay 는 팔리면 재고가 자동으로 줄어 0 이 되면 스스로 리스팅을
+                        # 내린다. 우리가 또 내릴 이유가 없다.
+                        # 오히려 재고를 다시 채워 되살려 놓으면, 주문동기화가 돌 때마다
+                        # 같은 옛 주문을 보고 계속 다시 내려버린다
+                        # (2026-07-23 메가앱솔이 살릴 때마다 몇 분 뒤 비활성으로 반복).
+                        # DB sale_status 만 sold_out 으로 표시하고 마켓은 건드리지 않는다.
+                        logger.info(f"[오버셀방지] {_sku} 판매 감지 → sold_out 표시")
                     except Exception as _e:
                         logger.warning(f"[오버셀방지] {_sku} 처리 실패: {_e}")
             # (dead code 제거: 두 번째 롯데ON 블록 → 첫 번째에 병합 완료)

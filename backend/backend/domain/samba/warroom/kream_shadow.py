@@ -508,6 +508,28 @@ def _note_fail(reason: str) -> None:
     _fail_reasons[reason] = _fail_reasons.get(reason, 0) + 1
 
 
+# 입찰제한 보정 사이클 상한 — 대량 오조정 방지(로컬 _hb_clamp 와 동일 취지)
+_hb_clamp = {"used": 0, "cap": 20}
+# (kid, opt) → 마진 하한. 순위교정 시 이 아래로는 절대 안 내린다.
+_floor_map: dict = {}
+# 순위교정(rank>=2 → 1,000원 인하) 사이클 상한
+_rank_fix = {"used": 0, "cap": 300}
+
+
+async def _fetch_highest_bid(cli, h, pid: str, opt: str) -> int:
+    """옵션별 최고구매입찰가 — 크림 판매입찰가는 이 값 이상이어야 등록/수정된다."""
+    try:
+        r = await cli.get(f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
+        if r.status_code != 200:
+            return 0
+        for o in (r.json() or {}).get("options") or []:
+            if str(o.get("name") or "") == opt:
+                return int(o.get("highest_bid") or 0)
+    except Exception:
+        pass
+    return 0
+
+
 async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> tuple:
     """실제 PATCH 실행(가격조정) — 응답 live_rank 검증 [Phase4c]. _EXECUTE=1 일 때만 호출.
     무경쟁 인상인데 rank!=1(밀림)이면 원가로 복귀 + 24h 쿨다운 기록(재스윙 방지)."""
@@ -520,9 +542,51 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
         if r.status_code not in (200, 201):
             # 사유 기록 — 그동안 실패 건수만 보이고 원인을 몰라 대응이 불가했다.
             _body = " ".join((r.text or "")[:120].split())
+            # 입찰제한(최근 거래가 확인 필요) → 최고구매입찰가로 1회 보정 재시도.
+            # 크림은 판매입찰가가 highest_bid 미만이면 거절한다(로컬 봇과 동일 대응).
+            if ("거래가" in _body or "입찰제한" in _body) and _hb_clamp[
+                "used"
+            ] < _hb_clamp["cap"]:
+                hb = await _fetch_highest_bid(cli, h, pid, opt)
+                if hb > 0 and hb != int(target):
+                    _hb_clamp["used"] += 1
+                    hb = int(hb) // 1000 * 1000
+                    r2 = await cli.patch(
+                        f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
+                        headers=h,
+                        json={"price": int(hb)},
+                    )
+                    if r2.status_code in (200, 201):
+                        return "ok", (r2.json() or {}).get("live_rank")
+                    _note_fail(
+                        f"HTTP {r2.status_code}(최고입찰가보정): "
+                        + " ".join((r2.text or "")[:80].split())
+                    )
+                    return "fail", None
             _note_fail(f"HTTP {r.status_code}: {_body}")
             return "fail", None
         rank = (r.json() or {}).get("live_rank")
+        # ── 순위 교정 [2026-07-23] — 공식 API의 lowest_* 가 우리 가격만 되비추는 사례가
+        # 확인돼(659534: 상대 842,000 존재하나 API 최저가는 우리 843,000) 시세 기준만으론
+        # 열세를 감지할 수 없다. PATCH 응답의 live_rank 는 정확하므로 이걸로 교정한다.
+        # 마진 하한 미만으론 절대 안 내림 — 하한이면 2등을 수용(동률·마진제약 케이스).
+        if (
+            not is_nocomp
+            and rank is not None
+            and int(rank) >= 2
+            and _rank_fix["used"] < _rank_fix["cap"]
+        ):
+            _floor = int(_floor_map.get((str(pid), str(opt)), 0) or 0)
+            _new = int(target) - 1000
+            if _new > 0 and _floor > 0 and _new >= _floor:
+                _rank_fix["used"] += 1
+                r3 = await cli.patch(
+                    f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
+                    headers=h,
+                    json={"price": _new},
+                )
+                if r3.status_code in (200, 201):
+                    return "ok", (r3.json() or {}).get("live_rank")
         if is_nocomp and rank is not None and rank != 1:
             await cli.patch(
                 f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
@@ -1101,8 +1165,27 @@ def _decide_price_action(
         target = max(target, int(cur * (1 - _DROP_CAP)))
     if adjusting and market_low > 0 and target < market_low * _ANOMALY_FLOOR:
         act, target, adjusting = "이상감지차단", cur, False
-    # ── 데드밴드 — 미세 조정 생략(헛조정·API 소음 차단). 마진 하한 미달 복구는 예외.
-    if adjusting and target != cur and cur > 0 and cur >= min_price:
+    # ── 천원 단위 정규화 [필수] — 크림은 1,000원 단위만 허용("천원 단위로 입력하세요" 400).
+    # 시장최저(-1000/-5000)·하향캡(cur×0.8)·지정가 경로에서 비(非)천원 값이 나와 PATCH가
+    # 대량 실패하고 있었다. 절사 후 마진 하한 아래로 내려가면 하한으로 되올린다.
+    if adjusting and target > 0:
+        target = int(target) // 1000 * 1000
+        if target < min_price:
+            target = int(min_price) // 1000 * 1000
+        if target == cur:
+            adjusting = False
+    # ── 데드밴드 — 미세 조정 생략(헛조정·API 소음 차단).
+    # 예외 1) 마진 하한 미달 복구(손실 방지)
+    # 예외 2) 1순위 획득 조정 — 크림은 1,000원 차이로 순위가 갈리므로 금액이 작아도
+    #        실행해야 한다. 데드밴드를 여기까지 적용했더니 1,018건이 경쟁에서 이탈했다.
+    _gains_rank1 = market_low > 0 and 0 < target <= market_low and not rank1
+    if (
+        adjusting
+        and target != cur
+        and cur > 0
+        and cur >= min_price
+        and not _gains_rank1
+    ):
         _db = float(POLICY.get("adjust_deadband_pct") or 0)
         if _db > 0 and abs(target - cur) < max(cur * _db / 100, 1000):
             act, target, adjusting = "데드밴드생략", cur, False
@@ -1455,6 +1538,7 @@ async def _process_shoe_asks(
                 continue
             c["stock"] += 1
             cur = int(a.get("price") or 0)
+            _floor_map[(kid, opt)] = calc_min_price(price, rate, True, False, _sur)
             act, target, adjusting, is_nc = _decide_price_action(
                 cur,
                 opt,
@@ -1521,6 +1605,9 @@ async def _process_box_asks(
                 if box["price"] > POLICY["max_cost_jpy"]:
                     return ("overcost", a, 0, False)
                 cur = int(a.get("price") or 0)
+                _floor_map[(kid, "해외배송")] = calc_min_price(
+                    box["price"], rate, True, False
+                )
                 act, target, adjusting, is_nc = _decide_price_action(
                     cur,
                     "해외배송",
@@ -1619,6 +1706,9 @@ async def run_kream_unified_once() -> dict:
 
     await _load_policy()
     _fail_reasons.clear()  # 사이클 단위 실패사유 집계
+    _hb_clamp["used"] = 0  # 입찰제한 보정 상한 리셋
+    _rank_fix["used"] = 0  # 순위교정 상한 리셋
+    _floor_map.clear()
     cooldown = await _load_cooldown()
     rate = await _jpy_krw_rate()
     tariff_threshold = int(150 * await _usd_krw_rate())
@@ -1747,6 +1837,10 @@ async def run_kream_unified_once() -> dict:
                     cur = int(ask.get("price") or 0)
                     low_over = int(ask.get("lowest_overseas_price") or 0)
                     low_norm = int(ask.get("lowest_normal_price") or 0)
+                    # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
+                    _floor_map[(kid, nm)] = calc_min_price(
+                        price, rate, False, nm.upper().startswith("PSA")
+                    )
                     act, target, adjusting, is_nc = _decide_price_action(
                         cur,
                         nm,

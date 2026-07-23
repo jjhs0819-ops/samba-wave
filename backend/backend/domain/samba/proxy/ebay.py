@@ -1232,11 +1232,32 @@ class EbayClient:
                     raise
                 logger.warning("[eBay] Offer 조회 실패 (신규 등록으로 폴백): %s", e)
 
-        # 재고수량이 1보다 크게 설정된 상품(stock_quantities)은 이미 팔린 수량을
+        # [최우선] 이미 살아있는 Offer 를 수정할 때는 재고를 건드리지 않는다.
+        # eBay 는 취소·환불해도 soldQuantity 를 되돌리지 않아서, DB 값을 그대로 밀면
+        # "DB수량 − 누적판매" 가 0 이 되어 한 번 팔릴 때마다 리스팅이 비활성으로 떨어진다.
+        # 판매자가 셀러센터에서 수량을 올려도 다음 전송에 도로 0 이 됐다(2026-07-23 냐옹·앱솔).
+        # 재고는 eBay 를 정답으로 보고, DB 는 sync_stock_from_ebay.py 가 따라오게 한다.
+        if _live_offer is None:
+            try:
+                _fresh = await self.get_offers_by_sku(sku)
+                _live_offer = _fresh[0] if _fresh else None
+            except Exception:
+                _live_offer = None
+        if _live_offer is not None:
+            offer_data["availableQuantity"] = int(
+                _live_offer.get("availableQuantity", 0) or 0
+            )
+            logger.info(
+                "[eBay] 기존 리스팅 재고 유지: sku=%s qty=%s",
+                sku,
+                offer_data["availableQuantity"],
+            )
+
+        # (신규 등록 경로) 재고수량이 1보다 크게 설정된 상품은 이미 팔린 수량을
         # 반영해야 함 — 그대로 밀어넣으면 매 동기화마다 판매분이 복구되는 오버셀 재발.
         # (2026-07-14 사용자 확인 질문으로 발견)
         _configured_qty = int(offer_data.get("availableQuantity", 1) or 1)
-        if _configured_qty > 1:
+        if _live_offer is None and _configured_qty > 1:
             try:
                 if _live_offer is None:
                     _fresh = await self.get_offers_by_sku(sku)
