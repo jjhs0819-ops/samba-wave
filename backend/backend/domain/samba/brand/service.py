@@ -80,12 +80,16 @@ class BrandGuardService:
         # 적재된다. 테넌트 지정 행은 그 위에 얹는 예외로 취급한다.
         # (이 합집합을 빼먹으면 계정 tenant 로만 조회돼 전역 엑셀 목록이 통째로
         #  안 보인다 — 실측으로 휠라·라코스테가 전부 통과했다.)
+        # tenant_id 가 없으면 전역 행만 본다. 필터를 통째로 빼면 **다른 테넌트의
+        # 예외 행까지 읽어** 남의 판정이 이 계정에 적용된다(테넌트 격리 위반).
         stmt = select(SambaBrandRestriction)
         if tenant_id is not None:
             stmt = stmt.where(
                 (SambaBrandRestriction.tenant_id == tenant_id)
                 | (SambaBrandRestriction.tenant_id.is_(None))
             )
+        else:
+            stmt = stmt.where(SambaBrandRestriction.tenant_id.is_(None))
         rows = list((await self.session.execute(stmt)).scalars().all())
         # 전역 → 테넌트 순으로 처리해 테넌트 예외가 나중에 덮어쓰게 한다
         rows.sort(key=lambda r: (r.tenant_id is not None,))

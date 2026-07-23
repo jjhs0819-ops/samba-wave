@@ -413,21 +413,28 @@ _SOURCING_CDN_HOSTS: tuple[str, ...] = (
     "musinsa.com",  # 무신사
     "msscdn.net",
     "elandrs.com",  # 이랜드
-    "akamaized.net",  # 소싱처 공용 가속 CDN
 )
+# akamaized.net(공용 가속 CDN)은 넣지 않는다 — 브랜드 자사몰도 같은 CDN을 쓰므로
+# 화이트리스트에 두면 정작 걸러야 할 브랜드 홍보물이 통과한다. 수집분 실측
+# (2026-07-23, samba_collected_product.detail_images) 결과 akamaized 호스트를 쓰는
+# 상품은 0건이라 제외해도 걸러지는 소싱처 이미지가 없다.
 
 
 def _is_sourcing_cdn(url: str) -> bool:
-    """소싱처 자체 CDN 이미지인지 (호스트 기준)."""
+    """소싱처 자체 CDN 이미지인지 (호스트 기준).
+
+    정확일치 또는 서브도메인만 인정한다. 부분문자열 매칭(`d in host`)은
+    `ssg.com.brand-cdn.example` 같은 무관한 호스트를 소싱처로 오인해 통과시킨다.
+    """
     try:
         host = urlparse(url).netloc.lower()
     except Exception:
         return False
+    # 포트·userinfo 제거 (netloc 은 'host:443' / 'user@host' 형태일 수 있다)
+    host = host.rsplit("@", 1)[-1].split(":", 1)[0]
     if not host:
         return False
-    return any(
-        host == d or host.endswith("." + d) or d in host for d in _SOURCING_CDN_HOSTS
-    )
+    return any(host == d or host.endswith("." + d) for d in _SOURCING_CDN_HOSTS)
 
 
 def _drop_brand_host_images(urls: list[str]) -> tuple[list[str], int]:
