@@ -1929,6 +1929,35 @@ class JobWorker:
                 f"{job.id} — {_pf_err}"
             )
 
+        # 롯데홈 유령 재연결 가드 — 매핑 없는 상품을 신규등록하기 전에 판매진행
+        # 리스팅을 재연결해 중복 리스팅 생성을 예방. 마켓에 이미 중복(2개+)인
+        # 상품은 신규등록 시 3개째가 되므로 잡에서 제외한다. 실패는 fail-open.
+        try:
+            from backend.domain.samba.shipment.lottehome_reconnect import (
+                reconnect_before_transmit,
+            )
+
+            _rc = await reconnect_before_transmit(product_ids, target_account_ids)
+            if _rc.get("reconnected"):
+                _add_job_log(
+                    job.id,
+                    f"롯데홈 재연결 가드: 기존 판매진행 리스팅 재연결 "
+                    f"{_rc['reconnected']:,}건 (신규등록 대신 수정 전송)",
+                )
+            if _rc.get("blocked"):
+                _rc_blocked = set(_rc["blocked"])
+                product_ids = [p for p in product_ids if p not in _rc_blocked]
+                _add_job_log(
+                    job.id,
+                    f"롯데홈 재연결 가드: 마켓 중복 리스팅 의심 {len(_rc_blocked):,}건 "
+                    f"전송 제외 (수동 정리 필요 — 전송 시 중복이 늘어남)",
+                )
+        except Exception as _rc_err:
+            logger.warning(
+                f"[잡워커] 롯데홈 재연결 가드 실패(무시, 일반 경로 진행): "
+                f"{job.id} — {_rc_err}"
+            )
+
         total = len(product_ids)
 
         # 이어하기: 이전 진행 위치를 먼저 읽은 후 진행률 갱신

@@ -1325,6 +1325,146 @@ async def backfill_lottehome_goodsno(
     }
 
 
+class LottehomeStopSaleRequest(BaseModel):
+    account_id: str
+    goods_nos: list[str]
+    sale_stat_cd: str = "20"  # 20=품절(가역), 30=영구중단
+    dry_run: bool = True
+
+
+@router.post("/lottehome/stop-sale-listings")
+async def stop_sale_lottehome_listings(
+    body: LottehomeStopSaleRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """롯데홈 리스팅 일괄 판매중지 — 파트너오피스 대조로 확정한 중복/고아 정리용.
+
+    searchStockList 는 판매중 전량의 부분집합(ghost_reconciler 참조)이라 서버가
+    덤프만으로 중복/고아를 자동 판정하면 오탐 위험이 있다. 그래서 파트너오피스
+    판매중 목록(유일 신뢰 소스)과 DB 를 대조해 확정한 goods_no 목록을 명시적으로
+    받는다 (실측 2026-07-23: 에잇세컨즈 중복 리스팅 677건 + 고아 55건).
+
+    안전장치:
+    - DB에 매핑된 goods_no(삼바가 관리 중인 리스팅)는 무조건 제외(protected)
+    - 요청당 최대 200건 — 콘솔에서 배치 순차 호출(게이트웨이 타임아웃 회피)
+    - dry_run=true(기본)면 분류만 반환, 마켓 호출 없음
+    - 기본 sale_stat_cd=20(품절, 가역) — 30(영구중단)은 명시 시에만
+    """
+    from backend.domain.samba.proxy.lottehome_ghost_reconciler import (
+        _fetch_db_mapping,
+        _get_client_for,
+    )
+
+    if body.sale_stat_cd not in ("20", "30"):
+        raise HTTPException(400, "sale_stat_cd 는 20(품절) 또는 30(영구중단)만 허용")
+    # 중복 제거 + 숫자만 (순서 유지)
+    goods_nos: list[str] = []
+    _seen: set[str] = set()
+    for g in body.goods_nos:
+        g = str(g).strip()
+        if g and g.isdigit() and g not in _seen:
+            _seen.add(g)
+            goods_nos.append(g)
+    if not goods_nos:
+        raise HTTPException(400, "유효한 goods_no 가 없습니다")
+    if len(goods_nos) > 200:
+        raise HTTPException(400, "요청당 최대 200건 — 나눠서 호출하세요")
+
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == body.account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type != "lottehome":
+        raise HTTPException(
+            status_code=400, detail=f"롯데홈 계정이 아닙니다: {acc.market_type}"
+        )
+    tenant_id = acc.tenant_id
+
+    # 보호셋: 삼바가 관리하는(매핑된) goods_no 는 절대 중지하지 않는다
+    db_gnos, _ = await _fetch_db_mapping(body.account_id)
+    protected = [g for g in goods_nos if g in db_gnos]
+    targets = [g for g in goods_nos if g not in db_gnos]
+
+    if body.dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "requested": len(goods_nos),
+            "protected": protected,
+            "targets": len(targets),
+            "sale_stat_cd": body.sale_stat_cd,
+        }
+
+    client = await _get_client_for(tenant_id)
+    if client is None:
+        raise HTTPException(status_code=400, detail="lottehome_credentials 없음")
+
+    # 마켓 호출 동안 세션이 idle-in-tx 로 커넥션 물지 않도록 먼저 종료
+    await session.commit()
+
+    stopped = 0
+    failed: list[dict[str, str]] = []
+    for g in targets:
+        try:
+            await client.update_sale_status(g, body.sale_stat_cd)
+            stopped += 1
+        except Exception as e:
+            msg = str(e)
+            # 이미 영구중단(0011)은 원하는 상태 → 성공 취급
+            if body.sale_stat_cd == "30" and ("0011" in msg or "영구중단" in msg):
+                stopped += 1
+            else:
+                failed.append({"goods_no": g, "error": msg[:200]})
+        await asyncio.sleep(0.3)
+
+    try:
+        from backend.domain.samba.warroom.model import SambaMonitorEvent
+
+        session.add(
+            SambaMonitorEvent(
+                event_type="lottehome_stop_sale_listings",
+                severity="warning",
+                market_type="lottehome",
+                summary=(
+                    f"롯데홈 리스팅 일괄 판매중지({body.sale_stat_cd}) "
+                    f"{stopped}건 (실패 {len(failed)}건, 보호 {len(protected)}건)"
+                ),
+                detail={
+                    "account_id": body.account_id,
+                    "sale_stat_cd": body.sale_stat_cd,
+                    "requested": len(goods_nos),
+                    "stopped": stopped,
+                    "protected": protected[:50],
+                    "failed": failed[:50],
+                },
+            )
+        )
+        await session.commit()
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "dry_run": False,
+        "requested": len(goods_nos),
+        "protected": protected,
+        "stopped": stopped,
+        "failed": failed,
+        "sale_stat_cd": body.sale_stat_cd,
+    }
+
+
 @router.get("/ghost-summary")
 async def ghost_summary(
     hours: int = Query(48, ge=1, le=720, description="최근 N시간 내 이벤트 집계"),
