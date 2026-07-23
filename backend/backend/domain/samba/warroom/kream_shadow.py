@@ -35,6 +35,8 @@ _COOLDOWN_TTL = 86400  # 24h — 무경쟁 인상 후 밀린 (상품,옵션) 재
 _EXECUTE = os.environ.get("KREAM_SHADOW_EXECUTE") == "1"
 # 박스(해외배송) 갱신/삭제 실행 게이트 — 카드(_EXECUTE)와 별도. 섀도 검증 후 KREAM_EXEC_BOX=1.
 _EXEC_BOX = os.environ.get("KREAM_EXEC_BOX") == "1"
+# 신발(mm) 갱신/삭제 실행 게이트 — 섀도 검증 후 KREAM_EXEC_SHOE=1. 등록은 하지 않음.
+_EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
@@ -55,6 +57,31 @@ async def _send_slack(msg: str) -> None:
 
 # 매수추천/원가오염 감시 상태 — {kid: {"h": 고점엔, "a": 매수알림함, "sa": 오염알림함}}
 _SET_WATCH = "kream_snkr_watch"
+
+
+def _rank_summary(asks: list) -> tuple[int, int, int, int]:
+    """(상품,옵션) 그룹별 1순위/비1순위 집계 — 로컬 봇과 동일 기준.
+    '진짜 1위' = 해외 최저(lowest_overseas, 내 입찰 포함)이면서 국내배송 최저까지 이긴 경우.
+    해외만 1위고 국내가 더 싸면 구매자는 국내를 사므로 무의미한 1등 → 1순위서 제외.
+    공식 API는 live_rank 가 항상 null 이라 price<=lowest 로 유도(로컬 _derive_rank1_official 동일).
+    rank 없는 입찰도 반드시 비1순위로 집계해 전 입찰이 어느 한쪽에 들어가게 한다."""
+    groups: dict = {}
+    nocomp: dict = {}  # 무경쟁 후보 — rank1 이면서 국내배송 경쟁 자체가 없는 그룹
+    for a in asks:
+        k = (str(a.get("product_id") or ""), str(a.get("option") or ""))
+        our = int(a.get("price") or 0)
+        ov = int(a.get("lowest_overseas_price") or 0)
+        dom = int(a.get("lowest_normal_price") or 0)
+        rank1 = ov > 0 and 0 < our <= ov
+        real1 = rank1 and (dom <= 0 or our <= dom)
+        # 그룹당 real1 이 하나라도 있으면 1순위로 승격(중복입찰 대비)
+        if k not in groups or (real1 and not groups[k]):
+            groups[k] = real1
+        if rank1 and dom <= 0:
+            nocomp[k] = True
+    total = len(groups)
+    r1 = sum(1 for v in groups.values() if v)
+    return r1, total - r1, total, len(nocomp)
 
 
 async def _unfulfilled_count() -> int:
@@ -128,8 +155,6 @@ async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
 async def _buy_watch(snapshot: list) -> str:
     """매수추천 — 스니덩 PSA10 고점대비 30%↓ + 거래10건↑ + 재고有. 1회 알림, 회복 시 재무장.
     원가오염 의심(등급역전 / 단일리스팅 급락)도 함께. 상태는 DB(kream_snkr_watch)에 유지."""
-    if not snapshot:
-        return ""
     prev = await _load_setting_map(_SET_WATCH)
     drops: list = []
     suspects: list = []
@@ -163,18 +188,21 @@ async def _buy_watch(snapshot: list) -> str:
             sus_alerted = False  # 정상 회복 시 재무장
         new_state[str(kid)] = {"h": high, "a": alerted, "sa": sus_alerted}
     await _save_setting_map(_SET_WATCH, {**prev, **new_state})
-    out = ""
-    if drops:
-        out += f"🚨💰 매수추천! 스니덩 PSA10 고점대비 30%↓ {len(drops):,}건\n"
+    # 로컬 포맷 그대로 — 급락 0건이어도 '매수추천 없음' 줄을 항상 낸다(구분선 14칸).
+    if not drops:
+        out = "💤 매수추천 없음 (스니덩 PSA10 고점대비 30%↓ 급락 0건)\n━━━━━━━━━━━━━━\n"
+    else:
+        out = f"🚨💰 매수추천! 스니덩 PSA10 고점대비 30%↓ {len(drops):,}건 💰🚨\n━━━━━━━━━━━━━━"
         for kid, sid, hi, cu, stk in drops[:15]:
             pct = int((1 - cu / hi) * 100)
             out += (
-                f"🟢 고점¥{hi:,}→¥{cu:,} (-{pct}%, 재고{stk:,}) "
-                f"크림 https://kream.co.kr/products/{kid} | "
-                f"스니덩 https://snkrdunk.com/apparels/{sid}\n"
+                f"\n🟢 고점¥{hi:,}→¥{cu:,} (-{pct}%, 재고{stk})"
+                f"\n   크림 https://kream.co.kr/products/{kid}"
+                f"  스니덩 https://snkrdunk.com/apparels/{sid}"
             )
         if len(drops) > 15:
-            out += f"외 {len(drops) - 15:,}건\n"
+            out += f"\n외 {len(drops) - 15:,}건"
+        out += "\n━━━━━━━━━━━━━━\n"
     if suspects:
         out += f"🧪 원가오염 의심 {len(suspects):,}건 (눈으로 확인 필요)\n"
         for kid, sid, s in suspects[:8]:
@@ -486,21 +514,31 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
 
 
 def calc_base(
-    price_jpy: float, rate: float, is_box: bool = False, is_card: bool = True
+    price_jpy: float,
+    rate: float,
+    is_box: bool = False,
+    is_card: bool = True,
+    surcharge_rate: float | None = None,
 ) -> float:
-    """원가 base = (snkr엔 + 배송엔)×환율 + 배대지비(원). 비카드는 원가 5% 가산."""
+    """원가 base = (snkr엔 + 배송엔)×환율 + 배대지비(원).
+    추가마진율(%)만큼 원가 가산 — 정책값 사용(하드코딩 금지).
+      · surcharge_rate 명시: 호출부가 분류(PSA=0 / 박스·카드팩 / 신발·의류)해서 넘김
+      · 미지정: PSA면 0, 비PSA는 박스/카드팩으로 간주(box_pack_margin_rate)"""
     ship_jpy = POLICY["shipping_fee_box"] if is_box else POLICY["shipping_fee_card"]
-    # 추가마진율(%) — is_card=PSA면 가산 없음. 비PSA는 박스/카드팩으로 취급(box_pack_margin_rate).
-    # (백엔드는 신발 미처리 — 신발 non_card_margin_rate 는 로컬 봇에서 적용)
-    surcharge = 0 if is_card else POLICY["box_pack_margin_rate"]
-    eff_jpy = price_jpy * (1 + surcharge / 100)
+    if surcharge_rate is None:
+        surcharge_rate = 0 if is_card else POLICY["box_pack_margin_rate"]
+    eff_jpy = price_jpy * (1 + surcharge_rate / 100)
     return (eff_jpy + ship_jpy) * rate + POLICY["forwarding_fee"]
 
 
 def calc_min_price(
-    price_jpy: float, rate: float, is_box: bool = False, is_card: bool = True
+    price_jpy: float,
+    rate: float,
+    is_box: bool = False,
+    is_card: bool = True,
+    surcharge_rate: float | None = None,
 ) -> int:
-    base = calc_base(price_jpy, rate, is_box, is_card)
+    base = calc_base(price_jpy, rate, is_box, is_card, surcharge_rate)
     margin = max(
         float(POLICY["min_margin_amount"]),
         base * POLICY["competitive_margin_rate"] / 100,
@@ -982,13 +1020,14 @@ def _decide_price_action(
     rate: float,
     tariff_threshold: int,
     is_box: bool = False,
+    surcharge_rate: float | None = None,
 ) -> tuple[str, int, bool, bool]:
     """갱신 결정 — run_kream_shadow_once 결정로직과 동일. 반환 (act, target, adjusting, is_nocomp).
     로컬 _kream_ask_adjust rank1유도+5분기+rank2추종+안전장치 이식.
-    is_box=True(박스/카드팩) → 배송비 900엔(calc_base is_box)."""
+    is_box=True(박스/카드팩/신발) → 배송비 900엔. surcharge_rate 로 추가마진 분류 지정."""
     is_card = opt.upper().startswith("PSA")
-    min_price = calc_min_price(snkr_jpy, rate, is_box, is_card)
-    base = calc_base(snkr_jpy, rate, is_box, is_card)
+    min_price = calc_min_price(snkr_jpy, rate, is_box, is_card, surcharge_rate)
+    base = calc_base(snkr_jpy, rate, is_box, is_card, surcharge_rate)
     no_comp = (
         math.ceil(base * (1 + POLICY["no_competition_margin_rate"] / 100) / 1000) * 1000
     )
@@ -1258,6 +1297,159 @@ async def _exec_delete_ask(cli: httpx.AsyncClient, h: dict, ask_id) -> bool:
         return False
 
 
+_SHOE_OPT_RE = re.compile(r"\d{3}(\.\d)?$")
+# 신발 사이즈별 신품 최저가 — 상품페이지 SSR 내장 JSON. 카드(apparels 숫자ID)와 ID공간이
+# 완전히 달라(/v1/apparels/{cid} 는 엉뚱한 의류 반환) 신발은 이 경로가 유일. 인증 불필요.
+_SHOE_SIZE_RE = re.compile(r'"sizeName":"([^"]+)"[^}]*\},"minNewListingPrice":(\d+)')
+
+
+def _cm_to_mm(s: str) -> str | None:
+    """'26.5cm' → '265'(크림 ask 옵션 포맷). 형식 안 맞으면 None."""
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*cm$", (s or "").strip(), re.I)
+    if not m:
+        return None
+    v = float(m.group(1)) * 10
+    return str(int(v)) if v == int(v) else str(v)
+
+
+async def _fetch_snkr_shoe_sizes(cli: httpx.AsyncClient, style: str) -> dict | None:
+    """신발 사이즈별 실시간 최저가(신품) — {mm: {price, stock}}. 실패 시 None(=DB 폴백)."""
+    try:
+        r = await cli.get(
+            f"https://snkrdunk.com/products/{style}",
+            headers={
+                "User-Agent": _SNKR_HEADERS["User-Agent"],
+                "Accept-Language": "ja",
+            },
+            follow_redirects=True,
+        )
+        if r.status_code != 200:
+            return None
+        html = r.text.replace("\\", "")
+    except Exception:
+        return None
+    out: dict = {}
+    for sz, pr in _SHOE_SIZE_RE.findall(html):
+        mm = _cm_to_mm(sz)
+        p = int(pr)
+        if mm and p > 0:
+            out[mm] = {"price": p, "stock": 1}
+    return out
+
+
+async def _process_shoe_asks(
+    asks: list,
+    kid_to_opts: dict,
+    cooldown,
+    rate: float,
+    tariff: int,
+    h: dict,
+    kid_to_snkr: dict | None = None,
+) -> dict:
+    """신발(mm 사이즈) ask 갱신/삭제 — 스니덩크 스니커즈.
+    원가·재고는 수집된 DB 옵션(사이즈별 price/stock)을 사용 — 신발은 사이즈별 실시간
+    시세 API가 없어 로컬 봇도 동일하게 DB 옵션을 썼다. 등록(리스톡)은 하지 않음.
+    추가마진은 '나머지(신발·의류)' 정책값 적용, 배송비는 박스(900엔) 기준.
+    가격 이상치(상식범위 밖)는 오염 데이터일 수 있어 건드리지 않고 보류 — 오조정 방지.
+    _EXEC_SHOE=1 일 때만 실제 PATCH/DELETE."""
+    shoe_asks = [
+        a for a in asks if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
+    ]
+    c = {
+        "total": len(shoe_asks),
+        "renew": 0,
+        "delete": 0,
+        "hold": 0,
+        "nocost": 0,
+        "stock": 0,
+        "patch": 0,
+        "del": 0,
+        "revert": 0,
+        "fail": 0,
+    }
+    if not shoe_asks:
+        return c
+    _sur = POLICY["non_card_margin_rate"]  # 신발 = 비카드 추가마진
+    kid_to_snkr = kid_to_snkr or {}
+    async with httpx.AsyncClient(timeout=25) as cli:
+        # 상품별 실시간 사이즈시세 1회 조회(입찰이 여러 사이즈여도 페이지는 1번만) — DB 폴백
+        live_map: dict = {}
+        _sem = asyncio.Semaphore(6)
+
+        async def _one_style(kid: str):
+            style = kid_to_snkr.get(kid)
+            if not style:
+                return
+            async with _sem:
+                live = await _fetch_snkr_shoe_sizes(cli, style)
+            if live is not None:
+                live_map[kid] = live
+
+        await asyncio.gather(
+            *[
+                _one_style(k)
+                for k in {str(a.get("product_id") or "") for a in shoe_asks}
+            ]
+        )
+        c["live_ok"] = len(live_map)
+
+        for a in shoe_asks:
+            kid = str(a.get("product_id") or "")
+            opt = str(a.get("option") or "").strip()
+            # 실시간 우선: 조회 성공한 상품은 그 값이 진실(매물 없으면 재고0=삭제 후보)
+            if kid in live_map:
+                od = live_map[kid].get(opt) or {"price": 0, "stock": 0}
+            else:
+                od = (kid_to_opts.get(kid) or {}).get(opt)
+            if od is None:
+                c["nocost"] += 1
+                continue
+            price = int(od.get("price") or 0)
+            stock = int(od.get("stock") or 0)
+            # 오염 가드 — 신발 원가 상식범위 밖이면 조정/삭제 모두 보류(수집 파싱오류 방어)
+            if price and not (5000 <= price <= 300000):
+                c["hold"] += 1
+                continue
+            if stock <= 0 or price <= 0:
+                c["delete"] += 1
+                if _EXEC_SHOE:
+                    if a.get("id") and await _exec_delete_ask(cli, h, a.get("id")):
+                        c["del"] += 1
+                    else:
+                        c["fail"] += 1
+                    await asyncio.sleep(0.1)
+                continue
+            c["stock"] += 1
+            cur = int(a.get("price") or 0)
+            act, target, adjusting, is_nc = _decide_price_action(
+                cur,
+                opt,
+                price,
+                int(a.get("lowest_overseas_price") or 0),
+                int(a.get("lowest_normal_price") or 0),
+                (kid, opt) in cooldown,
+                0,
+                rate,
+                tariff,
+                is_box=True,
+                surcharge_rate=_sur,
+            )
+            if adjusting and target != cur:
+                c["renew"] += 1
+                if _EXEC_SHOE and a.get("id"):
+                    res, _r = await _execute_update(
+                        cli, h, a.get("id"), target, cur, is_nc, kid, opt
+                    )
+                    if res == "ok":
+                        c["patch"] += 1
+                    elif res == "reverted":
+                        c["revert"] += 1
+                    else:
+                        c["fail"] += 1
+                    await asyncio.sleep(0.1)
+    return c
+
+
 async def _process_box_asks(
     asks: list, kid_to_snkr: dict, cooldown, rate: float, tariff: int, h: dict
 ) -> dict:
@@ -1401,6 +1593,8 @@ async def run_kream_unified_once() -> dict:
     kid_to_snkr = {
         p["kid"]: p["snkr_id"] for p in products if p["kid"] and p["snkr_id"]
     }
+    # 신발 pass용 kid→옵션맵 (사이즈별 price/stock). 배치 슬라이스 전 전체 — 신발 ask도 전역.
+    kid_to_opts = {p["kid"]: p["db_opts"] for p in products if p["kid"]}
     # ── 처리 대상 선정 [2026-07-22 구조개선] — 갱신과 리스톡의 필요 주기가 다름.
     #  · 갱신(live 입찰 보유): 시세 추종이라 **매 사이클 전량** 처리해야 경쟁에서 안 밀림.
     #    (로컬 봇도 live 입찰은 매 라운드 조정했음. 로테이션에 넣으면 1회전 1.7시간 = 사실상 방치)
@@ -1482,6 +1676,9 @@ async def run_kream_unified_once() -> dict:
                 int(_p9.get("price") or 0),
                 int(_p9.get("stock") or 0),
             )
+            # 슬랙 '재고 N건(카드…)' 집계 — 매물 있는 카드 상품 수
+            if int(_p10.get("stock") or 0) > 0 or int(_p9.get("stock") or 0) > 0:
+                r["instock"] = 1
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
@@ -1574,6 +1771,7 @@ async def run_kream_unified_once() -> dict:
     pend_delete: list = []  # (kid, nm)
     rs = {"recent": 0, "failed": 0, "miss": 0, "trade": 0, "hold": 0, "ok": 0}
     psa_snapshot: list = []  # 매수추천/원가오염 감시용 (kid, snkr_id, p10가, p10재고, p9가, p9재고)
+    card_instock = 0  # 매물 있는 카드 상품 수 (슬랙 '재고 N건(카드…)')
 
     for res in results:
         if isinstance(res, Exception) or not isinstance(res, dict):
@@ -1586,6 +1784,7 @@ async def run_kream_unified_once() -> dict:
         counts["cards"] += res.get("card", 0)
         if res.get("psa"):
             psa_snapshot.append(res["psa"])
+        card_instock += res.get("instock", 0)
         for kind, act, kid, nm, cur, target, adjusting, pname, is_nc in res["rows"]:
             counts["options"] += 1
             acts[act] += 1
@@ -1651,6 +1850,7 @@ async def run_kream_unified_once() -> dict:
     # ── [Step 5] 실제 실행 — _EXECUTE=1 일 때만. 삭제→갱신→리스톡 순. rate limit 여유(0.1s).
     # 로그는 실행 진행 중 5건마다 DB flush — 사이클 끝까지 안 기다리고 UI에 즉시 노출.
     exec_patch = exec_post = exec_del = exec_fail = exec_revert = 0
+    registered_lines: list = []  # 슬랙 리스톡 섹션 — 실제 등록된 (상품 옵션 가격) 줄
     await _flush_logs_to_db()  # 분류 결과 먼저 노출(실행 시작 전)
     if _EXECUTE:
         async with httpx.AsyncClient(timeout=25) as ecli:
@@ -1687,6 +1887,8 @@ async def run_kream_unified_once() -> dict:
                     ok2, reason = await _exec_create_ask(ecli, h, kid, target, nm)
                 if ok2:
                     exec_post += 1
+                    # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
+                    registered_lines.append(f"{str(pname)[:20]} {nm} {target:,}원")
                     _g_recent_posts[f"{kid}|{nm}"] = _now
                     _g_miss_counts.pop(f"{kid}|{nm}", None)
                 else:
@@ -1701,6 +1903,35 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
+
+    # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
+    shoe = await _process_shoe_asks(
+        asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr
+    )
+    logger.info(
+        "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
+        shoe["total"],
+        shoe.get("live_ok", 0),
+        shoe["stock"],
+        shoe["renew"],
+        shoe["delete"],
+        shoe["hold"],
+        shoe["nocost"],
+        shoe["patch"],
+        shoe["del"],
+        shoe["revert"],
+        shoe["fail"],
+        "실행ON" if _EXEC_SHOE else "섀도",
+    )
+    if shoe["total"]:
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[신발] mm {shoe['total']:,} — 갱신{shoe['renew']:,} 삭제{shoe['delete']:,} "
+            f"보류{shoe['hold']:,} / 실행 갱신{shoe['patch']:,} 삭제{shoe['del']:,} "
+            f"복귀{shoe['revert']:,} 실패{shoe['fail']:,} "
+            f"({'실행ON' if _EXEC_SHOE else '섀도'})",
+        )
 
     # ── [A] 박스(해외배송) 갱신/삭제 — 전역 ask 대상(배치 무관). _EXEC_BOX 게이트.
     box = await _process_box_asks(
@@ -1788,16 +2019,40 @@ async def run_kream_unified_once() -> dict:
         _pre += await _buy_watch(psa_snapshot)
     except Exception as _be:
         logger.warning("[크림통합] 매수추천 알림 실패(무시): %s", _be)
-    await _send_slack(
-        _pre + f"[크림 오토튠·{_mode}] 사이클 완료\n"
-        f"• 실행: 갱신 {exec_patch:,} / 신규등록 {exec_post:,} / 삭제 {exec_del:,} "
-        f"/ 복귀 {exec_revert:,} / 실패 {exec_fail:,}\n"
-        f"• 박스(해외배송): 갱신 {box.get('patch', 0):,} / 삭제 {box.get('del', 0):,}\n"
-        f"• 대상: live {len(live_products):,} 전량 + 리스톡탐색 "
-        f"{min(_unified_offset, rest_total):,}/{rest_total:,}\n"
-        f"• 리스톡 보류: 2연속대기 {rs.get('miss', 0):,} / 거래게이트 {rs.get('trade', 0):,} "
-        f"/ 이행대기 {rs.get('hold', 0):,}"
+    # ── 본문: 로컬 봇 슬랙 포맷 그대로 재현 (구분선 길이·문구·조건까지 동일) ──
+    _r1, _n1, _gt, _nc = _rank_summary(asks)
+    _ask_kids = {str(a.get("product_id") or "") for a in asks}
+    _mapped = len([k for k in _ask_kids if k in kid_to_snkr])
+    _del_all = exec_del + int(box.get("del", 0))
+    _upd_all = exec_patch + int(box.get("patch", 0))
+    _fail_all = exec_fail + int(box.get("fail", 0))
+    # [일치상품 리스톡·미등록 점검] — 로컬 _kream_restock_register 요약 포맷
+    _box_stock = max(0, int(box.get("total", 0)) - int(box.get("nocost", 0)))
+    _shoe_stock = int(shoe.get("stock", 0))
+    _stock_total = card_instock + _shoe_stock + _box_stock
+    _restock_sec = (
+        f"[일치상품 리스톡·미등록 점검]\n"
+        f"재고 {_stock_total:,}건 (카드 {card_instock:,}·신발 {_shoe_stock:,}"
+        f"·박스/팩 {_box_stock:,})"
+        f" / 신규등록 {exec_post:,}건 / 실패 {exec_fail:,}"
     )
+    if registered_lines:
+        _restock_sec += "\n" + "\n".join(registered_lines[:10])
+        if len(registered_lines) > 10:
+            _restock_sec += f"\n외 {len(registered_lines) - 10:,}건"
+    _restock_sec += "\n━━━━━━━━━━\n"
+    _msg = (
+        f"[크림 입찰갱신]\n"
+        f"환율 {rate:.4f} JPY→KRW\n\n"
+        f"입찰 {len(asks):,}건 | 매핑 {_mapped:,}/{len(_ask_kids):,}건\n"
+        f"삭제 {_del_all:,}건 | 조정 {_upd_all:,}건"
+        + (f" | ❌갱신실패 {_fail_all:,}건" if _fail_all else "")
+        + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
+        f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
+    )
+    if counts["anomaly"]:
+        _msg += f"\n\n⚠️ 이상감지(가격오류 의심·갱신차단) {counts['anomaly']:,}건"
+    await _send_slack(_pre + _restock_sec + _msg)
     return {
         "ok": True,
         "counts": counts,
