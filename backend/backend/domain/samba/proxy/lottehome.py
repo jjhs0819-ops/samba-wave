@@ -1123,7 +1123,13 @@ class LotteHomeClient:
         registDeliver가 [1000]으로 실패한다. ord_no 앞 8자리(YYYYMMDD) 기준
         ±1일 범위의 배송조회(상태 15/16/17)에서 실제 순번을 찾는다.
 
-        Returns: [{"sn": 실제순번, "goods_no": 상품번호}] — goods_no는 라인 특정용.
+        Returns: [{"sn": 실제순번, "goods_no": 상품번호, "prod_code": 상품코드,
+                   "prod_seq": 상품순번}] — 뒤 3개는 라인 특정(잘못 저장된 값과 대조)용.
+
+        잘못 저장된 값은 파서 폴백 체인(OrdDtlSn→DlvUnitSn→OrgOrdDtlSn→ProdSeq→
+        ProdCode)의 **어느 단계든** 될 수 있다. GoodsNo(상품번호) 하나만 돌려주면
+        ProdCode/ProdSeq 로 저장된 주문은 대조에 실패해 다중 라인일 때 보정을 포기한다.
+        그래서 후보를 전부 담아 호출부가 셋 다 비교하게 한다.
         """
         from datetime import datetime as _dt, timedelta as _td
 
@@ -1138,6 +1144,9 @@ class LotteHomeClient:
         end = (base + _td(days=1)).strftime("%Y%m%d")
         lines: list[dict[str, str]] = []
         seen: set[str] = set()
+        # 상태별로 순차 조회하되, 해당 주문을 찾은 시점에 멈춘다.
+        # searchDeliverList 는 3일치 전체 목록을 받아오는 무거운 호출이고 롯데홈은
+        # 과도한 조회로 IP 차단 이력이 있다 — 취소 1건에 3회씩 태우지 않는다.
         for stat in ("15", "16", "17"):
             try:
                 rows = await self.search_deliver_list(start, end, ord_dtl_stat_cd=stat)
@@ -1162,11 +1171,13 @@ class LotteHomeClient:
                         lines.append(
                             {
                                 "sn": sn,
-                                "goods_no": str(
-                                    p.get("GoodsNo") or p.get("ProdCode") or ""
-                                ),
+                                "goods_no": str(p.get("GoodsNo") or ""),
+                                "prod_code": str(p.get("ProdCode") or ""),
+                                "prod_seq": str(p.get("ProdSeq") or ""),
                             }
                         )
+            if lines:
+                break
         return lines
 
     async def search_cancel_orders(

@@ -3343,12 +3343,18 @@ async def _lh_imps_with_dtl_sn_heal(
         if not not_found:
             raise
         lines = await client.resolve_ord_dtl_sns(ord_no)
-        # 잘못 저장된 값은 대개 해당 라인의 상품코드 → 상품번호 일치 라인 우선,
+        # 잘못 저장된 값은 파서 폴백 체인의 어느 단계든 될 수 있다
+        # (…→OrgOrdDtlSn→ProdSeq→ProdCode). 상품번호 하나만 대조하면 ProdCode·
+        # ProdSeq 로 저장된 주문이 매칭에 실패해 다중 라인일 때 보정을 포기하므로,
+        # 세 값 중 하나라도 일치하는 라인을 후보로 본다.
         # 매칭 실패 시 단일 라인 주문일 때만 채택 (다중 라인 추측 금지 — 오취소 방지)
+        _saved = str(ord_dtl_sn)
         cand = [
             ln
             for ln in lines
-            if ln.get("goods_no") and ln["goods_no"] == str(ord_dtl_sn)
+            if _saved
+            in {ln.get("goods_no", ""), ln.get("prod_code", ""), ln.get("prod_seq", "")}
+            - {""}
         ]
         if not cand and len(lines) == 1:
             cand = lines
