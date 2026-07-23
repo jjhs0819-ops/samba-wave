@@ -233,19 +233,42 @@ asyncio.run(fix())
   # 기본값 1 (미설정 포함) → 실행 + 실패 시 exit 1. 스킵해도 verify_schema는 아래에서 실행됨.
   if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
     echo "Running database migrations..."
-    # 최신 HEAD로 stamp — 컬럼/인덱스가 이미 DB에 존재하는 상태에서 hot 테이블 ALTER가
-    # 활성 트랜잭션과 데드락 일으키는 문제 방지. 누락 컬럼이 진짜 있다면
-    # alembic upgrade heads 가 IF NOT EXISTS로 추가하므로 안전.
-    echo "Stamping alembic to current heads..."
-    # multi-head 환경: 모든 head revision을 동적으로 조회해서 stamp.
-    # 단일 revision으로만 stamp하면 upgrade heads 시 missing parent deadlock 발생.
-    # 컬럼/인덱스가 이미 DB에 존재하는 상태에서 hot 테이블 ALTER 데드락 회피.
-    _HEADS=$(uv run alembic heads -q 2>/dev/null | head -1)
-    if [ -z "$_HEADS" ]; then
-      echo "Warning: alembic heads 조회 실패, z_ret_editable_001으로 fallback"
-      _HEADS="z_ret_editable_001"
+    # alembic_version 이 정상이면 stamp 하지 않고 upgrade 만 한다.
+    #
+    # 예전에는 매 시작 무조건 `stamp --purge <heads>` 를 했다. 목적은 "컬럼이 이미
+    # DB에 있는데 ALTER 를 다시 돌려 hot 테이블 데드락 나는 것" 방지였지만,
+    # 부작용으로 **새 마이그레이션이 영구히 실행되지 않았다** — 코드의 최신 head 를
+    # DB에 먼저 찍어버리니 뒤따르는 upgrade 가 할 일이 없다고 판단한다.
+    # (2026-07-23: samba_brand_restriction 테이블이 이 경로로 통째로 누락돼
+    #  수동 DDL 로 만들어야 했다.)
+    # 데드락 방지는 stamp 가 아니라 각 마이그레이션의 idempotent 가드
+    # (information_schema 조회 후 존재하면 ALTER 스킵)가 담당한다 — CLAUDE.md
+    # "마이그레이션 hot 테이블 데드락 방지" 참조.
+    #
+    # stamp 는 아래 두 경우에만 복구 목적으로 실행한다:
+    #   - alembic_version 이 비어 있음 (기존 스키마인데 버전만 없는 상태)
+    #   - 저장된 revision 이 코드 히스토리에 없음 (브랜치 되돌림 등) → alembic current 가
+    #     revision 을 못 찍는다
+    # 두 경우 모두 아래 _CUR 가 빈 문자열이 되므로 한 번에 판정된다.
+    #
+    # 파싱 주의: alembic 에는 `-q` 옵션이 없다("unrecognized arguments: -q").
+    # 예전 코드가 `alembic heads -q` 를 쓰는 바람에 조회가 **항상 실패**해
+    # 매 배포마다 fallback revision(z_ret_editable_001)으로 stamp 되고,
+    # 그 이후 마이그레이션 전부가 재실행되고 있었다(느림 + hot 테이블 데드락 위험).
+    # 또 `alembic current` 는 INFO 로그를 stdout 에 섞어 내보내므로 걸러내야 한다.
+    _CUR=$(uv run alembic current 2>/dev/null | grep -v '^INFO' | awk '{print $1}' | tr -d '[:space:]')
+    if [ -z "$_CUR" ]; then
+      # multi-head 환경: head 를 전부 넘겨야 upgrade 시 missing parent 가 안 난다.
+      _HEADS=$(uv run alembic heads 2>/dev/null | grep -v '^INFO' | awk '{print $1}' | tr '\n' ' ')
+      if [ -z "$(echo "$_HEADS" | tr -d '[:space:]')" ]; then
+        echo "Warning: alembic heads 조회 실패, z_ret_editable_001으로 fallback"
+        _HEADS="z_ret_editable_001"
+      fi
+      echo "alembic_version 이 비었거나 코드에 없는 revision → heads 로 복구 stamp: $_HEADS"
+      uv run alembic stamp --purge $_HEADS 2>/dev/null || true
+    else
+      echo "alembic_version=$_CUR (정상) → stamp 생략, 미적용 마이그레이션만 실행"
     fi
-    uv run alembic stamp --purge $_HEADS 2>/dev/null || true
     _MIGRATION_OK=0
     for i in 1 2 3; do
       if uv run alembic upgrade heads; then
