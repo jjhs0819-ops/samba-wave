@@ -107,9 +107,7 @@ def test_name_without_trailing_token_not_matched():
 def test_short_token_ignored():
     """⑦' 5자리 미만 숫자는 토큰이 아니다 (사이즈 등 오인 방지)."""
     dump = {"3373000001": ("10", "리넨 셔츠 9500")}
-    reconnect, blocked = match_ghost_listings(
-        [("cp_A", "9500")], dump, db_gnos=set()
-    )
+    reconnect, blocked = match_ghost_listings([("cp_A", "9500")], dump, db_gnos=set())
     assert reconnect == {}
     assert blocked == set()
 
