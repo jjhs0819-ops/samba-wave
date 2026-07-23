@@ -1361,7 +1361,6 @@ async def set_lottehome_goodsno_mappings(
     - goods_no 가 이미 다른 상품에 매핑돼 있으면 거부(in_use)
     - 요청당 최대 500건, dry_run 기본
     """
-    import json as _json
 
     from sqlalchemy import text as _text
 
@@ -1411,9 +1410,7 @@ async def set_lottehome_goodsno_mappings(
             current = str(row[0] or "").strip()
             expected = str(m.expected_current or "").strip()
             if not current:
-                results.append(
-                    {"product_id": m.product_id, "result": "already_absent"}
-                )
+                results.append({"product_id": m.product_id, "result": "already_absent"})
                 continue
             if not expected or current != expected:
                 results.append(
@@ -1427,15 +1424,38 @@ async def set_lottehome_goodsno_mappings(
                 continue
             await session.execute(
                 _text(
+                    # jsonb '-' 는 스칼라에 쓰면 죽는다 —
+                    # 'null'::jsonb - 'key' → InvalidParameterValue:
+                    # "cannot delete from scalar" (요청 전체가 500).
+                    # COALESCE 는 SQL NULL 만 거르므로 jsonb 'null' 행
+                    # (실측 2026-07-23: mpn 22,769 / ra 24,604건)은 그대로 통과한다.
+                    # 과거 오염으로 배열이 된 행도 '-' 가 무효(원본 그대로 반환)라
+                    # 삭제가 조용히 실패한다. → 타입을 먼저 정규화하고 삭제한다.
                     "UPDATE samba_collected_product SET "
-                    "market_product_nos = COALESCE(market_product_nos, '{}'::jsonb) "
+                    "market_product_nos = "
+                    "  (CASE WHEN jsonb_typeof(market_product_nos) = 'object' "
+                    "        THEN market_product_nos ELSE '{}'::jsonb END) "
                     "  - CAST(:aid AS text) - CAST(:aid_qa AS text) "
                     "  - CAST(:aid_org AS text) - CAST(:aid_lost AS text), "
+                    # array 여도 안심 못 한다 — 이미 null 원소가 섞인 행(실측 539건)은
+                    # '-' 로 지워지지 않아 [null] 이 남고, 그러면 아래 status 판정도
+                    # '[]' 가 아니라서 'collected' 로 못 내려간다. 문자열 원소만
+                    # 남겨 재구성한 뒤 삭제한다.
                     "registered_accounts = "
-                    "  COALESCE(registered_accounts, '[]'::jsonb) "
+                    "  (CASE WHEN jsonb_typeof(registered_accounts) = 'array' "
+                    "        THEN COALESCE(("
+                    "          SELECT jsonb_agg(e) "
+                    "          FROM jsonb_array_elements(registered_accounts) e "
+                    "          WHERE jsonb_typeof(e) = 'string'), '[]'::jsonb) "
+                    "        ELSE '[]'::jsonb END) "
                     "  - CAST(:aid AS text), "
                     "status = CASE "
-                    "  WHEN COALESCE(registered_accounts, '[]'::jsonb) "
+                    "  WHEN (CASE WHEN jsonb_typeof(registered_accounts) = 'array' "
+                    "             THEN COALESCE(("
+                    "               SELECT jsonb_agg(e) "
+                    "               FROM jsonb_array_elements(registered_accounts) e "
+                    "               WHERE jsonb_typeof(e) = 'string'), '[]'::jsonb) "
+                    "             ELSE '[]'::jsonb END) "
                     "    - CAST(:aid AS text) = '[]'::jsonb "
                     "  THEN 'collected' ELSE status END "
                     "WHERE id = :pid AND market_product_nos->>:aid = :cur"
@@ -1450,9 +1470,7 @@ async def set_lottehome_goodsno_mappings(
                 },
             )
             applied += 1
-            results.append(
-                {"product_id": m.product_id, "result": "removed:" + current}
-            )
+            results.append({"product_id": m.product_id, "result": "removed:" + current})
             if applied % 200 == 0:
                 await session.commit()
             continue
@@ -1508,15 +1526,30 @@ async def set_lottehome_goodsno_mappings(
             continue
         await session.execute(
             _text(
+                # COALESCE 는 SQL NULL 만 거른다 — jsonb 'null' 이면 그대로 통과해
+                # 'null' || {obj} 가 [null, {...}] 배열이 되고 dict 가정 코드가
+                # 전부 깨진다. 이 엔드포인트의 대상(매핑 유실 상품)이 바로 그 군이다.
+                # (선례: order.py 87건 오염 b928641e / 재연결가드 e27dd0b6)
+                # registered_accounts 는 array 면 문자열 원소만 남겨 재구성해
+                # 기존에 섞인 null 원소(실측 539건)까지 함께 청소한다.
                 "UPDATE samba_collected_product SET "
                 "market_product_nos = "
-                "  COALESCE(market_product_nos, '{}'::jsonb) "
+                "  (CASE WHEN jsonb_typeof(market_product_nos) = 'object' "
+                "        THEN market_product_nos ELSE '{}'::jsonb END) "
                 "  || jsonb_build_object(CAST(:aid AS text), CAST(:gno AS text)), "
-                "registered_accounts = CASE "
-                "  WHEN COALESCE(registered_accounts, '[]'::jsonb) "
-                "    @> to_jsonb(CAST(:aid AS text)) THEN registered_accounts "
-                "  ELSE COALESCE(registered_accounts, '[]'::jsonb) "
-                "    || to_jsonb(CAST(:aid AS text)) END, "
+                "registered_accounts = ("
+                "  CASE WHEN jsonb_typeof(registered_accounts) = 'array' "
+                "    THEN COALESCE(("
+                "      SELECT jsonb_agg(e) "
+                "      FROM jsonb_array_elements(registered_accounts) e "
+                "      WHERE jsonb_typeof(e) = 'string'), '[]'::jsonb) "
+                "    ELSE '[]'::jsonb END"
+                ") || ("
+                "  CASE WHEN COALESCE(registered_accounts, '[]'::jsonb) "
+                "         @> to_jsonb(CAST(:aid AS text)) "
+                "    THEN '[]'::jsonb "
+                "    ELSE to_jsonb(ARRAY[CAST(:aid AS text)]) END"
+                "), "
                 "status = 'registered' "
                 "WHERE id = :pid"
             ),
