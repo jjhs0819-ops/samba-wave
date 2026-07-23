@@ -508,6 +508,12 @@ def _note_fail(reason: str) -> None:
     _fail_reasons[reason] = _fail_reasons.get(reason, 0) + 1
 
 
+def _now_ts() -> float:
+    import time  # noqa: F811
+
+    return time.time()
+
+
 # 입찰제한 보정 사이클 상한 — 대량 오조정 방지(로컬 _hb_clamp 와 동일 취지)
 _hb_clamp = {"used": 0, "cap": 20}
 # (kid, opt) → 마진 하한. 순위교정 시 이 아래로는 절대 안 내린다.
@@ -562,7 +568,10 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                         f"HTTP {r2.status_code}(최고입찰가보정): "
                         + " ".join((r2.text or "")[:80].split())
                     )
+                    _g_limit_cd[f"{pid}|{opt}"] = _now_ts()
                     return "fail", None
+            if "거래가" in _body or "입찰제한" in _body:
+                _g_limit_cd[f"{pid}|{opt}"] = _now_ts()
             _note_fail(f"HTTP {r.status_code}: {_body}")
             return "fail", None
         rank = (r.json() or {}).get("live_rank")
@@ -1259,6 +1268,11 @@ _FAILED_TTL = 21600
 _SET_RECENT = "kream_recent_posts"
 _SET_FAILED = "kream_failed_posts"
 _SET_MISS = "kream_miss_counts"
+# 입찰제한(최근 거래가 확인 필요) 반복 실패 쿨다운 — 공식 API 에 거래이력/허용밴드가 없어
+# 재시도해도 계속 거절된다. 일정 시간 조정 대상서 제외해 헛호출·실패로그를 끊는다.
+_SET_LIMIT = "kream_bid_limit_cooldown"
+_LIMIT_TTL = 21600  # 6h
+_g_limit_cd: dict = {}
 
 
 def needs_trade(name: str) -> bool:
@@ -1709,6 +1723,15 @@ async def run_kream_unified_once() -> dict:
     _hb_clamp["used"] = 0  # 입찰제한 보정 상한 리셋
     _rank_fix["used"] = 0  # 순위교정 상한 리셋
     _floor_map.clear()
+    # 입찰제한 쿨다운 로드(만료 정리) — 반복 실패 건을 이번 사이클 조정에서 제외
+    _g_limit_cd.clear()
+    _now_l = _now_ts()
+    for _k, _v in (await _load_setting_map(_SET_LIMIT)).items():
+        try:
+            if _now_l - float(_v) < _LIMIT_TTL:
+                _g_limit_cd[_k] = float(_v)
+        except Exception:
+            pass
     cooldown = await _load_cooldown()
     rate = await _jpy_krw_rate()
     tariff_threshold = int(150 * await _usd_krw_rate())
@@ -1837,6 +1860,22 @@ async def run_kream_unified_once() -> dict:
                     cur = int(ask.get("price") or 0)
                     low_over = int(ask.get("lowest_overseas_price") or 0)
                     low_norm = int(ask.get("lowest_normal_price") or 0)
+                    # 입찰제한 쿨다운 — 크림이 계속 거절하는 건은 재시도 안 함
+                    if f"{kid}|{nm}" in _g_limit_cd:
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "입찰제한쿨다운",
+                                kid,
+                                nm,
+                                cur,
+                                cur,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
                     _floor_map[(kid, nm)] = calc_min_price(
                         price, rate, False, nm.upper().startswith("PSA")
@@ -2056,6 +2095,7 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
+    await _save_setting_map(_SET_LIMIT, _g_limit_cd)  # 입찰제한 쿨다운 유지
 
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
     shoe = await _process_shoe_asks(
