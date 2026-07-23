@@ -1325,6 +1325,170 @@ async def backfill_lottehome_goodsno(
     }
 
 
+class LottehomeMappingItem(BaseModel):
+    product_id: str
+    goods_no: str
+    expected_current: str = ""  # 교체 모드: 현재 매핑값 일치 시에만 교체
+
+
+class LottehomeSetMappingRequest(BaseModel):
+    account_id: str
+    mappings: list[LottehomeMappingItem]
+    dry_run: bool = True
+
+
+@router.post("/lottehome/set-goodsno-mappings")
+async def set_lottehome_goodsno_mappings(
+    body: LottehomeSetMappingRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    admin: str = Depends(require_admin),
+):
+    """롯데홈 goods_no 매핑 수동 보정 — backfill 이 못 잡는 유령 재연결용.
+
+    backfill-goodsno 는 상품명 끝 원상품번호 토큰으로만 매칭하는데, 롯데홈
+    상품명 길이 제한으로 토큰이 잘린 리스팅(실측 118건)과 죽은 번호를 가리키는
+    매핑 교체(실측 22건)는 잡지 못한다. 파트너오피스 대조로 확정한
+    (product_id, goods_no) 쌍을 명시적으로 받아 보정한다.
+
+    안전장치:
+    - 신규 연결: 해당 계정 매핑이 이미 있으면 거부(conflict) —
+      교체는 expected_current 로 현재값을 명시했을 때만 허용(CAS)
+    - goods_no 가 이미 다른 상품에 매핑돼 있으면 거부(in_use)
+    - 요청당 최대 500건, dry_run 기본
+    """
+    import json as _json
+
+    from sqlalchemy import text as _text
+
+    if not body.mappings:
+        raise HTTPException(400, "mappings 가 비어 있습니다")
+    if len(body.mappings) > 500:
+        raise HTTPException(400, "요청당 최대 500건 — 나눠서 호출하세요")
+
+    from sqlmodel import select
+
+    from backend.domain.samba.account.model import SambaMarketAccount
+
+    acc = (
+        await session.exec(
+            select(SambaMarketAccount).where(
+                SambaMarketAccount.id == body.account_id,
+                SambaMarketAccount.is_active == True,  # noqa: E712
+            )
+        )
+    ).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="활성 계정을 찾을 수 없습니다")
+    if acc.market_type != "lottehome":
+        raise HTTPException(
+            status_code=400, detail=f"롯데홈 계정이 아닙니다: {acc.market_type}"
+        )
+
+    aid = body.account_id
+    applied = 0
+    results: list[dict[str, str]] = []
+    for m in body.mappings:
+        gno = str(m.goods_no).strip()
+        if not gno.isdigit():
+            results.append({"product_id": m.product_id, "result": "bad_goods_no"})
+            continue
+        # goods_no 가 이미 다른 상품에 매핑돼 있으면 거부
+        in_use = (
+            await session.execute(
+                _text(
+                    "SELECT id FROM samba_collected_product "
+                    "WHERE market_product_nos->>:aid = :gno AND id <> :pid LIMIT 1"
+                ),
+                {"aid": aid, "gno": gno, "pid": m.product_id},
+            )
+        ).first()
+        if in_use:
+            results.append(
+                {"product_id": m.product_id, "result": f"in_use_by:{in_use[0]}"}
+            )
+            continue
+        row = (
+            await session.execute(
+                _text(
+                    "SELECT market_product_nos->>:aid "
+                    "FROM samba_collected_product WHERE id = :pid"
+                ),
+                {"aid": aid, "pid": m.product_id},
+            )
+        ).first()
+        if row is None:
+            results.append({"product_id": m.product_id, "result": "not_found"})
+            continue
+        current = str(row[0] or "").strip()
+        expected = str(m.expected_current or "").strip()
+        if current and current != expected:
+            # 이미 매핑돼 있는데 교체 의사(expected_current) 불일치 → 거부
+            results.append(
+                {"product_id": m.product_id, "result": f"conflict:{current}"}
+            )
+            continue
+        if current == gno:
+            results.append({"product_id": m.product_id, "result": "already_set"})
+            continue
+        if body.dry_run:
+            results.append(
+                {
+                    "product_id": m.product_id,
+                    "result": ("would_replace:" + current) if current else "would_set",
+                }
+            )
+            continue
+        await session.execute(
+            _text(
+                "UPDATE samba_collected_product SET "
+                "market_product_nos = "
+                "  COALESCE(market_product_nos, '{}'::jsonb) "
+                "  || jsonb_build_object(CAST(:aid AS text), CAST(:gno AS text)), "
+                "registered_accounts = CASE "
+                "  WHEN COALESCE(registered_accounts, '[]'::jsonb) "
+                "    @> to_jsonb(CAST(:aid AS text)) THEN registered_accounts "
+                "  ELSE COALESCE(registered_accounts, '[]'::jsonb) "
+                "    || to_jsonb(CAST(:aid AS text)) END, "
+                "status = 'registered' "
+                "WHERE id = :pid"
+            ),
+            {"aid": aid, "gno": gno, "pid": m.product_id},
+        )
+        applied += 1
+        results.append({"product_id": m.product_id, "result": "set:" + gno})
+        if applied % 200 == 0:
+            await session.commit()
+    if not body.dry_run:
+        await session.commit()
+        try:
+            from backend.domain.samba.warroom.model import SambaMonitorEvent
+
+            session.add(
+                SambaMonitorEvent(
+                    event_type="lottehome_set_goodsno_mappings",
+                    severity="info",
+                    market_type="lottehome",
+                    summary=f"롯데홈 매핑 수동 보정 {applied}건",
+                    detail={
+                        "account_id": aid,
+                        "applied": applied,
+                        "results": results[:100],
+                    },
+                )
+            )
+            await session.commit()
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "dry_run": body.dry_run,
+        "requested": len(body.mappings),
+        "applied": applied,
+        "results": results,
+    }
+
+
 class LottehomeStopSaleRequest(BaseModel):
     account_id: str
     goods_nos: list[str]
