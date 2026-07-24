@@ -47,6 +47,8 @@ class OrderUpdate(BaseModel):
     cost: Optional[float] = None
     shipping_fee: Optional[float] = None
     fee_rate: Optional[float] = None
+    # 정산금 직접 보정용 — 미지정 시 sale_price×(1−fee_rate) 계산 유지
+    revenue: Optional[float] = None
     shipping_company: Optional[str] = None
     tracking_number: Optional[str] = None
     overseas_shipping_company: Optional[str] = None
