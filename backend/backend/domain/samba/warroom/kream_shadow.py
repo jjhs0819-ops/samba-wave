@@ -464,6 +464,35 @@ def _emit_autotune_log(
         pass
 
 
+async def _write_back_db_options(updates: list) -> None:
+    """실시간 snkr 원가/재고를 samba_collected_product.options 에 되쓴다.
+    카드는 마켓 미등록이라 메인 오토튠이 갱신 안 함 → 전수스캔 정지 후 db_opts 가 낡음.
+    검수페이지/데일리리포트/즉시수익 계산 정확도 + 다음 사이클 급락가드 직전가 정확도용.
+    옵션/원가만 갱신(가격결정엔 매 사이클 실시간값을 직접 쓰므로 여기 write 는 부수효과)."""
+    if not updates:
+        return
+    try:
+        from backend.db.orm import get_write_session
+
+        async with get_write_session() as s:
+            for snkr_id, opts, cost in updates:
+                await s.execute(
+                    _text(
+                        "UPDATE samba_collected_product "
+                        "SET options = CAST(:opt AS jsonb), cost = :cost, updated_at = NOW() "
+                        "WHERE source_site='SNKRDUNK' AND site_product_id = :sid"
+                    ),
+                    {
+                        "opt": json.dumps(opts, ensure_ascii=False),
+                        "cost": float(cost),
+                        "sid": str(snkr_id),
+                    },
+                )
+            await s.commit()
+    except Exception as exc:
+        logger.warning("[크림통합] DB 원가/재고 되쓰기 실패(무시): %s", exc)
+
+
 async def _flush_logs_to_db() -> None:
     """사이클 버퍼(_pending_logs)를 kream_refresh_log 에 일괄 INSERT + 오래된 행 트림.
     실패해도 무시(로그 유실만, 입찰 동작 무관)."""
@@ -1943,6 +1972,34 @@ async def run_kream_unified_once() -> dict:
             # 슬랙 '재고 N건(카드…)' 집계 — 매물 있는 카드 상품 수
             if int(_p10.get("stock") or 0) > 0 or int(_p9.get("stock") or 0) > 0:
                 r["instock"] = 1
+            # ── DB write-back [원가/재고 갱신] — 카드는 마켓 미등록이라 메인 오토튠 범위 밖.
+            # 로컬 전수스캔이 하던 DB options 갱신이 끊겨 db_opts 가 낡았다(검수/리포트/즉시수익
+            # 부정확). kream_shadow 가 매 사이클 실시간 fetch 하므로 그 값을 DB 에 되쓴다.
+            # 비PSA(박스/신발) 옵션은 보존, PSA10/9 만 실시간값으로 갱신.
+            _base_opts = [
+                {
+                    "name": _n,
+                    "price": int(_d.get("price") or 0),
+                    "stock": int(_d.get("stock") or 0),
+                }
+                for _n, _d in (prod.get("db_opts") or {}).items()
+                if not str(_n).upper().startswith("PSA")
+            ]
+            _new_opts = _base_opts + [
+                {
+                    "name": "PSA 10",
+                    "price": int(_p10.get("price") or 0),
+                    "stock": int(_p10.get("stock") or 0),
+                },
+                {
+                    "name": "PSA 9",
+                    "price": int(_p9.get("price") or 0),
+                    "stock": int(_p9.get("stock") or 0),
+                },
+            ]
+            _new_cost = int(_p10.get("price") or 0) or int(_p9.get("price") or 0)
+            if _new_cost > 0:
+                r["db_update"] = (snkr_id, _new_opts, _new_cost)
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
@@ -2090,11 +2147,14 @@ async def run_kream_unified_once() -> dict:
     rs = {"recent": 0, "failed": 0, "miss": 0, "trade": 0, "hold": 0, "ok": 0}
     psa_snapshot: list = []  # 매수추천/원가오염 감시용 (kid, snkr_id, p10가, p10재고, p9가, p9재고)
     card_instock = 0  # 매물 있는 카드 상품 수 (슬랙 '재고 N건(카드…)')
+    db_updates: list = []  # (snkr_id, options, cost) — 실시간값 DB 되쓰기(원가/재고 갱신)
 
     for res in results:
         if isinstance(res, Exception) or not isinstance(res, dict):
             counts["snkr_fail"] += 1
             continue
+        if res.get("db_update"):
+            db_updates.append(res["db_update"])
         counts["products"] += 1
         counts["snkr_ok"] += res["snkr_ok"]
         counts["snkr_fail"] += res["snkr_fail"]
@@ -2321,6 +2381,7 @@ async def run_kream_unified_once() -> dict:
         f"복귀{exec_revert:,} 실패{exec_fail:,} (리스톡탐색 {min(_unified_offset, rest_total):,}/{rest_total:,})",
     )
     await _flush_logs_to_db()
+    await _write_back_db_options(db_updates)  # 실시간 원가/재고 → DB 되쓰기
     # 활성사이클 표시용 상태 기록 (카드 갱신+박스 갱신 = 가격조정 건수)
     await _save_kream_cycle_status(
         min(_unified_offset, rest_total),
