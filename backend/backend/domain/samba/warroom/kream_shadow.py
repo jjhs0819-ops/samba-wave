@@ -894,6 +894,34 @@ async def _fetch_snkr_box(cli: httpx.AsyncClient, snkr_id: str) -> dict:
         return {"price": -1, "stock": -1}
 
 
+async def _fetch_snkr_sizes(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
+    """수량별 최저가 — GET /v1/apparels/{id}/sizes → {수량N: {price, stock}}.
+    박스/카드팩의 '해외배송(N개)' 옵션은 낱개×N 이 아니라 N수량 실시세를 써야 한다
+    (1パック¥1,610 vs 4パック¥8,499 처럼 규모별 프리미엄/할인 존재). API 실패 시 None."""
+    try:
+        r = await cli.get(
+            f"https://snkrdunk.com/v1/apparels/{snkr_id}/sizes", headers=_SNKR_HEADERS
+        )
+        if r.status_code != 200:
+            return None
+        out: dict[int, dict] = {}
+        for sp in r.json().get("sizePrices") or []:
+            sz = sp.get("size") or {}
+            nm = str(sz.get("localizedName") or sz.get("name") or "")
+            m = re.search(r"(\d+)", nm)
+            if not m:
+                continue
+            n = int(m.group(1))
+            p = int(sp.get("minListingPrice") or 0)
+            cnt = int(
+                sp.get("listingItemCount") or sp.get("listingCount") or (1 if p else 0)
+            )
+            out[n] = {"price": p, "stock": cnt}
+        return out
+    except Exception:
+        return None
+
+
 async def _fetch_snkr_pack(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
     """카드팩 팩수별 최저가(JPY) {N: 엔}. HTML 파싱(sizeNameパック + minNewListingPrice).
     로컬 fetch_snkr_pack_prices_sync 포팅. 1팩×N 곱셈 금지(팩수별 실시세)."""
@@ -1674,29 +1702,42 @@ async def _process_box_asks(
         async def _one(a):
             async with sem:
                 kid = str(a.get("product_id") or "")
+                opt = str(a.get("option") or "")  # 실제 옵션(해외배송 / 해외배송(N개))
                 snkr_id = kid_to_snkr.get(kid)
                 if not snkr_id:
                     return ("nocost", a, 0, False)
-                box = await _fetch_snkr_box(scli, snkr_id)
-                if box["stock"] < 0:
-                    return ("hold", a, 0, False)  # API 실패 — 삭제금지
-                if box["stock"] == 0 or box["price"] <= 0:
-                    return ("delete", a, 0, False)
-                box["price"] = _guard_jpy(kid, "해외배송", int(box["price"]))
+                # 수량 파싱 — '해외배송(N개)'=N수량 묶음. N수량 실시세를 써야 저평가 안 남.
+                _mq = re.search(r"\((\d+)개\)", opt)
+                qty = int(_mq.group(1)) if _mq else 1
+                if qty > 1:
+                    # 다수량 묶음 → /sizes 의 N수량 최저가 사용(낱개×N 금지)
+                    sizes = await _fetch_snkr_sizes(scli, snkr_id)
+                    if sizes is None:
+                        return ("hold", a, 0, False)  # API 실패 — 삭제금지
+                    sd = sizes.get(qty)
+                    if not sd or sd["stock"] <= 0 or sd["price"] <= 0:
+                        return ("delete", a, 0, False)  # 그 수량 매물 없음
+                    price = int(sd["price"])
+                else:
+                    box = await _fetch_snkr_box(scli, snkr_id)
+                    if box["stock"] < 0:
+                        return ("hold", a, 0, False)
+                    if box["stock"] == 0 or box["price"] <= 0:
+                        return ("delete", a, 0, False)
+                    price = int(box["price"])
+                price = _guard_jpy(kid, opt, price)
                 # 입찰 최고 원가 초과 — 갱신 대상서 제외(로컬 25만엔 원칙). 삭제는 안 함.
-                if box["price"] > POLICY["max_cost_jpy"]:
+                if price > POLICY["max_cost_jpy"]:
                     return ("overcost", a, 0, False)
                 cur = int(a.get("price") or 0)
-                _floor_map[(kid, "해외배송")] = calc_min_price(
-                    box["price"], rate, True, False
-                )
+                _floor_map[(kid, opt)] = calc_min_price(price, rate, True, False)
                 act, target, adjusting, is_nc = _decide_price_action(
                     cur,
-                    "해외배송",
-                    box["price"],
+                    opt,
+                    price,
                     int(a.get("lowest_overseas_price") or 0),
                     int(a.get("lowest_normal_price") or 0),
-                    (kid, "해외배송") in cooldown,
+                    (kid, opt) in cooldown,
                     0,
                     rate,
                     tariff,
@@ -1708,7 +1749,7 @@ async def _process_box_asks(
                     target,
                     is_nc,
                     act,
-                    box["price"],
+                    price,
                 )
 
         rows = await asyncio.gather(
