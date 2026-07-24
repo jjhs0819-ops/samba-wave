@@ -925,6 +925,36 @@ async def _fetch_snkr_used(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
     return out
 
 
+async def _html_haslisting(
+    cli: httpx.AsyncClient, snkr_id: str, option: str
+) -> bool | None:
+    """상품 HTML 의 등급별 hasListing 으로 재고 이중검증 [로컬 이식].
+    True=재고있음(삭제보류) / False=재고없음(삭제진행) / None=확인불가(안전하게 삭제보류).
+    used API 가 순간 0 을 반환해 정상 입찰이 삭제되던 것 방지."""
+    o = str(option or "")
+    if "10" in o:
+        fid = "psa_10"
+    elif "9" in o:
+        fid = "psa_9"
+    else:
+        return None
+    try:
+        r = await cli.get(
+            f"https://snkrdunk.com/apparels/{snkr_id}",
+            headers={**_SNKR_HEADERS, "Accept": "text/html"},
+        )
+        if r.status_code != 200:
+            return None
+        m = re.search(
+            r'"filterConditionId":"' + fid + r'"[^}]*"hasListing":(true|false)', r.text
+        )
+        if m:
+            return m.group(1) == "true"
+        return False  # 등급 자체 없음 = 재고없음
+    except Exception:
+        return None
+
+
 async def _fetch_snkr_box(cli: httpx.AsyncClient, snkr_id: str) -> dict:
     """봉인 박스 최저가(JPY)·재고. GET /v1/apparels/{id} → {minPrice, listingCount}.
     로컬 fetch_snkr_box_price_sync 포팅. API 실패=-1(재고0과 구분, 삭제 금지)."""
@@ -1402,6 +1432,71 @@ _GRADE_RE = re.compile(
 # 리스톡 가드 상태(사이클 시작 시 로드): (kid,opt)→값
 _g_trade_counts: dict[str, int] = {}
 _g_unfulfilled: set[tuple[str, str]] = set()
+# 즉시판매 보류 [로컬 이식] — 직전 스냅샷엔 있었는데 지금 사라진 입찰=팔린 것. 주문폴링(랙)
+# 을 기다리지 않고 판매 즉시 재입찰 차단. 소싱완료(sourcing_order_number)되면 해제, 6h 만료.
+_SET_SNAPSHOT = "kream_ask_snapshot"
+_SET_HOLD = "kream_relist_hold"
+_HOLD_TTL = 21600  # 6h
+
+
+async def _detect_and_hold_sold(asks: list) -> None:
+    """직전 스냅샷 대비 사라진 (kid,opt)=판매 → 즉시 보류. 소싱완료·만료분 정리 후
+    _g_unfulfilled 에 합쳐 리스톡이 스킵하게 한다. 스냅샷은 현재 라이브로 갱신."""
+    import time as _t  # noqa: F811
+
+    now = _t.time()
+    try:
+        prev = await _load_setting_map(_SET_SNAPSHOT)  # {"kid|opt": ts}
+        prev_keys = set(prev.keys())
+        cur_keys = {
+            f"{a.get('product_id')}|{str(a.get('option') or '').replace(' ', '')}"
+            for a in asks
+            if a.get("product_id")
+        }
+        sold = prev_keys - cur_keys
+        hold = {
+            k: float(v)
+            for k, v in (await _load_setting_map(_SET_HOLD)).items()
+            if now - float(v) < _HOLD_TTL
+        }
+        for k in sold:
+            hold.setdefault(k, now)  # 최초감지 시각 유지
+        # 소싱완료(sourcing_order_number 있음)된 것은 해제
+        if hold:
+            _kids = list({k.split("|", 1)[0] for k in hold})
+            try:
+                async with get_read_session() as s:
+                    fulfilled = {
+                        f"{r[0]}|{str(r[1] or '').replace(' ', '')}"
+                        for r in (
+                            await s.execute(
+                                _text(
+                                    "SELECT product_id, product_option FROM samba_order "
+                                    "WHERE product_id = ANY(:k) "
+                                    "AND COALESCE(sourcing_order_number,'')<>''"
+                                ),
+                                {"k": _kids},
+                            )
+                        ).all()
+                    }
+                hold = {k: v for k, v in hold.items() if k not in fulfilled}
+            except Exception:
+                pass
+        # 리스톡 스킵 대상에 합류
+        for k in hold:
+            if "|" in k:
+                _kid, _opt = k.split("|", 1)
+                _g_unfulfilled.add((_kid, _opt))
+        await _save_setting_map(_SET_HOLD, hold)
+        await _save_setting_map(_SET_SNAPSHOT, {k: now for k in cur_keys})
+        if sold:
+            _emit_autotune_log(
+                "KREAM", "", f"[즉시판매] 사라진 입찰 {len(sold):,}건 → 재입찰 보류"
+            )
+    except Exception as exc:
+        logger.warning("[크림통합] 즉시판매 보류 감지 실패(무시): %s", exc)
+
+
 _g_recent_posts: dict[str, float] = {}  # "kid|opt" → epoch (2h TTL)
 _g_failed_posts: dict[str, float] = {}  # "kid|opt" → epoch (6h TTL)
 _g_miss_counts: dict[str, int] = {}  # "kid|opt" → 연속 미검출 횟수
@@ -2142,19 +2237,37 @@ async def run_kream_unified_once() -> dict:
                         )
                     )
                 elif has_ask and stock <= 0:
-                    r["rows"].append(
-                        (
-                            "delete",
-                            "삭제(무재고)",
-                            kid,
-                            nm,
-                            int(ask.get("price") or 0),
-                            0,
-                            True,
-                            prod["name"],
-                            False,
+                    # 재고0 HTML 이중검증 — used API 순간 0 에 정상입찰 오삭제 방지.
+                    _hl = await _html_haslisting(scli, snkr_id, nm)
+                    if _hl is not False:
+                        # True(HTML상 재고있음) 또는 None(확인불가) → 삭제 보류
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "삭제보류(HTML재고확인)",
+                                kid,
+                                nm,
+                                int(ask.get("price") or 0),
+                                int(ask.get("price") or 0),
+                                False,
+                                prod["name"],
+                                False,
+                            )
                         )
-                    )
+                    else:
+                        r["rows"].append(
+                            (
+                                "delete",
+                                "삭제(무재고·HTML확인)",
+                                kid,
+                                nm,
+                                int(ask.get("price") or 0),
+                                0,
+                                True,
+                                prod["name"],
+                                False,
+                            )
+                        )
                 elif not has_ask and stock > 0 and price > 0:
                     base = calc_base(price, rate, False, True)
                     mp = calc_min_price(price, rate, False, True)
@@ -2190,6 +2303,7 @@ async def run_kream_unified_once() -> dict:
 
     # [Step 5] 리스톡 가드 상태 로드 + 실행대기 수집(순차 — 가드상태 race 방지)
     await _load_restock_guards()
+    await _detect_and_hold_sold(asks)  # 즉시판매 보류(스냅샷) → _g_unfulfilled 합류
     import time as _t  # noqa: F811
 
     _now = _t.time()
