@@ -502,6 +502,9 @@ async def cleanup_esm_orphans(
         )
 
     market_goods = await _scan_market_goods(client)
+    # 주의(#679): orphan(마켓有·DB無)은 대부분 외부 셀링툴이 등록한 남의 라이브
+    # 리스팅이다. 삼바 소유증명 신호가 없어 유령과 외부상품을 구분 불가하므로,
+    # 삭제 전 반드시 target_sample 을 육안 확인할 것(자동경로는 DELETE_CONFIRMED 로 차단).
     orphans = sorted(market_goods - tracked)
     targets = sorted(market_goods) if wipe_all else orphans
 

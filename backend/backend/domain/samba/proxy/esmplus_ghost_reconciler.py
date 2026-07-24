@@ -43,6 +43,16 @@ RECONCILER_ENABLED = os.environ.get("ESM_GHOST_RECONCILER", "").lower() in (
     "true",
     "yes",
 )
+# orphan(마켓有·DB無) 자동삭제 최종 확인 게이트(#679). orphan 은 대부분 외부 셀링툴이
+# 등록한 남의 라이브 리스팅이며, upstream 스캔엔 삼바 소유증명(managedCode 등) 신호가
+# 없어 삼바 유령과 외부 리스팅을 **구분 불가**. AUTO_CLEAN 만으로 삭제하면 외부셀러
+# 상품이 소실된다(#679 실사고: 동명 아디다스/푸마 122건 오판). 따라서 실제 삭제는
+# AUTO_CLEAN + 이 플래그가 **둘 다** 켜졌을 때만. 기본 OFF = 탐지·알림 전용.
+DELETE_CONFIRMED = os.environ.get("ESM_GHOST_DELETE_CONFIRMED", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 async def _fetch_active_esm_accounts() -> list[dict[str, Any]]:
@@ -258,7 +268,16 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
     if not AUTO_CLEAN:
         return result
 
-    # AUTO_CLEAN=1 일 때만 실제 삭제
+    if not DELETE_CONFIRMED:
+        # #679 방어심층 — orphan 을 삼바 유령으로 단정해 삭제하면 외부셀러 라이브
+        # 리스팅이 소실된다(소유증명 부재). AUTO_CLEAN 만으로는 삭제 금지, 탐지·알림만.
+        logger.warning(
+            f"[esm_ghost] {label} orphan={orphan_count} 감지 — 자동삭제 보류"
+            f"(ESM_GHOST_DELETE_CONFIRMED 미설정, 외부리스팅 오삭제 방지 #679)"
+        )
+        return result
+
+    # AUTO_CLEAN + DELETE_CONFIRMED 둘 다일 때만 실제 삭제
     deleted: list[str] = []
     failed: list[str] = []
     for gno in list(orphans):
