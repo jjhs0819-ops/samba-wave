@@ -20,6 +20,7 @@ from sqlmodel import col, select
 from backend.db.orm import get_write_session
 from backend.domain.samba.order.model import (
     EXCLUDED_ORDER_STATUSES,
+    RETURN_BLOCKED_STATUSES,
     SHIPPED_SHIPPING_STATUS_KEYWORDS,
     SambaOrder,
     is_order_cancelled,
@@ -1202,6 +1203,18 @@ _SHIP_FAILED_SKIP_STATUSES = {
     "exchanged",
 }
 
+# 마켓이 영구적으로 거부하는 응답 패턴 (#681). 재시도해도 영원히 같은 답이 오므로
+# sweep 재전송 대상에서 제외한다. 보수적으로 확인된 코드만 등록 — 일시 실패
+# (rate limit, 타임아웃 등)를 영구로 오분류하면 정상 재전송을 막으므로.
+#   -3313: 11번가 "해당 배송번호의 주문상태가 이미 변경 되었습니다"(구매확정/취소완료)
+_PERMANENT_REJECTION_PATTERNS: tuple[str, ...] = ("(-3313)",)
+
+
+def _is_permanent_market_rejection(err: str) -> bool:
+    """마켓 응답이 영구 거부(재시도 무의미)인지 판정."""
+    msg = err or ""
+    return any(p in msg for p in _PERMANENT_REJECTION_PATTERNS)
+
 
 def _set_ship_failed_note(existing: str | None, reason: str) -> str:
     """notes 에 [송장전송실패] 세그먼트 설정 — 기존 실패 세그먼트는 최신 사유로 교체, 수동메모 보존."""
@@ -1260,6 +1273,33 @@ async def dispatch_to_market(
                 "success": False,
                 "blocked": True,
                 "error": "취소요청 주문은 송장 등록을 진행하지 않습니다",
+            }
+
+        # 반품/교환/발송불가 가드 (#681) — 취소 가드와 대칭.
+        # enqueue 는 EXCLUDED_ORDER_STATUSES 로 반품/교환을 제외하지만, 큐잉 후
+        # dispatch 사이에 주문이 반품/교환으로 flip 되면 취소 가드에 안 걸려 마켓까지
+        # 도달한다. 마켓은 클레임 진행 중이라 영구 거부하는데 sweep 이 5분마다 재전송
+        # → 잡만 CANCELLED 로 닫는다. order.status/shipping_status 는 불변(ship_failed
+        # 오염 금지) — 반품/교환 상태 자체가 정확한 표시다.
+        _ord_status = (order.status or "").lower().strip()
+        if _ord_status in RETURN_BLOCKED_STATUSES:
+            logger.warning(
+                f"[송장동기화][가드] 반품/교환/발송불가 주문 dispatch 차단 "
+                f"job_id={job.id} order_id={order.id} status={order.status} "
+                f"shipping_status={order.shipping_status}"
+            )
+            job.status = STATUS_CANCELLED
+            job.last_error = (
+                f"반품/교환/발송불가 주문 dispatch 차단 (status={order.status}, "
+                f"shipping_status={order.shipping_status})"
+            )
+            job.updated_at = datetime.now(_UTC)
+            session.add(job)
+            await session.commit()
+            return {
+                "success": False,
+                "blocked": True,
+                "error": "반품/교환/발송불가 주문은 송장 등록을 진행하지 않습니다",
             }
 
         # 배송상태 가드 (#558) — enqueue 제외 기준과 대칭.
@@ -1346,6 +1386,27 @@ async def dispatch_to_market(
             return {"success": True, **result}
 
         except Exception as exc:
+            # 마켓 영구 거부(#681) — 마켓 측이 이미 종결(구매확정/취소완료 등)이라
+            # 재시도가 영원히 같은 답을 받는 케이스. DISPATCH_FAILED 로 두면 sweep 이
+            # 5분마다 재전송하므로 CANCELLED 로 종결한다. order 재스탬프 금지 —
+            # 마켓 실상태 반영은 주문 동기화의 몫이고, ship_failed 오염을 막는다.
+            if _is_permanent_market_rejection(str(exc)):
+                logger.warning(
+                    f"[송장동기화][가드] 마켓 영구 거부 — 재시도 중단 "
+                    f"job_id={job.id} order_id={order.id} err={str(exc)[:200]}"
+                )
+                job.status = STATUS_CANCELLED
+                job.last_error = f"마켓 영구 거부 — 재시도 중단: {exc}"[:500]
+                job.dispatch_result = {"error": str(exc), "permanent": True, **result}
+                job.updated_at = datetime.now(_UTC)
+                session.add(job)
+                await session.commit()
+                return {
+                    "success": False,
+                    "blocked": True,
+                    "error": f"마켓 영구 거부: {exc}",
+                }
+
             job.status = STATUS_DISPATCH_FAILED
             job.last_error = f"dispatch 실패: {exc}"[:500]
             job.dispatch_result = {"error": str(exc), **result}

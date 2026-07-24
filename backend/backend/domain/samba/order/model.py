@@ -356,6 +356,26 @@ CANCEL_BLOCKED_STATUSES: frozenset[str] = frozenset(
     {"cancel_requested", "cancelling", "cancelled"}
 )
 
+# 반품/교환/발송불가 — 송장 dispatch 를 막아야 하지만 취소 가드(is_order_cancelled)엔
+# 안 걸리는 상태들. 잡 큐잉 시점엔 EXCLUDED_ORDER_STATUSES 로 제외되지만, 큐잉 후
+# dispatch 사이에 주문이 이 상태로 flip 되면 가드 공백에 빠져 마켓이 영구 거부하는데도
+# sweep 이 5분마다 재전송한다(실측 10건이 최장 2개월 반복). CANCEL_BLOCKED_STATUSES 와
+# 대칭으로 dispatch 진입 직전 차단한다.
+RETURN_BLOCKED_STATUSES: frozenset[str] = frozenset(
+    {
+        "return_requested",
+        "returning",
+        "returned",
+        "return_completed",
+        "exchange_requested",
+        "exchanging",
+        "exchanged",
+        "exchange_pending",
+        "exchange_done",
+        "undeliverable",
+    }
+)
+
 
 class OrderCancelledError(RuntimeError):
     """주문이 취소 단계라 발주/송장 진행이 차단됐음을 알리는 명시적 예외."""
