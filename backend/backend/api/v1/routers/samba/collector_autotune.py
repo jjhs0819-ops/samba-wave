@@ -1529,16 +1529,22 @@ async def _site_autotune_loop(device_id: str, site: str):
                     if _target_ids:
                         _where.append(_CP.id.in_(_target_ids))
                     _batch_limit = _pc_bs(device_id).get(site, _AUTOTUNE_CYCLE_BATCH)
+                    # SNKRDUNK 소싱 플러그인은 refresh 시 extra_data(snkr_type)를 읽는다.
+                    # 이 배치에 SNKRDUNK 가 있으면 extra_data 를 defer 하지 않는다 — defer 하면
+                    # 세션 종료 후 접근 시 DetachedInstanceError 로 전 상품 갱신 실패(작은 컬럼이라
+                    # 성능 영향 없음). 그 외 사이트는 hot 테이블 부하 방지 위해 defer 유지.
+                    _defer_opts = [
+                        defer(_CP.detail_html),
+                        defer(_CP.detail_images),
+                        defer(_CP.images),
+                    ]
+                    if "SNKRDUNK" not in _autotune_site_members(site):
+                        _defer_opts.append(defer(_CP.extra_data))
                     stmt = (
                         select(_CP)
                         .where(*_where)
                         .order_by(*_order_clause)
-                        .options(
-                            defer(_CP.detail_html),
-                            defer(_CP.detail_images),
-                            defer(_CP.images),
-                            defer(_CP.extra_data),
-                        )
+                        .options(*_defer_opts)
                     )
                     if not _target_ids:
                         stmt = stmt.limit(_batch_limit)
