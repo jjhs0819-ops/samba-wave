@@ -136,3 +136,25 @@ def kream_real_cost(display_price) -> float:
     if p <= 0:
         return 0.0
     return round(p + KREAM_SHIPPING_FEE + p * KREAM_FEE_RATE)
+
+
+def bunjang_image_urls(product: dict) -> list:
+    """번장 상세(product) → 전체 이미지 URL 목록.
+
+    imageUrl 은 "..._{cnt}_타임스탬프_w{res}.jpg" 템플릿, imageCount 가 장수.
+    뒷면 문의가 많아 대표 1장만이 아니라 전체를 등록한다(2026-07-24).
+    """
+    import re as _re
+
+    tmpl = str(product.get("imageUrl") or "")
+    cnt = int(product.get("imageCount") or 1)
+    if not tmpl:
+        return []
+    urls = []
+    for i in range(1, cnt + 1):
+        u = tmpl.replace("{cnt}", str(i)).replace("{res}", "856")
+        # 템플릿에 {res} 가 없고 고정형이면 그대로, 없으면 표준형으로 폴백
+        if "{" in u:
+            u = f"https://media.bunjang.co.kr/product/{product.get('pid') or ''}_{i}_w856.jpg"
+        urls.append(u)
+    return urls
