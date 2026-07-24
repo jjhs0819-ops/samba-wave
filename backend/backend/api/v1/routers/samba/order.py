@@ -11663,6 +11663,15 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
     except (TypeError, ValueError):
         product_price = 0
 
+    # 정산금(revenue) = pay_amount − poundage(총 수수료). API가 주문별 실제
+    # 수수료를 내려주므로 요율 하드코딩 금지 (실측 2026-07-24: 15만원 이하
+    # 기술서비스료 정액 15,000원, 초과 구간은 판매가 비율 — 정책 변경도 자동 반영).
+    try:
+        _poundage = int(item.get("poundage") or 0)
+    except (TypeError, ValueError):
+        _poundage = 0
+    revenue = max(product_price - _poundage, 0)
+
     # 배송지(delivery_address_platform) — 수취인/주소 분리 저장
     dap = item.get("delivery_address_platform") or {}
     if not isinstance(dap, dict):
@@ -11693,6 +11702,7 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         "product_option": item.get("properties", "") or "",
         "quantity": quantity,
         "sale_price": product_price,
+        "revenue": revenue,
         "cost": 0,
         "status": status,
         "shipping_status": "",
