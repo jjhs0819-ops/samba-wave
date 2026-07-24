@@ -1895,10 +1895,43 @@ async def run_kream_unified_once() -> dict:
     rate = await _jpy_krw_rate()
     tariff_threshold = int(150 * await _usd_krw_rate())
 
-    # live ask 인덱스 (kid, 옵션) → ask
+    # ── 중복입찰 정리 [로컬 이식] — (상품,옵션)당 내 입찰이 2개↑면 최고가 1개만 남기고 삭제.
+    # 안 하면 무경쟁 인상 시 안 올린 다른 내 입찰이 rank1 이 돼, 올린 입찰이 rank2 로 밀림 →
+    # 재확인 로직이 '경쟁자에 밀림'으로 오인 → 무경쟁 인상↔하향 무한 핑퐁 + 쿨다운 반복.
+    _dup: dict = {}
+    for a in asks:
+        _k = (str(a.get("product_id") or ""), str(a.get("option") or ""))
+        _dup.setdefault(_k, []).append(a)
+    _dedup_del = 0
+    if _EXECUTE:
+        async with httpx.AsyncClient(timeout=25) as _dcli:
+            for _k, _grp in _dup.items():
+                if len(_grp) < 2:
+                    continue
+                _grp.sort(key=lambda x: -int(x.get("price") or 0))  # 최고가 유지
+                for _a in _grp[1:]:
+                    if _a.get("id") and await _exec_delete_ask(_dcli, h, _a.get("id")):
+                        _dedup_del += 1
+                    await asyncio.sleep(0.1)
+    if _dedup_del:
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[중복입찰] {_dedup_del:,}건 삭제(최고가 1개만 유지 — 핑퐁 방지)",
+        )
+        # 삭제분 반영 위해 재조회
+        try:
+            asks = await _fetch_live_asks(h)
+        except Exception:
+            pass
+
+    # live ask 인덱스 (kid, 옵션) → ask (중복 시 최고가 유지)
     ask_index: dict = {}
     for a in asks:
-        ask_index[(str(a.get("product_id") or ""), str(a.get("option") or ""))] = a
+        _ik = (str(a.get("product_id") or ""), str(a.get("option") or ""))
+        _prev = ask_index.get(_ik)
+        if _prev is None or int(a.get("price") or 0) > int(_prev.get("price") or 0):
+            ask_index[_ik] = a
 
     products = await _load_matched_products()
     # 박스 pass용 kid→snkr_id 맵 (배치 슬라이스 전 전체 — 박스 ask는 카탈로그 전역, 로테이션 안 함)
