@@ -8468,7 +8468,30 @@ async def sync_orders_from_markets(
                     "18": ("confirmed", "구매확정"),
                 }
                 _lh_dlv_cache: dict[str, list[dict]] = {}
-                _lh_dlvsn_map: dict[str, list[str]] = {}  # OrdNo → [DlvUnitSn, ...]
+                # 키 주입용 — 반드시 DlvUnitSn만 담는다. OrdDtlSn 폴백을 섞으면
+                # 롯데홈이 DlvUnitSn 없이 OrdDtlSn(914-계열)만 주는 사이클에
+                # 잘못된 키 행이 생성되고 유령 정리가 정상 행을 오판 삭제한다
+                # (2026-07-24 실사고 — B19805/A78791 정상 레코드 삭제·재오염).
+                _lh_dlvsn_map: dict[str, list[str]] = {}  # OrdNo → [DlvUnitSn only]
+                # 유령 정리 보존용 — 응답에 등장한 모든 라인 식별자.
+                # 어떤 식별자 공간의 키로 저장된 행이든 응답에 흔적이 있으면 지우지 않는다.
+                _lh_preserve_map: dict[str, set[str]] = {}
+
+                def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
+                    _dsn = str(_pitem.get("DlvUnitSn") or "")
+                    if _dsn and _dsn not in _lh_dlvsn_map.get(_ono, []):
+                        _lh_dlvsn_map.setdefault(_ono, []).append(_dsn)
+                    for _k in (
+                        "DlvUnitSn",
+                        "OrdDtlSn",
+                        "OrgOrdDtlSn",
+                        "ProdSeq",
+                        "ProdCode",
+                    ):
+                        _v = str(_pitem.get(_k) or "")
+                        if _v:
+                            _lh_preserve_map.setdefault(_ono, set()).add(_v)
+
                 # 4개 상태 조회가 모두 성공해야 유령 정리를 실행한다.
                 # 하나라도 실패(부분응답)하면 실배송라인이 집합에서 빠져
                 # 정상 주문을 유령으로 오인 삭제할 수 있으므로 정리를 건너뛴다.
@@ -8487,23 +8510,9 @@ async def sync_orders_from_markets(
                             if isinstance(_pi, list):
                                 for _pitem in _pi:
                                     if isinstance(_pitem, dict):
-                                        _dsn = str(
-                                            _pitem.get("DlvUnitSn")
-                                            or _pitem.get("OrdDtlSn")
-                                            or ""
-                                        )
-                                        if _dsn and _dsn not in _lh_dlvsn_map.get(
-                                            _ono, []
-                                        ):
-                                            _lh_dlvsn_map.setdefault(_ono, []).append(
-                                                _dsn
-                                            )
+                                        _lh_collect_ids(_ono, _pitem)
                             elif isinstance(_pi, dict):
-                                _dsn = str(
-                                    _pi.get("DlvUnitSn") or _pi.get("OrdDtlSn") or ""
-                                )
-                                if _dsn and _dsn not in _lh_dlvsn_map.get(_ono, []):
-                                    _lh_dlvsn_map.setdefault(_ono, []).append(_dsn)
+                                _lh_collect_ids(_ono, _pi)
                     except Exception as _dlv_pre_e:
                         logger.warning(
                             f"[주문동기화] {label}: 배송조회(stat={_lh_stat}) 수집 실패: {_dlv_pre_e}"
@@ -8540,11 +8549,10 @@ async def sync_orders_from_markets(
                             # deliver_list에서 수집한 DlvUnitSn 사용 → 키 일관성 유지
                             _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
                             if not _dlvsn_list:
-                                if _lh_dlv_fetch_ok:
-                                    _lh_deferred += 1
-                                    continue
-                                # 배송조회 자체가 실패한 사이클이면 기존 폴백 유지
-                                # (전 주문 등록 지연 방지)
+                                # 배송조회 실패 사이클도 폴백 없이 무조건 보류 —
+                                # 폴백이 상품코드 키 행을 만들어 사고의 재유입 경로가 됨
+                                _lh_deferred += 1
+                                continue
                             for _i, _prod in enumerate(_prod_info_raw):
                                 _flat = dict(ro)
                                 _flat["ProdInfo"] = (
@@ -8577,8 +8585,9 @@ async def sync_orders_from_markets(
                             _no_key = str(ro.get("OrdNo", "") or "")
                             _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
                             _pi = ro.get("ProdInfo")
-                            if not _dlvsn_list and _lh_dlv_fetch_ok:
-                                # 실순번 미확보 — 이번 사이클 등록 보류 (추측 키 금지)
+                            if not _dlvsn_list:
+                                # 실순번 미확보 — 이번 사이클 등록 보류 (추측 키 금지).
+                                # 배송조회 실패 사이클도 폴백 없이 보류한다
                                 _lh_deferred += 1
                                 continue
                             if _dlvsn_list and isinstance(_pi, dict) and _no_key:
@@ -8640,9 +8649,22 @@ async def sync_orders_from_markets(
                                 _lh_dlv_replaced.add(_dlv_ord_no)
                             continue
 
+                        # 배송조회 경로도 검증된 DlvUnitSn이 있는 라인만 행 생성.
+                        # OrdDtlSn(914-계열)만 오는 열화 사이클에 그 값으로 키를 만들면
+                        # 취소/송장 [1000] 불가 행이 생기고 유령 정리를 오염시킨다.
+                        # 키가 OrdDtlSn 폴백으로 잡히지 않도록 파싱 전에 제거한다.
                         if isinstance(_prod_info_raw, list):
+                            _ro2 = dict(ro)
+                            _ro2["ProdInfo"] = [
+                                {k: v for k, v in _it.items() if k != "OrdDtlSn"}
+                                for _it in _prod_info_raw
+                                if isinstance(_it, dict) and _it.get("DlvUnitSn")
+                            ]
+                            if not _ro2["ProdInfo"]:
+                                _lh_deferred += 1
+                                continue
                             for _p in _parse_lottehome_order_multi(
-                                ro, account["id"], label, _fs
+                                _ro2, account["id"], label, _fs
                             ):
                                 _p["shipping_status"] = _fss
                                 _dedup_key = _p.get("ext_order_number") or _p.get(
@@ -8652,6 +8674,18 @@ async def sync_orders_from_markets(
                                     _lh_seen.add(_dedup_key)
                                     orders_data.append(_p)
                         else:
+                            _pi_d = (
+                                _prod_info_raw
+                                if isinstance(_prod_info_raw, dict)
+                                else {}
+                            )
+                            if not _pi_d.get("DlvUnitSn"):
+                                _lh_deferred += 1
+                                continue
+                            ro = dict(ro)
+                            ro["ProdInfo"] = {
+                                k: v for k, v in _pi_d.items() if k != "OrdDtlSn"
+                            }
                             _oid = _lh_order_key(ro)
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)
@@ -10534,8 +10568,15 @@ async def sync_orders_from_markets(
                     for _g_ordno, _g_dsns in _lh_dlvsn_map.items():
                         if not _g_ordno or not _g_dsns:
                             continue
-                        _g_ph = ", ".join(f":g_{_i}" for _i in range(len(_g_dsns)))
-                        _g_prm: dict = {f"g_{_i}": _v for _i, _v in enumerate(_g_dsns)}
+                        # 보존 목록 = DlvUnitSn + 응답에 등장한 모든 식별자
+                        # (OrdDtlSn/OrgOrdDtlSn/ProdCode 등). 식별자 공간이 어긋난
+                        # 사이클에 정상 행을 유령으로 오판 삭제하지 않기 위함
+                        # (2026-07-24 실사고 재발 방지).
+                        _g_keep = sorted(
+                            set(_g_dsns) | _lh_preserve_map.get(_g_ordno, set())
+                        )
+                        _g_ph = ", ".join(f":g_{_i}" for _i in range(len(_g_keep)))
+                        _g_prm: dict = {f"g_{_i}": _v for _i, _v in enumerate(_g_keep)}
                         _g_prm["cid"] = account["id"]
                         _g_prm["pfx"] = f"{_g_ordno}:%"
                         _g_res = await session.execute(
