@@ -5414,8 +5414,20 @@ class JobWorker:
         client = None
         if site == "FashionPlus":
             from backend.domain.samba.proxy.fashionplus import FashionPlusClient
+            from backend.domain.samba.collector.refresher import (
+                get_collect_proxy_url,
+            )
 
-            client = FashionPlusClient()
+            # 패플 검색(goods/fetch)은 메인 IP가 403 차단됨 — 수집 프록시 필수.
+            # (상세 API는 메인 IP 허용되나 검색만 차단). 롯데온/ABC/GS와 동일하게
+            # 수집 프록시를 주입한다. proxy_url=None 이면 기존처럼 메인 IP(=403).
+            _fp_proxy = get_collect_proxy_url()
+            client = FashionPlusClient(proxy_url=_fp_proxy)
+            if _fp_proxy:
+                logger.info(
+                    "[잡워커] 패플 수집 프록시: %s"
+                    % (_fp_proxy.split("@")[-1] if "@" in _fp_proxy else "on")
+                )
         elif site == "Nike":
             from backend.domain.samba.proxy.nike import NikeClient
 

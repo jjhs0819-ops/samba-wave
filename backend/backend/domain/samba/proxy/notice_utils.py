@@ -1302,6 +1302,22 @@ def _is_vague(value: str) -> bool:
     return any(keyword in stripped for keyword in vague_keywords)
 
 
+def _notice_too_short(value: str) -> bool:
+    """SSG 상품고시 값이 '특수문자 제외 2byte 이상' 규칙에 미달하는지 판별.
+
+    특수문자/공백을 제외한 실질 문자의 UTF-8 바이트 길이가 2 미만이면 SSG가
+    "상품고시 항목은 특수문자 제외하고 2byte 이상 등록해야 합니다 [itemMngPropId]"
+    로 등록을 거부한다. 예: 영문 단일문자 color='A'(모델명 끝글자를 색상으로
+    오파싱한 케이스), '.', '-'. 한글 1글자(3byte)는 통과.
+    """
+    if not value:
+        return True
+    import re as _re
+
+    meaningful = _re.sub(r"[^0-9A-Za-z가-힣]", "", value)
+    return len(meaningful.encode("utf-8")) < 2
+
+
 def build_ssg_notice(
     product: dict[str, Any],
 ) -> tuple[str, list[dict[str, str]]]:
@@ -1320,10 +1336,22 @@ def build_ssg_notice(
     _raw_color = product.get("color", "") or ""
     material = (
         _pol_material
-        or (_raw_material if not _is_vague(_raw_material) else "")
+        or (
+            _raw_material
+            if not _is_vague(_raw_material) and not _notice_too_short(_raw_material)
+            else ""
+        )
         or fallback
     )
-    color = _pol_color or (_raw_color if not _is_vague(_raw_color) else "") or fallback
+    color = (
+        _pol_color
+        or (
+            _raw_color
+            if not _is_vague(_raw_color) and not _notice_too_short(_raw_color)
+            else ""
+        )
+        or fallback
+    )
     origin = product.get("origin", "") or ""
 
     # 치수 및 굽높이 — 정책 주입값 우선, 없으면 소싱 데이터(ABCmart sizeNotice/heelHeight)
