@@ -423,6 +423,4 @@ class PoisonClient:
             business["carrier"] = carrier
         elif carrier_name:
             business["carrierName"] = carrier_name
-        return await self._post(
-            "/dop/api/v1/pop/api/v1/order/delivery", business
-        )
+        return await self._post("/dop/api/v1/pop/api/v1/order/delivery", business)

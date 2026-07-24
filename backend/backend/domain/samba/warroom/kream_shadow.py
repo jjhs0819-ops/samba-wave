@@ -58,6 +58,45 @@ async def _send_slack(msg: str) -> None:
 # 매수추천/원가오염 감시 상태 — {kid: {"h": 고점엔, "a": 매수알림함, "sa": 오염알림함}}
 _SET_WATCH = "kream_snkr_watch"
 
+# ── 급락 가드 [로컬 _kream_ask_adjust._guard_jpy 이식] ──────────────────────
+# 사고: 스니덩 최저 1건이 일시 급락(¥16,000→¥11,300)하면 원가·최소가가 붕괴해
+# 저가 입찰·체결(652078 PSA10: 정상175,000 → 129,000 체결, 손실46,000)이 난다.
+# 대응: 직전 사이클 원가 대비 30%↓ 급락이면 1사이클 보류(직전가로 계산=인하 방지).
+# 다음 사이클에도 낮으면 진짜 하락으로 수용. 상태는 samba_settings 에 유지.
+_SET_GUARD = "kream_price_guard"
+_g_price_guard: dict = {}
+
+
+def _guard_jpy(kid: str, opt: str, cur_jpy: int) -> int:
+    """급락이면 직전가 반환(1사이클 보류), 아니면 현재가 그대로. 반환값이 원가 계산 기준."""
+    try:
+        cur = int(cur_jpy or 0)
+    except (TypeError, ValueError):
+        return cur_jpy
+    if cur <= 0:
+        return cur_jpy
+    k = f"{kid}|{opt}"
+    st = _g_price_guard.get(k) or {}
+    prev = int(st.get("p") or 0)
+    hold = int(st.get("hold") or 0)
+    eff = cur
+    if prev > 0 and cur < prev * 0.7:
+        if hold < 1:
+            eff = prev  # 1회 보류 — 이번 사이클은 직전가로 계산(인하 방지)
+            hold = 1
+            _emit_autotune_log(
+                "KREAM",
+                kid,
+                f"급락보류 {opt} ¥{prev:,}→¥{cur:,} "
+                f"(-{int((1 - cur / prev) * 100)}%) 일회성 의심, 가격유지",
+            )
+        else:
+            hold = 0  # 2사이클 연속 저가 → 진짜 하락 수용
+    else:
+        hold = 0
+    _g_price_guard[k] = {"p": eff, "hold": hold}
+    return eff
+
 
 def _rank_summary(asks: list) -> tuple[int, int, int, int]:
     """(상품,옵션) 그룹별 1순위/비1순위 집계 — 로컬 봇과 동일 기준.
@@ -539,6 +578,21 @@ async def _fetch_highest_bid(cli, h, pid: str, opt: str) -> int:
 async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> tuple:
     """실제 PATCH 실행(가격조정) — 응답 live_rank 검증 [Phase4c]. _EXECUTE=1 일 때만 호출.
     무경쟁 인상인데 rank!=1(밀림)이면 원가로 복귀 + 24h 쿨다운 기록(재스윙 방지)."""
+    # ── 출력단 마진 하한 최종 가드 [이중방어] ──
+    # 입력단 급락가드를 통과하더라도(직전가 없음·완만한 하락 등) 최소가 미만 값은 절대
+    # 전송 금지. 원가가 뭐든 마진 하한(_floor_map) 이상만 나가게 강제한다.
+    # 652078/649924 저마진 체결(8~9%, 정책 14%) 재발 원천 차단.
+    _floor = int(_floor_map.get((str(pid), str(opt)), 0) or 0)
+    if _floor > 0 and int(target) < _floor:
+        _note_fail(f"마진하한미달 차단: 목표 {int(target):,} < 최소 {_floor:,}")
+        logger.warning(
+            "[크림통합] 마진하한 차단 %s %s: 목표 %s < 최소 %s",
+            pid,
+            opt,
+            f"{int(target):,}",
+            f"{_floor:,}",
+        )
+        return "fail", None
     try:
         r = await cli.patch(
             f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
@@ -1221,13 +1275,14 @@ async def _load_matched_products() -> list[dict]:
                 _text(
                     "SELECT site_product_id AS snkr_id, "
                     "resell_matches->'kream'->>'product_id' AS kid, "
+                    "(resell_matches->'kream'->>'ambiguous')='true' AS ambiguous, "
                     "options::text AS opts, name "
                     "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                 )
             )
         ).all()
-    for snkr_id, kid, opts_txt, name in rows:
+    for snkr_id, kid, ambiguous, opts_txt, name in rows:
         db_opts: dict = {}
         fixed: dict = {}
         if opts_txt:
@@ -1247,6 +1302,7 @@ async def _load_matched_products() -> list[dict]:
         out.append(
             {
                 "snkr_id": str(snkr_id or ""),
+                "ambiguous": bool(ambiguous),
                 "kid": str(kid or ""),
                 "name": str(name or ""),
                 "db_opts": db_opts,
@@ -1551,6 +1607,7 @@ async def _process_shoe_asks(
             if price > POLICY["max_cost_jpy"]:
                 c["overcost"] = c.get("overcost", 0) + 1
                 continue
+            price = _guard_jpy(kid, opt, price)
             if stock <= 0 or price <= 0:
                 c["delete"] += 1
                 if _EXEC_SHOE:
@@ -1625,6 +1682,7 @@ async def _process_box_asks(
                     return ("hold", a, 0, False)  # API 실패 — 삭제금지
                 if box["stock"] == 0 or box["price"] <= 0:
                     return ("delete", a, 0, False)
+                box["price"] = _guard_jpy(kid, "해외배송", int(box["price"]))
                 # 입찰 최고 원가 초과 — 갱신 대상서 제외(로컬 25만엔 원칙). 삭제는 안 함.
                 if box["price"] > POLICY["max_cost_jpy"]:
                     return ("overcost", a, 0, False)
@@ -1730,6 +1788,8 @@ async def run_kream_unified_once() -> dict:
 
     await _load_policy()
     _fail_reasons.clear()  # 사이클 단위 실패사유 집계
+    global _g_price_guard
+    _g_price_guard = await _load_setting_map(_SET_GUARD)  # 급락 가드 직전가 로드
     _hb_clamp["used"] = 0  # 입찰제한 보정 상한 리셋
     _rank_fix["used"] = 0  # 순위교정 상한 리셋
     _floor_map.clear()
@@ -1845,7 +1905,7 @@ async def run_kream_unified_once() -> dict:
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
-                price = int(d.get("price") or 0)
+                price = _guard_jpy(kid, nm, int(d.get("price") or 0))
                 stock = int(d.get("stock") or 0)
                 ask = ask_index.get((kid, nm))
                 has_ask = ask is not None
@@ -1912,6 +1972,23 @@ async def run_kream_unified_once() -> dict:
                             adjusting,
                             prod["name"],
                             is_nc,
+                        )
+                    )
+                elif has_ask and stock <= 0 and prod.get("ambiguous"):
+                    # 중복매핑(ambiguous) 가격불일치 — 어느 snkr 이 진짜 매칭인지 불확실.
+                    # 재고0 판단이 무효일 수 있어 삭제 보류(로컬 삭제보류 이식, 오삭제 방지).
+                    _cp = int(ask.get("price") or 0)
+                    r["rows"].append(
+                        (
+                            "skip",
+                            "삭제보류(중복매핑)",
+                            kid,
+                            nm,
+                            _cp,
+                            _cp,
+                            False,
+                            prod["name"],
+                            False,
                         )
                     )
                 elif has_ask and stock <= 0:
@@ -2106,6 +2183,7 @@ async def run_kream_unified_once() -> dict:
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
     await _save_setting_map(_SET_LIMIT, _g_limit_cd)  # 입찰제한 쿨다운 유지
+    await _save_setting_map(_SET_GUARD, _g_price_guard)  # 급락 가드 직전가 유지
 
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
     shoe = await _process_shoe_asks(
