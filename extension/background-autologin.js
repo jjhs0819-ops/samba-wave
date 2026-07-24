@@ -275,6 +275,13 @@ async function _isSsgLoggedIn() {
 // accountId 명시(송장수집) 호출에도 적용 — 기존 사이트 단위 쿨다운은 accountId 시 우회됐음.
 const _ACCOUNT_FAIL_COOLDOWN_MS = 30 * 60 * 1000
 const _ACCOUNT_FAIL_MAX = 5
+// 5회 누적 차단 뒤에도 마지막 실패로부터 이 시간이 지나면 1회만 재시도(probe) 허용.
+// 이게 없으면 데드락: 차단이 로그인 시도 자체를 막는데, 카운터 해제는 로그인
+// 성공 시에만 되므로(_clearAccountLoginFail) 성공이 영원히 발생할 수 없다.
+// probe 성공 시 기존 경로로 카운터 클리어, 실패 시 at 갱신으로 다시 24h 차단
+// (로그인 폭주 없음 — 계정당 24h에 1회). 원래 취지(잠긴/비번틀린 계정에 잡마다
+// 재로그인 → 사이트 잠금 영구화 방지)는 그대로 보존된다.
+const _ACCOUNT_FAIL_PROBE_MS = 24 * 60 * 60 * 1000
 let _accountLoginFail = null // `${siteKey}::${accountId}` → { count, at } (storage 영속)
 
 async function _loadAccountLoginFail() {
@@ -313,7 +320,16 @@ async function _accountLoginBlocked(siteKey, accountId) {
   const rec = _accountLoginFail[`${siteKey}::${accountId}`]
   if (!rec) return null
   if (rec.count >= _ACCOUNT_FAIL_MAX) {
-    return `로그인 ${rec.count}회 누적 실패 — 영구 차단(비번 재설정 + samba 동기화 후 성공 1회로 해제)`
+    // 마지막 실패로부터 24h 경과 → probe 1회 허용(null 반환).
+    // 성공 시 _clearAccountLoginFail 로 해제, 실패 시 _recordAccountLoginFail 가
+    // at 을 갱신하므로 다시 24h 차단된다. 스테일 차단(마지막 실패가 오래전)은
+    // 배포 즉시 probe 대상이 되어 수동 조치 없이 자가치유된다.
+    const sinceLast = Date.now() - rec.at
+    if (sinceLast >= _ACCOUNT_FAIL_PROBE_MS) {
+      return null
+    }
+    const remainH = Math.ceil((_ACCOUNT_FAIL_PROBE_MS - sinceLast) / 3600000)
+    return `로그인 ${rec.count}회 누적 실패 — 차단 중(${remainH}시간 후 자동 재시도, 성공 1회로 해제)`
   }
   const elapsed = Date.now() - rec.at
   if (elapsed < _ACCOUNT_FAIL_COOLDOWN_MS) {
