@@ -893,15 +893,45 @@ async def _send_esm(order, account, courier, tracking, session):
 # POIZON 택배사 코드 프로세스 캐시 — {carrierName: carrier}
 _POISON_CARRIER_CACHE: dict[str, int] = {}
 
+# 한글 택배사명 → POIZON carrier 코드. POIZON [197] KR 응답의 carrierName이
+# 전부 영문(CJ Logistics/KRHANJIN/Lotte Global Logistics)이라 국내 입력
+# 한글명은 정확·부분일치 모두 실패한다(#684 배포 검증). 코드값은
+# 2026-07-24 [197] KR 실조회 결과 기준.
+_POISON_CARRIER_KR = {
+    "CJ대한통운": 210,
+    "대한통운": 210,
+    "CJ택배": 210,
+    "씨제이대한통운": 210,
+    "CJGLS": 210,
+    "한진택배": 290,
+    "한진": 290,
+    "롯데택배": 280,
+    "롯데글로벌로지스": 280,
+    "롯데": 280,
+    "우체국택배": 540,
+    "우체국": 540,
+    "우체국소포": 540,
+    "로젠택배": 270,
+    "로젠": 270,
+    "CU편의점택배": 530,
+    "CU": 530,
+}
+
 
 async def _poison_resolve_carrier(client, courier: str):
-    """택배사명 → POIZON carrier 코드. 공식 조회([197]) 캐시, 미매칭 시 None.
+    """택배사명 → POIZON carrier 코드. 한글 폴백표 → 공식 조회([197]) 캐시 순.
 
     미매칭이면 호출부가 carrierName 문자열로 폴백 전송한다.
     """
     name = (courier or "").strip()
     if not name:
         return None
+    # 한글명 우선 매칭 — 정확일치 후 포함일치 ("CJ대한통운(무료)" 등 흡수)
+    if name in _POISON_CARRIER_KR:
+        return _POISON_CARRIER_KR[name]
+    for nm, cd in _POISON_CARRIER_KR.items():
+        if nm in name:
+            return cd
     if not _POISON_CARRIER_CACHE:
         try:
             for it in await client.get_delivery_carriers(region="KR"):
