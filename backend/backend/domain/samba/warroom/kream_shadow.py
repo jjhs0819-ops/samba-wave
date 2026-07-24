@@ -453,8 +453,10 @@ async def _save_kream_cycle_status(
 def _emit_autotune_log(
     site: str, product_id: str, msg: str, level: str = "info"
 ) -> None:
-    """크림 로그 1줄을 사이클 버퍼에 적재(포맷=오토튠 UI와 동일 `[HH:MM:SS] [SITE] ...`).
-    실제 DB 기록은 사이클 끝 _flush_logs_to_db() 가 일괄 처리."""
+    """크림 오토튠 로그 1줄 적재. 라벨은 **소싱처(SNKRDUNK)** 로 통일 — 활성사이클/소싱처 필터와
+    일치시키기 위함(크림은 판매처라 [KREAM] 이면 소싱처 그룹서 이탈). 포맷=오토튠 UI 동일.
+    '실패0' 처럼 0건인데 프론트가 '실패' 문자열로 빨간 오류처리하던 것 방지 — 호출부에서
+    실패건은 >0 일 때만 붙인다."""
     try:
         from datetime import datetime, timedelta, timezone
 
@@ -462,15 +464,20 @@ def _emit_autotune_log(
         ts = (now + timedelta(hours=9)).strftime("%H:%M:%S")
         _pending_logs.append(
             {
-                "site": site,
+                "site": "SNKRDUNK",  # 소싱처 기준 라벨 통일
                 "product_id": str(product_id or ""),
-                "msg": f"[{ts}] [{site}] {msg}",
+                "msg": f"[{ts}] [SNKRDUNK] {msg}",
                 "level": level,
                 "device_id": "",  # 빈 device_id = 글로벌 → 어느 PC 필터에서도 노출
             }
         )
     except Exception:
         pass
+
+
+def _fail_tag(n: int) -> str:
+    """실패건 태그 — 0 이면 빈 문자열(프론트가 '실패' 문자열을 빨간 오류로 처리하는 것 회피)."""
+    return f" 실패{n:,}" if n else ""
 
 
 async def _write_back_db_options(updates: list) -> None:
@@ -2490,7 +2497,7 @@ async def run_kream_unified_once() -> dict:
             "",
             f"[신발] mm {shoe['total']:,} — 갱신{shoe['renew']:,} 삭제{shoe['delete']:,} "
             f"보류{shoe['hold']:,} / 실행 갱신{shoe['patch']:,} 삭제{shoe['del']:,} "
-            f"복귀{shoe['revert']:,} 실패{shoe['fail']:,} "
+            f"복귀{shoe['revert']:,}{_fail_tag(shoe['fail'])} "
             f"({'실행ON' if _EXEC_SHOE else '섀도'})",
         )
 
@@ -2516,8 +2523,8 @@ async def run_kream_unified_once() -> dict:
             "KREAM",
             "",
             f"[박스] 해외배송 {box['total']:,} — 갱신{box['renew']:,} 삭제{box['delete']:,} "
-            f"보류{box['hold']:,} / 실행 갱신{box['patch']:,} 삭제{box['del']:,} 복귀{box['revert']:,} "
-            f"실패{box['fail']:,} ({'실행ON' if _EXEC_BOX else '섀도'})",
+            f"보류{box['hold']:,} / 실행 갱신{box['patch']:,} 삭제{box['del']:,} 복귀{box['revert']:,}"
+            f"{_fail_tag(box['fail'])} ({'실행ON' if _EXEC_BOX else '섀도'})",
         )
 
     logger.info(
@@ -2557,17 +2564,19 @@ async def run_kream_unified_once() -> dict:
         f"[통합] 사이클 완료({'실행ON' if _EXECUTE else '섀도'}) — 카드{counts['cards']:,} "
         f"/ 갱신{counts['renew']:,} 리스톡가능{rs['ok']:,}(보류 {counts['restock'] - rs['ok']:,}) "
         f"삭제{counts['delete']:,} 원가상한초과{counts.get('overcost', 0):,} / 실행 갱신{exec_patch:,} 등록{exec_post:,} 삭제{exec_del:,} "
-        f"복귀{exec_revert:,} 실패{exec_fail:,} (리스톡탐색 {min(_unified_offset, rest_total):,}/{rest_total:,})",
+        f"복귀{exec_revert:,}{_fail_tag(exec_fail)} (리스톡탐색 {min(_unified_offset, rest_total):,}/{rest_total:,})",
     )
     await _flush_logs_to_db()
     await _write_back_db_options(db_updates)  # 실시간 원가/재고 → DB 되쓰기
-    # 활성사이클 표시용 상태 기록 (카드 갱신+박스 갱신 = 가격조정 건수)
+    # 활성사이클 표시용 — 진행/총을 '이번 사이클 처리수'로 통일(가격변동≤진행 정합).
+    # 리스톡탐색 offset(3000/23813)은 사이클 완료 로그에 별도 표기(활성사이클 idx 와 혼동 방지).
+    _processed = counts["products"] + box.get("total", 0) + shoe.get("total", 0)
     await _save_kream_cycle_status(
-        min(_unified_offset, rest_total),
-        rest_total,
-        counts["renew"] + box.get("renew", 0),
-        counts["delete"] + box.get("delete", 0),
-        processed=counts["products"] + box.get("total", 0) + shoe.get("total", 0),
+        _processed,  # idx = 처리 상품수
+        _processed,  # total = 처리 상품수(사이클마다 전량 처리 → 100%)
+        counts["renew"] + box.get("renew", 0) + shoe.get("renew", 0),  # 가격변동
+        counts["delete"] + box.get("delete", 0) + shoe.get("delete", 0),
+        processed=_processed,
         cycle_sec=_tstart.time() - _cycle_t0,
     )
     # ── 슬랙 알림 [로컬 봇 이식] — 사이클마다 실행 요약. 무변동이어도 발송(로컬과 동일).

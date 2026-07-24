@@ -17,7 +17,7 @@ const LOG_POLL_INTERVAL = 500
 // (2026-05-26 사고: 재고변동/스킵 로그 등 일부 msg 가 사용자 화면에 안 보임).
 const KNOWN_SITES = new Set([
   'ABCmart', 'GrandStage', 'GSShop', 'MUSINSA', 'LOTTEON', 'SSG',
-  'KREAM', '다나와', '패션플러스', 'FashionPlus', 'Nike', 'Adidas',
+  'KREAM', 'SNKRDUNK', '다나와', '패션플러스', 'FashionPlus', 'Nike', 'Adidas',
   '렉스몬드', 'Lexmond', '이랜드몰', 'SSF샵', 'SSFShop',
 ])
 
@@ -38,7 +38,7 @@ const extractSiteFromLog = (msg: string): string | null => {
 const shouldShowLog = (msg: string, filterSources: string[] | null): boolean => {
   if (filterSources === null) return true
   const site = extractSiteFromLog(msg)
-  if (site === 'KREAM') return true  // KREAM(크림 오토튠)은 PC분담과 무관한 백엔드 흐름 — 항상 노출
+  if (site === 'SNKRDUNK' || site === 'KREAM') return true  // 크림 오토튠(소싱처 SNKRDUNK)은 PC분담 무관 백엔드 흐름 — 항상 노출
   if (filterSources.length === 0) return false  // C PC: 글로벌 메시지도 숨김
   if (!site) return true  // A/B PC: 사이클 완료/쿠키 로테이션 등 글로벌 메시지는 보임
   return filterSources.includes(site)
@@ -158,7 +158,7 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
             const kept = fs && fs.length > 0 ? next.filter(l => shouldShowLog(l.msg, fs)) : next
             // KREAM(크림 오토튠)은 5분 주기로 몰아서 찍히는 백엔드 흐름 — 타 사이트가 초당 여러 줄
             // 쏟아내면 30줄 창에서 즉시 밀려나 "활성인데 로그 없음"으로 보임. 별도로 최근 20줄 보존.
-            const isK = (m: string) => extractSiteFromLog(m) === 'KREAM'
+            const isK = (m: string) => { const s = extractSiteFromLog(m); return s === 'SNKRDUNK' || s === 'KREAM' }
             const kreamLines = kept.filter(l => isK(l.msg)).slice(-20)
             const others = kept.filter(l => !isK(l.msg)).slice(-30)
             return [...others, ...kreamLines].sort((a, b) => (a.__seq ?? 0) - (b.__seq ?? 0))
