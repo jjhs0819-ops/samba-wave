@@ -35,6 +35,14 @@ AUTO_CLEAN = os.environ.get("ESM_AUTO_CLEAN_GHOSTS", "").lower() in (
     "true",
     "yes",
 )
+# 게이트웨이 goods/search 하드블록(#680) 이후 전체스캔 리컨실러는 403 로 매 사이클
+# 실패 → 공유 rate 예산만 잠식(#679 증상3, 하루 201회 doomed 스캔). 기본 OFF.
+# orphan(마켓有·DB無) 탐지가 필요하면 GET /goods/{goodsNo} 기반 개별확인으로 대체.
+RECONCILER_ENABLED = os.environ.get("ESM_GHOST_RECONCILER", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 
 async def _fetch_active_esm_accounts() -> list[dict[str, Any]]:
@@ -300,6 +308,14 @@ async def reconcile_all_accounts_once() -> dict[str, Any]:
 
 async def ghost_reconciler_loop() -> None:
     """24시간 주기 백그라운드 루프 — lifecycle에서 create_task 로 기동."""
+    if not RECONCILER_ENABLED:
+        # 게이트웨이 goods/search 하드블록(#680)으로 전체스캔이 403 → 진입 자체 스킵.
+        # 재활성화는 ESM_GHOST_RECONCILER=1 (전체스캔 대신 GET 기반 감사 도입 후 권장).
+        logger.info(
+            "[esm_ghost] 비활성(ESM_GHOST_RECONCILER 미설정) — "
+            "goods/search 하드블록(#680)으로 전체스캔 리컨실러 진입 스킵"
+        )
+        return
     logger.info(
         f"[esm_ghost] 시작 — interval=24h auto_clean={AUTO_CLEAN} "
         f"first_run_in={INITIAL_DELAY_SECONDS}s"

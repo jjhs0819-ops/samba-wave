@@ -1014,7 +1014,19 @@ class ESMPlusClient:
     # ------------------------------------------------------------------
 
     async def search_products(self, params: dict[str, Any]) -> dict[str, Any]:
-        """상품 목록 조회 — POST /item/v1/goods/search (분당 30회 제한)"""
+        """상품 목록 조회 — POST /item/v1/goods/search (분당 30회 제한)
+
+        게이트웨이 하드블록(#680, 2026-07-24 00:00~)으로 이 엔드포인트는 403.
+        상시 코드경로(resolve 폴백/타깃조회·ghost 전체스캔) 재유입을 원천 차단하기
+        위해 기본 ON 하드가드. 게이트웨이가 차단을 해제하면 ESM_SEARCH_BLOCKED=0 로 복구.
+        호출부는 모두 try/except 로 감싸 None/빈맵으로 폴백하므로(저장된 _master 사용)
+        RuntimeError 가 정상 폴백을 유발한다.
+        """
+        if os.environ.get("ESM_SEARCH_BLOCKED", "1").lower() in ("1", "true", "yes"):
+            raise RuntimeError(
+                "ESM goods/search 게이트웨이 하드블록(#680) — 목록조회 차단됨. "
+                "저장된 _master goodsNo 사용 필요"
+            )
         return await self._call_api("POST", "/item/v1/goods/search", data=params)
 
     # ------------------------------------------------------------------
@@ -2555,14 +2567,15 @@ async def resolve_esm_master_goods_no(
     """저장 상품번호(siteGoodsNo 또는 master) → 마스터 goodsNo.
 
     ESM 수정/삭제/판매상태 API(/goods/{goodsNo}/...)는 마스터번호 필수.
-    과거 저장값은 siteGoodsNo(옥션 F.../지마켓 숫자)라 그대로 호출 시 404.
 
-    순서(#371 ②): 캐시(0콜) → 타깃조회(1~2콜) → 전체스캔(폴백).
+    #680: 게이트웨이 goods/search 하드블록(2026-07-24~)으로 목록조회 기반 변환
+    (타깃조회·전체스캔) 폐지. 저장된 {account_id}_master 를 호출부가 직접 사용
+    (Phase0 실측 커버리지 100%). 캐시 히트만 반영, 미스는 None → 호출부의
+    `resolve(...) or goods_no` 관용구가 _master 를 그대로 사용.
     """
     val = str(goods_no or "").strip()
     if not val:
         return None
-    site_key = client.cfg["siteKey"].lower()
     cache_key = _esm_cache_key(client)
     now = time.time()
     cached = _ESM_MASTER_MAP_CACHE.get(cache_key)
@@ -2572,19 +2585,8 @@ async def resolve_esm_master_goods_no(
             return val
         if val in site_map:
             return site_map[val]
-
-    # 캐시 없음/stale — 타깃조회 먼저 (rate-limit 절약)
-    targeted = await _esm_targeted_resolve(client, val, site_key)
-    if targeted is not None:
-        return targeted
-
-    # 전체스캔 폴백 (캐시 갱신 겸)
-    fresh = await _build_esm_master_map(client)
-    _ESM_MASTER_MAP_CACHE[cache_key] = (now, fresh)
-    site_map, masters, _ = fresh
-    if val in masters:
-        return val
-    return site_map.get(val)
+    # 캐시 미스 → goods/search 호출 없이 None (호출부가 저장된 _master 사용)
+    return None
 
 
 async def register_esm_options(

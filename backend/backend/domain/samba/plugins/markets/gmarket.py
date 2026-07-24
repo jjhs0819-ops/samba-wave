@@ -699,7 +699,23 @@ class GMarketMarketPlugin(MarketPlugin):
             err_msg = str(e)
             # 상품 없음 → 신규등록 전환
             if "상품이 없습니다" in err_msg or "not exist" in err_msg.lower():
-                logger.warning(f"[지마켓] 상품 {master_no} 없음 → 신규등록 전환")
+                # #680 재등록 오폭발 차단 — GET 단건조회(/goods/{goodsNo})로 실존 재확인.
+                # goods/search 하드블록과 무관(단건 GET). 200=실존이면 PUT 실패는 키 공간
+                # 어긋남/일시장애 → 재등록 금지, 수정실패로 보류(매핑보존). 404=진짜 삭제만 신규전환.
+                try:
+                    await client.get_product(master_no)
+                    logger.warning(
+                        f"[지마켓] 상품 {master_no} PUT 실패했으나 GET 실존확인 → "
+                        f"재등록 보류(매핑보존)"
+                    )
+                    return {
+                        "success": False,
+                        "message": f"수정 실패(상품 #{master_no} 실존, 재등록 보류): {err_msg[:80]}",
+                    }
+                except Exception:
+                    logger.warning(
+                        f"[지마켓] 상품 {master_no} 없음(GET 404) → 신규등록 전환"
+                    )
                 result = await client.register_product(update_data)
                 new_goods_no = result.get("goodsNo", "")
                 return {
