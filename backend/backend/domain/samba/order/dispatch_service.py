@@ -35,6 +35,8 @@ _KOREAN_MARKET_MAP = {
     "신세계몰": "ssg",
     "SSG": "ssg",
     "플레이오토": "playauto",
+    "poison": "poison",
+    "포이즌": "poison",
 }
 
 
@@ -142,6 +144,8 @@ async def send_invoice_to_market(
             return await _send_gsshop(order, account, courier, tracking, session)
         if market_type in ("gmarket", "auction"):
             return await _send_esm(order, account, courier, tracking, session)
+        if market_type == "poison":
+            return await _send_poison(order, account, courier, tracking, session)
         return False, f"미지원 마켓: {market_type}"
     except Exception as e:
         logger.warning(
@@ -884,3 +888,131 @@ async def _send_esm(order, account, courier, tracking, session):
             await client.aclose()
         except Exception:
             pass
+
+
+# POIZON 택배사 코드 프로세스 캐시 — {carrierName: carrier}
+_POISON_CARRIER_CACHE: dict[str, int] = {}
+
+
+async def _poison_resolve_carrier(client, courier: str):
+    """택배사명 → POIZON carrier 코드. 공식 조회([197]) 캐시, 미매칭 시 None.
+
+    미매칭이면 호출부가 carrierName 문자열로 폴백 전송한다.
+    """
+    name = (courier or "").strip()
+    if not name:
+        return None
+    if not _POISON_CARRIER_CACHE:
+        try:
+            for it in await client.get_delivery_carriers(region="KR"):
+                nm = str(it.get("carrierName") or "").strip()
+                cd = it.get("carrier")
+                if nm and cd is not None:
+                    _POISON_CARRIER_CACHE[nm] = int(cd)
+        except Exception as e:
+            logger.warning(f"[송장전송][POIZON] 택배사 조회 실패(이름 폴백): {e}")
+    if name in _POISON_CARRIER_CACHE:
+        return _POISON_CARRIER_CACHE[name]
+    # 부분일치 폴백 — "CJ대한통운" vs "CJ Logistics" 등 표기 차이 흡수
+    for nm, cd in _POISON_CARRIER_CACHE.items():
+        if name in nm or nm in name:
+            return cd
+    return None
+
+
+async def _send_poison(order, account, courier, tracking, session):
+    """POIZON — Ship Order([100]) 송장 전송.
+
+    order_no_list 가 배열이라 합배송을 지원한다: 같은 계정의 다른 포이즌
+    주문이 같은 송장번호로 이미 저장돼 있으면 한 호출에 묶어 보내고,
+    성공한 형제 주문도 송장전송완료로 함께 갱신한다.
+    """
+    from sqlalchemy import text as _text
+
+    from backend.domain.samba.proxy.poison import PoisonClient
+
+    extras = account.additional_fields or {}
+    if not isinstance(extras, dict):
+        extras = {}
+    app_key = (
+        extras.get("app_key", "")
+        or extras.get("appKey", "")
+        or getattr(account, "api_key", "")
+        or ""
+    )
+    app_secret = (
+        extras.get("app_secret", "")
+        or extras.get("appSecret", "")
+        or getattr(account, "api_secret", "")
+        or ""
+    )
+    if not app_key or not app_secret:
+        return False, "POIZON app_key/app_secret 없음"
+    if not tracking:
+        return False, "운송장 번호 누락"
+    tracking = str(tracking).replace("-", "").replace(" ", "")
+
+    # 합배송 — 같은 계정·같은 송장번호의 다른 포이즌 주문을 한 호출에 묶는다
+    order_nos = [str(order.order_number)]
+    sibling_rows = (
+        await session.execute(
+            _text(
+                "SELECT id, order_number FROM samba_order "
+                "WHERE source = 'poison' AND channel_id = :cid "
+                "AND REPLACE(REPLACE(COALESCE(tracking_number,''),'-',''),' ','') "
+                "    = :trk "
+                "AND order_number <> :ono "
+                "AND status NOT IN ('cancelled', 'cancel_requested')"
+            ),
+            {"cid": account.id, "trk": tracking, "ono": str(order.order_number)},
+        )
+    ).all()
+    sibling_map = {str(r[1]): str(r[0]) for r in sibling_rows}
+    order_nos.extend(sibling_map.keys())
+
+    client = PoisonClient(app_key, app_secret)
+    carrier_cd = await _poison_resolve_carrier(client, courier)
+    resp = await client.ship_order(
+        order_nos,
+        tracking,
+        carrier=carrier_cd,
+        carrier_name=None if carrier_cd is not None else (courier or None),
+    )
+    if resp.get("code") != 200:
+        return False, (
+            f"POIZON 송장 전송 실패: code={resp.get('code')} "
+            f"{str(resp.get('msg') or resp.get('message') or '')[:120]}"
+        )
+    data = resp.get("data") or {}
+    ok_list = {str(x) for x in (data.get("success_order_no_list") or [])}
+    failed = data.get("failed_item_list") or []
+    # 이 주문 자체가 실패 목록에 있으면 실패 처리
+    _self_failed = next(
+        (
+            f
+            for f in (failed if isinstance(failed, list) else [failed])
+            if str((f or {}).get("orderNo")) == str(order.order_number)
+        ),
+        None,
+    )
+    if _self_failed:
+        return False, (
+            f"POIZON 송장 전송 실패: {str(_self_failed.get('failedMsg') or '')[:120]}"
+        )
+
+    # 성공한 형제 주문(합배송)도 송장전송완료로 갱신
+    for ono, oid in sibling_map.items():
+        if ok_list and ono not in ok_list:
+            continue
+        await session.execute(
+            _text(
+                "UPDATE samba_order SET shipping_status = :ss, status = :st, "
+                "updated_at = now() WHERE id = :oid"
+            ),
+            {"ss": "송장전송완료", "st": "shipping", "oid": oid},
+        )
+    if sibling_map:
+        await session.commit()
+
+    extra = f" (합배송 {len(order_nos)}건)" if len(order_nos) > 1 else ""
+    return True, f"POIZON 송장 전송 완료{extra}"

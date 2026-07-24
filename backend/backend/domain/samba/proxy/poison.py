@@ -380,3 +380,49 @@ class PoisonClient:
                 break
             page_no += 1
         return all_orders
+
+    async def get_delivery_carriers(
+        self, region: str = "KR", delivery_type: str = "OFFLINE_EXPRESS_DELIVERY"
+    ) -> list[dict[str, Any]]:
+        """지원 택배사 목록 조회 ([197]). Returns: [{carrier:int, carrierName:str}]."""
+        data = await self._post(
+            "/dop/api/v1/pop/api/v1/order/support/delivery/carrier",
+            {"region": region, "deliveryType": delivery_type},
+        )
+        if data.get("code") != 200:
+            logger.warning(
+                f"[POIZON] 택배사 조회 실패 code={data.get('code')} "
+                f"msg={data.get('msg') or data.get('message')}"
+            )
+            return []
+        return (data.get("data") or {}).get("carrierItems") or []
+
+    async def ship_order(
+        self,
+        order_no_list: list[str],
+        express_no: str,
+        *,
+        carrier: int | None = None,
+        carrier_name: str | None = None,
+        region: str = "KR",
+        delivery_type: str = "OFFLINE_EXPRESS_DELIVERY",
+    ) -> dict[str, Any]:
+        """주문 발송 처리 ([100] Ship Order) — 송장번호 전송.
+
+        order_no_list 가 배열이라 합배송(여러 주문 + 송장 1개)을 그대로 지원.
+        carrier(코드)와 carrier_name(문자열)은 둘 중 하나만 보내야 한다.
+        Returns: 원본 응답 dict (code/msg/data.success_order_no_list 등).
+        """
+        business: dict[str, Any] = {
+            "order_no_list": list(order_no_list),
+            "express_no": express_no,
+            "delivery_region": region,
+            "delivery_type": delivery_type,
+        }
+        if carrier is not None:
+            business["carrier"] = carrier
+        elif carrier_name:
+            business["carrierName"] = carrier_name
+        return await self._post(
+            "/dop/api/v1/pop/api/v1/order/delivery", business
+        )
