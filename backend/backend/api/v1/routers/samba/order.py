@@ -5,7 +5,16 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import select
@@ -13192,6 +13201,71 @@ async def kakao_name_candidates(
         len(candidates),
     )
     return {"ok": True, "count": len(candidates), "candidates": candidates}
+
+
+class PoisonSourceLinkItem(BaseModel):
+    bidding_no: str  # POIZON sellerBiddingNo (= samba_order.shipment_id)
+    source_url: str  # 소싱처 상품 페이지 (무신사/렉스몬드)
+    product_image: Optional[str] = None
+    source_site: Optional[str] = None  # MUSINSA / REXMONDE 등
+
+
+class PoisonSourceLinksBody(BaseModel):
+    items: list[PoisonSourceLinkItem]
+
+
+@public_router.post("/poison/source-links")
+async def poison_source_links(
+    body: PoisonSourceLinksBody,
+    request: Request,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """포이즌 주문 원문링크·이미지 백필 — 외부 오토비더가 biddingNo→소싱정보 전송.
+
+    포이즌 주문 동기화는 sellerBiddingNo 를 shipment_id 에 저장하지만
+    소싱 매핑(무신사 상품번호)은 오토비더 로컬 DB에만 있어 source_url 이 비어
+    프론트 '원문링크' 버튼이 동작하지 않는다. 이 엔드포인트로 채우면
+    기존 handleSourceLink 1단계(source_url)가 바로 소비한다.
+
+    인증: X-Api-Key 게이트웨이 통과 전제(JWT 면제 public_router).
+    게이트웨이가 tenant_id 를 주입하면 해당 테넌트로 격리하고,
+    글로벌 키(주입 없음)면 biddingNo 전역 유일성에 의존해 매칭한다.
+    """
+    from sqlalchemy import text as _t
+
+    tenant_id = getattr(request.state, "tenant_id", None)
+    updated = 0
+    for it in body.items[:1000]:
+        bno = (it.bidding_no or "").strip()
+        url = (it.source_url or "").strip()
+        if not bno or not url.startswith("http"):
+            continue
+        sets = {"source_url": url}
+        img = (it.product_image or "").strip()
+        if img.startswith("http"):
+            sets["product_image"] = img
+        site = (it.source_site or "").strip().upper()
+        if site:
+            sets["source_site"] = site
+        set_clauses = ", ".join(f"{k} = :{k}" for k in sets)
+        q = (
+            f"UPDATE samba_order SET {set_clauses} "
+            "WHERE source = 'poison' AND shipment_id = :bno"
+        )
+        params: dict[str, Any] = {**sets, "bno": bno}
+        if tenant_id:
+            q += " AND tenant_id = :tid"
+            params["tid"] = tenant_id
+        res = await session.execute(_t(q), params)
+        updated += res.rowcount or 0
+    await session.commit()
+    if updated:
+        logger.info(
+            "[poison-source-links] %d건 수신 → 주문 %d건 원문링크 백필",
+            len(body.items),
+            updated,
+        )
+    return {"ok": True, "received": len(body.items), "updated": updated}
 
 
 async def _kream_cost_backfill_from_shopmine(

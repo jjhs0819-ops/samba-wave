@@ -53,8 +53,10 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
     }
     // 3. 마켓 상품번호로 수집상품 역추적
     // KREAM 주문은 product_id가 KREAM 마켓 번호 — 무신사 등 다른 소싱처 상품에 오매칭됨. 건너뜀.
+    // POIZON 주문도 product_id가 POIZON spu/sku id라 동일 사유로 건너뜀
+    // (원문링크는 오토비더가 /orders/poison/source-links 로 source_url을 채워 1단계에서 열림).
     const _srcSiteBase = (o.source_site || '').split('(')[0].trim()
-    if (o.product_id && _srcSiteBase !== 'KREAM') {
+    if (o.product_id && _srcSiteBase !== 'KREAM' && o.source !== 'poison') {
       try {
         const res = await collectorApi.lookupByMarketNo(o.product_id)
         if (res.found && res.original_link) {
