@@ -798,6 +798,11 @@ def _headers(service: str, key: str, secret: str) -> dict:
 
 async def _fetch_live_asks(h: dict) -> list[dict]:
     """내 live 입찰 전량(공식 OpenAPI, 페이징). 읽기 전용."""
+    return await _fetch_asks_by_status(h, "live")
+
+
+async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
+    """상태별 내 입찰 전량(공식 OpenAPI, 페이징). status='live'|'expired' 등. 읽기 전용."""
     out: list[dict] = []
     page = 1
     async with httpx.AsyncClient(timeout=25) as cli:
@@ -805,7 +810,7 @@ async def _fetch_live_asks(h: dict) -> list[dict]:
             r = await cli.get(
                 f"{KREAM_OPENAPI_BASE}/asks",
                 headers=h,
-                params={"status": "live", "page": page, "per_page": _PER_PAGE},
+                params={"status": status, "page": page, "per_page": _PER_PAGE},
             )
             r.raise_for_status()
             d = r.json()
@@ -1965,6 +1970,180 @@ async def _process_box_asks(
     return c
 
 
+# 만료 회수(재입찰) 사이클당 상한 — 대량 재게시 폭주 방지.
+_EXPIRED_MAX = int(os.environ.get("KREAM_EXPIRED_MAX") or 30)
+
+
+async def _lookup_snkr_mapping(kid: str) -> tuple[str, str] | None:
+    """kid → (snkr_id=site_product_id, source_site). 매핑 없으면 None."""
+    async with get_read_session() as s:
+        row = (
+            await s.execute(
+                _text(
+                    "SELECT site_product_id, source_site "
+                    "FROM samba_collected_product "
+                    "WHERE resell_matches->'kream'->>'product_id' = :k "
+                    "AND source_site IN ('SNKRDUNK','ONITSUKA') LIMIT 1"
+                ),
+                {"k": kid},
+            )
+        ).first()
+    if not row:
+        return None
+    return str(row[0] or ""), str(row[1] or "")
+
+
+async def _process_expired_asks(
+    live_asks: list, h: dict, rate: float, tariff: int
+) -> dict:
+    """만료(status=expired) 입찰 재입찰 — 신발/박스/카드.
+
+    KREAM ask 수명(~14일)이 다하면 만료탭으로 빠지고 live 목록서 사라져 갱신·리스톡
+    어느 pass도 재입찰하지 못한다(로컬 봇이 하던 managed−live 보정을 정지시킨 공백).
+    → 매 사이클 만료건을 조회해 '현재 live 없음'인 것만 시세·재고·상한·가드 확인 후 재입찰.
+    실행 게이트: 카드=_EXECUTE / 신발=_EXEC_SHOE / 박스=_EXEC_BOX (각 pass와 동일).
+    """
+    c = {
+        "total": 0,
+        "cand": 0,
+        "post": 0,
+        "fail": 0,
+        "nomap": 0,
+        "onitsuka": 0,
+        "nocost": 0,
+        "overcost": 0,
+        "guard": 0,
+        "lines": [],
+    }
+    try:
+        expired = await _fetch_asks_by_status(h, "expired")
+    except Exception as exc:
+        logger.warning("[크림통합] 만료 입찰 조회 실패(무시): %s", exc)
+        return c
+    c["total"] = len(expired)
+    if not expired:
+        return c
+
+    live_keys = {
+        (str(a.get("product_id") or ""), str(a.get("option") or "").strip())
+        for a in live_asks
+    }
+    # (kid,opt) 최신 1건만, 현재 live 없는 것만
+    seen: dict = {}
+    for a in expired:
+        kid = str(a.get("product_id") or "")
+        opt = str(a.get("option") or "").strip()
+        if not kid or not opt or (kid, opt) in live_keys:
+            continue
+        seen[(kid, opt)] = a  # 페이지 뒤가 최신 → 덮어씀
+    cand = list(seen.items())
+    c["cand"] = len(cand)
+    if not cand:
+        return c
+
+    _now = _now_ts()
+    _sur_shoe = POLICY["non_card_margin_rate"]
+    maxc = POLICY["max_cost_jpy"]
+    processed = 0
+    async with httpx.AsyncClient(timeout=25) as cli:
+        for (kid, opt), a in cand:
+            if processed >= _EXPIRED_MAX:
+                break
+            mapping = await _lookup_snkr_mapping(kid)
+            if not mapping:
+                c["nomap"] += 1
+                continue
+            snkr_id, site = mapping
+            # 오니츠카 재입찰 영구 차단 [2026-07-20 지시] — 되살리면 안 됨.
+            if site == "ONITSUKA":
+                c["onitsuka"] += 1
+                continue
+            pname = str(a.get("product_name") or "")
+
+            # 분류 → 실시간 시세·재고 조회
+            is_shoe = bool(_SHOE_OPT_RE.fullmatch(opt))
+            is_box = "해외배송" in opt
+            is_card = "PSA" in opt.upper()
+            price = 0
+            stock = 0
+            gate = False
+            if is_shoe:
+                live_sz = await _fetch_snkr_shoe_sizes(cli, snkr_id)
+                od = (live_sz or {}).get(opt) or {}
+                price = int(od.get("price") or 0)
+                stock = int(od.get("stock") or 0)
+                target = calc_min_price(price, rate, True, False, _sur_shoe)
+                gate = _EXEC_SHOE
+            elif is_box:
+                m = re.search(r"(\d+)개", opt)
+                if m:
+                    sizes = await _fetch_snkr_sizes(cli, snkr_id) or {}
+                    od = sizes.get(int(m.group(1))) or {}
+                    price = int(od.get("price") or 0)
+                    stock = int(od.get("stock") or 0)
+                else:
+                    b = await _fetch_snkr_box(cli, snkr_id)
+                    price = int(b.get("price") or 0)
+                    stock = int(b.get("stock") or 0)
+                target = calc_min_price(price, rate, True, False) if price > 0 else 0
+                gate = _EXEC_BOX
+            elif is_card:
+                used = await _fetch_snkr_used(cli, snkr_id) or {}
+                g = "PSA 10" if "10" in opt else ("PSA 9" if "9" in opt else "")
+                od = used.get(g) or {}
+                price = int(od.get("price") or 0)
+                stock = int(od.get("stock") or 0)
+                target = calc_min_price(price, rate, False, True)
+                gate = _EXECUTE
+            else:
+                c["nomap"] += 1
+                continue
+
+            # 재고·원가 가드
+            if price <= 0 or stock <= 0:
+                c["nocost"] += 1
+                continue
+            if price > maxc:
+                c["overcost"] += 1
+                continue
+            # 급락 가드(직전가 대비 폭락 → 저가 재입찰 방지)
+            price = _guard_jpy(kid, opt, price)
+            # 리스톡 가드 — 재게시/실패 쿨다운 + 거래이력 + 이행대기(판매 후 소싱 전 보류)
+            _key = f"{kid}|{opt}"
+            if (
+                _key in _g_recent_posts
+                or _key in _g_failed_posts
+                or not _trade_ok(kid, pname)
+                or (kid, opt.replace(" ", "")) in _g_unfulfilled
+            ):
+                c["guard"] += 1
+                continue
+            target = _floor_map.get((kid, opt), target)
+            if target <= 0:
+                c["nocost"] += 1
+                continue
+
+            processed += 1
+            _emit_autotune_log(
+                "KREAM", kid, f"{pname[:40]} ({opt}): 만료 재입찰 {target:,}"
+            )
+            if not gate:
+                continue
+            ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
+            if (not ok) and ("announcement" in reason or "고시" in reason):
+                ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
+            if ok:
+                c["post"] += 1
+                c["lines"].append(f"{pname[:20]} {opt} {target:,}원")
+                _g_recent_posts[_key] = _now
+                _g_miss_counts.pop(_key, None)
+            else:
+                c["fail"] += 1
+                _g_failed_posts[_key] = _now
+            await asyncio.sleep(0.1)
+    return c
+
+
 async def run_kream_unified_once() -> dict:
     """[Step 3 섀도] 스니덩크 전수순회 통합 — 옵션별 갱신/리스톡/삭제 분류. 쓰기 없음(하드오프)."""
     from collections import Counter as _Counter
@@ -2526,6 +2705,36 @@ async def run_kream_unified_once() -> dict:
             f"보류{box['hold']:,} / 실행 갱신{box['patch']:,} 삭제{box['del']:,} 복귀{box['revert']:,}"
             f"{_fail_tag(box['fail'])} ({'실행ON' if _EXEC_BOX else '섀도'})",
         )
+
+    # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
+    expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
+    if expired.get("total"):
+        logger.info(
+            "[크림통합] 만료회수 %d(재입찰후보%d) — 등록%d 실패%d / 스킵[매핑없음%d 오니츠카%d 품절%d 상한%d 가드%d]",
+            expired["total"],
+            expired["cand"],
+            expired["post"],
+            expired["fail"],
+            expired["nomap"],
+            expired["onitsuka"],
+            expired["nocost"],
+            expired["overcost"],
+            expired["guard"],
+        )
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[만료회수] 만료 {expired['total']:,} 재입찰후보 {expired['cand']:,} — "
+            f"등록 {expired['post']:,}{_fail_tag(expired['fail'])} "
+            f"(품절{expired['nocost']:,} 상한{expired['overcost']:,} 가드{expired['guard']:,})",
+        )
+        if _EXECUTE and (expired["post"] or expired["fail"]):
+            await _save_setting_map(_SET_RECENT, _g_recent_posts)
+            await _save_setting_map(_SET_FAILED, _g_failed_posts)
+        # 슬랙/완료로그 집계 합산 — 만료 재입찰도 신규등록으로 표기.
+        registered_lines.extend(expired["lines"])
+        exec_post += expired["post"]
+        exec_fail += expired["fail"]
 
     logger.info(
         "[크림통합] %s — 상품%d(카드%d 비카드%d snkr실패%d) / 갱신%d 리스톡%d(가능%d 2연속대기%d "

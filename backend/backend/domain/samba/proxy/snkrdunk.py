@@ -201,6 +201,26 @@ def _parse_size_label(desc: str) -> str:
     return (desc or "").strip()
 
 
+# JP 상세페이지(/products/{id}) 사이즈별 신품 최저가(엔화) 추출용.
+# /en/ 사이트는 USD라 sale_price·옵션가가 달러로 저장되는 문제가 있어,
+# 신발/스트릿웨어는 이 정규식으로 엔화(minNewListingPrice)를 뽑아 대체한다.
+_SHOE_JPY_RE = re.compile(r'"sizeName":"([^"]+)"[^}]*\},"minNewListingPrice":(\d+)')
+
+
+def _parse_shoe_jpy_options(html: str) -> list[dict[str, Any]]:
+    """JP 페이지 HTML → 사이즈(cm)별 엔화 최저가 옵션 리스트.
+
+    minNewListingPrice 가 있는 사이즈 = 신품 재고 있음(stock=1).
+    """
+    src = html.replace("\\", "")
+    out: list[dict[str, Any]] = []
+    for sz, pr in _SHOE_JPY_RE.findall(src):
+        p = int(pr)
+        if p > 0:
+            out.append({"name": sz.strip() or "기본", "price": p, "stock": 1})
+    return out
+
+
 def _extract_jsonld_products(html: str) -> list[dict[str, Any]]:
     """HTML에서 ld+json Product 노드들 추출."""
     products: list[dict[str, Any]] = []
@@ -756,7 +776,38 @@ class SnkrdunkClient:
         detected_type = snkr_type or (
             "streetwear" if _is_streetwear_id(site_product_id) else "sneaker"
         )
-        return self._parse_detail(html, site_product_id, detected_type, url)
+        detail = self._parse_detail(html, site_product_id, detected_type, url)
+
+        # 신발/스트릿웨어: /en/ 는 USD라 sale_price·옵션가가 달러로 저장됨.
+        # JP 페이지(/products/{id}) 엔화 최저가로 대체 (name/brand/image 는 /en/ 유지).
+        # JP 조회 실패 시 /en/ USD 값 그대로 폴백.
+        if detected_type in ("sneaker", "streetwear") and not detail.get("error"):
+            jpy_opts = await self._fetch_shoe_jpy(site_product_id)
+            if jpy_opts:
+                prices = [o["price"] for o in jpy_opts]
+                detail["options"] = jpy_opts
+                detail["sale_price"] = min(prices)
+                detail["original_price"] = min(prices)
+                detail["sale_status"] = "in_stock"
+                if isinstance(detail.get("extra_data"), dict):
+                    detail["extra_data"]["currency"] = "JPY"
+        return detail
+
+    async def _fetch_shoe_jpy(self, style: str) -> list[dict[str, Any]]:
+        """JP 상세페이지에서 사이즈별 엔화 최저가 조회. 실패 시 빈 리스트(=USD 폴백)."""
+        try:
+            async with httpx.AsyncClient(
+                headers={**HEADERS, "Accept-Language": "ja"},
+                timeout=self._timeout,
+                follow_redirects=True,
+            ) as client:
+                r = await client.get(f"{BASE}/products/{style}")
+            if r.status_code != 200:
+                return []
+            return _parse_shoe_jpy_options(r.text)
+        except Exception as e:
+            logger.warning(f"[SNKRDUNK] JP 엔화가 조회 실패 {style}: {e}")
+            return []
 
     @staticmethod
     def _parse_detail(
