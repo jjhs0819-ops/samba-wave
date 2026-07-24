@@ -851,13 +851,30 @@ _SNKR_HEADERS = {
 }
 
 
+def _robust_floor(prices_sorted: list[int]) -> int:
+    """단일 헐값(오등록/스캠 리스팅) outlier 제거 등급 하한가 [로컬 이식·근본 fix].
+    - 5개↑: 중앙값 50% 미만 호가는 outlier 로 버리고 남은 것 중 최저가.
+    - 5개 미만(thin market): 버릴 통계근거 부족 → 최저가 그대로.
+    이게 근본 fix — 단일 min() 을 믿어 헐값 매물 1개에 원가·최소가가 뚫려 저가체결되던
+    사고(652078·831281 등)를 소스에서 차단(모양가드=두더지잡기 종식, 메모리 기록)."""
+    if not prices_sorted:
+        return 0
+    n = len(prices_sorted)
+    if n < 5:
+        return prices_sorted[0]
+    cut = prices_sorted[n // 2] * 0.5  # 중앙값 × 0.5
+    for p in prices_sorted:  # 오름차순 — cut 이상 첫 값 = outlier 제거 후 최저
+        if p >= cut:
+            return p
+    return prices_sorted[0]
+
+
 async def _fetch_snkr_used(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
-    """스니덩크 중고(PSA10/PSA9) 옵션별 실시간 최저가(JPY)·재고수.
+    """스니덩크 중고(PSA10/PSA9) 등급별 실시간 하한가(JPY, outlier제거)·재고수.
     page1 실패 시 None(기존 DB값 유지 — 오판 방지). 반환:
-    {"PSA 10": {"price": jpy, "stock": n}, "PSA 9": {...}}.
-    displayShortConditionTitle 로 PSA10/9 분류, isDisplaySold 제외, price 최저 + 개수 집계."""
-    cond_min: dict = {}
-    cond_cnt: dict = {}
+    {"PSA 10": {"price": robust하한, "stock": n, "raw_min": 단일최저}, "PSA 9": {...}}.
+    단일 min() 이 아니라 _robust_floor 로 헐값 outlier 를 소스에서 걸러 저가체결 근절."""
+    cond_prices: dict[str, list[int]] = {}  # 등급별 전체 호가 — robust_floor 용
     page = 1
     while page <= 20:
         try:
@@ -892,18 +909,20 @@ async def _fetch_snkr_used(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
             p = x.get("price")
             if not isinstance(p, (int, float)) or p <= 0:
                 continue
-            p = int(p)
-            if ckey not in cond_min or p < cond_min[ckey]:
-                cond_min[ckey] = p
-            cond_cnt[ckey] = cond_cnt.get(ckey, 0) + 1
+            cond_prices.setdefault(ckey, []).append(int(p))
         if len(items) < 100:
             break
         page += 1
         await asyncio.sleep(0.2)
-    return {
-        k: {"price": cond_min.get(k, 0), "stock": cond_cnt.get(k, 0)}
-        for k in ["PSA 10", "PSA 9"]
-    }
+    out: dict = {}
+    for ckey in ("PSA 10", "PSA 9"):
+        prices = sorted(cond_prices.get(ckey) or [])
+        out[ckey] = {
+            "price": _robust_floor(prices),  # outlier 제거 하한(원가 기준)
+            "stock": len(prices),
+            "raw_min": prices[0] if prices else 0,  # 참고/로깅용
+        }
+    return out
 
 
 async def _fetch_snkr_box(cli: httpx.AsyncClient, snkr_id: str) -> dict:
