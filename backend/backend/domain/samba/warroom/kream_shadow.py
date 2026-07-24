@@ -404,9 +404,15 @@ _kream_started_at = None
 
 
 async def _save_kream_cycle_status(
-    idx: int, total: int, price_cnt: int, del_cnt: int
+    idx: int,
+    total: int,
+    price_cnt: int,
+    del_cnt: int,
+    processed: int = 0,
+    cycle_sec: float = 0.0,
 ) -> None:
-    """크림 사이클 진행상태를 DB 기록 → api /autotune/active-cycles 가 읽어 SNKRDUNK 활성 표시."""
+    """크림 사이클 진행상태를 DB 기록 → api /autotune/active-cycles 가 읽어 SNKRDUNK 활성 표시.
+    processed/cycle_sec 로 처리속도(avg_sec_per_item) 계산 지원."""
     global _kream_cycle_count, _kream_started_at
     from datetime import datetime, timezone
 
@@ -423,6 +429,9 @@ async def _save_kream_cycle_status(
             "price_count": int(price_cnt),
             "delete_count": int(del_cnt),
             "cycle_count": _kream_cycle_count,
+            "processed": int(processed),  # 이번 사이클 처리 상품 수
+            "cycle_sec": round(float(cycle_sec), 1),  # 이번 사이클 소요(초)
+            "avg_sec": round(cycle_sec / processed, 3) if processed > 0 else 0,
             "started_at": _kream_started_at,
             "updated_at": now_iso,
             "execute": _EXECUTE,
@@ -1953,6 +1962,10 @@ async def run_kream_unified_once() -> dict:
     """[Step 3 섀도] 스니덩크 전수순회 통합 — 옵션별 갱신/리스톡/삭제 분류. 쓰기 없음(하드오프)."""
     from collections import Counter as _Counter
 
+    import time as _tstart  # noqa: F811
+
+    _cycle_t0 = _tstart.time()  # 사이클 처리속도(avg_sec) 계산용
+
     if not await _kream_autotune_enabled():
         logger.info("[크림통합] 오토튠 UI서 스니덩크/크림 체크해제 — 이번 사이클 스킵")
         _emit_autotune_log("KREAM", "", "[통합] 스니덩크/크림 체크해제 — 스킵")
@@ -2554,6 +2567,8 @@ async def run_kream_unified_once() -> dict:
         rest_total,
         counts["renew"] + box.get("renew", 0),
         counts["delete"] + box.get("delete", 0),
+        processed=counts["products"] + box.get("total", 0) + shoe.get("total", 0),
+        cycle_sec=_tstart.time() - _cycle_t0,
     )
     # ── 슬랙 알림 [로컬 봇 이식] — 사이클마다 실행 요약. 무변동이어도 발송(로컬과 동일).
     # 로컬과 동일한 구성: 미이행 + 방치입찰(고아) + 매수추천/원가오염 + 실행요약.
