@@ -1610,8 +1610,12 @@ def needs_trade(name: str) -> bool:
         return True
     if _GRADE_RE.search(nm):
         return False
+    # 카드번호(NNN/NNN, 예 'eM 001/018') 있으면 낱장 — 밀봉팩/박스는 카드번호 없음.
+    # 맥도날드 '미니멈 팩' 같은 세트명이 '팩'을 포함해 낱장이 오게이트되던 문제. [2026-07-25]
+    if re.search(r"\d{1,3}\s*/\s*\d{1,3}", nm):
+        return False
     # 한글/영문 팩·박스 — ask 의 영문 product_name 경로(만료회수 등)에서도 게이트 작동.
-    # 등급토큰 체크(위)를 통과한 것만 여기 오므로 낱장(등급 있음)은 이미 제외됨. [2026-07-25]
+    # 등급토큰·카드번호 통과한 것만 여기 오므로 낱장은 이미 제외됨. [2026-07-25]
     if "박스" in nm or "팩" in nm or "box" in t or "pack" in t:
         return True
     return False
