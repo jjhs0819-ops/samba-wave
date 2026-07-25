@@ -50,8 +50,30 @@ def _is_shoes_category(category_id: str) -> bool:
 
 
 # 트레이딩카드(포켓몬 TCG 등) 카테고리 — condition="NEW" 사용 불가, 실사용 검증 완료된 카테고리만 등록
-# 183454: CCG Individual Cards(싱글), 183455: CCG Mixed Card Lots(복수장 묶음)
+# 183454: CCG Individual Cards(싱글), 183455: CCG Mixed Card Lots(복수장 묶음/밀봉 팩·박스)
 _TCG_CARD_CATEGORY_IDS = {"183454", "183455"}
+
+# [최우선] 밀봉 팩·박스는 반드시 183455. 183454(싱글)에 넣으면 우리 컨디션 조합을
+# eBay 가 25021 로 거부한다 — 오늘만 4번 재발한 사고의 근본원인(2026-07-25).
+# 제목에 이 단어가 있으면 밀봉 상품으로 보고 183455 로 라우팅한다.
+import re as _re_sealed
+
+_SEALED_TITLE_RE = _re_sealed.compile(
+    r"booster\s*(box|pack)|booster\b|\bbox\b|\bpack\b|elite\s*trainer|"
+    r"\betb\b|배틀\s*파트너|배틀강화|미개봉|부스터|박스|팩(?!\w)",
+    _re_sealed.IGNORECASE,
+)
+
+
+def resolve_tcg_category(title: str, fallback: str = "183454") -> str:
+    """TCG 상품 제목으로 싱글(183454)/밀봉묶음(183455) 카테고리 결정.
+
+    밀봉(부스터/박스/팩/ETB) 단어가 있으면 183455, 아니면 fallback(기본 183454).
+    등록·수정 어느 경로든 이 함수로 카테고리를 정해 25021 재발을 막는다.
+    """
+    if _SEALED_TITLE_RE.search(title or ""):
+        return "183455"
+    return fallback
 
 
 def _extract_pokemon_card_name(title: str) -> str:
@@ -681,6 +703,19 @@ class EbayClient:
             or product.get("ebay_title")
             or product.get("name", "")
         )[:80]
+
+        # [최우선] 밀봉 팩·박스가 183454(싱글)로 넘어오면 183455 로 자동 교정한다.
+        # 호출부(register/price_apply/refresh 등)가 카테고리를 잘못 넘겨도 여기서 막아
+        # 25021 재발을 차단한다(2026-07-25). 싱글카드는 그대로 둔다.
+        if category_id == "183454":
+            _fixed = resolve_tcg_category(
+                name or product.get("name", ""), fallback="183454"
+            )
+            if _fixed != category_id:
+                logger.info(
+                    "[eBay] 밀봉 감지 — 카테고리 183454→%s (%s)", _fixed, name[:40]
+                )
+                category_id = _fixed
         brand = product.get("brand") or "Unbranded"
         color = product.get("color") or ""
         material = product.get("material") or ""
