@@ -495,7 +495,10 @@ async def _write_back_db_options(updates: list) -> None:
                 await s.execute(
                     _text(
                         "UPDATE samba_collected_product "
-                        "SET options = CAST(:opt AS jsonb), cost = :cost, updated_at = NOW() "
+                        "SET options = CAST(:opt AS jsonb), "
+                        # 소싱품절(cost0)이면 기존 원가 보존 — 재고/확인시각만 갱신
+                        "cost = CASE WHEN :cost > 0 THEN :cost ELSE cost END, "
+                        "updated_at = NOW() "
                         "WHERE source_site='SNKRDUNK' AND site_product_id = :sid"
                     ),
                     {
@@ -2353,8 +2356,10 @@ async def run_kream_unified_once() -> dict:
                 },
             ]
             _new_cost = int(_p10.get("price") or 0) or int(_p9.get("price") or 0)
-            if _new_cost > 0:
-                r["db_update"] = (snkr_id, _new_opts, _new_cost)
+            # fetch 성공(2311서 None 조기리턴)이므로 소싱품절(cost0)도 실측이다.
+            # 재고0·확인시각을 항상 되쓴다(소싱품절 카드 updated_at 이 07-22 동결되던 버그).
+            # cost 는 write-back 에서 0 이면 기존값 보존(마지막 원가 유실 방지).
+            r["db_update"] = (snkr_id, _new_opts, _new_cost)
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
