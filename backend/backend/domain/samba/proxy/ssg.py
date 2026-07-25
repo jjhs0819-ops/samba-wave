@@ -31,7 +31,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -899,22 +899,52 @@ class SSGClient:
         return total
 
     async def list_live_items(
-        self, site_no: Optional[str] = None, max_pages: int = 2000
+        self,
+        site_no: Optional[str] = None,
+        max_pages: int = 2000,
+        on_page: Optional[Callable[[list[dict[str, Any]]], None]] = None,
     ) -> list[dict[str, Any]]:
         """판매중 전체 상품 나열 (유령정리용).
 
         getItemList.ssg 를 page/pageSize=100/siteNo 로 전량 페이징.
         각 항목에서 itemId / splVenItemId / sellStatCd / itemNm 만 추출해 반환.
         (sellStatCd=90 필터는 호출측에서 처리 — 여기선 전량 반환)
+
+        on_page 를 주면 전량을 리스트에 쌓지 않고 페이지 단위로 콜백에 넘긴 뒤
+        빈 리스트를 반환한다(스트리밍 모드). 세팅 계정은 누적 14만건 규모라
+        전량 보관이 reconciler 컨테이너(2GiB) 메모리를 크게 밀어올려 OOM
+        재기동의 한 축이 된다 — 집계만 필요한 호출자는 on_page 를 쓸 것.
         """
+        import asyncio as _aio
+
         site = site_no or self.site_no
         page, page_size, out = 1, 100, []
         while page <= max_pages:
-            resp = await self._call_api(
-                "GET",
-                "/item/0.1/getItemList.ssg",
-                params={"page": str(page), "pageSize": str(page_size), "siteNo": site},
-            )
+            # 전량 나열은 수백 페이지(43k+ 계정은 620페이지 이상)라 SSG API 가
+            # 중간에 한 번만 타임아웃해도 예외가 위로 튀어 유령 reconciler 전체가
+            # 실패한다(→ 매일 스캔 실패 → 유령 무한 누적). 페이지 단위 재시도로
+            # 일시적 타임아웃을 흡수하고, 4회 실패한 페이지만 건너뛴다.
+            resp: dict[str, Any] = {}
+            for _attempt in range(4):
+                try:
+                    resp = await self._call_api(
+                        "GET",
+                        "/item/0.1/getItemList.ssg",
+                        params={
+                            "page": str(page),
+                            "pageSize": str(page_size),
+                            "siteNo": site,
+                        },
+                    )
+                    break
+                except Exception as _e:
+                    if _attempt == 3:
+                        logger.warning(
+                            f"[SSG] list_live_items page={page} 4회 실패 — 건너뜀: {_e}"
+                        )
+                        resp = {}
+                    else:
+                        await _aio.sleep(2)
             # XStream(XML→dict) 응답의 items 중첩이 계정/건수에 따라 3가지로 달라진다:
             #  (a) result.items.item = {단일 dict}          (1건)
             #  (b) result.items.item = [dict, ...]           (다건, 평평)
@@ -937,13 +967,22 @@ class SSGClient:
                         _collect_items(_v)
 
             _collect_items(resp.get("result", {}) if isinstance(resp, dict) else {})
-            for it in page_items:
-                out.append(
-                    {
-                        k: it.get(k)
-                        for k in ("itemId", "splVenItemId", "sellStatCd", "itemNm")
-                    }
-                )
+            normalized = [
+                {
+                    k: it.get(k)
+                    for k in ("itemId", "splVenItemId", "sellStatCd", "itemNm")
+                }
+                for it in page_items
+            ]
+            if on_page is not None:
+                # 스트리밍 모드 — 호출자가 즉시 집계하고 페이지 데이터는 버린다.
+                on_page(normalized)
+            else:
+                out.extend(normalized)
+            # 수백~천 페이지짜리 순회는 로그가 전혀 없으면 "멈췄나 죽었나" 구분이
+            # 안 된다(2026-07-25 감사에서 실측 1,395페이지·31분). 진행 흔적을 남긴다.
+            if page % 200 == 0:
+                logger.info(f"[SSG] list_live_items 진행 page={page}")
             if len(page_items) < page_size:
                 break
             page += 1

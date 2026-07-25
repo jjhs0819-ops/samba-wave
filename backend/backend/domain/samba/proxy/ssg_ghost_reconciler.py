@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 from sqlalchemy import bindparam, text
@@ -35,7 +36,17 @@ from backend.shutdown_state import is_shutting_down
 logger = logging.getLogger("backend.ssg.ghost_reconciler")
 
 RUN_INTERVAL_SECONDS = 24 * 3600
-INITIAL_DELAY_SECONDS = 60 * 45  # 부팅 45분 뒤 첫 실행 (다른 reconciler와 시차 분산)
+# 부팅 후 첫 실행까지 대기(다른 reconciler와 시차 분산용).
+# ★2026-07-25: 기존 45분은 reconciler 컨테이너 워커의 OOM 재기동 주기(~40분)보다
+# 길어서, 첫 실행 전에 워커가 죽고 다시 45분을 세는 무한루프가 됐다(24h 로그에
+# 스캔 완료 0건, 유령/링크 불일치 누적). 재기동보다 짧게 잡고 env 로 조절 가능하게 한다.
+INITIAL_DELAY_SECONDS = int(
+    os.environ.get("SSG_GHOST_INITIAL_DELAY_SECONDS", "") or 60 * 8
+)
+# 재기동이 잦을 때 스캔(전량 나열 ~30분)이 남발되지 않도록, "마지막 시도" 기준 쿨다운.
+RETRY_COOLDOWN_SECONDS = int(
+    os.environ.get("SSG_GHOST_RETRY_COOLDOWN_SECONDS", "") or 3 * 3600
+)
 ALERT_THRESHOLD = 20
 DELETE_THROTTLE_SECONDS = 0.4
 AUTO_CLEAN = os.environ.get("SSG_AUTO_CLEAN_GHOSTS", "").lower() in (
@@ -86,21 +97,28 @@ async def _scan_ssg_market(client) -> tuple[dict[str, tuple[str, str]], int, int
     splVenItemId 가 없는 항목은 대조 불가라 유령 판정에서 제외(스킵 카운트만).
     반환: (live_map, market_total, no_splven_count)
     """
-    items = await client.list_live_items()
     live: dict[str, tuple[str, str]] = {}
-    no_splven = 0
-    for it in items:
-        if str(it.get("sellStatCd") or "") == "90":
-            continue
-        iid = str(it.get("itemId") or "").strip()
-        if not iid:
-            continue
-        sv = str(it.get("splVenItemId") or "").strip()
-        if not sv:
-            no_splven += 1
-            continue
-        live[sv] = (iid, str(it.get("itemNm") or ""))
-    return live, len(items), no_splven
+    stats = {"total": 0, "no_splven": 0}
+
+    def _consume(page_items: list[dict[str, Any]]) -> None:
+        # 스트리밍 집계 — 전량(세팅 계정 14만건)을 리스트로 들고 있지 않는다.
+        # 전량 보관은 2GiB 컨테이너에서 OOM 재기동을 유발했다(2026-07-25).
+        for it in page_items:
+            stats["total"] += 1
+            if str(it.get("sellStatCd") or "") == "90":
+                continue
+            iid = str(it.get("itemId") or "").strip()
+            if not iid:
+                continue
+            sv = str(it.get("splVenItemId") or "").strip()
+            if not sv:
+                stats["no_splven"] += 1
+                continue
+            # itemNm 은 판정에 안 쓰이고 보고 샘플용이라 길이를 잘라 메모리 절약.
+            live[sv] = (iid, str(it.get("itemNm") or "")[:60])
+
+    await client.list_live_items(on_page=_consume)
+    return live, stats["total"], stats["no_splven"]
 
 
 async def _fetch_existing_product_ids(candidate_ids) -> set[str]:
@@ -161,6 +179,73 @@ async def _log_monitor_event(
         logger.debug(f"[ssg_ghost] monitor_event 기록 스킵: {e}")
 
 
+async def _log_scan_done(total_ghosts: int, total_deleted: int) -> None:
+    """스캔 1사이클 완료 기록 (재기동 후 중복/누락 판단용)."""
+    try:
+        from backend.domain.samba.warroom.model import SambaMonitorEvent
+
+        async with get_write_session() as session:
+            session.add(
+                SambaMonitorEvent(
+                    event_type="ssg_ghost_scan_done",
+                    severity="info",
+                    market_type="ssg",
+                    summary=(
+                        f"SSG 유령스캔 완료 — 유령 {total_ghosts}건 / "
+                        f"판매중지 {total_deleted}건"
+                    ),
+                    detail={
+                        "total_ghosts": total_ghosts,
+                        "total_deleted": total_deleted,
+                        "auto_clean_enabled": AUTO_CLEAN,
+                    },
+                )
+            )
+            await session.commit()
+    except Exception as e:
+        logger.debug(f"[ssg_ghost] scan_done 기록 스킵: {e}")
+
+
+async def _seconds_since(event_type: str) -> float | None:
+    """해당 이벤트 마지막 기록 이후 경과초. 기록이 없으면 None."""
+    try:
+        async with get_write_session() as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(created_at))) "
+                        "FROM samba_monitor_event WHERE event_type = :et"
+                    ),
+                    {"et": event_type},
+                )
+            ).first()
+        if row and row[0] is not None:
+            return float(row[0])
+    except Exception as e:
+        logger.debug(f"[ssg_ghost] {event_type} 마지막시각 조회 실패(무시): {e}")
+    return None
+
+
+async def _log_scan_started() -> None:
+    """스캔 시도 기록 — 재기동 폭주 시 스캔 남발을 막는 쿨다운 기준."""
+    try:
+        from backend.domain.samba.warroom.model import SambaMonitorEvent
+
+        async with get_write_session() as session:
+            session.add(
+                SambaMonitorEvent(
+                    event_type="ssg_ghost_scan_started",
+                    severity="info",
+                    market_type="ssg",
+                    summary="SSG 유령스캔 시작",
+                    detail={"auto_clean_enabled": AUTO_CLEAN},
+                )
+            )
+            await session.commit()
+    except Exception as e:
+        logger.debug(f"[ssg_ghost] scan_started 기록 스킵: {e}")
+
+
 async def _reconcile_one_account(
     acc: dict[str, Any],
     dry_run: bool | None = None,
@@ -181,11 +266,16 @@ async def _reconcile_one_account(
         return {"account_id": account_id, "skipped": "no_apikey"}
 
     # 마켓 전량 나열
+    _t0 = time.monotonic()
     try:
         live_map, market_total, no_splven = await _scan_ssg_market(client)
     except Exception as e:
         logger.exception(f"[ssg_ghost] {label} 마켓 나열 실패: {e}")
         return {"account_id": account_id, "account_label": label, "error": str(e)}
+    logger.info(
+        f"[ssg_ghost] {label} 나열완료 total={market_total} live={len(live_map)} "
+        f"elapsed={time.monotonic() - _t0:.0f}s"
+    )
 
     splven_ids = set(live_map.keys())
     existing = await _fetch_existing_product_ids(splven_ids)
@@ -259,6 +349,7 @@ async def reconcile_all_accounts_once() -> dict[str, Any]:
         logger.info("[ssg_ghost] 활성 SSG 계정 없음 — 스킵")
         return {"accounts": [], "total_ghosts": 0, "total_deleted": 0}
 
+    await _log_scan_started()
     results: list[dict[str, Any]] = []
     for acc in accounts:
         try:
@@ -276,6 +367,9 @@ async def reconcile_all_accounts_once() -> dict[str, Any]:
         f"[ssg_ghost] 완료 auto_clean={AUTO_CLEAN} "
         f"total_ghosts={total_ghosts} total_deleted={total_deleted}"
     )
+    # 스캔 완료 사실을 DB에 남긴다 — 워커가 재기동돼도 "오늘 이미 돌았는지"를
+    # 판단할 수 있어야 초기지연을 건너뛰거나 지킬 수 있다(아래 loop 참조).
+    await _log_scan_done(total_ghosts, total_deleted)
     return {
         "accounts": results,
         "total_ghosts": total_ghosts,
@@ -285,11 +379,31 @@ async def reconcile_all_accounts_once() -> dict[str, Any]:
 
 async def ghost_reconciler_loop() -> None:
     """24시간 주기 백그라운드 루프 — lifecycle에서 create_task 로 기동."""
-    logger.info(
-        f"[ssg_ghost] 시작 — interval=24h auto_clean={AUTO_CLEAN} "
-        f"first_run_in={INITIAL_DELAY_SECONDS}s"
-    )
-    await asyncio.sleep(INITIAL_DELAY_SECONDS)
+    # 워커가 재기동될 때마다 초기지연을 처음부터 다시 세면, 재기동 주기가 지연보다
+    # 짧은 환경(2026-07-25 실측: OOM 으로 ~40분마다 재기동)에서는 스캔이 영구히
+    # 실행되지 않는다. 마지막 완료 기록이 주기(24h)를 넘겼으면 지연을 건너뛴다.
+    # 단, 재기동이 잦을 때 스캔이 남발되면 SSG API 를 과하게 두드리므로
+    # "마지막 시도" 기준 쿨다운(RETRY_COOLDOWN_SECONDS)을 함께 본다.
+    _done = await _seconds_since("ssg_ghost_scan_done")
+    _started = await _seconds_since("ssg_ghost_scan_started")
+    _overdue = _done is None or _done >= RUN_INTERVAL_SECONDS
+    _cooled = _started is None or _started >= RETRY_COOLDOWN_SECONDS
+    if _overdue and _cooled:
+        delay = 60
+        logger.warning(
+            f"[ssg_ghost] 시작 — 마지막 완료="
+            f"{'없음' if _done is None else f'{_done / 3600:.1f}h 전'} → "
+            f"초기지연 생략(first_run_in={delay}s) auto_clean={AUTO_CLEAN}"
+        )
+    else:
+        delay = INITIAL_DELAY_SECONDS
+        logger.info(
+            f"[ssg_ghost] 시작 — interval=24h auto_clean={AUTO_CLEAN} "
+            f"first_run_in={delay}s "
+            f"(완료 {_done and round(_done / 3600, 1)}h 전 / "
+            f"시도 {_started and round(_started / 3600, 1)}h 전)"
+        )
+    await asyncio.sleep(delay)
     while not is_shutting_down():
         try:
             await reconcile_all_accounts_once()
