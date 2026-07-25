@@ -936,10 +936,19 @@ class ImageTransformService:
         # 있으나(아래 fashionplus 분기) R2 선미러 목록엔 누락 → 추가. 우리 서버는
         # 다운로드 가능(200 실측) → R2 선미러 후 SSG 재전송 시 상품컷 정상 표시.
         "fashionplus.co.kr",
+        # GS샵 소싱 상세 HTML 이 실제로 물고 있는 이미지 호스트들 — 위 m-gs.kr 은
+        # 메인컷 CDN 이고, 상세컷은 아래 4종에서 온다. 미러 목록 누락 →
+        # strip_external_imgs_in_html 이 <img> 를 통째로 제거 → SSG 상세가
+        # `<p><br></p>` 빈껍데기로 등록되던 문제(2026-07-25 라이브 실측).
+        # 우리 서버는 다운로드 가능 → R2 선미러 필요. (#410/#428 과 동일 클래스)
+        "image.ellotte.com",  # 롯데EPS 상세컷 (http:// 로 박히는 경우 많음)
+        "lotteeps.com",  # ellt.static.lotteeps.com — 롯데백화점 주문안내 배너
+        "ykpartner.com",  # img.ykpartner.com — 아디다스 브랜드 상세
+        "brandimages.co.kr",  # 나이키/아주 브랜드 상세·안내 배너
     )
 
     async def mirror_external_to_r2(
-        self, urls: list[str], min_bytes: int = 0
+        self, urls: list[str], min_bytes: int = 0, force: bool = False
     ) -> tuple[list[str], dict[str, str]]:
         """차단 도메인의 이미지 URL을 R2로 미러링하여 R2 URL로 치환.
 
@@ -947,6 +956,9 @@ class ImageTransformService:
         - min_bytes>0 이면 차단 도메인이 아니어도 URL 바이트 길이가 그 값을 초과하는
           이미지는 미러링(짧은 R2 URL로 단축). 롯데ON origImgFileNm 200byte 한도처럼
           긴 URL(인코딩된 한글 파일명 등)이 거부되는 경우 대응.
+        - force=True 면 차단목록/min_bytes 무관하게 R2 아닌 외부 URL 전부 미러링.
+          SSG처럼 "미러 안 된 외부 <img>는 어차피 strip" 인 경로에서 사용
+          (화이트리스트로는 호스트 롱테일을 못 따라감 — 2026-07-25 실측 25종+).
         - 이미 R2 publicUrl 도메인이거나 (차단 대상도 아니고 min_bytes도 안 넘으면) 원본 유지
         - 다운로드/업로드 실패 시 해당 URL은 결과에서 제외(드롭)
         - 원본 포맷(MIME) 보존: webp 변환 없이 그대로 저장
@@ -990,9 +1002,10 @@ class ImageTransformService:
                 result_slots[_i] = url
                 continue
             # 차단 도메인이 아니고 min_bytes도 안 넘으면 원본 유지
+            # (force=True 면 외부 호스트는 무조건 미러 — 위 docstring 참조)
             _blocked = any(b in host for b in self._HOTLINK_BLOCKED_HOSTS)
             _too_long = bool(min_bytes) and len(url.encode("utf-8")) > min_bytes
-            if not _blocked and not _too_long:
+            if not _blocked and not _too_long and not force:
                 result_slots[_i] = url
                 continue
             to_download.append((_i, url))
@@ -1093,7 +1106,11 @@ class ImageTransformService:
         return result, url_map
 
     async def mirror_with_persistence(
-        self, product_id: str | None, urls: list[str], min_bytes: int = 0
+        self,
+        product_id: str | None,
+        urls: list[str],
+        min_bytes: int = 0,
+        force: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         """DB 영속 매핑(samba_collected_product.image_mirror_map) 활용 + 신규 매핑 저장.
 
@@ -1103,7 +1120,9 @@ class ImageTransformService:
         - 실패 시 일반 미러 결과만 반환 (DB 오류는 로깅 후 무시 — 등록 자체는 진행)
         """
         if not urls or not product_id:
-            return await self.mirror_external_to_r2(urls, min_bytes=min_bytes)
+            return await self.mirror_external_to_r2(
+                urls, min_bytes=min_bytes, force=force
+            )
 
         from sqlalchemy import select, update
 
@@ -1127,7 +1146,9 @@ class ImageTransformService:
         for _k, _v in _db_map.items():
             self._R2_MIRROR_CACHE.setdefault(_k, _v)
 
-        _result, _url_map = await self.mirror_external_to_r2(urls, min_bytes=min_bytes)
+        _result, _url_map = await self.mirror_external_to_r2(
+            urls, min_bytes=min_bytes, force=force
+        )
 
         # 신규(또는 변경) 매핑만 DB에 머지
         _new = {k: v for k, v in _url_map.items() if _db_map.get(k) != v}
@@ -1486,7 +1507,37 @@ class ImageTransformService:
                 new_html = new_html.replace(orig, new)
         return new_html
 
-    async def mirror_urls_in_html(self, html: str) -> str:
+    @staticmethod
+    def normalize_lazy_img_src(html: str) -> str:
+        """지연로딩 `<img data-src="...">` 를 실제 `src` 로 승격.
+
+        GS샵/롯데 소싱 상세 HTML 은 상품컷을 전부 `data-src` 로 물고 있다(원본
+        페이지가 JS lazy-load). 그대로 마켓에 넘기면 미러링으로 URL 만 바뀌고
+        속성명은 `data-src` 라 브라우저가 아무것도 렌더하지 않는다
+        (2026-07-25 SSG 라이브 실측 — itemId 1000858240316).
+
+        - 이미 실제 `src` 가 있는 태그는 그대로 둔다(플레이스홀더 유지가 안전).
+        - `src` 가 없는 태그만 `data-src` → `src` 로 이름 변경.
+        """
+        if not html or "data-src" not in html:
+            return html
+        import re as _re
+
+        def _fix(m: "_re.Match[str]") -> str:
+            tag = m.group(0)
+            # `data-src=` 를 제외한 진짜 src 속성이 이미 있으면 손대지 않는다
+            if _re.search(r'(?<![\w-])src\s*=', tag, _re.IGNORECASE):
+                return tag
+            return _re.sub(r'(?<![\w-])data-src(\s*=)', r"src\1", tag, flags=_re.I)
+
+        return _re.sub(r"<img\b[^>]*>", _fix, html, flags=_re.IGNORECASE)
+
+    async def mirror_urls_in_html(
+        self,
+        html: str,
+        mirror_all: bool = False,
+        product_id: str | None = None,
+    ) -> str:
         """HTML 문자열 내부의 차단 도메인 이미지 URL을 R2 미러 URL로 치환.
 
         detail_html처럼 사전 생성된 HTML 안의 <img src="..."> URL이 미러링을
@@ -1495,12 +1546,19 @@ class ImageTransformService:
         protocol-relative URL(`//image.msscdn.net/...`)도 처리 — 무신사
         goodsContents 배너가 `<img src="//image.msscdn.net/...">` 형식이므로
         `https?://`만 매칭하면 미러링 우회되어 핫링크 차단으로 깨진 이미지 노출.
+
+        mirror_all=True 면 차단목록과 무관하게 외부 호스트 전부 미러링한다.
+        SSG 경로는 미러 실패분을 strip_external_imgs_in_html 로 어차피 제거하므로,
+        화이트리스트에 없는 호스트 = 상세 통째 소실이었다(2026-07-25 실측: SSG
+        등록 71,840건 중 11,350건이 이미지 전멸, 원인 호스트 25종+).
+        product_id 를 주면 image_mirror_map 영속 캐시를 태워 재전송 시 재다운로드 회피.
         """
         if not html:
             return html
         import re as _re
 
-        # protocol-relative(//host/...)와 절대(https?://...) 양쪽 매칭
+        # protocol-relative(//host/...)와 절대(https?://...) 양쪽 매칭.
+        # `data-src=` 도 같은 패턴에 걸린다(`src=` 를 포함하므로) — 의도된 동작.
         pattern = _re.compile(r'src=(["\'])((?:https?:)?//[^"\']+)\1', _re.IGNORECASE)
         # orig(원본 문자열) -> normalized(https://...) 매핑
         orig_to_norm: dict[str, str] = {}
@@ -1509,12 +1567,14 @@ class ImageTransformService:
             if url in orig_to_norm:
                 continue
             norm = ("https:" + url) if url.startswith("//") else url
-            if self.is_hotlink_blocked_url(norm):
+            if mirror_all or self.is_hotlink_blocked_url(norm):
                 orig_to_norm[url] = norm
         if not orig_to_norm:
             return html
 
-        _, url_map = await self.mirror_external_to_r2(list(orig_to_norm.values()))
+        _, url_map = await self.mirror_with_persistence(
+            product_id, list(orig_to_norm.values()), force=mirror_all
+        )
         if not url_map:
             return html
 
@@ -1553,6 +1613,10 @@ class ImageTransformService:
             if t
         ]
 
+        # 제거된 외부 호스트 집계 — 미러 화이트리스트 누락을 조용히 넘기지 않는다.
+        # (호스트 롱테일이 계속 새로 유입돼 상세가 통째로 비던 문제, 2026-07-25)
+        _stripped: dict[str, int] = {}
+
         def _keep(m: "_re.Match[str]") -> str:
             tag = m.group(0)
             src = _re.search(
@@ -1565,9 +1629,18 @@ class ImageTransformService:
             host = (_up(norm).netloc or "").lower()
             if any(tok in host for tok in allowed_tokens):
                 return tag  # our-domain/R2 → 유지
+            _stripped[host] = _stripped.get(host, 0) + 1
             return ""  # 외부(미러 실패) → 제거
 
-        return _re.sub(r"<img\b[^>]*>", _keep, html, flags=_re.IGNORECASE)
+        out = _re.sub(r"<img\b[^>]*>", _keep, html, flags=_re.IGNORECASE)
+        if _stripped:
+            logger.warning(
+                "[이미지미러] 미러 실패 외부 <img> %d개 제거 — 호스트별 %s "
+                "(상세페이지 소실 위험: 미러 대상 확인 필요)",
+                sum(_stripped.values()),
+                _stripped,
+            )
+        return out
 
     async def transform_single_image(
         self,
