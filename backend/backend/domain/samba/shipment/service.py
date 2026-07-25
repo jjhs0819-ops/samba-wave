@@ -147,6 +147,100 @@ def exceeds_price_cap(*values) -> bool:
     return False
 
 
+# 짧은 한글 금지어는 부분매칭 오탐이 압도적이라 정확일치만 적용하는 길이 상한.
+# 실측(2026-07-25): '리지'→'오리지널' 2,789건, '람'→'바람막이' 726건,
+# '리프'→'브리프' 459건 … SSG 등록분의 9.3%가 오탐으로 전송 차단됐다.
+_FORBIDDEN_SHORT_KO_MAXLEN = 3
+_HANGUL_RE = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
+
+# 금지어 목록 → 매처 캐시. 목록은 전송 1회 동안 고정이라 매 상품마다 재컴파일하면
+# 상품당 수백 회 regex 컴파일이 발생한다(금지어 1,544개 실측) → 전송 지연.
+_forbidden_matcher_cache: dict[tuple[str, ...], tuple] = {}
+
+
+def _get_forbidden_matcher(words: list[str]) -> tuple:
+    """(라틴 단어경계 정규식, 짧은한글 {소문자: 원본}, 긴한글 [(소문자, 원본)]) 반환."""
+    key = tuple(words)
+    cached = _forbidden_matcher_cache.get(key)
+    if cached is not None:
+        return cached
+
+    latin: list[str] = []
+    short_ko: dict[str, str] = {}
+    long_ko: list[tuple[str, str]] = []
+    for w in words:
+        if not w:
+            continue
+        if not _HANGUL_RE.search(w):
+            latin.append(w)
+        elif len(w) <= _FORBIDDEN_SHORT_KO_MAXLEN:
+            short_ko.setdefault(w.lower(), w)
+        else:
+            long_ko.append((w.lower(), w))
+
+    latin_re = None
+    latin_map: dict[str, str] = {}
+    if latin:
+        for w in latin:
+            latin_map.setdefault(w.lower(), w)
+        # 긴 단어 우선 매칭 — 짧은 대안이 먼저 걸려 원본 복원이 어긋나지 않게.
+        alt = "|".join(
+            re.escape(w) for w in sorted(latin_map, key=len, reverse=True)
+        )
+        latin_re = re.compile(rf"(?<![0-9a-z])({alt})(?![0-9a-z])")
+
+    result = (latin_re, latin_map, short_ko, long_ko)
+    # 캐시 폭주 방지 — 금지어 목록은 사실상 1~2종이라 여유 상한으로 충분
+    if len(_forbidden_matcher_cache) > 32:
+        _forbidden_matcher_cache.clear()
+    _forbidden_matcher_cache[key] = result
+    return result
+
+
+def _forbidden_hit(words: list[str], product: dict[str, Any]) -> str | None:
+    """금지어 게이트 판정 — 걸린 단어를 반환, 없으면 None.
+
+    haystack = **실제 마켓에 나가는 등록상품명** + brand + 영문명.
+
+    (a) `_original_name`(원상품명)을 haystack 에서 뺀다.
+        삭제어(type=deletion)로 상품명에서 지운 단어가 원상품명에 남아 금지어로
+        되살아나 전송이 막히던 결함(실측 725건). 예: '아디다스오리지널'은 삭제어라
+        등록명엔 없는데 원상품명 때문에 금지어 '리지'에 매칭됐다.
+        마켓에 나가지 않는 문자열로 전송을 막을 이유가 없다.
+        brand/name_en 은 #414①(브랜드명을 금지어로 등록한 경우) 취지대로 유지.
+
+    (b) 부분매칭 오탐 차단:
+        - 라틴문자 금지어: 단어경계 일치. 'SENTI'가 'Essentials' 에, 'pat'이
+          'patagonia' 에 걸리던 오탐 제거.
+        - 한글 3글자 이하: brand 정확일치 또는 상품명의 공백단위 토큰 정확일치만.
+          ('람'이 '바람막이'에 안 걸리되, brand='람' 이나 "람 자켓"은 계속 차단)
+        - 한글 4글자 이상: 종전대로 부분매칭.
+    """
+    _name = product.get("name") or ""
+    _brand = (product.get("brand") or "").strip()
+    _name_en = product.get("name_en") or ""
+    _hay = " ".join(s for s in (_name, _brand, _name_en) if s).lower()
+
+    latin_re, latin_map, short_ko, long_ko = _get_forbidden_matcher(words)
+
+    if latin_re is not None:
+        m = latin_re.search(_hay)
+        if m:
+            return latin_map.get(m.group(1), m.group(1))
+
+    if short_ko:
+        if _brand.lower() in short_ko:
+            return short_ko[_brand.lower()]
+        for t in re.split(r"\s+", _name.lower()):
+            if t in short_ko:
+                return short_ko[t]
+
+    for wl, w in long_ko:
+        if wl in _hay:
+            return w
+    return None
+
+
 def calc_market_price(
     cost: float,
     policy_pricing: dict,
@@ -2046,20 +2140,7 @@ class SambaShipmentService:
                     else []
                 )
                 if _fb_words:
-                    # 게이트 haystack 확장 — 등록상품명 + 원상품명 + brand + 영문명.
-                    # 브랜드명을 금지어로 등록한 경우, name_rule 조합/마켓 정규화로
-                    # 등록상품명에 브랜드가 빠져도 brand 필드로 매칭되도록 함(#414①).
-                    _hay = " ".join(
-                        s
-                        for s in (
-                            acct_product.get("name"),
-                            acct_product.get("_original_name"),
-                            acct_product.get("brand"),
-                            acct_product.get("name_en"),
-                        )
-                        if s
-                    ).lower()
-                    _hit = next((w for w in _fb_words if w.lower() in _hay), None)
+                    _hit = _forbidden_hit(_fb_words, acct_product)
                     if _hit:
                         res["status"] = "skipped"
                         res["error"] = f"금지어 '{_hit}' 포함 — {market_type} 전송 제외"
