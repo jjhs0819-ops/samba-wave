@@ -926,8 +926,9 @@ async def snkrdunk_compare_all_public(
                 d["kream_candidates"] = []
         elif not isinstance(kc, list):
             d["kream_candidates"] = []
-        # 후보선택형(kream_id 비어도 후보 존재)도 '크림매칭'으로 분류 [2026-07-20 사용자 지시]
-        matched = matched or bool(d["kream_candidates"])
+        # 매칭 = 확정 크림번호(kream_id) 있을 때만. 미확정 후보만 있는 카드는 '크림미매칭'(cat3/4)
+        # 으로 분류 — 확정 안 돼 입찰 대상이 아닌데 cat1(매칭)에 들어가 미등록을 부풀리던 문제.
+        # [2026-07-25 사용자 지시 — 구 '후보도 매칭' 규칙 폐기]
         d["cat"] = (1 if has_stock else 2) if matched else (3 if has_stock else 4)
         # DB 실시간 등록여부 (크림에 입찰 존재)
         d["registered"] = bool(d["kream_id"]) and d["kream_id"] in registered_set

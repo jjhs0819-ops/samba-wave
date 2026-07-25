@@ -1589,6 +1589,9 @@ _FAILED_TTL = 21600
 _SET_RECENT = "kream_recent_posts"
 _SET_FAILED = "kream_failed_posts"
 _SET_MISS = "kream_miss_counts"
+# 리스톡 로테이션 offset 영속화 — 재배포/재시작에도 순회 위치 유지(안 하면 매 재시작 0 리셋 →
+# 앞부분만 반복, 뒤쪽 카드 영영 미평가 → 품절 재고갱신·리스톡 누락). [2026-07-25]
+_SET_OFFSET = "kream_unified_offset"
 # 입찰제한(최근 거래가 확인 필요) 반복 실패 쿨다운 — 공식 API 에 거래이력/허용밴드가 없어
 # 재시도해도 계속 거절된다. 일정 시간 조정 대상서 제외해 헛호출·실패로그를 끊는다.
 _SET_LIMIT = "kream_bid_limit_cooldown"
@@ -2329,6 +2332,14 @@ async def run_kream_unified_once() -> dict:
     live_products = [p for p in products if p["kid"] in _live_kids]
     rest_products = [p for p in products if p["kid"] not in _live_kids]
     batch = int(os.environ.get("KREAM_UNIFIED_BATCH") or 10000)
+    # 재시작 직후(in-memory 0)면 DB서 이전 offset 복원 → 로테이션 이어감(재배포 리셋 방지)
+    if _unified_offset == 0:
+        try:
+            _unified_offset = int(
+                (await _load_setting_map(_SET_OFFSET)).get("v", 0) or 0
+            )
+        except Exception:
+            _unified_offset = 0
     if batch > 0 and len(rest_products) > batch:
         start = _unified_offset % len(rest_products)
         rest_slice = (rest_products[start:] + rest_products[:start])[:batch]
@@ -2336,6 +2347,9 @@ async def run_kream_unified_once() -> dict:
     else:
         rest_slice = rest_products
         _unified_offset = 0
+    await _save_setting_map(
+        _SET_OFFSET, {"v": int(_unified_offset)}
+    )  # 다음 재시작 대비 영속화
     products = live_products + rest_slice
     rest_total = len(rest_products)  # 리스톡 탐색 로테이션 분모(진행률 표시용)
     logger.info(
