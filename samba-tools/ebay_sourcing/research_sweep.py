@@ -35,6 +35,11 @@ BLOCK = re.compile(r"pardon our interruption|unusual traffic|are you a robot|"
 
 class Tab:
     def __init__(self):
+        self._connect()
+
+    def _connect(self):
+        # [중요] ws 가 한 번 끊기면(웨일 재시작/절전/네트워크) 전체 스윕이 죽었다
+        # (2026-07-24 12/300 에서 ConnectionResetError). 재연결로 이어가게 한다.
         tabs = json.load(urllib.request.urlopen(f"{CDP}/json/list"))
         pages = [t for t in tabs if t.get("type") == "page"
                  and "ebay.com/sh/research" in (t.get("url") or "")]
@@ -46,16 +51,24 @@ class Tab:
         self.ws = websocket.create_connection(
             pages[0]["webSocketDebuggerUrl"], timeout=90, suppress_origin=True)
         self._id = 0
-        self.cmd("Page.enable")
-        self.cmd("Runtime.enable")
+        self.cmd("Page.enable", _retry=False)
+        self.cmd("Runtime.enable", _retry=False)
 
-    def cmd(self, method, params=None):
-        self._id += 1
-        self.ws.send(json.dumps({"id": self._id, "method": method, "params": params or {}}))
-        while True:
-            m = json.loads(self.ws.recv())
-            if m.get("id") == self._id:
-                return m
+    def cmd(self, method, params=None, _retry=True):
+        try:
+            self._id += 1
+            self.ws.send(json.dumps({"id": self._id, "method": method, "params": params or {}}))
+            while True:
+                m = json.loads(self.ws.recv())
+                if m.get("id") == self._id:
+                    return m
+        except Exception:
+            if not _retry:
+                raise
+            # 끊김 → 잠깐 쉬고 재연결 후 1회 재시도
+            time.sleep(10)
+            self._connect()
+            return self.cmd(method, params, _retry=False)
 
     def js(self, expr):
         r = self.cmd("Runtime.evaluate", {"expression": expr, "returnByValue": True,
