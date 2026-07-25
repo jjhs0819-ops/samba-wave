@@ -24,6 +24,9 @@ HEADERS = {
     "Accept": "application/json",
     "Accept-Language": "ko-KR,ko;q=0.9",
     "Referer": "https://www.fashionplus.co.kr/",
+    # 검색 API(goods/fetch)는 AJAX 마커가 없으면 앱이 HTML 에러페이지(403)를 반환.
+    # 실제 프론트가 XHR로 호출하므로 동일 마커를 붙인다(안티봇 우회 아님).
+    "X-Requested-With": "XMLHttpRequest",
 }
 
 
@@ -80,9 +83,23 @@ class FashionPlusClient:
         kw["transport"] = httpx.AsyncHTTPTransport(retries=3, proxy=self.proxy_url)
         return kw
 
+    async def _seed_session(self, client: "httpx.AsyncClient") -> None:
+        """검색 API 호출 전 홈페이지 1회 방문으로 세션 쿠키 획득.
+
+        패플 검색 API(goods/fetch)는 세션 쿠키가 없으면 403(HTML 에러페이지)을
+        반환한다(2026-07 사이트 변경). 실제 프론트가 홈 진입 시 쿠키를 받는 흐름과
+        동일. 쿠키는 client 쿠키자에 자동 저장돼 이후 검색 요청에 실린다.
+        """
+        try:
+            await client.get("https://www.fashionplus.co.kr/", headers=HEADERS)
+        except Exception:
+            # 시딩 실패해도 검색 시도는 진행(검색측 403 처리 로직이 잡음)
+            pass
+
     async def _fetch_search_meta(self, keyword: str) -> dict[str, Any]:
         """검색 API 호출 후 categories/brands 메타데이터 반환 (상품 목록은 1건만)."""
         async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            await self._seed_session(client)
             params: dict[str, str] = {
                 "searchWord": keyword,
                 "page": "1",
@@ -252,6 +269,7 @@ class FashionPlusClient:
         last_error = ""
 
         async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            await self._seed_session(client)
             while True:
                 params: dict[str, str] = {
                     "searchWord": keyword,
