@@ -480,6 +480,41 @@ def _fail_tag(n: int) -> str:
     return f" 실패{n:,}" if n else ""
 
 
+async def _write_live_asks_snapshot(asks: list) -> None:
+    """현재 live 입찰 스냅샷을 kream_live_asks 에 되쓴다 — 검수페이지 '등록여부' 실시간 반영.
+    로컬봇(_kream_ask_adjust)이 매 사이클 하던 것. 백엔드 이관 후 끊겨 07-22 동결 →
+    이후 입찰분이 전부 '미등록' 오분류되던 버그. TRUNCATE+INSERT 를 한 트랜잭션으로
+    (원자적) — 중간 실패 시 rollback 돼 기존 스냅샷 보존(전부 미등록 되는 사고 방지)."""
+    if not asks:
+        return
+    seen: set = set()
+    rows: list = []
+    for a in asks:
+        kid = str(a.get("product_id") or "")
+        opt = str(a.get("option") or "")
+        if not kid or (kid, opt) in seen:
+            continue
+        seen.add((kid, opt))
+        rows.append({"k": kid, "o": opt, "p": int(a.get("price") or 0)})
+    if not rows:
+        return
+    try:
+        from backend.db.orm import get_write_session
+
+        async with get_write_session() as s:
+            await s.execute(_text("TRUNCATE kream_live_asks"))
+            await s.execute(
+                _text(
+                    "INSERT INTO kream_live_asks (product_id, option, price, updated_at) "
+                    "VALUES (:k, :o, :p, NOW())"
+                ),
+                rows,
+            )
+            await s.commit()
+    except Exception as exc:
+        logger.warning("[크림통합] kream_live_asks 스냅샷 실패(무시): %s", exc)
+
+
 async def _write_back_db_options(updates: list) -> None:
     """실시간 snkr 원가/재고를 samba_collected_product.options 에 되쓴다.
     카드는 마켓 미등록이라 메인 오토튠이 갱신 안 함 → 전수스캔 정지 후 db_opts 가 낡음.
@@ -642,11 +677,27 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
         )
         return "fail", None
     try:
+        # 보관 전환 신청(is_keep_on_deferred) 명시 — 스펙상 미입력 시 기존값 유지라
+        # 매 수정마다 실어야 보관판매 유지(안 실으면 자동입찰이 신청 놓쳐 false 방치).
+        # 이후 순위교정 PATCH 는 가격만 보내도 기존 keep 유지됨.
+        _pkey = f"{pid}|{opt}"
+        _pbody = {"price": int(target)}
+        if _pkey not in _keep_impossible:
+            _pbody["is_keep_on_deferred"] = True
         r = await cli.patch(
-            f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
-            headers=h,
-            json={"price": int(target)},
+            f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h, json=_pbody
         )
+        # 보관 불가 상품(400 '보관 신청이 불가능') → keep 빼고 재시도(갱신 자체는 성공)
+        if (
+            r.status_code not in (200, 201)
+            and "is_keep_on_deferred" in _pbody
+            and "보관" in (r.text or "")
+        ):
+            _keep_impossible.add(_pkey)
+            _pbody.pop("is_keep_on_deferred")
+            r = await cli.patch(
+                f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h, json=_pbody
+            )
         if r.status_code not in (200, 201):
             # 사유 기록 — 그동안 실패 건수만 보이고 원인을 몰라 대응이 불가했다.
             _body = " ".join((r.text or "")[:120].split())
@@ -1668,19 +1719,33 @@ def _trade_ok(kid: str, name: str) -> bool:
     return _g_trade_counts.get(str(kid), 0) >= 1
 
 
+# 보관 신청 불가 판정된 (kid|opt) — keep 재시도로 불필요한 400 반복 안 하려 캐시.
+_keep_impossible: set = set()
+
+
 async def _exec_create_ask(
     cli: httpx.AsyncClient, h: dict, kid: str, price: int, opt: str
 ) -> tuple[bool, str]:
-    """POST /asks 신규 입찰. 고시필요 응답이면 등록 재시도. 반환 (성공, 사유)."""
+    """POST /asks 신규 입찰. 보관 전환 신청(is_keep_on_deferred) 명시 — 신규는 미입력 시
+    보관 안 됨(2026-07-19). 보관불가 상품(400 '보관 신청이 불가능')은 keep 빼고 재등록.
+    반환 (성공, 사유)."""
+    _key = f"{kid}|{opt}"
+    body = {"product_id": int(kid), "price": int(price), "option": opt}
+    if _key not in _keep_impossible:
+        body["is_keep_on_deferred"] = True
     try:
-        r = await cli.post(
-            f"{KREAM_OPENAPI_BASE}/asks",
-            headers=h,
-            json={"product_id": int(kid), "price": int(price), "option": opt},
-        )
+        r = await cli.post(f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
         if r.status_code in (200, 201):
             return True, "ok"
         detail = str((r.json() or {}).get("detail") or r.text)[:200]
+        # 보관 불가 → keep 빼고 재등록(정상 등록 보존)
+        if "보관" in detail and "is_keep_on_deferred" in body:
+            _keep_impossible.add(_key)
+            body.pop("is_keep_on_deferred")
+            r = await cli.post(f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
+            if r.status_code in (200, 201):
+                return True, "ok"
+            detail = str((r.json() or {}).get("detail") or r.text)[:200]
         return False, detail
     except Exception as exc:
         return False, str(exc)[:120]
@@ -2230,6 +2295,9 @@ async def run_kream_unified_once() -> dict:
             asks = await _fetch_live_asks(h)
         except Exception:
             pass
+
+    # 검수페이지 '등록여부' 실시간 반영 — 현재 입찰 스냅샷 되쓰기(로컬봇 이식).
+    await _write_live_asks_snapshot(asks)
 
     # live ask 인덱스 (kid, 옵션) → ask (중복 시 최고가 유지)
     ask_index: dict = {}
