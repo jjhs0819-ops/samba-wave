@@ -1685,7 +1685,26 @@ class SSGClient:
         # 2) 특수문자 제거 (한글·영문·숫자·공백만 허용, 언더스코어도 제거)
         cleaned_name = _re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", cleaned_name)
         cleaned_name = _re.sub(r"\s{2,}", " ", cleaned_name).strip()
-        # 3) 90byte 제한 (공백 포함)
+        # 2-5) SEO 키워드를 상품명(itemNm)에 덧붙임 — 검색 노출용.
+        #      seo_keywords 우선, 없으면 tags 상위로 폴백. 상품명에 이미 있는
+        #      단어·내부마커(__ai_tagged__ 등)는 제외하고, 아래 90byte 컷 안에서 추가.
+        _seo_src = product.get("seo_keywords") or product.get("tags") or []
+        if isinstance(_seo_src, list) and _seo_src:
+            _name_low = cleaned_name.lower()
+            _seo_add: list[str] = []
+            for _kw in _seo_src:
+                _kw = str(_kw).strip()
+                if not _kw or (_kw.startswith("__") and _kw.endswith("__")):
+                    continue
+                _kw = _re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", _kw).strip()
+                _kw = _re.sub(r"\s{2,}", " ", _kw)
+                if not _kw or _kw.lower() in _name_low or _kw.lower() in " ".join(_seo_add).lower():
+                    continue
+                _seo_add.append(_kw)
+            if _seo_add:
+                cleaned_name = (cleaned_name + " " + " ".join(_seo_add)).strip()
+                cleaned_name = _re.sub(r"\s{2,}", " ", cleaned_name)
+        # 3) 90byte 제한 (공백 포함) — SEO 덧붙인 뒤 최종 컷
         encoded = cleaned_name.encode("utf-8")
         if len(encoded) > 90:
             # 90byte 이내로 잘라냄 (멀티바이트 경계 보호)
