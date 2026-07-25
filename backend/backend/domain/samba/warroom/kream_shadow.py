@@ -1607,7 +1607,9 @@ def needs_trade(name: str) -> bool:
         return True
     if _GRADE_RE.search(nm):
         return False
-    if "박스" in nm or "팩" in nm:
+    # 한글/영문 팩·박스 — ask 의 영문 product_name 경로(만료회수 등)에서도 게이트 작동.
+    # 등급토큰 체크(위)를 통과한 것만 여기 오므로 낱장(등급 있음)은 이미 제외됨. [2026-07-25]
+    if "박스" in nm or "팩" in nm or "box" in t or "pack" in t:
         return True
     return False
 
@@ -2135,7 +2137,9 @@ async def _process_expired_asks(
             if site == "ONITSUKA":
                 c["onitsuka"] += 1
                 continue
-            pname = str(a.get("product_name") or "")
+            # 거래게이트(needs_trade)는 한글 팩/박스도 보므로 한글명 우선(영문만 쓰면
+            # 'Premium Champion Pack' 이 게이트 통과해 팩/박스 재입찰되던 버그). [2026-07-25]
+            pname = str(a.get("product_name_kr") or a.get("product_name") or "")
 
             # 분류 → 실시간 시세·재고 조회
             is_shoe = bool(_SHOE_OPT_RE.fullmatch(opt))
@@ -2617,6 +2621,15 @@ async def run_kream_unified_once() -> dict:
                 counts["overcost"] = counts.get("overcost", 0) + 1
             elif kind == "renew":
                 counts["renew"] += 1
+                # 거래게이트 위반 기존입찰 등록해제 — needs_trade(팩/박스/유희왕/원피스)인데
+                # 거래이력<1 이면 애초에 등록되면 안 됨(체결 시 손해). 갱신 유지 대신 삭제.
+                # 이관 전/게이트구멍으로 잘못 입찰된 것 자동 정리 + 재발 방지. [2026-07-25]
+                # 안전장치: 거래카운트 로드 실패(빈 맵)면 전 팩/박스 대량삭제 위험 → 스킵.
+                if _g_trade_counts and not _trade_ok(kid, pname):
+                    counts["delete"] += 1
+                    counts["gate_del"] = counts.get("gate_del", 0) + 1
+                    pend_delete.append((kid, nm))
+                    continue
                 if act == "무경쟁인상(쿨다운보류)":
                     counts["cd_blocked"] += 1
                 if act == "이상감지차단":
