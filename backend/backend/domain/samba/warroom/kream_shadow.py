@@ -653,9 +653,18 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                 "used"
             ] < _hb_clamp["cap"]:
                 hb = await _fetch_highest_bid(cli, h, pid, opt)
+                hb = int(hb) // 1000 * 1000
+                # ── 마진 하한 가드 [저마진 체결 원천차단·2026-07-25] ──
+                # 입찰제한 보정도 최소가(_floor) 밑으론 절대 안 내린다. hb < 최소가면
+                # 재입찰 포기(쿨다운) — 마진 하한 밑 판매 방지. 651557 PSA10 5.7% 체결 사고.
+                if hb > 0 and _floor > 0 and hb < _floor:
+                    _note_fail(
+                        f"입찰제한-마진하한 차단: 최고입찰가 {hb:,} < 최소 {_floor:,}"
+                    )
+                    _g_limit_cd[f"{pid}|{opt}"] = _now_ts()
+                    return "fail", None
                 if hb > 0 and hb != int(target):
                     _hb_clamp["used"] += 1
-                    hb = int(hb) // 1000 * 1000
                     r2 = await cli.patch(
                         f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
                         headers=h,
