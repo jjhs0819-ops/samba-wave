@@ -262,10 +262,10 @@ POLICY = {
     # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외. 로컬 봇의 25만엔 원칙.
     # 초고가 카드(수백만엔)에 입찰이 걸리면 체결 시 그 값으로 소싱해야 해 치명적.
     "max_cost_jpy": 250000,
-    # 조정 데드밴드(%) — 목표가와 현재가 차이가 이 비율 미만이면 조정 생략.
+    # 조정 데드밴드(원) — 목표가와 현재가 차이가 이 금액 미만이면 조정 생략.
     # 실시간 원가/시세의 미세변동이 매 사이클 수백 건의 헛조정으로 번지는 것 차단.
     # 단 '마진 하한 미달(현재가 < 최소가)' 은 손실 방지라 데드밴드와 무관하게 항상 조정.
-    "adjust_deadband_pct": 1.5,
+    "adjust_deadband_krw": 2000,
 }
 
 
@@ -314,8 +314,8 @@ async def _load_policy() -> None:
                         "max_cost_jpy": k.get(
                             "kreamMaxCostJpy", POLICY["max_cost_jpy"]
                         ),
-                        "adjust_deadband_pct": k.get(
-                            "kreamAdjustDeadbandPct", POLICY["adjust_deadband_pct"]
+                        "adjust_deadband_krw": k.get(
+                            "kreamAdjustDeadbandKrw", POLICY["adjust_deadband_krw"]
                         ),
                     }
                 )
@@ -1395,8 +1395,8 @@ def _decide_price_action(
         and cur >= min_price
         and not _gains_rank1
     ):
-        _db = float(POLICY.get("adjust_deadband_pct") or 0)
-        if _db > 0 and abs(target - cur) < max(cur * _db / 100, 1000):
+        _db = float(POLICY.get("adjust_deadband_krw") or 0)
+        if _db > 0 and abs(target - cur) < _db:
             act, target, adjusting = "데드밴드생략", cur, False
     return act, target, adjusting, is_nocomp
 
