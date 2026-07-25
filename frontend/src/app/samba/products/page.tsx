@@ -2599,13 +2599,14 @@ export default function ProductsPage() {
       </div>
       </div>
 
-      {/* Result header + action bar */}
+      {/* Result header + action bar — 한 줄 유지(넘치면 가로 스크롤, 줄바꿈 금지) */}
       <div style={{
         background: c.surface, border: `1px solid ${c.border}`, borderRadius: "8px",
         padding: "8px 14px", marginBottom: "1rem",
-        display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "8px",
+        display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "nowrap", gap: "8px",
+        overflowX: "auto",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "nowrap" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "4px", cursor: "pointer", margin: 0 }} title="검색결과 전체 선택">
             <input
               type="checkbox"
@@ -2858,7 +2859,7 @@ export default function ProductsPage() {
             }}
           >업데이트</button>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
           <button
             onClick={() => { setViewMode("compact"); setExpandedIds(new Set()) }}
             style={{
