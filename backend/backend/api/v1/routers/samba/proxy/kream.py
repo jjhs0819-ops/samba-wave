@@ -955,12 +955,16 @@ async def snkrdunk_update_verify_public(
     """검수 '일치' 확정 플래그 저장 (자동 입찰 관리 대상 지정, 인증 불필요)."""
     from sqlalchemy import text
 
+    # kream 객체 통째로 merge — 부모 'kream' 키가 없으면(inject가 kream_candidates 만 넣은
+    # 다중후보 행) jsonb_set('{kream,verified}') 는 중간 경로를 못 만들어 조용히 실패했다.
+    # → verified 를 눌러도 DB 에 안 박혀 리로드시 미확인으로 되돌아가던 버그. [2026-07-25]
     sql = text("""
         UPDATE samba_collected_product
         SET resell_matches = jsonb_set(
             COALESCE(resell_matches, '{}'::jsonb),
-            '{kream,verified}',
-            CAST(:verified AS jsonb),
+            '{kream}',
+            COALESCE(resell_matches -> 'kream', '{}'::jsonb)
+                || jsonb_build_object('verified', CAST(:verified AS jsonb)),
             true
         ), updated_at = NOW()
         WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
