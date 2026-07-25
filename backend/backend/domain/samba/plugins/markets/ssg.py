@@ -473,7 +473,15 @@ class SSGPlugin(MarketPlugin):
                         _,
                     ) = await _img_svc.mirror_with_persistence(_pid, _detail_images)
                 if _detail_html:
-                    _mirrored_html = await _img_svc.mirror_urls_in_html(_detail_html)
+                    # ① 지연로딩 data-src → src 승격. GS샵/롯데 상세는 상품컷이
+                    #    전부 data-src 라 그대로 두면 미러돼도 렌더링 안 됨.
+                    # ② mirror_all=True — 미러 실패분은 아래 strip 이 어차피
+                    #    제거하므로, 화이트리스트에 없는 호스트는 곧 상세 소실이었다
+                    #    (실측: SSG 등록 71,840건 중 11,350건 이미지 전멸).
+                    _detail_html = _img_svc.normalize_lazy_img_src(_detail_html)
+                    _mirrored_html = await _img_svc.mirror_urls_in_html(
+                        _detail_html, mirror_all=True, product_id=_pid
+                    )
                     # 미러 실패로 남은 외부 <img>(puma_notice 깨진 이미지·용량초과 등)
                     # 제거 — SSG가 fetch 못 해 "파일 다운로드 도중 오류"로 상품 전체
                     # 등록 거부되는 것 방지. 미러된 정상 이미지는 보존.
