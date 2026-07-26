@@ -479,13 +479,10 @@ class SSGPlugin(MarketPlugin):
                     _detail_html = _img_svc.strip_foreign_notice_imgs_in_html(
                         _detail_html
                     )
-                    # ① 지연로딩 data-src → src 승격. GS샵/롯데 상세는 상품컷이
-                    #    전부 data-src 라 그대로 두면 미러돼도 렌더링 안 됨.
-                    # ② mirror_all=True — 미러 실패분은 아래 strip 이 어차피
-                    #    제거하므로, 화이트리스트에 없는 호스트는 곧 상세 소실이었다
-                    #    (실측: SSG 등록 71,840건 중 11,350건 이미지 전멸).
+                    # ① 지연로딩 data-src → src 승격. 소싱처 상세는 상품컷이
+                    #    data-src 인 경우가 있어, 그대로 두면 미러돼도 렌더링 안 됨.
                     _detail_html = _img_svc.normalize_lazy_img_src(_detail_html)
-                    # ★2026-07-26 원복 — mirror_all 은 쓰지 않는다.
+                    # ② ★2026-07-26 원복 — 전량 미러(mirror_all)는 쓰지 않는다.
                     # 전량 미러는 상품컷을 살리는 대신, 원래 strip 되던 것들까지
                     # 전부 통과시켰다: 롯데백화점/현대백화점 안내배너, 그리고
                     # 브랜드 자체 CDN 의 공식판매처·교환반품 안내
