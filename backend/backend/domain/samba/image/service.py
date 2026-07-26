@@ -1519,6 +1519,14 @@ class ImageTransformService:
     _FOREIGN_NOTICE_URL_PARTS = (
         "lottedepartment_gsshop",  # "롯데백화점 상품 주문안내" / "이 상품은 롯데백화점 상품입니다"
         "/front/design/naverstore/",  # 롯데EPS 공용 안내배너 경로(위 2종이 전부 — 실측)
+        # 현대 계열 CDN 전체 차단(사장님 지시 2026-07-26). 이 호스트들엔
+        # "이 상품은 현대백화점 오프라인 매장에서 판매중인 상품입니다"(THE HYUNDAI 로고,
+        # 2,268건), "NIKE KIDS 현대백화점 중동점" 매장사진 등 타사 매장 홍보물이 섞여 있다.
+        # 나이키스윔 취급주의·반품안내 같은 정당한 안내도 같은 호스트라 함께 빠지지만,
+        # 타사 로고가 신세계몰에 노출되는 리스크가 더 크다는 판단.
+        # (GS샵 소싱분에 박힌 것들 — 더현대 소싱 자체는 별개)
+        "thehyundai.com",
+        "hmall.com",  # image.hmall.com + image.hyundaihmall.com 둘 다 매칭
     )
 
     @classmethod
