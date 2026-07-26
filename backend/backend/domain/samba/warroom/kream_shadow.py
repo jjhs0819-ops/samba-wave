@@ -410,12 +410,24 @@ async def _save_kream_cycle_status(
     del_cnt: int,
     processed: int = 0,
     cycle_sec: float = 0.0,
+    stock_cnt: int = 0,
 ) -> None:
     """크림 사이클 진행상태를 DB 기록 → api /autotune/active-cycles 가 읽어 SNKRDUNK 활성 표시.
-    processed/cycle_sec 로 처리속도(avg_sec_per_item) 계산 지원."""
+    processed/cycle_sec 로 처리속도(avg_sec_per_item) 계산 지원.
+    stock_cnt = 실제 재고변화 건수(리스톡+삭제) — 재배포 리셋 방지 위해 cycle_count 는 DB 복원."""
     global _kream_cycle_count, _kream_started_at
     from datetime import datetime, timezone
 
+    # 재시작 직후(인메모리 0)면 DB 에서 이전 사이클#·시작시각 복원 — 재배포마다 1로 리셋돼
+    # 활성사이클이 '멈춘 것처럼' 보이던 문제.
+    if _kream_cycle_count == 0:
+        try:
+            _prev = await _load_setting_map("kream_cycle_status")
+            _kream_cycle_count = int(_prev.get("cycle_count") or 0)
+            if _kream_started_at is None and _prev.get("started_at"):
+                _kream_started_at = str(_prev.get("started_at"))
+        except Exception:
+            pass
     _kream_cycle_count += 1
     now_iso = datetime.now(timezone.utc).isoformat()
     if _kream_started_at is None:
@@ -428,6 +440,7 @@ async def _save_kream_cycle_status(
             "total": int(total),
             "price_count": int(price_cnt),
             "delete_count": int(del_cnt),
+            "stock_count": int(stock_cnt),  # 실제 재고변화(리스톡+삭제)
             "cycle_count": _kream_cycle_count,
             "processed": int(processed),  # 이번 사이클 처리 상품 수
             "cycle_sec": round(float(cycle_sec), 1),  # 이번 사이클 소요(초)
@@ -1608,16 +1621,17 @@ def needs_trade(name: str) -> bool:
         return True
     if "원피스" in nm or re.search(r"one\s*piece", t):
         return True
-    if _GRADE_RE.search(nm):
-        return False
-    # 카드번호(NNN/NNN, 예 'eM 001/018') 있으면 낱장 — 밀봉팩/박스는 카드번호 없음.
-    # 맥도날드 '미니멈 팩' 같은 세트명이 '팩'을 포함해 낱장이 오게이트되던 문제. [2026-07-25]
-    if re.search(r"\d{1,3}\s*/\s*\d{1,3}", nm):
-        return False
-    # 한글/영문 팩·박스 — ask 의 영문 product_name 경로(만료회수 등)에서도 게이트 작동.
-    # 등급토큰·카드번호 통과한 것만 여기 오므로 낱장은 이미 제외됨. [2026-07-25]
-    if "박스" in nm or "팩" in nm or "box" in t or "pack" in t:
-        return True
+    # 카드번호/세트명('['·'(' 이후)은 제외하고 판정 — 낱장의 세트명 'Expansion Pack'·
+    # '베이스 팩'·'미니멈 팩'의 팩/pack 이 낱장을 밀봉팩으로 오게이트해 거래게이트에
+    # 영영 걸리던 버그(포켓몬 낱장 대량 미입찰 원인). 밀봉팩/박스는 카드번호 대괄호가 없다. [2026-07-26]
+    head = re.split(r"[\[(]", nm)[0]
+    ht = head.lower()
+    if _GRADE_RE.search(head):
+        return False  # 등급토큰 = 낱장
+    if re.search(r"\d{1,3}\s*/\s*\d{1,3}", head):
+        return False  # 카드번호(NNN/NNN) = 낱장
+    if "박스" in head or "팩" in head or "box" in ht or "pack" in ht:
+        return True  # 세트명 제외 후에도 팩/박스 = 진짜 밀봉품
     return False
 
 
@@ -2893,13 +2907,22 @@ async def run_kream_unified_once() -> dict:
     # 활성사이클 표시용 — 진행/총을 '이번 사이클 처리수'로 통일(가격변동≤진행 정합).
     # 리스톡탐색 offset(3000/23813)은 사이클 완료 로그에 별도 표기(활성사이클 idx 와 혼동 방지).
     _processed = counts["products"] + box.get("total", 0) + shoe.get("total", 0)
+    # 진행 = 리스톡탐색 로테이션 위치(offset/전체) — 매 사이클 100% 로 뜨던 오해 제거.
+    # 재고변화 = 리스톡(신규재고)+삭제(품절) 실제 건수 — 전에 processed(전량)를 재고로 잘못 표시.
+    _stock_chg = (
+        counts["restock"]
+        + counts["delete"]
+        + box.get("delete", 0)
+        + shoe.get("delete", 0)
+    )
     await _save_kream_cycle_status(
-        _processed,  # idx = 처리 상품수
-        _processed,  # total = 처리 상품수(사이클마다 전량 처리 → 100%)
+        int(min(_unified_offset, rest_total)),  # idx = 리스톡탐색 진행
+        int(rest_total or _processed),  # total = 리스톡 대상 총수
         counts["renew"] + box.get("renew", 0) + shoe.get("renew", 0),  # 가격변동
         counts["delete"] + box.get("delete", 0) + shoe.get("delete", 0),
         processed=_processed,
         cycle_sec=_tstart.time() - _cycle_t0,
+        stock_cnt=_stock_chg,
     )
     # ── 슬랙 알림 [로컬 봇 이식] — 사이클마다 실행 요약. 무변동이어도 발송(로컬과 동일).
     # 로컬과 동일한 구성: 미이행 + 방치입찰(고아) + 매수추천/원가오염 + 실행요약.

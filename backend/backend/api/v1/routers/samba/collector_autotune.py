@@ -5716,7 +5716,7 @@ async def autotune_active_cycles():
                     "avg_sec_per_item": (float(_kstat.get("avg_sec") or 0) or None),
                     "cycle_count": int(_kstat.get("cycle_count") or 0),
                     "price_count": int(_kstat.get("price_count") or 0),
-                    "stock_count": int(_kstat.get("processed") or 0),
+                    "stock_count": int(_kstat.get("stock_count") or 0),
                     "soldout_count": int(_kstat.get("delete_count") or 0),
                     "started_at": _st_iso,
                     "elapsed_sec": _elapsed,
