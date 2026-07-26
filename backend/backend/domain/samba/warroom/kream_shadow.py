@@ -3007,8 +3007,18 @@ async def run_kream_unified_once() -> dict:
     _box_stock = max(0, int(box.get("total", 0)) - int(box.get("nocost", 0)))
     _shoe_stock = int(shoe.get("stock", 0))
     _stock_total = card_instock + _shoe_stock + _box_stock
+    # 무재고 전수 스캔 진행율 — 1,500/사이클 로테이션이라 1바퀴에 여러 사이클 걸림.
+    _scan_done = int(min(_unified_offset, rest_total))
+    _scan_pct = round(100 * _scan_done / rest_total) if rest_total else 0
+    # 이번 사이클 리스톡 발견(무재고→재고 감지) — 등록 통과/보류 분리 표기.
+    _rs_found = int(counts["restock"])
+    _rs_hold = max(0, _rs_found - int(rs["ok"]))
     _restock_sec = (
         f"[일치상품 리스톡·미등록 점검]\n"
+        f"무재고 스캔 {_scan_done:,}/{rest_total:,} ({_scan_pct:,}%)"
+        f" · 1,500개/사이클 로테이션\n"
+        f"이번 사이클 리스톡 발견 {_rs_found:,}건"
+        f" (등록 {int(rs['ok']):,} · 보류 {_rs_hold:,})\n"
         f"재고 {_stock_total:,}건 (카드 {card_instock:,}·신발 {_shoe_stock:,}"
         f"·박스/팩 {_box_stock:,})"
         f" / 신규등록 {exec_post:,}건 / 실패 {exec_fail:,}"
