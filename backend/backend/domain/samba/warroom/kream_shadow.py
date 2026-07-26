@@ -1399,7 +1399,16 @@ def _decide_price_action(
     is_ov = bool(low_over)
     market_low = (low_over if is_ov else low_norm) or low_over or low_norm
     rank1 = market_low > 0 and 0 < cur <= market_low
-    no_comp_eff = min(no_comp, domestic_cap(low_norm, tariff_threshold))
+    _dcap = domestic_cap(low_norm, tariff_threshold)
+    # 국내입찰가 비교 — 국내가 더 싸서 최소마진(min_price) 지키며 못 이기면(국내상한 초과)
+    # 입찰 무의미(체결 안 되거나 손해) → 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
+    if low_norm > 0 and min_price > _dcap:
+        return "국내못이김삭제", 0, True, False
+    # 2등입찰 방지 — 최소마진(min_price) 지키며 시장최저(해외/국내) 못 이기면 rank1 불가.
+    # 2등 입찰은 체결 안 됨 → 무의미. 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
+    if market_low > 0 and min_price > market_low:
+        return "2등불가삭제", 0, True, False
+    no_comp_eff = min(no_comp, _dcap)
     band = max(3000, int(no_comp_eff * 0.03))
     truly_nocomp = (rank1 or market_low >= no_comp_eff) and no_comp_eff > min_price
 
@@ -1925,7 +1934,19 @@ async def _process_shoe_asks(
                 is_box=True,
                 surcharge_rate=_sur,
             )
-            if adjusting and target != cur:
+            if act in ("국내못이김삭제", "2등불가삭제"):
+                # 가격열위 삭제(국내못이김/2등불가) — 사이클당 상한(200) 적용, 점진 삭제.
+                if not _price_del_take():
+                    c["price_del_skip"] = c.get("price_del_skip", 0) + 1
+                else:
+                    c["delete"] += 1
+                    if _EXEC_SHOE and a.get("id"):
+                        if await _exec_delete_ask(cli, h, a.get("id")):
+                            c["del"] += 1
+                        else:
+                            c["fail"] += 1
+                        await asyncio.sleep(0.1)
+            elif adjusting and target != cur:
                 c["renew"] += 1
                 if _EXEC_SHOE and a.get("id"):
                     res, _r = await _execute_update(
@@ -2007,6 +2028,8 @@ async def _process_box_asks(
                     tariff,
                     is_box=True,
                 )
+                if act in ("국내못이김삭제", "2등불가삭제"):
+                    return ("pricedel", a, 0, False)  # 가격열위 삭제(상한 적용)
                 return (
                     ("renew" if adjusting and target != cur else "keep"),
                     a,
@@ -2041,6 +2064,18 @@ async def _process_box_asks(
                     else:
                         c["fail"] += 1
                     await asyncio.sleep(0.1)
+            elif kind == "pricedel":
+                # 가격열위 삭제(국내못이김/2등불가) — 사이클당 상한(200) 적용, 점진 삭제.
+                if not _price_del_take():
+                    c["price_del_skip"] = c.get("price_del_skip", 0) + 1
+                else:
+                    c["delete"] += 1
+                    if _EXEC_BOX:
+                        if await _exec_delete_ask(scli, h, a.get("id")):
+                            c["del"] += 1
+                        else:
+                            c["fail"] += 1
+                        await asyncio.sleep(0.1)
             elif kind == "renew":
                 c["renew"] += 1
                 if len(_bsamp) < 8:
@@ -2072,6 +2107,20 @@ async def _process_box_asks(
 
 # 만료 회수(재입찰) 사이클당 상한 — 대량 재게시 폭주 방지.
 _EXPIRED_MAX = int(os.environ.get("KREAM_EXPIRED_MAX") or 30)
+
+# 국내못이김/2등불가 가격열위 삭제 사이클당 상한 — 첫 사이클 수백건 일괄삭제 쇼크 방지,
+# 200/사이클 점진 삭제(슬랙 감시). 무재고·게이트 삭제는 상한 무관(전량 삭제). [2026-07-26]
+_PRICE_DEL_CAP = int(os.environ.get("KREAM_PRICE_DEL_CAP") or 200)
+_price_del_left = 0  # 사이클 시작 시 _PRICE_DEL_CAP 로 리셋
+
+
+def _price_del_take() -> bool:
+    """가격열위 삭제 예산 1건 소진. 남으면 True(삭제 진행), 소진 시 False(이번 사이클 유지)."""
+    global _price_del_left
+    if _price_del_left <= 0:
+        return False
+    _price_del_left -= 1
+    return True
 
 
 async def _lookup_snkr_mapping(kid: str) -> tuple[str, str] | None:
@@ -2277,6 +2326,8 @@ async def run_kream_unified_once() -> dict:
     _g_price_guard = await _load_setting_map(_SET_GUARD)  # 급락 가드 직전가 로드
     _hb_clamp["used"] = 0  # 입찰제한 보정 상한 리셋
     _rank_fix["used"] = 0  # 순위교정 상한 리셋
+    global _price_del_left
+    _price_del_left = _PRICE_DEL_CAP  # 가격열위 삭제 예산 리셋(사이클당 200)
     _floor_map.clear()
     # 입찰제한 쿨다운 로드(만료 정리) — 반복 실패 건을 이번 사이클 조정에서 제외
     _g_limit_cd.clear()
@@ -2523,9 +2574,12 @@ async def run_kream_unified_once() -> dict:
                         rate,
                         tariff_threshold,
                     )
+                    # 가격열위(국내 못이김/2등불가) 삭제, 아니면 갱신
                     r["rows"].append(
                         (
-                            "renew",
+                            "delete"
+                            if act in ("국내못이김삭제", "2등불가삭제")
+                            else "renew",
                             act,
                             kid,
                             nm,
@@ -2669,6 +2723,11 @@ async def run_kream_unified_once() -> dict:
                 if adjusting and target != cur:
                     pend_renew.append((kid, nm, target, cur, is_nc))
             elif kind == "delete":
+                # 가격열위 삭제(국내못이김/2등불가)는 사이클당 상한(200) 적용 — 점진 삭제.
+                # 무재고·HTML확인 삭제는 상한 무관(전량 삭제).
+                if act in ("국내못이김삭제", "2등불가삭제") and not _price_del_take():
+                    counts["price_del_skip"] = counts.get("price_del_skip", 0) + 1
+                    continue
                 counts["delete"] += 1
                 pend_delete.append((kid, nm))
             elif kind == "restock":
@@ -2976,6 +3035,19 @@ async def run_kream_unified_once() -> dict:
         )
     if counts["anomaly"]:
         _msg += f"\n\n⚠️ 이상감지(가격오류 의심·갱신차단) {counts['anomaly']:,}건"
+    # 가격열위(국내못이김/2등불가) 삭제 — 사이클당 상한(_PRICE_DEL_CAP) 점진 삭제 진행상황.
+    _pdskip = (
+        counts.get("price_del_skip", 0)
+        + int(box.get("price_del_skip", 0))
+        + int(shoe.get("price_del_skip", 0))
+    )
+    _pddone = max(0, _PRICE_DEL_CAP - _price_del_left)
+    if _pddone or _pdskip:
+        _msg += (
+            f"\n\n🧹 가격열위 삭제(2등·국내못이김) {_pddone:,}건"
+            f"/사이클상한 {_PRICE_DEL_CAP:,}"
+            + (f" · 대기 {_pdskip:,}건(다음 사이클)" if _pdskip else "")
+        )
     await _send_slack(_pre + _restock_sec + _msg)
     return {
         "ok": True,
