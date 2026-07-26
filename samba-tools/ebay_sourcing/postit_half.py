@@ -84,13 +84,11 @@ def _bbox_from_mask(m: np.ndarray, w: int, h: int):
 
 
 def detect_card_bbox(img: Image.Image):
-    """카드 bbox. 기본은 벽 배경과의 색차, 컬러 배경(매트)이면 밝기로 폴백."""
+    """카드 bbox. 벽 배경과의 색차, 컬러 배경(매트)이면 밝기로 폴백."""
     a = np.asarray(img.convert("RGB")).astype(int)
     h, w = a.shape[:2]
     bg = _bg_color(a)
-    diff = np.abs(a - bg).sum(2)
-    bb = _bbox_from_mask(diff > 45, w, h)
-    # bbox가 화면 대부분이면 배경이 컬러(매트) → 밝기로 카드 재검출
+    bb = _bbox_from_mask(np.abs(a - bg).sum(2) > 45, w, h)
     if bb is None or (bb[2] - bb[0]) * (bb[3] - bb[1]) > 0.82 * w * h:
         lum = (a * [0.299, 0.587, 0.114]).sum(2)
         thr = max(140, np.median(lum) + 25)
@@ -132,38 +130,36 @@ def compose(src: Image.Image, paper_src: Image.Image) -> Image.Image:
     카드폭 0.5로 얹는다. 배경색 패딩/채우기 절대 없음. 포스트잇은 항상 크롭 안에 보인다."""
     src = src.convert("RGB")
     w, h = src.size
+    x0, y0, x1, y1 = detect_card_bbox(src)
+    card_w, card_h = x1 - x0, y1 - y0
+    cx = (x0 + x1) // 2
 
-    # ① 카드 중심으로 정사각 크롭(패딩 없이 긴 변만 자름)
-    bx0, by0, bx1, by1 = detect_card_bbox(src)
-    side = min(w, h)
-    ccx, ccy = (bx0 + bx1) // 2, (by0 + by1) // 2
-    left = min(max(ccx - side // 2, 0), w - side)
-    top = min(max(ccy - side // 2, 0), h - side)
-    sq = src.crop((left, top, left + side, top + side))
-
-    # ② 크롭된 정사각 안에서 카드 재검출 → 포스트잇 배치
-    x0, y0, x1, y1 = detect_card_bbox(sq)
-    card_w = x1 - x0
-    # 카드가 프레임을 꽉 채우면 검출이 작게 잡히기도 함 → 카드는 최소 프레임 85%로 본다
-    if card_w < side * 0.5:
-        card_w = int(side * 0.85)
-        card_cx = side // 2
-        y1 = int(side * 0.95)
-    else:
-        card_cx = (x0 + x1) // 2
     note_w = max(40, int(card_w * NOTE_RATIO))
     note_h = int(note_w * paper_src.height / paper_src.width)
     note = paper_src.resize((note_w, note_h), Image.LANCZOS)
-    mg = max(6, side // 100)
-    gap = max(8, side // 40)
-    # 카드 아래 여백 있으면 그 아래, 없으면 카드 하단에 얹음(둘 다 포스트잇 온전히 보임)
-    if y1 + gap + note_h + mg <= side:
-        note_top = y1 + gap
-    else:
-        note_top = side - note_h - mg
-    nx = min(max(card_cx - note_w // 2, mg), side - note_w - mg)
-    _paste_note(sq, note, nx, note_top, note_w, note_h)
-    return sq
+    mg = max(6, min(w, h) // 60)
+    gap = max(8, int(card_h * 0.04))
+    side = min(w, h)
+
+    # 포스트잇 = 카드 바로 아래. 카드+포스트잇이 정사각에 안 들어가면 카드 하단에 겹쳐 얹음
+    # (손 아래 천에 뜨는 것 방지 — 항상 카드에 붙어있게)
+    note_top = y1 + gap
+    if (note_top + note_h) - y0 > side - mg:
+        note_top = y1 - note_h - gap  # 카드 하단 위에 얹기
+        note_top = max(note_top, y0 + card_h // 3)
+    note_bottom = note_top + note_h
+    nx = min(max(cx - note_w // 2, 0), w - note_w)
+
+    canvas = src.copy()
+    _paste_note(canvas, note, nx, note_top, note_w, note_h)
+
+    # 정사각 크롭 = 카드 상단부터 포스트잇 하단까지 담게(카드 안 자름, 패딩 없음)
+    top = y0 - mg
+    if note_bottom + mg > top + side:      # 포스트잇이 크롭 밖이면 아래로 밀되
+        top = note_bottom + mg - side
+    top = min(max(top, 0), h - side)
+    left = min(max(cx - side // 2, 0), w - side)
+    return canvas.crop((left, top, left + side, top + side))
 
 
 async def main():

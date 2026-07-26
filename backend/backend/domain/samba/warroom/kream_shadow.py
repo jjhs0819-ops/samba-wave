@@ -1881,15 +1881,26 @@ async def _process_shoe_asks(
     tariff: int,
     h: dict,
     kid_to_snkr: dict | None = None,
+    sized_kids: set | None = None,
 ) -> dict:
-    """신발(mm 사이즈) ask 갱신/삭제 — 스니덩크 스니커즈.
-    원가·재고는 수집된 DB 옵션(사이즈별 price/stock)을 사용 — 신발은 사이즈별 실시간
-    시세 API가 없어 로컬 봇도 동일하게 DB 옵션을 썼다. 등록(리스톡)은 하지 않음.
+    """신발(mm 사이즈)·의류/시계(S/M/L 등) ask 갱신/삭제 — 스니덩크.
+    원가·재고는 수집된 DB 옵션(옵션별 price/stock)을 사용 — 신발/의류는 옵션별 실시간
+    시세 API가 없어 로컬 봇도 동일하게 DB 옵션을 썼다. 등록(리스톡)은 _process_shoe_restock 담당.
     추가마진은 '나머지(신발·의류)' 정책값 적용, 배송비는 박스(900엔) 기준.
     가격 이상치(상식범위 밖)는 오염 데이터일 수 있어 건드리지 않고 보류 — 오조정 방지.
-    _EXEC_SHOE=1 일 때만 실제 PATCH/DELETE."""
+    _EXEC_SHOE=1 일 때만 실제 PATCH/DELETE.
+    sized_kids: 의류/시계(apparel/watch) kid 집합 — 이 kid의 ask는 옵션포맷(S/M/L) 무관하게 관리 대상."""
+    _sized = sized_kids or set()
+    # 신발(mm) + 의류/시계(kid가 sized_kids) — 옵션포맷 달라도 관리. 카드(PSA)·박스(해외배송) 제외.
     shoe_asks = [
-        a for a in asks if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
+        a
+        for a in asks
+        if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
+        or (
+            str(a.get("product_id") or "") in _sized
+            and not str(a.get("option") or "").upper().startswith("PSA")
+            and "해외배송" not in str(a.get("option") or "")
+        )
     ]
     c = {
         "total": len(shoe_asks),
@@ -1921,12 +1932,14 @@ async def _process_shoe_asks(
             if live is not None:
                 live_map[kid] = live
 
-        await asyncio.gather(
-            *[
-                _one_style(k)
-                for k in {str(a.get("product_id") or "") for a in shoe_asks}
-            ]
-        )
+        # 실시간 사이즈시세 조회는 신발(mm) kid 만 — 의류/시계는 shoe-size API 없음(오파싱 방지).
+        # 의류/시계 kid 는 live_map 미포함 → DB 옵션(kid_to_opts) 폴백으로 원가 사용.
+        _mm_kids = {
+            str(a.get("product_id") or "")
+            for a in shoe_asks
+            if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
+        }
+        await asyncio.gather(*[_one_style(k) for k in _mm_kids])
         c["live_ok"] = len(live_map)
 
         for a in shoe_asks:
@@ -2587,6 +2600,19 @@ async def run_kream_unified_once() -> dict:
     }
     # 신발 pass용 kid→옵션맵 (사이즈별 price/stock). 배치 슬라이스 전 전체 — 신발 ask도 전역.
     kid_to_opts = {p["kid"]: p["db_opts"] for p in products if p["kid"]}
+    # 의류/시계(apparel/watch) kid — 신발 pass 가 옵션포맷(S/M/L) 무관 갱신/삭제하도록 전달.
+    async with get_read_session() as _ss:
+        _skr = (
+            await _ss.execute(
+                _text(
+                    "SELECT resell_matches->'kream'->>'product_id' "
+                    "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
+                    "AND extra_data->>'snkr_type' IN ('apparel','watch') "
+                    "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
+                )
+            )
+        ).all()
+    sized_kids = {str(r[0]) for r in _skr if r[0]}
     # ── 처리 대상 선정 [2026-07-22 구조개선] — 갱신과 리스톡의 필요 주기가 다름.
     #  · 갱신(live 입찰 보유): 시세 추종이라 **매 사이클 전량** 처리해야 경쟁에서 안 밀림.
     #    (로컬 봇도 live 입찰은 매 라운드 조정했음. 로테이션에 넣으면 1회전 1.7시간 = 사실상 방치)
@@ -3036,7 +3062,7 @@ async def run_kream_unified_once() -> dict:
 
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
     shoe = await _process_shoe_asks(
-        asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr
+        asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr, sized_kids
     )
     logger.info(
         "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
