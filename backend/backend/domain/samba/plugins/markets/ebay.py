@@ -373,6 +373,28 @@ class EbayPlugin(MarketPlugin):
                     "[eBay] 정책 배송정책 조회 실패(계정 기본값 사용): %s", e
                 )
 
+        # [최우선] 밀봉 박스·팩은 부피가 커서 카드 배송비($10/$15)로 팔면 적자
+        # (2026-07-25 MEGA Inferno X Box: 배송비 $15 받고 실비 4만원). 제목이 밀봉이면
+        # 굿즈-대형 배송정책(255030960025 $25/$25)을 강제한다. 상품정책 지정보다 우선.
+        _name_for_ship = ""
+        if isinstance(product, dict):
+            _name_for_ship = (
+                product.get("name_en")
+                or product.get("ebay_title")
+                or product.get("name", "")
+            )
+        try:
+            from backend.domain.samba.proxy.ebay import _SEALED_TITLE_RE
+
+            if _name_for_ship and _SEALED_TITLE_RE.search(_name_for_ship):
+                ebay_policy_fulfillment_id = "255030960025"
+                logger.info(
+                    "[eBay] 밀봉 감지 — 굿즈-대형 배송정책 강제 (%s)",
+                    _name_for_ship[:40],
+                )
+        except Exception:
+            pass
+
         # [중요] 배송정책은 상품 정책(samba_policy.market_policies.eBay.fulfillmentPolicyId)이
         # 있으면 그것을 먼저 쓴다. 계정 기본값만 쓰면 부피 큰 굿즈(응원봉 등)에도 카드용
         # 저가 배송정책이 붙어 배송비 적자가 난다. 또 상품을 수정할 때마다 계정 기본값으로

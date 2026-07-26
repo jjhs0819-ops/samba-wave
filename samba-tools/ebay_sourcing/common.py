@@ -111,6 +111,22 @@ class Whale:
         )
         return d.get("list", []) if not d.get("_err") else []
 
+    def reconnect(self):
+        """WS 끊김(번장 탭 이동/닫힘) 복구 — 탭 재탐색 후 재연결."""
+        import time
+
+        import websocket
+
+        try:
+            self.ws.close()
+        except Exception:
+            pass
+        time.sleep(2)
+        self.ws = websocket.create_connection(_whale_tab(), timeout=60, suppress_origin=True)
+        self._id = 0
+        self._cmd("Runtime.enable")
+        time.sleep(2)
+
     def close(self):
         try:
             self.ws.close()

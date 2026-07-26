@@ -1,0 +1,320 @@
+[
+ {
+  "sku": "cp_01KWWEHWZT0TMN17R36PVQ2HPT",
+  "pid": "410473043",
+  "old": 7500,
+  "new": 5000
+ },
+ {
+  "sku": "cp_01KWWEHX012YDTJH7DNR6A1267",
+  "pid": "411361006",
+  "old": 5000,
+  "new": 2500
+ },
+ {
+  "sku": "cp_01KWWEHX06394WCAT4KZS64NNT",
+  "pid": "416718478",
+  "old": 3500,
+  "new": 1000
+ },
+ {
+  "sku": "cp_01KWWEHX0FSKGM6T2FH0ACSRC2",
+  "pid": "416717089",
+  "old": 3500,
+  "new": 1000
+ },
+ {
+  "sku": "cp_01KWWEHX0KRHSGRQAM17Y03343",
+  "pid": "418182920",
+  "old": 2800,
+  "new": 900
+ },
+ {
+  "sku": "cp_01KWWEHX0RK67FXQHC999PNDCA",
+  "pid": "418181809",
+  "old": 2400,
+  "new": 500
+ },
+ {
+  "sku": "cp_01KWWF4RBX06V258JDD1CR2W6J",
+  "pid": "409126673",
+  "old": 3000,
+  "new": 1000
+ },
+ {
+  "sku": "cp_01KWWF5136G97Z0ZKC3CSZP4BG",
+  "pid": "418241162",
+  "old": 3000,
+  "new": 1000
+ },
+ {
+  "sku": "cp_01KWWF584XTK35K1H683XD2777",
+  "pid": "418344967",
+  "old": 6000,
+  "new": 4000
+ },
+ {
+  "sku": "cp_01KWWF5G3Y0V2FSDTZ4AJ9GRH0",
+  "pid": "418388905",
+  "old": 5000,
+  "new": 3000
+ },
+ {
+  "sku": "cp_01KWWF5RB9SJHVMJGN13YNY1ZA",
+  "pid": "407717593",
+  "old": 14000,
+  "new": 12000
+ },
+ {
+  "sku": "cp_01KXFWFTN9PTR8AZQF4",
+  "pid": "366616837",
+  "old": 34000,
+  "new": 30000
+ },
+ {
+  "sku": "cp_01KXFWFTQVQS7NDDABGYD46NPM",
+  "pid": "418472316",
+  "old": 3490,
+  "new": 990
+ },
+ {
+  "sku": "cp_01KXFWFTQWRJP21MJ9GR562K1M",
+  "pid": "419842849",
+  "old": 4900,
+  "new": 3000
+ },
+ {
+  "sku": "cp_01KXFWFTR4J8N8GFG7D8PVMPXM",
+  "pid": "421039499",
+  "old": 5000,
+  "new": 2500
+ },
+ {
+  "sku": "cp_01KXFWFTR5BX51QJWAF42F7PKM",
+  "pid": "419850278",
+  "old": 6000,
+  "new": 2000
+ },
+ {
+  "sku": "cp_01KXFWFTR5BX51QJWAF42F7PKN",
+  "pid": "419850170",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTR6MTK4S6YN551BS8RH",
+  "pid": "419850058",
+  "old": 6000,
+  "new": 2000
+ },
+ {
+  "sku": "cp_01KXFWFTR7D4QEE72B9CRAFFCE",
+  "pid": "420079918",
+  "old": 19000,
+  "new": 17000
+ },
+ {
+  "sku": "cp_01KXFWFTR7D4QEE72B9CRAFFCF",
+  "pid": "419850008",
+  "old": 10000,
+  "new": 5000
+ },
+ {
+  "sku": "cp_01KXFWFTRA1A7SYFCFE64CBTN0",
+  "pid": "419849913",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTRBRD80WE1R7FKTBPWH",
+  "pid": "419849818",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTRDE3MMD9WQFRYFWZ32",
+  "pid": "419849614",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTRJMPDXE92VHKYTJN6P",
+  "pid": "405337846",
+  "old": 14000,
+  "new": 10000
+ },
+ {
+  "sku": "cp_01KXFWFTRKYWB2CZQ4AWGFWE86",
+  "pid": "419849475",
+  "old": 6000,
+  "new": 2000
+ },
+ {
+  "sku": "cp_01KXFWFTRN6TD4XKSDBM25M373",
+  "pid": "419849467",
+  "old": 19000,
+  "new": 15000
+ },
+ {
+  "sku": "cp_01KXFWFTRQVHVJCDDN2F7W2H8C",
+  "pid": "419849367",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTRRAM2GRNZ84FB3K7CB",
+  "pid": "419849219",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTRST7MGTQWC8J1EQ2BN",
+  "pid": "419848913",
+  "old": 5500,
+  "new": 1500
+ },
+ {
+  "sku": "cp_01KXFWFTRTR7E2C649GF7TM82G",
+  "pid": "419113917",
+  "old": 16000,
+  "new": 13000
+ },
+ {
+  "sku": "cp_01KXFWFTRX97C3CF2BJSR1A94G",
+  "pid": "419115456",
+  "old": 6300,
+  "new": 3800
+ },
+ {
+  "sku": "cp_01KXFWFTS3ZJ8RJZXG60GSHVMS",
+  "pid": "420355046",
+  "old": 17000,
+  "new": 15000
+ },
+ {
+  "sku": "cp_01KXFWFTS5KJNJB5WZ5YDFXEZR",
+  "pid": "419849036",
+  "old": 20000,
+  "new": 15000
+ },
+ {
+  "sku": "cp_01KXFWFTS9A3Q0PBGNBEBK9QR4",
+  "pid": "417327755",
+  "old": 9500,
+  "new": 7000
+ },
+ {
+  "sku": "cp_01KY40B66MZD4DGKZMVHEA0MDH",
+  "pid": "420714651",
+  "old": 13000,
+  "new": 11000
+ },
+ {
+  "sku": "cp_01KY40ZXPZAVXBDSQD86D5YANP",
+  "pid": "364075034",
+  "old": 6900,
+  "new": 5000
+ },
+ {
+  "sku": "cp_01KY410JKHE04EXGZ975XBMQ4A",
+  "pid": "420621247",
+  "old": 27000,
+  "new": 24000
+ },
+ {
+  "sku": "cp_01KY410WCRE0WBWJCK7C6JXPY6",
+  "pid": "421403516",
+  "old": 32000,
+  "new": 30000
+ },
+ {
+  "sku": "cp_01KY411HKCW13FZ42VVEJAPTJP",
+  "pid": "421283501",
+  "old": 52000,
+  "new": 48000
+ },
+ {
+  "sku": "cp_01KY41VYH5H83DDDJSZFAVJV52",
+  "pid": "420790536",
+  "old": 14000,
+  "new": 12000
+ },
+ {
+  "sku": "cp_01KY4AH9N2HEYHBAK7D2MNR98Z",
+  "pid": "411608117",
+  "old": 169000,
+  "new": 160000
+ },
+ {
+  "sku": "cp_01KY4AHP6M6SZEQYSAHRSPWYDN",
+  "pid": "400785979",
+  "old": 32000,
+  "new": 30000
+ },
+ {
+  "sku": "cp_01KY4FHRQSDX4KWAJTYH0RT36Z",
+  "pid": "420966931",
+  "old": 56000,
+  "new": 140000
+ },
+ {
+  "sku": "cp_01KY4FJ69ASQXECE1E4GP83E24",
+  "pid": "421123353",
+  "old": 38500,
+  "new": 36500
+ },
+ {
+  "sku": "cp_01KY4FJXFVEEQN7Y3MFBFJT7MM",
+  "pid": "412206979",
+  "old": 42800,
+  "new": 40000
+ },
+ {
+  "sku": "cp_01KY4FK89396WHQR8CC74GP7C0",
+  "pid": "414478363",
+  "old": 59500,
+  "new": 55000
+ },
+ {
+  "sku": "cp_01KY4FVVSW8T95AJZJPT92AETH",
+  "pid": "413379580",
+  "old": 45000,
+  "new": 42000
+ },
+ {
+  "sku": "cp_01KY4FWKQWB4X2S4ZBZBPR3YQK",
+  "pid": "413172157",
+  "old": 44500,
+  "new": 40000
+ },
+ {
+  "sku": "cp_01KY4FWZP6W95HHBKVEJK3FPZT",
+  "pid": "411194777",
+  "old": 55345,
+  "new": 43000
+ },
+ {
+  "sku": "cp_01KY4G0J50MFWXSH646Y95SG1G",
+  "pid": "401598766",
+  "old": 11500,
+  "new": 9500
+ },
+ {
+  "sku": "cp_01KY4NHPGR551BA403TFVEPPGZ",
+  "pid": "416017667",
+  "old": 40000,
+  "new": 37500
+ },
+ {
+  "sku": "cp_01KY67WWT5GHYR6Z4A44PBAFTP",
+  "pid": "419615500",
+  "old": 38000,
+  "new": 33000
+ },
+ {
+  "sku": "cp_01KY8T65FXNTG3KDBNVH32Z1BY",
+  "pid": "415769814",
+  "old": 120000,
+  "new": 90000
+ }
+]
