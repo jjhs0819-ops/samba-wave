@@ -35,8 +35,10 @@ _COOLDOWN_TTL = 86400  # 24h — 무경쟁 인상 후 밀린 (상품,옵션) 재
 _EXECUTE = os.environ.get("KREAM_SHADOW_EXECUTE") == "1"
 # 박스(해외배송) 갱신/삭제 실행 게이트 — 카드(_EXECUTE)와 별도. 섀도 검증 후 KREAM_EXEC_BOX=1.
 _EXEC_BOX = os.environ.get("KREAM_EXEC_BOX") == "1"
-# 신발(mm) 갱신/삭제 실행 게이트 — 섀도 검증 후 KREAM_EXEC_SHOE=1. 등록은 하지 않음.
+# 신발(mm) 갱신/삭제 실행 게이트 — 섀도 검증 후 KREAM_EXEC_SHOE=1.
 _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
+# 신발 신규 자동등록 실행 게이트 — 갱신/삭제와 별도. 섀도 후보 검증 후 KREAM_EXEC_SHOE_RESTOCK=1.
+_EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
@@ -2002,6 +2004,161 @@ async def _process_shoe_asks(
     return c
 
 
+# 신발 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지(사이즈별 다건). verified 확정 신발만.
+_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 50)
+
+
+def _cm_to_mm_variants(name: str) -> set[str]:
+    """옵션명 매칭 후보 — 원본 정규화 + cm→mm(24.5cm→245). 크림(mm)↔DB(cm) 불일치 흡수."""
+    out = {str(name or "").replace(" ", "").upper()}
+    m = re.match(r"^([\d.]+)\s*cm$", str(name or "").strip(), re.I)
+    if m:
+        out.add(str(int(round(float(m.group(1)) * 10))))
+    return out
+
+
+async def _process_shoe_restock(
+    asks: list, kid_to_snkr: dict, cooldown, rate: float, tariff: int, h: dict
+) -> dict:
+    """신발/의류/시계 신규 자동등록 — verified 확정 + 재고O + 해당 사이즈 미등록만.
+    카드 리스톡 동일 가드(2연속miss·재게시2h·실패6h·거래·이행대기) + 원가상한 + 정책(2등불가/
+    국내못이김) 스킵. 사이즈 옵션명 크림(mm)↔DB(cm) 변환 매칭. _EXEC_SHOE=1 일 때만 실제 POST.
+    사이클당 _SHOE_RESTOCK_MAX 상한(사이즈별 다건이라 폭주 방지)."""
+    c = {
+        "cand": 0,
+        "post": 0,
+        "fail": 0,
+        "miss": 0,
+        "recent": 0,
+        "failed": 0,
+        "trade": 0,
+        "hold": 0,
+        "overcost": 0,
+        "policy": 0,
+        "optmiss": 0,
+        "capped": 0,
+    }
+    # 이미 라이브 ask 있는 (kid, mm옵션) — 재등록 방지
+    live_pairs = {
+        (str(a.get("product_id") or ""), str(a.get("option") or "").strip())
+        for a in asks
+        if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
+    }
+    _sur = POLICY["non_card_margin_rate"]
+    async with get_read_session() as s:
+        rows = (
+            await s.execute(
+                _text(
+                    "SELECT resell_matches->'kream'->>'product_id' AS kid, name, options::text "
+                    "FROM samba_collected_product "
+                    "WHERE source_site='SNKRDUNK' "
+                    "AND extra_data->>'snkr_type' IN ('sneaker','apparel','watch') "
+                    "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
+                    "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+                    "AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int) "
+                    "  FROM jsonb_array_elements(options::jsonb) o),0)>0"
+                )
+            )
+        ).all()
+    posted = 0
+    _now = _now_ts()
+    async with httpx.AsyncClient(timeout=25) as cli:
+        for kid, name, opts_txt in rows:
+            kid = str(kid or "")
+            try:
+                opts = json.loads(opts_txt) if opts_txt else []
+            except Exception:
+                continue
+            instock = [
+                (str(o.get("name")), int(o.get("price") or 0))
+                for o in opts
+                if int(o.get("stock") or 0) > 0 and int(o.get("price") or 0) > 0
+            ]
+            if not instock:
+                continue
+            api_j = None
+            for db_name, jpy in instock:
+                variants = _cm_to_mm_variants(db_name)
+                if live_pairs & {(kid, v) for v in variants}:
+                    continue  # 이미 등록된 사이즈
+                if jpy > POLICY["max_cost_jpy"]:
+                    c["overcost"] += 1
+                    continue
+                if not _trade_ok(kid, name or ""):
+                    c["trade"] += 1
+                    continue
+                if api_j is None:  # 상품당 1회만 크림 조회(사이즈 여러개 공유)
+                    try:
+                        r = await cli.get(
+                            f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
+                        )
+                        api_j = r.json() if r.status_code == 200 else {}
+                    except Exception:
+                        api_j = {}
+                api_opt = next(
+                    (
+                        o
+                        for o in api_j.get("options") or []
+                        if str(o.get("name") or "").replace(" ", "").upper() in variants
+                    ),
+                    None,
+                )
+                if api_opt is None:
+                    c["optmiss"] += 1
+                    continue
+                mm_opt = str(api_opt.get("name"))
+                _key = f"{kid}|{mm_opt}"
+                # 카드 리스톡 동일 가드 순서
+                _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
+                if _g_miss_counts[_key] < 2:
+                    c["miss"] += 1
+                    continue
+                if _key in _g_recent_posts:
+                    c["recent"] += 1
+                    continue
+                if _key in _g_failed_posts:
+                    c["failed"] += 1
+                    continue
+                if (kid, mm_opt.replace(" ", "")) in _g_unfulfilled:
+                    c["hold"] += 1
+                    continue
+                low_over = int(api_opt.get("lowest_overseas_price") or 0)
+                low_norm = int(api_opt.get("lowest_normal_price") or 0)
+                act, target, _adj, _nc = _decide_price_action(
+                    0,
+                    mm_opt,
+                    jpy,
+                    low_over,
+                    low_norm,
+                    (kid, mm_opt) in cooldown,
+                    0,
+                    rate,
+                    tariff,
+                    is_box=True,
+                    surcharge_rate=_sur,
+                )
+                if "삭제" in act or target <= 0:
+                    c["policy"] += 1  # 2등불가/국내못이김 — 등록 안 함
+                    continue
+                c["cand"] += 1
+                if posted >= _SHOE_RESTOCK_MAX:
+                    c["capped"] += 1
+                    continue
+                posted += 1
+                if _EXEC_SHOE_RESTOCK:
+                    ok, reason = await _exec_create_ask(
+                        cli, h, kid, int(target), mm_opt
+                    )
+                    if ok:
+                        c["post"] += 1
+                        _g_recent_posts[_key] = _now
+                    else:
+                        c["fail"] += 1
+                        _g_failed_posts[_key] = _now
+                    await asyncio.sleep(0.12)
+    return c
+
+
 async def _process_box_asks(
     asks: list, kid_to_snkr: dict, cooldown, rate: float, tariff: int, h: dict
 ) -> dict:
@@ -2931,6 +3088,43 @@ async def run_kream_unified_once() -> dict:
             f"보류{box['hold']:,} / 실행 갱신{box['patch']:,} 삭제{box['del']:,} 복귀{box['revert']:,}"
             f"{_fail_tag(box['fail'])} ({'실행ON' if _EXEC_BOX else '섀도'})",
         )
+
+    # ── [B-2] 신발 신규 자동등록 — verified 확정 신발/의류/시계 미등록분(사이즈 mm↔cm 매칭).
+    # 카드 리스톡과 동일 가드 + 원가상한 + 정책스킵. 사이클당 상한. _EXEC_SHOE 게이트.
+    shoe_rs = await _process_shoe_restock(
+        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h
+    )
+    if shoe_rs.get("cand") or shoe_rs.get("post"):
+        logger.info(
+            "[크림통합] 신발등록 후보%d 등록%d 실패%d / 스킵[2연속%d 재게시%d 실패쿨%d 거래%d "
+            "이행대기%d 상한초과%d 정책%d 옵션없음%d 사이클상한%d] (%s)",
+            shoe_rs["cand"],
+            shoe_rs["post"],
+            shoe_rs["fail"],
+            shoe_rs["miss"],
+            shoe_rs["recent"],
+            shoe_rs["failed"],
+            shoe_rs["trade"],
+            shoe_rs["hold"],
+            shoe_rs["overcost"],
+            shoe_rs["policy"],
+            shoe_rs["optmiss"],
+            shoe_rs["capped"],
+            "실행ON" if _EXEC_SHOE_RESTOCK else "섀도",
+        )
+        _cap_txt = f" · 대기 {shoe_rs['capped']:,}" if shoe_rs["capped"] else ""
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[신발등록] 후보 {shoe_rs['cand']:,} — 등록 {shoe_rs['post']:,}"
+            f"{_fail_tag(shoe_rs['fail'])} (사이클상한 {_SHOE_RESTOCK_MAX:,}{_cap_txt}) "
+            f"({'실행ON' if _EXEC_SHOE_RESTOCK else '섀도'})",
+        )
+        # 재게시/실패 가드 갱신분 저장(카드 저장 이후 변동분 반영)
+        if _EXEC_SHOE_RESTOCK and (shoe_rs["post"] or shoe_rs["fail"]):
+            await _save_setting_map(_SET_RECENT, _g_recent_posts)
+            await _save_setting_map(_SET_FAILED, _g_failed_posts)
+        await _save_setting_map(_SET_MISS, _g_miss_counts)
 
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)

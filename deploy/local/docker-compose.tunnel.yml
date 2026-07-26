@@ -197,6 +197,9 @@ services:
       KREAM_EXEC_BOX: "1"  # [A] 박스(해외배송) 갱신/삭제 실행 — 섀도 검증 완료(175건 계산정확)
       KREAM_EXEC_SHOE: "1"  # [B] 신발(mm) 갱신/삭제 실행 — 실시간 사이즈시세 이식 후 섀도검증
                             # (247상품 100% 조회, 갱신198·삭제60, 샘플 전건 인상/삭제·인하 0)
+      KREAM_EXEC_SHOE_RESTOCK: "1"  # [B-2] 신발 신규 자동등록 실행 — verified 확정+미등록, cm↔mm
+                                    # 매칭 섀도검증(optmiss0·가드정상). 사이클상한 50, 2연속가드
+      KREAM_SHOE_RESTOCK_MAX: "50"  # 신발 신규등록 사이클당 상한(사이즈별 다건 폭주 방지)
       # netns 공유 → api(8080)/worker(8081)/reconciler(8082)와 분리
       KREAM_BIND_PORT: "8083"
       # 크림 루프는 반드시 돌아야 하므로 BG 비활성 금지 (0 고정)

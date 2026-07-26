@@ -44,7 +44,9 @@ REFINE = (
 
 
 async def gemini_refine(key, model, img_bytes):
-    """PIL 합성본을 Gemini 로 자연 blend. 실패 시 원본(PIL) 반환."""
+    """PIL 합성본을 Gemini 로 자연 blend. 재시도 4회(429/실패 백오프).
+    끝까지 실패하면 **None** 반환 → 호출부가 스킵(컷아웃 폴백 게시 절대 금지)."""
+    import asyncio
     import httpx
 
     body = {"contents": [{"parts": [
@@ -54,24 +56,30 @@ async def gemini_refine(key, model, img_bytes):
         "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}}
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
            f":generateContent?key={key}")
-    try:
-        async with httpx.AsyncClient(timeout=180) as c:
-            r = await c.post(url, json=body, headers={"Content-Type": "application/json"})
-        for p in r.json().get("candidates", [{}])[0].get("content", {}).get("parts", []):
-            if "inlineData" in p:
-                out = base64.b64decode(p["inlineData"]["data"])
-                # 정사각 보정(Gemini 가 살짝 비율 바꾸면)
-                im = Image.open(io.BytesIO(out)).convert("RGB")
-                w, h = im.size
-                if abs(w - h) > 4:
-                    s = min(w, h)
-                    im = im.crop(((w - s) // 2, (h - s) // 2, (w - s) // 2 + s, (h - s) // 2 + s))
-                b = io.BytesIO()
-                im.save(b, "JPEG", quality=92)
-                return b.getvalue()
-    except Exception:
-        pass
-    return img_bytes
+    for attempt in range(4):
+        try:
+            async with httpx.AsyncClient(timeout=180) as c:
+                r = await c.post(url, json=body, headers={"Content-Type": "application/json"})
+            if r.status_code == 429:
+                await asyncio.sleep(20 * (attempt + 1))
+                continue
+            for p in r.json().get("candidates", [{}])[0].get("content", {}).get("parts", []):
+                if "inlineData" in p:
+                    out = base64.b64decode(p["inlineData"]["data"])
+                    im = Image.open(io.BytesIO(out)).convert("RGB")
+                    w, h = im.size
+                    if abs(w - h) > 4:
+                        s = min(w, h)
+                        im = im.crop(((w - s) // 2, (h - s) // 2,
+                                      (w - s) // 2 + s, (h - s) // 2 + s))
+                    b = io.BytesIO()
+                    im.save(b, "JPEG", quality=92)
+                    return b.getvalue()
+            # 이미지 파트 없음 → 재시도
+            await asyncio.sleep(8 * (attempt + 1))
+        except Exception:
+            await asyncio.sleep(8 * (attempt + 1))
+    return None  # 컷아웃 폴백 금지 — 스킵
 
 
 async def main():
@@ -99,7 +107,7 @@ async def main():
             rows = (await s.execute(tx(
                 "SELECT id, site_product_id, name_en, applied_policy_id, market_product_nos->>:kv "
                 "FROM samba_collected_product WHERE registered_accounts @> CAST(:kvj AS jsonb) "
-                "AND source_site='BUNJANG' AND created_at > now() - interval '4 hours'"),
+                "AND source_site='BUNJANG' AND created_at > now() - interval '3 days'"),
                 {"kv": KV, "kvj": f'["{KV}"]'})).all()
             print(f"검사 대상 {len(rows)}건")
             fixed = skip_white = 0
@@ -115,9 +123,15 @@ async def main():
                     except Exception as e:
                         print(f"  imgX {nm[:30]} ({str(e)[:30]})")
                         continue
+                    import asyncio as _aio
                     buf = io.BytesIO()
                     out.save(buf, "JPEG", quality=94)
                     final = await gemini_refine(gkey, gmodel, buf.getvalue())
+                    await _aio.sleep(1.5)  # rate-limit 회피
+                    if final is None:  # Gemini 블렌드 실패 → 컷아웃 게시 금지, 스킵
+                        skip_white += 1
+                        print(f"  SKIP(블렌드실패, 구이미지유지) {nm[:38]}")
+                        continue
                     if dry:
                         if fixed < 4:
                             open(f"/tmp/refix_{fixed}.jpg", "wb").write(final)
