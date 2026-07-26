@@ -965,15 +965,13 @@ class ImageTransformService:
         # 있으나(아래 fashionplus 분기) R2 선미러 목록엔 누락 → 추가. 우리 서버는
         # 다운로드 가능(200 실측) → R2 선미러 후 SSG 재전송 시 상품컷 정상 표시.
         "fashionplus.co.kr",
-        # GS샵 소싱 상세 HTML 이 실제로 물고 있는 이미지 호스트들 — 위 m-gs.kr 은
-        # 메인컷 CDN 이고, 상세컷은 아래 4종에서 온다. 미러 목록 누락 →
-        # strip_external_imgs_in_html 이 <img> 를 통째로 제거 → SSG 상세가
-        # `<p><br></p>` 빈껍데기로 등록되던 문제(2026-07-25 라이브 실측).
-        # 우리 서버는 다운로드 가능 → R2 선미러 필요. (#410/#428 과 동일 클래스)
-        "image.ellotte.com",  # 롯데EPS 상세컷 (http:// 로 박히는 경우 많음)
-        "lotteeps.com",  # ellt.static.lotteeps.com — 롯데백화점 주문안내 배너
-        "ykpartner.com",  # img.ykpartner.com — 아디다스 브랜드 상세
-        "brandimages.co.kr",  # 나이키/아주 브랜드 상세·안내 배너
+        # ★2026-07-26 제거(원복). GS샵 상세컷 호스트(image.ellotte.com,
+        # lotteeps.com, ykpartner.com, brandimages.co.kr)를 2026-07-25 에 여기
+        # 추가했으나, 이 호스트들은 상품컷과 함께 **타사몰 안내배너·브랜드
+        # 공식판매처 안내**를 같이 물고 있었다(롯데백화점 주문안내, "아디다스 공식
+        # 온라인 판매처" 등). 미러 대상에 넣으면 그것들까지 SSG 상세에 노출된다.
+        # → 화이트리스트에서 빼서 strip_external_imgs_in_html 이 제거하도록 되돌림.
+        # GS샵 상세컷 복구는 상품컷만 골라내는 방법을 갖춘 뒤 재시도한다.
     )
 
     async def mirror_external_to_r2(
