@@ -143,6 +143,46 @@ async def _unfulfilled_count() -> int:
         return 0
 
 
+async def _count_cat1_verified_unreg() -> int:
+    """검수 카테고리1(재고O+매칭) 중 '매칭확인(verified)'됐으나 크림 미등록(입찰 없음)인 상품수.
+    자동입찰 누락 감시용 — 확인 끝난 재고상품이 아직 크림에 안 걸린 것. 실패 시 -1.
+    정의는 proxy/kream.py 검수목록(get_snkrdunk_compare_all)의 cat/verified/registered 와 동일."""
+    sql = _text(
+        """
+        SELECT COUNT(*) FROM samba_collected_product p
+        WHERE p.source_site IN ('SNKRDUNK','ONITSUKA')
+          AND COALESCE(p.resell_matches->'kream'->>'verified','') = 'true'
+          AND (
+            COALESCE(p.resell_matches->'kream'->>'product_id','') <> ''
+            OR jsonb_array_length(
+                 COALESCE(p.resell_matches->'kream_candidates','[]'::jsonb)) > 0
+          )
+          AND (
+            COALESCE((SELECT NULLIF(o->>'stock','')::int
+                      FROM jsonb_array_elements(p.options::jsonb) o
+                      WHERE REPLACE(o->>'name',' ','')='PSA10' LIMIT 1),0) > 0
+            OR COALESCE((SELECT NULLIF(o->>'stock','')::int
+                      FROM jsonb_array_elements(p.options::jsonb) o
+                      WHERE REPLACE(o->>'name',' ','')='PSA9' LIMIT 1),0) > 0
+            OR (p.extra_data->>'snkr_type' IN ('sneaker','apparel','watch')
+                AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int)
+                      FROM jsonb_array_elements(p.options::jsonb) o),0) > 0)
+          )
+          AND NOT (
+            COALESCE(p.resell_matches->'kream'->>'product_id','') <> ''
+            AND p.resell_matches->'kream'->>'product_id'
+                IN (SELECT product_id FROM kream_live_asks)
+          )
+        """
+    )
+    try:
+        async with get_read_session() as s:
+            return int((await s.execute(sql)).scalar() or 0)
+    except Exception as exc:
+        logger.warning("[크림통합] cat1 확인·미등록 집계 실패(무시): %s", exc)
+        return -1
+
+
 async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
     """방치입찰(매칭 없는 live ask) — 갱신이 가격조정을 못 해 체결 시 손실위험.
     로컬 봇과 동일: 30건 이하면 자동삭제, 초과면 오탐 우려로 알림만(수동 확인)."""
@@ -3013,8 +3053,16 @@ async def run_kream_unified_once() -> dict:
     # 이번 사이클 리스톡 발견(무재고→재고 감지) — 등록 통과/보류 분리 표기.
     _rs_found = int(counts["restock"])
     _rs_hold = max(0, _rs_found - int(rs["ok"]))
+    # 검수 카테고리1(재고O+매칭) 중 매칭확인(verified)됐으나 크림 미등록 상품수 — 등록누락 감시.
+    _cat1_vunreg = await _count_cat1_verified_unreg()
+    _cat1_line = (
+        f"✅ 확인·미등록(cat1) {_cat1_vunreg:,}건 — 자동입찰 누락 점검\n"
+        if _cat1_vunreg >= 0
+        else ""
+    )
     _restock_sec = (
         f"[일치상품 리스톡·미등록 점검]\n"
+        f"{_cat1_line}"
         f"무재고 스캔 {_scan_done:,}/{rest_total:,} ({_scan_pct:,}%)"
         f" · 1,500개/사이클 로테이션\n"
         f"이번 사이클 리스톡 발견 {_rs_found:,}건"
