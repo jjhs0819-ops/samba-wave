@@ -511,8 +511,16 @@ class SSGPlugin(MarketPlugin):
                     #    제거하므로, 화이트리스트에 없는 호스트는 곧 상세 소실이었다
                     #    (실측: SSG 등록 71,840건 중 11,350건 이미지 전멸).
                     _detail_html = _img_svc.normalize_lazy_img_src(_detail_html)
+                    # ★2026-07-26 원복 — mirror_all 은 쓰지 않는다.
+                    # 전량 미러는 상품컷을 살리는 대신, 원래 strip 되던 것들까지
+                    # 전부 통과시켰다: 롯데백화점/현대백화점 안내배너, 그리고
+                    # 브랜드 자체 CDN 의 공식판매처·교환반품 안내
+                    # (KODAK·Columbia·언더아머·adidas·CGP·아디다스 공식판매처 등).
+                    # 이것들은 우리 상품 상세에 들어가면 안 되는 것들이다.
+                    # 화이트리스트(_HOTLINK_BLOCKED_HOSTS)에 있는 소싱처 CDN 만
+                    # 미러하고, 나머지 외부 <img> 는 아래 strip 이 제거한다.
                     _mirrored_html = await _img_svc.mirror_urls_in_html(
-                        _detail_html, mirror_all=True, product_id=_pid
+                        _detail_html, product_id=_pid
                     )
                     # 미러 실패로 남은 외부 <img>(puma_notice 깨진 이미지·용량초과 등)
                     # 제거 — SSG가 fetch 못 해 "파일 다운로드 도중 오류"로 상품 전체
