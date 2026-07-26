@@ -556,13 +556,18 @@ async def _snkrdunk_update_match_impl(
     # 한글명(name)은 caller가 kream_name_ko를 명시했을 때만 갱신
     name_set = ", name = :kream_name_ko" if kream_name_ko else ""
 
+    # 확정 시 자기 행의 후보(kream_candidates)도 비운다 — 안 지우면 확정됐는데도 다중후보로
+    # 남아 다음 매칭·검수에서 계속 재매칭 대상처럼 떠서 확정이 안 먹는 것처럼 보임. [2026-07-26]
     sql = text(f"""
         UPDATE samba_collected_product
         SET resell_matches = jsonb_set(
-            COALESCE(resell_matches, '{{}}'::jsonb),
-            '{{kream}}',
-            COALESCE(resell_matches -> 'kream', '{{}}'::jsonb) || {override_obj},
-            true
+            jsonb_set(
+                COALESCE(resell_matches, '{{}}'::jsonb),
+                '{{kream}}',
+                COALESCE(resell_matches -> 'kream', '{{}}'::jsonb) || {override_obj},
+                true
+            ),
+            '{{kream_candidates}}', '[]'::jsonb, true
         ){name_set}, updated_at = NOW()
         WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
