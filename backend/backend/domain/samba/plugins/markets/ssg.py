@@ -576,6 +576,21 @@ class SSGPlugin(MarketPlugin):
         # 기존 상품번호가 있으면 수정, 없으면 신규등록
         if existing_no:
             data["itemId"] = existing_no
+            # ★가격/재고 전용 수정(오토튠, 하루 15만건)에서는 itemDesc 를 아예 보내지
+            # 않는다. 상위 레이어가 price/stock-only 일 때 _build_detail_html(정책
+            # 템플릿 재생성)을 건너뛰기 때문에, itemDesc 를 그대로 보내면 DB 의
+            # 소싱처 원문 detail_html 이 SSG 상세를 덮어써 정책 구성이 깨진다
+            # (빈 원문이면 상세가 통째로 비워지고, 원문이면 타사 배너까지 실린다).
+            # SSG updateItem 은 itemDesc 생략을 부분 업데이트로 처리해 기존 상세를
+            # 보존한다 — 라이브 검증(2026-07-26): 가격 166,600→170,900 반영되고
+            # 상세 443자/3장 완전 동일 유지. 소싱처 4곳 표본에서도 상세 무변경 확인.
+            if skip_image:
+                _dropped = data.pop("itemDesc", None) is not None
+                if _dropped:
+                    logger.info(
+                        "[SSG] 경량 가격/재고 수정 → itemDesc 생략(기존 상세 보존): "
+                        f"itemId={existing_no}"
+                    )
             result = await client.update_product(data)
             # 신규 옵션(소싱처에 새 사이즈 생김) → updateItem 불가 → 삭제 후 재등록.
             # SSG updateItem 은 기존 옵션 수정만 되고 신규 옵션 추가가 안 되므로,
