@@ -499,6 +499,12 @@ class SSGPlugin(MarketPlugin):
                         _,
                     ) = await _img_svc.mirror_with_persistence(_pid, _detail_images)
                 if _detail_html:
+                    # ⓪ 타사 몰 안내배너 제거 — 미러링 전에 해야 한다. 미러 후엔
+                    #    우리 CDN URL 이 되어 아래 strip 이 못 거른다.
+                    #    (신세계몰 상품에 롯데백화점/GS SHOP 로고 노출 방지)
+                    _detail_html = _img_svc.strip_foreign_notice_imgs_in_html(
+                        _detail_html
+                    )
                     # ① 지연로딩 data-src → src 승격. GS샵/롯데 상세는 상품컷이
                     #    전부 data-src 라 그대로 두면 미러돼도 렌더링 안 됨.
                     # ② mirror_all=True — 미러 실패분은 아래 strip 이 어차피

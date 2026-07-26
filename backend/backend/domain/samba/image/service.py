@@ -1507,6 +1507,52 @@ class ImageTransformService:
                 new_html = new_html.replace(orig, new)
         return new_html
 
+    # 타사(경쟁몰) 안내 배너 URL 조각 — 상세에 섞여 들어가면 신세계몰 상품에
+    # 롯데백화점/GS SHOP 로고와 "이 상품은 롯데백화점 상품입니다", 타사 교환·반품
+    # 안내가 그대로 노출된다(2026-07-26 라이브 확인, itemId 1000858234338).
+    # 미러링 전에 제거해야 한다 — 미러 후에는 우리 CDN URL이 되어
+    # strip_external_imgs_in_html 이 걸러내지 못한다.
+    # ⚠️ 좁게 유지할 것. `/notice_img/`(brandimages.co.kr) 전체를 막으면 안 된다 —
+    # 그 경로엔 `aju_wear_women_swim_end_ssg.jpg` 처럼 나이키 스윔 사이즈표·취급주의·
+    # 반품안내 같은 **정당한 상품 정보**가 들어 있고, `_ssg` 접미사는 SSG 전용 버전이다
+    # (2026-07-26 실물 확인). 실제 타사 로고 배너로 확인된 것만 넣는다.
+    _FOREIGN_NOTICE_URL_PARTS = (
+        "lottedepartment_gsshop",  # "롯데백화점 상품 주문안내" / "이 상품은 롯데백화점 상품입니다"
+        "/front/design/naverstore/",  # 롯데EPS 공용 안내배너 경로(위 2종이 전부 — 실측)
+    )
+
+    @classmethod
+    def strip_foreign_notice_imgs_in_html(cls, html: str) -> str:
+        """타사 몰 안내/로고 배너 <img> 를 제거. 미러링 **이전**에 호출할 것.
+
+        상품컷은 건드리지 않는다 — URL 조각 화이트리스트 매칭이라 오탐 위험이 낮다.
+        제거분은 warning 으로 남겨 패턴 누락을 조기에 발견한다.
+        """
+        if not html:
+            return html
+        import re as _re
+
+        removed: dict[str, int] = {}
+
+        def _keep(m: "_re.Match[str]") -> str:
+            tag = m.group(0)
+            src = _re.search(
+                r'(?:data-)?src=["\']([^"\']+)["\']', tag, _re.IGNORECASE
+            )
+            if not src:
+                return tag
+            url = src.group(1).lower()
+            for part in cls._FOREIGN_NOTICE_URL_PARTS:
+                if part in url:
+                    removed[part] = removed.get(part, 0) + 1
+                    return ""
+            return tag
+
+        out = _re.sub(r"<img\b[^>]*>", _keep, html, flags=_re.IGNORECASE)
+        if removed:
+            logger.info("[이미지필터] 타사 안내배너 <img> 제거 — %s", removed)
+        return out
+
     @staticmethod
     def normalize_lazy_img_src(html: str) -> str:
         """지연로딩 `<img data-src="...">` 를 실제 `src` 로 승격.
