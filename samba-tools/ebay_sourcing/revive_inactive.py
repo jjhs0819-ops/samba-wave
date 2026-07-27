@@ -35,7 +35,14 @@ KV = "ma_01KXQCB67RZBBE99H8TM2J4K8J"
 CARD_POLICY = "pol_01KXD2K5JE2HHR53GZ1NGV0PGV"
 NS = {"e": "urn:ebay:apis:eBLBaseComponents"}
 H = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://m.bunjang.co.kr/"}
-BAD = ("삽니다", "구해요", "구합니다", "구매", "매입", "교환", "대리", "예약", "원합니다", "일괄", "랜덤")
+BAD = (
+    "삽니다", "구해요", "구합니다", "구매", "매입", "교환", "대리", "예약", "원합니다", "일괄", "랜덤",
+    # 굿즈/번들 = 카드 아님. 카드 제목으로 등록되던 재발원인(2026-07-27 잉어킹 교통카드·키링 사고)
+    "키링", "키홀더", "교통카드", "이즐", "뱃지", "배지", "아크릴", "거치대", "스탠드",
+    "시계", "워치", "스트랩", "인형", "포스터", "우산", "텀블러", "엽서", "틴케이스",
+    "굿즈", "스티커", "슬리브", "탑로더", "쿠션", "부채", "마그넷", "자석", "브로마이드",
+    "키캡", "파우치", "빈티지", "정품", "키홀더", "볼펜", "노트", "배찌", "홀더", "스티키",
+)
 # 영문 리스팅 제목 → 번장 검색용 한글명. 번장은 한글로만 검색되므로 필수.
 EN2KO = {
     "meowth": "냐옹", "magikarp": "잉어킹", "venusaur": "이상해꽃", "charizard": "리자몽",
@@ -169,6 +176,12 @@ async def main():
                 dup = any(k and _tok(lt) and len(k & _tok(lt)) / len(k | _tok(lt)) >= 0.5 for lt in live)
                 if dup:
                     print(f"SKIP(라이브에 이미 있음) {title[:46]}")
+                    continue
+                # [중요] 같은 카드가 이미 라이브면 스킵(중복등록=계정정지). 제목 표현이 달라도
+                # 포켓몬 영문명이 라이브 제목에 있으면 동일 카드로 본다(2026-07-27 잉어킹 중복사고).
+                en_name = next((kk for kk in EN2KO if kk in title.lower()), "")
+                if en_name and any(en_name in lt for lt in live):
+                    print(f"SKIP(같은 카드 라이브) {title[:46]}")
                     continue
                 q = kw_of(title)
                 ko = next((v for kk, v in EN2KO.items() if kk in title.lower()), "")
