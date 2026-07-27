@@ -3,7 +3,7 @@
 // 폰 전용 간편 주문 뷰 — 아이디/비번 로그인(기존 JWT 재사용) 후 최근 주문 카드형 표시.
 // 기존 orderApi/userApi/useTheme 그대로 사용. 백엔드/DB 변경 없음.
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApi } from '@/lib/samba/api/operations'
 import { orderApi } from '@/lib/samba/api/commerce'
 import type { SambaOrder } from '@/lib/samba/api/commerce'
@@ -47,8 +47,13 @@ const isUnshipped = (o: SambaOrder): boolean => {
   return !o.tracking_number && !cancelled
 }
 
-type RangeKey = 'today' | '7d' | '30d'
-const RANGE_DAYS: Record<RangeKey, number> = { today: 0, '7d': 6, '30d': 29 }
+type RangeKey = 'today' | 'yesterday' | '7d'
+// 각 기간의 시작/끝 날짜 오프셋 (KST 기준, 0=오늘, -1=어제)
+const RANGE_OFFSET: Record<RangeKey, { start: number; end: number }> = {
+  today: { start: 0, end: 0 },
+  yesterday: { start: -1, end: -1 },
+  '7d': { start: -6, end: 0 },
+}
 
 export default function SambaMobileOrdersPage() {
   const c = useTheme()
@@ -70,13 +75,14 @@ export default function SambaMobileOrdersPage() {
   const [loadError, setLoadError] = useState('')
   const [tab, setTab] = useState<'all' | 'unshipped'>('all')
   const [range, setRange] = useState<RangeKey>('7d')
+  const [market, setMarket] = useState<string>('') // '' = 전체 판매처
 
   const loadOrders = useCallback(async (r: RangeKey) => {
     setLoading(true)
     setLoadError('')
     try {
-      const start = kstDate(-RANGE_DAYS[r])
-      const end = kstDate(0)
+      const start = kstDate(RANGE_OFFSET[r].start)
+      const end = kstDate(RANGE_OFFSET[r].end)
       const res = await orderApi.listByDateRangePaged({
         start,
         end,
@@ -149,7 +155,22 @@ export default function SambaMobileOrdersPage() {
     setPassword('')
   }
 
-  const shown = tab === 'unshipped' ? orders.filter(isUnshipped) : orders
+  // 로드된 주문에서 판매처 목록 추출 (건수순 정렬)
+  const marketList = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const o of orders) {
+      const m = marketOf(o)
+      counts.set(m, (counts.get(m) || 0) + 1)
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
+  }, [orders])
+
+  // 선택 판매처가 목록에 없으면 전체로 간주
+  const activeMarket = marketList.some(([m]) => m === market) ? market : ''
+
+  const shown = orders
+    .filter((o) => (tab === 'unshipped' ? isUnshipped(o) : true))
+    .filter((o) => (activeMarket ? marketOf(o) === activeMarket : true))
   const unshippedCount = orders.filter(isUnshipped).length
 
   // ── 로딩 게이트 ──
@@ -255,7 +276,7 @@ export default function SambaMobileOrdersPage() {
   }
 
   // ── 주문 화면 ──
-  const rangeLabel: Record<RangeKey, string> = { today: '오늘', '7d': '7일', '30d': '30일' }
+  const rangeLabel: Record<RangeKey, string> = { today: '오늘', yesterday: '어제', '7d': '7일' }
 
   return (
     <div style={{ minHeight: '100vh', background: c.pageBg, color: c.text }}>
@@ -289,7 +310,7 @@ export default function SambaMobileOrdersPage() {
 
         {/* 기간 선택 */}
         <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
-          {(Object.keys(RANGE_DAYS) as RangeKey[]).map((r) => (
+          {(Object.keys(RANGE_OFFSET) as RangeKey[]).map((r) => (
             <button
               key={r}
               onClick={() => setRange(r)}
@@ -355,11 +376,35 @@ export default function SambaMobileOrdersPage() {
             미발송 {fmtNum(unshippedCount)}
           </button>
         </div>
+
+        {/* 판매처 필터 */}
+        <select
+          value={activeMarket}
+          onChange={(e) => setMarket(e.target.value)}
+          style={{
+            width: '100%',
+            marginTop: 8,
+            padding: '0.5rem 0.6rem',
+            fontSize: 14,
+            background: c.inputBg,
+            color: c.text,
+            border: `1px solid ${c.border}`,
+            borderRadius: 8,
+            outline: 'none',
+          }}
+        >
+          <option value="">전체 판매처 ({fmtNum(orders.length)})</option>
+          {marketList.map(([m, cnt]) => (
+            <option key={m} value={m}>
+              {m} ({fmtNum(cnt)})
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* 요약 */}
       <div style={{ padding: '0.6rem 0.85rem', fontSize: 12, color: c.textSub }}>
-        기간 총 {fmtNum(totalCount)}건 · 매출 {fmtNum(Math.round(totalSale))}원
+        표시 {fmtNum(shown.length)}건 · 기간 총 {fmtNum(totalCount)}건 · 매출 {fmtNum(Math.round(totalSale))}원
       </div>
 
       {/* 상태 메시지 */}
