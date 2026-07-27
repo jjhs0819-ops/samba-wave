@@ -8479,6 +8479,13 @@ async def sync_orders_from_markets(
                 # 이축 교차 매칭용 (#688) — 클레임(취소/반품) 행의 primary 키(주문상세 축)
                 # → 반대 축(배송단위 축) 후보 키. DB 매칭 실패 시 2차 역조회에 사용.
                 _lh_alt_key_map: dict[str, set[str]] = {}
+                # 상세 축 값 집합 (#4차, 2026-07-27 D38041 실사고) — 롯데홈이
+                # DlvUnitSn "필드"에 주문상세 축 값을 섞어 주는 사이클이 있다
+                # (D38041: DlvUnitSn 자리에 상세축 914631676, 실제 배송축 1130815689).
+                # 필드명만 믿지 말고 "값"을 검증한다: 같은 주문에서 상세축 필드
+                # (OrdDtlSn/OrgOrdDtlSn/ProdSeq/ProdCode)로 관측된 값이 DlvUnitSn
+                # 자리로 오면 혼입으로 판정해 키 주입·행 생성에 쓰지 않는다.
+                _lh_detail_axis: dict[str, set[str]] = {}
 
                 def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
                     _dsn = str(_pitem.get("DlvUnitSn") or "")
@@ -8494,6 +8501,36 @@ async def sync_orders_from_markets(
                         _v = str(_pitem.get(_k) or "")
                         if _v:
                             _lh_preserve_map.setdefault(_ono, set()).add(_v)
+                            if _k != "DlvUnitSn":
+                                _lh_detail_axis.setdefault(_ono, set()).add(_v)
+
+                def _lh_clean_dlvsns(
+                    _ono: str, _extra_detail: dict | None = None
+                ) -> list[str]:
+                    """상세축 혼입 값을 제거한 검증된 DlvUnitSn 목록.
+
+                    _extra_detail: 현재 처리 중인 행의 ProdInfo — 그 행의 상세축
+                    값도 제외 대상에 포함 (맵에 아직 안 담긴 신규주문 행 대응).
+                    """
+                    _bad = set(_lh_detail_axis.get(_ono, set()))
+                    if _extra_detail:
+                        for _k in ("OrdDtlSn", "OrgOrdDtlSn", "ProdSeq", "ProdCode"):
+                            _v = str(_extra_detail.get(_k) or "")
+                            if _v:
+                                _bad.add(_v)
+                    return [_s for _s in _lh_dlvsn_map.get(_ono, []) if _s not in _bad]
+
+                def _lh_valid_dlvsn(_ono: str, _pitem: dict) -> str:
+                    """행 생성용 검증 DlvUnitSn — 상세축 혼입이면 빈 문자열."""
+                    _dsn = str(_pitem.get("DlvUnitSn") or "")
+                    if not _dsn:
+                        return ""
+                    if _dsn in _lh_detail_axis.get(_ono, set()):
+                        return ""
+                    for _k in ("OrdDtlSn", "OrgOrdDtlSn", "ProdSeq", "ProdCode"):
+                        if _dsn == str(_pitem.get(_k) or ""):
+                            return ""
+                    return _dsn
 
                 def _lh_norm_prods(_ro: dict) -> list[dict]:
                     """_parse_lottehome_order_multi 와 동일한 ProdInfo 정규화."""
@@ -8577,8 +8614,13 @@ async def sync_orders_from_markets(
                         _prod_info_raw = ro.get("ProdInfo")
                         if isinstance(_prod_info_raw, list):
                             _no_key = str(ro.get("OrdNo", "") or "")
-                            # deliver_list에서 수집한 DlvUnitSn 사용 → 키 일관성 유지
-                            _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
+                            # 신규주문 행의 상세축 값을 먼저 학습 (혼입 판별 재료)
+                            for _pd in _prod_info_raw:
+                                if isinstance(_pd, dict):
+                                    _lh_collect_ids(_no_key, _pd)
+                            # deliver_list에서 수집한 DlvUnitSn 사용 → 키 일관성 유지.
+                            # 상세축 혼입 값은 제거 (#4차 D38041)
+                            _dlvsn_list = _lh_clean_dlvsns(_no_key)
                             if not _dlvsn_list:
                                 # 배송조회 실패 사이클도 폴백 없이 무조건 보류 —
                                 # 폴백이 상품코드 키 행을 만들어 사고의 재유입 경로가 됨
@@ -8614,8 +8656,13 @@ async def sync_orders_from_markets(
                             # ext_order_number에 저장하면 registDeliver.lotte가
                             # [0005] 필수파라미터 오류(ord_dtl_sn)로 송장전송을 거부한다.
                             _no_key = str(ro.get("OrdNo", "") or "")
-                            _dlvsn_list = _lh_dlvsn_map.get(_no_key, [])
                             _pi = ro.get("ProdInfo")
+                            # 신규주문 행의 상세축 값 학습 후, 혼입 제거된 목록 사용 (#4차)
+                            if isinstance(_pi, dict):
+                                _lh_collect_ids(_no_key, _pi)
+                            _dlvsn_list = _lh_clean_dlvsns(
+                                _no_key, _pi if isinstance(_pi, dict) else None
+                            )
                             if not _dlvsn_list:
                                 # 실순번 미확보 — 이번 사이클 등록 보류 (추측 키 금지).
                                 # 배송조회 실패 사이클도 폴백 없이 보류한다
@@ -8686,10 +8733,12 @@ async def sync_orders_from_markets(
                         # 키가 OrdDtlSn 폴백으로 잡히지 않도록 파싱 전에 제거한다.
                         if isinstance(_prod_info_raw, list):
                             _ro2 = dict(ro)
+                            # DlvUnitSn "값"까지 검증 — 상세축 혼입이면 제외 (#4차)
                             _ro2["ProdInfo"] = [
                                 {k: v for k, v in _it.items() if k != "OrdDtlSn"}
                                 for _it in _prod_info_raw
-                                if isinstance(_it, dict) and _it.get("DlvUnitSn")
+                                if isinstance(_it, dict)
+                                and _lh_valid_dlvsn(_dlv_ord_no, _it)
                             ]
                             if not _ro2["ProdInfo"]:
                                 _lh_deferred += 1
@@ -8710,7 +8759,8 @@ async def sync_orders_from_markets(
                                 if isinstance(_prod_info_raw, dict)
                                 else {}
                             )
-                            if not _pi_d.get("DlvUnitSn"):
+                            # DlvUnitSn "값"까지 검증 — 상세축 혼입이면 보류 (#4차)
+                            if not _lh_valid_dlvsn(_dlv_ord_no, _pi_d):
                                 _lh_deferred += 1
                                 continue
                             ro = dict(ro)
@@ -8811,7 +8861,8 @@ async def sync_orders_from_markets(
                                 _ret_prod_raw = [_ret_prod_raw]
                             if not _ret_prod_raw:
                                 _ret_prod_raw = [{}]
-                            _ret_dlvsn_list = _lh_dlvsn_map.get(_ret_ord_no, [])
+                            # 상세축 혼입 제거된 검증 목록 사용 (#4차)
+                            _ret_dlvsn_list = _lh_clean_dlvsns(_ret_ord_no)
                             for _ri, _ret_prod in enumerate(_ret_prod_raw):
                                 _ret_flat = dict(ro)
                                 _ret_flat["ProdInfo"] = (

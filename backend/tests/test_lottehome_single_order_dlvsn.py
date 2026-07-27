@@ -97,10 +97,13 @@ class TestSingleOrderCollectionInjectsDlvUnitSn:
         self.src = ORDER_PY.read_text(encoding="utf-8")
 
     def test_single_branch_injects_dlvsn(self) -> None:
-        # 단건 else 분기에서 _lh_dlvsn_map 조회 후 ProdInfo 에 DlvUnitSn 주입
-        assert "_dlvsn_list = _lh_dlvsn_map.get(_no_key, [])" in self.src, (
-            "단건 신규주문 수집이 _lh_dlvsn_map 에서 DlvUnitSn 을 조회하지 않음"
-        )
+        # 단건 else 분기에서 DlvUnitSn 목록 조회 후 ProdInfo 에 주입.
+        # 조회는 _lh_dlvsn_map 직접 또는 상세축 혼입을 걸러낸 _lh_clean_dlvsns
+        # (#689) 둘 중 하나면 된다 — 어느 쪽이든 출처는 배송조회 DlvUnitSn.
+        assert (
+            "_dlvsn_list = _lh_dlvsn_map.get(_no_key, [])" in self.src
+            or "_dlvsn_list = _lh_clean_dlvsns(" in self.src
+        ), "단건 신규주문 수집이 DlvUnitSn 목록을 조회하지 않음"
         assert '"DlvUnitSn": _real_dsn' in self.src, (
             "단건 신규주문 수집이 ProdInfo 에 진짜 DlvUnitSn 을 주입하지 않음"
         )
