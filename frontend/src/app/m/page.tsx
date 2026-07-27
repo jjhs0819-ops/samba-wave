@@ -550,8 +550,10 @@ export default function SambaMobileOrdersPage() {
           const cpid = o.collected_product_id || ''
           // 주문 값 우선, 없으면 collected_product 폴백 (KREAM/POIZON 등 이미지 누락 대응)
           const imgSrc = o.product_image || (cpid ? cpImages[cpid] : '') || ''
-          const srcUrl = o.source_url || (cpid ? cpSourceUrl[cpid] : '') || ''
-          const srcSite = o.source_site || (cpid ? cpSourceSite[cpid] : '') || ''
+          // 소싱처는 수집상품(collected_product) 값이 진짜 — 주문 source_site는 판매처(KREAM 등)와
+          // 같은 레거시값이 들어있어 신뢰 불가. collected 우선, 없으면 주문값 폴백.
+          const srcUrl = (cpid ? cpSourceUrl[cpid] : '') || o.source_url || ''
+          const srcSite = (cpid ? cpSourceSite[cpid] : '') || o.source_site || ''
           return (
             <div
               key={o.id}
