@@ -8486,6 +8486,8 @@ async def sync_orders_from_markets(
                 # (OrdDtlSn/OrgOrdDtlSn/ProdSeq/ProdCode)로 관측된 값이 DlvUnitSn
                 # 자리로 오면 혼입으로 판정해 키 주입·행 생성에 쓰지 않는다.
                 _lh_detail_axis: dict[str, set[str]] = {}
+                # 상세축 혼입으로 이번 사이클 보류한 주문 — 로그용
+                _lh_axis_mixed: set[str] = set()
 
                 def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
                     _dsn = str(_pitem.get("DlvUnitSn") or "")
@@ -8511,6 +8513,12 @@ async def sync_orders_from_markets(
 
                     _extra_detail: 현재 처리 중인 행의 ProdInfo — 그 행의 상세축
                     값도 제외 대상에 포함 (맵에 아직 안 담긴 신규주문 행 대응).
+
+                    부분 제거는 전량 보류로 처리한다. 호출부가 이 목록을 상품
+                    인덱스(_dlvsn_list[_i])로 참조하므로, 일부만 빠지면 뒤 상품에
+                    남의 배송단위 번호가 붙거나 인덱스 키(_lh_prod_idx = _i)
+                    폴백으로 새어 옛 인덱스 키 사고가 재유입된다. 다음 정상
+                    사이클에 온전한 목록으로 등록된다.
                     """
                     _bad = set(_lh_detail_axis.get(_ono, set()))
                     if _extra_detail:
@@ -8518,7 +8526,13 @@ async def sync_orders_from_markets(
                             _v = str(_extra_detail.get(_k) or "")
                             if _v:
                                 _bad.add(_v)
-                    return [_s for _s in _lh_dlvsn_map.get(_ono, []) if _s not in _bad]
+                    _raw = _lh_dlvsn_map.get(_ono, [])
+                    _clean = [_s for _s in _raw if _s not in _bad]
+                    if len(_clean) != len(_raw):
+                        # 인덱스 정합성이 깨짐 → 이 주문은 통째로 이번 사이클 보류
+                        _lh_axis_mixed.add(_ono)
+                        return []
+                    return _clean
 
                 def _lh_valid_dlvsn(_ono: str, _pitem: dict) -> str:
                     """행 생성용 검증 DlvUnitSn — 상세축 혼입이면 빈 문자열."""
@@ -8626,6 +8640,14 @@ async def sync_orders_from_markets(
                                 # 폴백이 상품코드 키 행을 만들어 사고의 재유입 경로가 됨
                                 _lh_deferred += 1
                                 continue
+                            # 상품 수 > DlvUnitSn 수 면 인덱스 매핑이 성립하지 않는다.
+                            # 남는 상품이 인덱스 키(_lh_prod_idx = _i)로 저장되면
+                            # 취소·송장전송 불가 행이 되므로 주문 전체를 보류한다.
+                            if len(_dlvsn_list) < sum(
+                                1 for _pd in _prod_info_raw if isinstance(_pd, dict)
+                            ):
+                                _lh_deferred += 1
+                                continue
                             for _i, _prod in enumerate(_prod_info_raw):
                                 _flat = dict(ro)
                                 _flat["ProdInfo"] = (
@@ -8704,6 +8726,12 @@ async def sync_orders_from_markets(
                     logger.info(
                         f"[주문동기화] {label}: 실순번 미확보 신규주문 {_lh_deferred}건 등록 보류 "
                         f"(다음 사이클에 실순번과 함께 등록)"
+                    )
+                if _lh_axis_mixed:
+                    # 계속 쌓이면 정상 DlvUnitSn 이 상세축 값과 겹쳐 오판되는 것일 수 있다
+                    logger.info(
+                        f"[주문동기화] {label}: 상세축 혼입 감지 {len(_lh_axis_mixed)}건 보류 "
+                        f"— {sorted(_lh_axis_mixed)[:5]}"
                     )
 
                 # deliver_list 처리: 캐시 재사용 (API 이중 호출 없음).
