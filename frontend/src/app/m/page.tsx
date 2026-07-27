@@ -44,12 +44,35 @@ const amountOf = (o: SambaOrder): number =>
 const hasOrderNo = (o: SambaOrder): boolean =>
   !!(o.sourcing_order_number && o.sourcing_order_number.trim())
 
-// 미발송 판정: 송장 없음 + 취소 아님
-const isUnshipped = (o: SambaOrder): boolean => {
+// 발송/미발송/취소 판정 — 백엔드 기준(order/model.py)과 일치
+// 발송키워드(shipping_status 한글 원본) + 취소/반품/교환 제외 상태
+const SHIPPED_KEYWORDS = ['배송중', '배송완료', '구매확정', '국내배송중', '송장전송완료']
+const EXCLUDED_STATUSES = [
+  'cancel_requested', 'cancelling', 'cancelled',
+  'return_requested', 'returning', 'returned', 'return_completed',
+  'exchange_requested', 'exchanging', 'exchanged', 'exchange_pending', 'exchange_done',
+  'ship_failed', 'undeliverable',
+]
+
+// 취소/반품/교환 등 집계 제외 상태
+const isCancelled = (o: SambaOrder): boolean => {
   const st = (o.status || '').toLowerCase()
-  const cancelled = /취소|cancel|refund|반품/.test(st)
-  return !o.tracking_number && !cancelled
+  if (EXCLUDED_STATUSES.includes(st)) return true
+  const ss = o.shipping_status || ''
+  return /취소|반품|교환/.test(ss)
 }
+
+// 발송됨: 송장 있음 또는 배송키워드 + 취소류 아님
+const isShipped = (o: SambaOrder): boolean => {
+  if (isCancelled(o)) return false
+  const hasTrk = !!(o.tracking_number && o.tracking_number.trim())
+  const ss = o.shipping_status || ''
+  const kw = SHIPPED_KEYWORDS.some((k) => ss.includes(k))
+  return hasTrk || kw
+}
+
+// 미발송: 취소류도 발송도 아님 (아직 배송 전)
+const isUnshipped = (o: SambaOrder): boolean => !isCancelled(o) && !isShipped(o)
 
 type RangeKey = 'today' | 'yesterday' | '7d'
 // 각 기간의 시작/끝 날짜 오프셋 (KST 기준, 0=오늘, -1=어제)
@@ -300,7 +323,7 @@ export default function SambaMobileOrdersPage() {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <span style={{ fontSize: 16, fontWeight: 700 }}>삼바 주문</span>
+          <img src="/logo.png" alt="삼바" style={{ height: 26, width: 'auto' }} />
           <button
             onClick={handleLogout}
             style={{
@@ -469,7 +492,12 @@ export default function SambaMobileOrdersPage() {
       {/* 카드 목록 */}
       <div style={{ padding: '0 0.85rem 2rem' }}>
         {shown.map((o) => {
-          const unship = isUnshipped(o)
+          // 뱃지 3종: 취소/반품 · 발송 · 미발송
+          const badge = isCancelled(o)
+            ? { text: '취소/반품', bg: c.surfaceAlt, fg: c.danger }
+            : isShipped(o)
+              ? { text: '발송', bg: c.surfaceAlt, fg: c.success }
+              : { text: '미발송', bg: c.accentBg, fg: c.warn }
           return (
             <div
               key={o.id}
@@ -489,25 +517,63 @@ export default function SambaMobileOrdersPage() {
                     fontWeight: 700,
                     padding: '0.15rem 0.5rem',
                     borderRadius: 999,
-                    background: unship ? c.accentBg : c.surfaceAlt,
-                    color: unship ? c.warn : c.success,
+                    background: badge.bg,
+                    color: badge.fg,
                   }}
                 >
-                  {unship ? '미발송' : '발송'}
+                  {badge.text}
                 </span>
               </div>
 
-              <div style={{ fontSize: 12, color: c.link, fontWeight: 600, marginBottom: 2 }}>
-                {marketOf(o)}
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 2 }}>
-                {o.product_name || '(상품명 없음)'}
-              </div>
-              {o.product_option && (
-                <div style={{ fontSize: 12, color: c.textSub, marginBottom: 4 }}>
-                  옵션: {o.product_option}
+              {/* 썸네일 + 상품정보 */}
+              <div style={{ display: 'flex', gap: 10 }}>
+                {o.product_image ? (
+                  <img
+                    src={o.product_image}
+                    alt=""
+                    loading="lazy"
+                    style={{
+                      width: 60,
+                      height: 60,
+                      objectFit: 'cover',
+                      borderRadius: 8,
+                      border: `1px solid ${c.border}`,
+                      flexShrink: 0,
+                      background: c.surfaceAlt,
+                    }}
+                    onError={(e) => {
+                      ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                    }}
+                  />
+                ) : null}
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 12, color: c.link, fontWeight: 600, marginBottom: 2 }}>
+                    {marketOf(o)}
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.35, marginBottom: 2 }}>
+                    {o.product_name || '(상품명 없음)'}
+                  </div>
+                  {o.product_option && (
+                    <div style={{ fontSize: 12, color: c.textSub }}>옵션: {o.product_option}</div>
+                  )}
+                  {o.source_site && (
+                    <div style={{ fontSize: 12, marginTop: 2 }}>
+                      {o.source_url ? (
+                        <a
+                          href={o.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ color: c.link, textDecoration: 'underline' }}
+                        >
+                          소싱처: {o.source_site} ↗
+                        </a>
+                      ) : (
+                        <span style={{ color: c.textSub }}>소싱처: {o.source_site}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               <div
                 style={{
