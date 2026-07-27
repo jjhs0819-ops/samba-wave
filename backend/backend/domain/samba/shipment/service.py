@@ -2067,6 +2067,34 @@ class SambaShipmentService:
                 # GS샵 등 부분수정 플러그인용 — 요청된 필드(재고/가격)만 전송하도록 전달
                 acct_product["_update_items"] = update_items
 
+                # SSG 신규등록 전 동일상품명 선점 검사 (중복수집 충돌 사전차단).
+                #
+                # ★2026-07-27: SSG 는 같은 상품명이 이미 등록돼 있으면 "동일한 상품이 이미
+                # 존재"로 신규등록을 거부한다. 롯데온 수집이 같은 소싱처 상품을 회차마다
+                # 새 수집상품으로 만들어(유니크 제약 없음 + 서브키워드 모드에서 중복필터
+                # 비활성) 동일 상품명 형제가 최대 11개까지 생겼고, 그 결과 첫 건만 등록되고
+                # 나머지는 매 전송마다 거부당했다(허수 등록기록 13,609건의 81%).
+                # 거부가 뻔한 전송은 시도 자체를 하지 않는다 — SSG API 부하·잡 시간 낭비 방지.
+                if market_type == "ssg" and not real_market_no(
+                    (product_row.market_product_nos or {}).get(account_id)
+                    if isinstance(product_row.market_product_nos, dict)
+                    else None
+                ):
+                    _dup_owner = await self._find_ssg_name_owner(
+                        product_id, product_row.name or "", account_id
+                    )
+                    if _dup_owner:
+                        res["status"] = "skipped"
+                        res["error"] = (
+                            f"동일 상품명이 이미 등록됨(중복 수집분 {_dup_owner} 선점) — "
+                            "중복 상품 정리 필요"
+                        )
+                        logger.info(
+                            f"[SSG] 동일상품명 선점 → 전송 스킵: product={product_id} "
+                            f"owner={_dup_owner}"
+                        )
+                        return res
+
                 # SSG 표준카테고리(stdCtgId) 주입 — ssg_std 매핑값을 _std_category_id로 전달
                 if market_type == "ssg":
                     _std_cat = mapped_categories.get("ssg_std", "")
@@ -3494,6 +3522,51 @@ class SambaShipmentService:
         )
 
     # ==================== 카테고리 매핑 자동 조회 ====================
+
+    async def _find_ssg_name_owner(
+        self, product_id: str, name: str, account_id: str
+    ) -> str:
+        """이 SSG 계정에 이미 등록된 '동일 소싱처 상품' 형제의 id (없으면 "").
+
+        SSG 는 동일 상품명 재등록을 "동일한 상품이 이미 존재"로 거부한다. 그런데 이름만
+        같아도 카테고리가 다르면 전송 상품명(itemNm)이 달라져 SSG가 받아주는 경우가 있어
+        (실측: 정상 등록분 10건 중 4건이 동일 이름 형제 보유), 이름 기준 차단은 등록 가능한
+        상품까지 막는다. 그래서 **같은 소싱처의 같은 상품코드(site_product_id)** = 논란 없는
+        중복수집분만 차단한다(롯데온 충돌의 79%). 이름만 같은 케이스는 전송을 시도하고,
+        거부되면 플러그인이 실패로 정직하게 기록한다(_duplicate_name_conflict).
+        """
+        from sqlalchemy import text
+
+        name = (name or "").strip()
+        if not name:
+            return ""
+        def _real(alias: str = "") -> str:
+            """해당 계정에 '실제 itemId'가 기록된 상품인지 (마커/빈값 제외)."""
+            col = f"{alias}.market_product_nos" if alias else "market_product_nos"
+            return (
+                f"{col} ->> cast(:acc as text) IS NOT NULL "
+                f"AND {col} ->> cast(:acc as text) "
+                "NOT IN ('__exists__', '__claiming__', '')"
+            )
+        try:
+            row = (
+                await self.session.execute(
+                    text(
+                        "SELECT s.id FROM samba_collected_product s "
+                        "JOIN samba_collected_product p ON p.id = cast(:pid as text) "
+                        " AND s.source_site = p.source_site "
+                        " AND s.site_product_id = p.site_product_id "
+                        "WHERE s.id <> cast(:pid as text) AND s.site_product_id <> '' "
+                        f"AND {_real('s')} LIMIT 1"
+                    ),
+                    {"pid": product_id, "acc": account_id},
+                )
+            ).first()
+            return str(row[0]) if row else ""
+        except Exception as e:
+            # 조회 실패 시엔 게이트를 열어둔다(전송 시도) — 과차단보다 안전
+            logger.warning(f"[SSG] 동일상품명 선점 조회 실패(무시): {e}")
+            return ""
 
     async def _resolve_category_mappings(
         self,
