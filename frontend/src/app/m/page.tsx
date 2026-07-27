@@ -40,6 +40,10 @@ const marketOf = (o: SambaOrder): string =>
 const amountOf = (o: SambaOrder): number =>
   o.total_payment_amount != null ? o.total_payment_amount : o.sale_price
 
+// 발주번호(소싱처 주문번호) 입력 여부
+const hasOrderNo = (o: SambaOrder): boolean =>
+  !!(o.sourcing_order_number && o.sourcing_order_number.trim())
+
 // 미발송 판정: 송장 없음 + 취소 아님
 const isUnshipped = (o: SambaOrder): boolean => {
   const st = (o.status || '').toLowerCase()
@@ -76,6 +80,7 @@ export default function SambaMobileOrdersPage() {
   const [tab, setTab] = useState<'all' | 'unshipped'>('all')
   const [range, setRange] = useState<RangeKey>('7d')
   const [market, setMarket] = useState<string>('') // '' = 전체 판매처
+  const [orderInput, setOrderInput] = useState<'all' | 'has' | 'none'>('all') // 발주번호 입력 여부
 
   const loadOrders = useCallback(async (r: RangeKey) => {
     setLoading(true)
@@ -171,6 +176,9 @@ export default function SambaMobileOrdersPage() {
   const shown = orders
     .filter((o) => (tab === 'unshipped' ? isUnshipped(o) : true))
     .filter((o) => (activeMarket ? marketOf(o) === activeMarket : true))
+    .filter((o) =>
+      orderInput === 'all' ? true : orderInput === 'has' ? hasOrderNo(o) : !hasOrderNo(o),
+    )
   const unshippedCount = orders.filter(isUnshipped).length
 
   // ── 로딩 게이트 ──
@@ -400,6 +408,40 @@ export default function SambaMobileOrdersPage() {
             </option>
           ))}
         </select>
+
+        {/* 발주번호 입력 필터 */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          {([
+            ['all', '전체'],
+            ['has', '입력'],
+            ['none', '미입력'],
+          ] as [typeof orderInput, string][]).map(([key, label]) => {
+            const cnt =
+              key === 'all'
+                ? orders.length
+                : key === 'has'
+                  ? orders.filter(hasOrderNo).length
+                  : orders.filter((o) => !hasOrderNo(o)).length
+            return (
+              <button
+                key={key}
+                onClick={() => setOrderInput(key)}
+                style={{
+                  flex: 1,
+                  fontSize: 13,
+                  padding: '0.4rem 0',
+                  background: orderInput === key ? c.accentBg : c.btnBg,
+                  color: c.btnText,
+                  border: `1px solid ${c.btnBorder}`,
+                  borderRadius: 8,
+                  fontWeight: orderInput === key ? 700 : 400,
+                }}
+              >
+                발주 {label} {fmtNum(cnt)}
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       {/* 요약 */}
