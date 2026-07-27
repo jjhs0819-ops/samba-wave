@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApi } from '@/lib/samba/api/operations'
-import { orderApi } from '@/lib/samba/api/commerce'
+import { orderApi, collectorApi } from '@/lib/samba/api/commerce'
 import type { SambaOrder } from '@/lib/samba/api/commerce'
 import { useTheme } from '@/lib/samba/useTheme'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
@@ -104,6 +104,11 @@ export default function SambaMobileOrdersPage() {
   const [market, setMarket] = useState<string>('') // '' = 전체 판매처
   const [orderInput, setOrderInput] = useState<'all' | 'has' | 'none'>('all') // 발주번호 입력 여부
 
+  // 수집상품 폴백 맵 — 주문 product_image/source가 비면 collected_product에서 보충(KREAM/POIZON 등)
+  const [cpImages, setCpImages] = useState<Record<string, string>>({})
+  const [cpSourceSite, setCpSourceSite] = useState<Record<string, string>>({})
+  const [cpSourceUrl, setCpSourceUrl] = useState<Record<string, string>>({})
+
   const loadOrders = useCallback(async (r: RangeKey) => {
     setLoading(true)
     setLoadError('')
@@ -144,6 +149,50 @@ export default function SambaMobileOrdersPage() {
   useEffect(() => {
     if (loggedIn) loadOrders(range)
   }, [loggedIn, range, loadOrders])
+
+  // 주문의 collected_product_id 로 이미지/소싱처 폴백 조회 (PC 주문화면과 동일)
+  const cpIdsKey = useMemo(() => {
+    const ids = [...new Set(orders.map((o) => o.collected_product_id).filter((id): id is string => !!id))]
+    ids.sort()
+    return ids.join(',')
+  }, [orders])
+
+  useEffect(() => {
+    const ids = cpIdsKey ? cpIdsKey.split(',') : []
+    if (ids.length === 0) {
+      setCpImages({})
+      setCpSourceSite({})
+      setCpSourceUrl({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const rows = await collectorApi.getProductsByIds(ids)
+        if (cancelled) return
+        const imgs: Record<string, string> = {}
+        const sites: Record<string, string> = {}
+        const urls: Record<string, string> = {}
+        for (const row of rows) {
+          if (Array.isArray(row.images) && row.images[0]) imgs[row.id] = String(row.images[0])
+          if (row.source_site) sites[row.id] = row.source_site
+          if (row.source_url) urls[row.id] = row.source_url
+        }
+        setCpImages(imgs)
+        setCpSourceSite(sites)
+        setCpSourceUrl(urls)
+      } catch {
+        if (!cancelled) {
+          setCpImages({})
+          setCpSourceSite({})
+          setCpSourceUrl({})
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [cpIdsKey])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -498,6 +547,11 @@ export default function SambaMobileOrdersPage() {
             : isShipped(o)
               ? { text: '발송', bg: c.surfaceAlt, fg: c.success }
               : { text: '미발송', bg: c.accentBg, fg: c.warn }
+          const cpid = o.collected_product_id || ''
+          // 주문 값 우선, 없으면 collected_product 폴백 (KREAM/POIZON 등 이미지 누락 대응)
+          const imgSrc = o.product_image || (cpid ? cpImages[cpid] : '') || ''
+          const srcSite = o.source_site || (cpid ? cpSourceSite[cpid] : '') || ''
+          const srcUrl = o.source_url || (cpid ? cpSourceUrl[cpid] : '') || ''
           return (
             <div
               key={o.id}
@@ -527,9 +581,9 @@ export default function SambaMobileOrdersPage() {
 
               {/* 썸네일 + 상품정보 */}
               <div style={{ display: 'flex', gap: 10 }}>
-                {o.product_image ? (
+                {imgSrc ? (
                   <img
-                    src={o.product_image}
+                    src={imgSrc}
                     alt=""
                     loading="lazy"
                     style={{
@@ -556,19 +610,19 @@ export default function SambaMobileOrdersPage() {
                   {o.product_option && (
                     <div style={{ fontSize: 12, color: c.textSub }}>옵션: {o.product_option}</div>
                   )}
-                  {o.source_site && (
+                  {srcSite && (
                     <div style={{ fontSize: 12, marginTop: 2 }}>
-                      {o.source_url ? (
+                      {srcUrl ? (
                         <a
-                          href={o.source_url}
+                          href={srcUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           style={{ color: c.link, textDecoration: 'underline' }}
                         >
-                          소싱처: {o.source_site} ↗
+                          소싱처: {srcSite} ↗
                         </a>
                       ) : (
-                        <span style={{ color: c.textSub }}>소싱처: {o.source_site}</span>
+                        <span style={{ color: c.textSub }}>소싱처: {srcSite}</span>
                       )}
                     </div>
                   )}
