@@ -885,17 +885,47 @@ class SSGPlugin(MarketPlugin):
                         or res.get("resultMessage", "")
                         or f"resultCode={code}"
                     )
-                    # 동일 상품 이미 존재 — 첫 전송 성공 후 transmitting stuck으로 itemId 미저장된 경우.
-                    # registered_accounts 복구 + "__exists__" 마커로 중복 재등록 차단.
+                    # "동일한 상품이 이미 존재" 응답 처리.
+                    #
+                    # ★2026-07-27 근본수정: 과거엔 이 응답을 무조건 성공(_already_exists)으로
+                    # 리턴해 호출자가 "__exists__" 마커 + registered_accounts 를 기록했다.
+                    # 그런데 전수조사 결과 이 응답의 81%는 "내 상품이 이미 등록됨"이 아니라
+                    # **같은 상품명의 다른 수집상품(중복수집분)이 이미 등록돼 있어 SSG가 막은 것**
+                    # 이었다(13,609건 중 11,042건). 성공으로 기록하면 삼바 화면엔 "등록됨"인데
+                    # 실제 마켓엔 없는 허수가 되고, 재전송 대상에서도 빠져 영구 방치된다.
+                    # → splVenItemId(내 지문)로 실제 내 등록분이 있는지 확인해 갈라 처리한다.
                     if "동일한 상품이 이미 존재" in msg and not existing_no:
+                        _spl = str(product.get("id") or "")
+                        _mine = ""
+                        if _spl:
+                            try:
+                                _mine = await client.find_live_item_id_by_spl_ven(_spl)
+                            except Exception as _e:
+                                logger.warning(f"[SSG] 동일상품 응답 후 지문조회 실패: {_e}")
+                        if _mine:
+                            # 진짜 내 상품이 이미 등록돼 있던 케이스 — itemId 를 확보했으므로
+                            # "__exists__" 가 아닌 실제 번호를 기록시킨다.
+                            logger.warning(
+                                f"[SSG] 동일상품 존재 — 내 등록분 확인(itemId={_mine}) → 번호 기록: "
+                                f"product={_spl}"
+                            )
+                            return {
+                                "success": True,
+                                "message": f"SSG 이미 등록된 상품 (itemId={_mine})",
+                                "product_no": _mine,
+                                "data": result_data,
+                            }
                         logger.warning(
-                            f"[SSG] 동일상품 존재 오류 → 이미 등록된 것으로 처리 (itemId 수동 확인 필요): "
-                            f"product={product.get('id')}"
+                            "[SSG] 동일상품 존재 — 내 지문 등록분 없음 = 동일 상품명의 다른 "
+                            f"수집상품이 선점(중복수집 충돌) → 미등록 실패로 기록: product={_spl}"
                         )
                         return {
-                            "success": True,
-                            "message": "SSG 이미 등록된 상품 (itemId 미확인 — 셀러센터에서 확인 필요)",
-                            "_already_exists": True,
+                            "success": False,
+                            "message": (
+                                "SSG 등록 실패: 동일 상품명이 이미 등록됨(중복 수집분 충돌) — "
+                                "중복 상품 정리 필요"
+                            ),
+                            "_duplicate_name_conflict": True,
                             "data": result_data,
                         }
                     return {
