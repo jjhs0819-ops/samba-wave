@@ -74,7 +74,6 @@ export default function SambaMobileOrdersPage() {
   // 주문 데이터
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [totalCount, setTotalCount] = useState(0)
-  const [totalSale, setTotalSale] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [tab, setTab] = useState<'all' | 'unshipped'>('all')
@@ -97,7 +96,6 @@ export default function SambaMobileOrdersPage() {
       })
       setOrders(res.items || [])
       setTotalCount(res.total_count || 0)
-      setTotalSale(res.total_sale || 0)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '주문을 불러오지 못했습니다')
     } finally {
@@ -180,6 +178,8 @@ export default function SambaMobileOrdersPage() {
       orderInput === 'all' ? true : orderInput === 'has' ? hasOrderNo(o) : !hasOrderNo(o),
     )
   const unshippedCount = orders.filter(isUnshipped).length
+  // 표시(필터 적용)된 주문 기준 매출 합계
+  const shownSale = shown.reduce((s, o) => s + (amountOf(o) || 0), 0)
 
   // ── 로딩 게이트 ──
   if (!ready) {
@@ -446,7 +446,7 @@ export default function SambaMobileOrdersPage() {
 
       {/* 요약 */}
       <div style={{ padding: '0.6rem 0.85rem', fontSize: 12, color: c.textSub }}>
-        표시 {fmtNum(shown.length)}건 · 기간 총 {fmtNum(totalCount)}건 · 매출 {fmtNum(Math.round(totalSale))}원
+        표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원 · 기간 총 {fmtNum(totalCount)}건
       </div>
 
       {/* 상태 메시지 */}
