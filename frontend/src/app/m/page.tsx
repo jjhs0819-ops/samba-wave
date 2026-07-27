@@ -77,7 +77,7 @@ export default function SambaMobileOrdersPage() {
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [tab, setTab] = useState<'all' | 'unshipped'>('all')
-  const [range, setRange] = useState<RangeKey>('7d')
+  const [range, setRange] = useState<RangeKey>('today')
   const [market, setMarket] = useState<string>('') // '' = 전체 판매처
   const [orderInput, setOrderInput] = useState<'all' | 'has' | 'none'>('all') // 발주번호 입력 여부
 
