@@ -550,8 +550,8 @@ export default function SambaMobileOrdersPage() {
           const cpid = o.collected_product_id || ''
           // 주문 값 우선, 없으면 collected_product 폴백 (KREAM/POIZON 등 이미지 누락 대응)
           const imgSrc = o.product_image || (cpid ? cpImages[cpid] : '') || ''
-          const srcSite = o.source_site || (cpid ? cpSourceSite[cpid] : '') || ''
           const srcUrl = o.source_url || (cpid ? cpSourceUrl[cpid] : '') || ''
+          const srcSite = o.source_site || (cpid ? cpSourceSite[cpid] : '') || ''
           return (
             <div
               key={o.id}
@@ -586,6 +586,10 @@ export default function SambaMobileOrdersPage() {
                     src={imgSrc}
                     alt=""
                     loading="lazy"
+                    referrerPolicy="no-referrer"
+                    onClick={() => {
+                      if (srcUrl) window.open(srcUrl, '_blank', 'noopener,noreferrer')
+                    }}
                     style={{
                       width: 60,
                       height: 60,
@@ -594,6 +598,7 @@ export default function SambaMobileOrdersPage() {
                       border: `1px solid ${c.border}`,
                       flexShrink: 0,
                       background: c.surfaceAlt,
+                      cursor: srcUrl ? 'pointer' : 'default',
                     }}
                     onError={(e) => {
                       ;(e.currentTarget as HTMLImageElement).style.display = 'none'
@@ -619,10 +624,10 @@ export default function SambaMobileOrdersPage() {
                           rel="noopener noreferrer"
                           style={{ color: c.link, textDecoration: 'underline' }}
                         >
-                          소싱처: {srcSite} ↗
+                          {srcSite} ↗
                         </a>
                       ) : (
-                        <span style={{ color: c.textSub }}>소싱처: {srcSite}</span>
+                        <span style={{ color: c.textSub }}>{srcSite}</span>
                       )}
                     </div>
                   )}
