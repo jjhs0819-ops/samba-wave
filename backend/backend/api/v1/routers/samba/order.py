@@ -8476,6 +8476,9 @@ async def sync_orders_from_markets(
                 # 유령 정리 보존용 — 응답에 등장한 모든 라인 식별자.
                 # 어떤 식별자 공간의 키로 저장된 행이든 응답에 흔적이 있으면 지우지 않는다.
                 _lh_preserve_map: dict[str, set[str]] = {}
+                # 이축 교차 매칭용 (#688) — 클레임(취소/반품) 행의 primary 키(주문상세 축)
+                # → 반대 축(배송단위 축) 후보 키. DB 매칭 실패 시 2차 역조회에 사용.
+                _lh_alt_key_map: dict[str, set[str]] = {}
 
                 def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
                     _dsn = str(_pitem.get("DlvUnitSn") or "")
@@ -8491,6 +8494,34 @@ async def sync_orders_from_markets(
                         _v = str(_pitem.get(_k) or "")
                         if _v:
                             _lh_preserve_map.setdefault(_ono, set()).add(_v)
+
+                def _lh_norm_prods(_ro: dict) -> list[dict]:
+                    """_parse_lottehome_order_multi 와 동일한 ProdInfo 정규화."""
+                    _raw = _ro.get("ProdInfo", [])
+                    if isinstance(_raw, dict):
+                        _raw = [_raw]
+                    if not _raw:
+                        _raw = [{}]
+                    return [_p if isinstance(_p, dict) else {} for _p in _raw]
+
+                def _lh_reg_alt_keys(_ono: str, _pitem: dict, _primary: str) -> None:
+                    """클레임 행의 반대 축(배송단위 축) 후보 키 등록 — issue #688.
+
+                    취소/반품 경로는 prefer_org_dtl_sn=True 로 주문상세 축(OrgOrdDtlSn)
+                    키를 합성하는데, 원본 행은 배송단위 축(DlvUnitSn) 키로 저장돼 있어
+                    DB 매칭에 실패한다 → 유령 INSERT + 원본 행에 취소 미반영.
+                    OrgDlvUnitSn(원 배송단위 번호)만 alt 후보로 쓴다. 클레임 응답의
+                    DlvUnitSn 은 재발급 번호라 오매칭 위험 → 제외.
+                    """
+                    if not _ono or not _primary:
+                        return
+                    _alt_sn = str(_pitem.get("OrgDlvUnitSn") or "").strip()
+                    if not _alt_sn or _alt_sn.lower() in ("null", "none", "0"):
+                        return
+                    _alt_key = f"{_ono}:{_alt_sn}"
+                    if _alt_key == _primary:
+                        return
+                    _lh_alt_key_map.setdefault(_primary, set()).add(_alt_key)
 
                 # 4개 상태 조회가 모두 성공해야 유령 정리를 실행한다.
                 # 하나라도 실패(부분응답)하면 실배송라인이 집합에서 빠져
@@ -8741,13 +8772,24 @@ async def sync_orders_from_markets(
                         # #528 — 취소조회 OrdDtlSn 은 재발급 클레임 라인번호라
                         # 원주문(OrgOrdDtlSn)과 어긋남 → prefer_org_dtl_sn=True 로
                         # 원주문 매칭(반품 #393 과 동일). 유령 취소행 방지.
-                        for parsed in _parse_lottehome_order_multi(
-                            ro,
-                            account["id"],
-                            label,
-                            "cancelled",
-                            prefer_org_dtl_sn=True,
+                        _cn_ord_no = str(ro.get("OrdNo", "") or "")
+                        _cn_prods = _lh_norm_prods(ro)
+                        for _ci, parsed in enumerate(
+                            _parse_lottehome_order_multi(
+                                ro,
+                                account["id"],
+                                label,
+                                "cancelled",
+                                prefer_org_dtl_sn=True,
+                            )
                         ):
+                            # #688 — 원본 행이 배송단위 축 키로 저장된 경우 대비
+                            if _ci < len(_cn_prods):
+                                _lh_reg_alt_keys(
+                                    _cn_ord_no,
+                                    _cn_prods[_ci],
+                                    str(parsed.get("order_number", "")),
+                                )
                             _lh_override(parsed)
                 except Exception as _e:
                     logger.warning(f"[주문동기화] {label}: 취소주문 실패: {_e}")
@@ -8798,6 +8840,12 @@ async def sync_orders_from_markets(
                                     "반품요청"
                                     if ret_status == "return_requested"
                                     else "회수확정"
+                                )
+                                # #688 — 원본 행이 배송단위 축 키로 저장된 경우 대비
+                                _lh_reg_alt_keys(
+                                    _ret_ord_no,
+                                    _ret_flat["ProdInfo"],
+                                    str(parsed.get("order_number", "")),
                                 )
                                 _lh_override(parsed)
                     except Exception as _e:
@@ -9509,6 +9557,56 @@ async def sync_orders_from_markets(
                 for _lhr in _lh_q.fetchall():
                     if _lhr[1] and _lhr[1] not in _existing_id_map:
                         _existing_id_map[_lhr[1]] = _lhr[0]
+
+            # 롯데홈쇼핑 이축 교차 매칭 (#688) — 2차 역조회.
+            # 취소/반품 행은 주문상세 축(OrgOrdDtlSn) 키, 원본 행은 배송단위 축
+            # (DlvUnitSn) 키라 위 조회에서 못 찾고 유령 INSERT 되며 원본 행에는
+            # 취소가 반영되지 않았다. 클레임 응답의 OrgDlvUnitSn(원 배송단위 번호)로
+            # 원본 행을 찾아 UPDATE 경로로 되돌린다.
+            _lh_alt_claims: dict[str, set[str]] = {}
+            if market_type == "lottehome" and _lh_alt_key_map:
+                for _pk, _aks in _lh_alt_key_map.items():
+                    if _pk in _existing_id_map:
+                        continue
+                    for _ak in _aks:
+                        _lh_alt_claims.setdefault(_ak, set()).add(_pk)
+            # 같은 alt 를 primary 2개가 주장하면(합배송 배송단위 공유) 매칭 포기
+            _lh_alt_uniq = [_a for _a, _ps in _lh_alt_claims.items() if len(_ps) == 1]
+            if _lh_alt_uniq:
+                _ax_ph = ", ".join(f":ax_{i}" for i in range(len(_lh_alt_uniq)))
+                _ax_prm: dict = {f"ax_{i}": v for i, v in enumerate(_lh_alt_uniq)}
+                _ax_prm["tid"] = account["tenant_id"] or tenant_id
+                _ax_prm["cid"] = account["id"]
+                _ax_q = await session.execute(
+                    _sa_text(
+                        f"SELECT id, order_number FROM samba_order "
+                        f"WHERE source = 'lottehome' "
+                        f"AND order_number IN ({_ax_ph}) "
+                        f"AND tenant_id IS NOT DISTINCT FROM :tid "
+                        f"AND channel_id IS NOT DISTINCT FROM :cid "
+                        f"ORDER BY created_at DESC"
+                    ),
+                    _ax_prm,
+                )
+                _ax_found: dict[str, int] = {}
+                for _axr in _ax_q.fetchall():
+                    if _axr[1] and _axr[1] not in _ax_found:
+                        _ax_found[_axr[1]] = _axr[0]
+                _ax_matched = 0
+                for _ak in _lh_alt_uniq:
+                    _ax_id = _ax_found.get(_ak)
+                    if not _ax_id:
+                        continue
+                    _pk = next(iter(_lh_alt_claims[_ak]))
+                    if _pk in _existing_id_map:
+                        continue
+                    _existing_id_map[_pk] = _ax_id
+                    _ax_matched += 1
+                if _ax_matched:
+                    logger.info(
+                        f"[주문동기화] {label}: 롯데홈 이축 교차 매칭 "
+                        f"{_ax_matched}건 (유령 INSERT 방지·원본 행에 클레임 반영)"
+                    )
 
             # 중복 확인 후 저장 (기존 주문은 금액/상태 업데이트)
             synced = 0

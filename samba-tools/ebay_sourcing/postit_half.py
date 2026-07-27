@@ -125,41 +125,19 @@ def _paste_note(canvas, note, nx, ny, note_w, note_h):
     canvas.paste(note, (nx, ny), note)
 
 
-def compose(src: Image.Image, paper_src: Image.Image) -> Image.Image:
-    """① 정사각 크롭 먼저(번장 사진 대부분 정사각, 길면 잘라냄) → ② 그 안에 포스트잇을
-    카드폭 0.5로 얹는다. 배경색 패딩/채우기 절대 없음. 포스트잇은 항상 크롭 안에 보인다."""
+def compose(src: Image.Image, paper_src=None) -> Image.Image:
+    """대표사진 = 깨끗한 카드만. **포스트잇 합성 안 함**(컷아웃 사고 종결, 사용자 결정
+    2026-07-27). 카드 중심으로 정사각 크롭 → 카드 얼굴/상단 안 잘림. 배경색 패딩 없음.
+    paper_src 는 호환용 인자(사용 안 함)."""
     src = src.convert("RGB")
     w, h = src.size
     x0, y0, x1, y1 = detect_card_bbox(src)
-    card_w, card_h = x1 - x0, y1 - y0
-    cx = (x0 + x1) // 2
-
-    note_w = max(40, int(card_w * NOTE_RATIO))
-    note_h = int(note_w * paper_src.height / paper_src.width)
-    note = paper_src.resize((note_w, note_h), Image.LANCZOS)
-    mg = max(6, min(w, h) // 60)
-    gap = max(8, int(card_h * 0.04))
+    cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
     side = min(w, h)
-
-    # 포스트잇 = 카드 바로 아래. 카드+포스트잇이 정사각에 안 들어가면 카드 하단에 겹쳐 얹음
-    # (손 아래 천에 뜨는 것 방지 — 항상 카드에 붙어있게)
-    note_top = y1 + gap
-    if (note_top + note_h) - y0 > side - mg:
-        note_top = y1 - note_h - gap  # 카드 하단 위에 얹기
-        note_top = max(note_top, y0 + card_h // 3)
-    note_bottom = note_top + note_h
-    nx = min(max(cx - note_w // 2, 0), w - note_w)
-
-    canvas = src.copy()
-    _paste_note(canvas, note, nx, note_top, note_w, note_h)
-
-    # 정사각 크롭 = 카드 상단부터 포스트잇 하단까지 담게(카드 안 자름, 패딩 없음)
-    top = y0 - mg
-    if note_bottom + mg > top + side:      # 포스트잇이 크롭 밖이면 아래로 밀되
-        top = note_bottom + mg - side
-    top = min(max(top, 0), h - side)
+    # 카드가 정사각에 다 들어가면 카드 전체를 담게 중심 정렬(얼굴 잘림 방지)
     left = min(max(cx - side // 2, 0), w - side)
-    return canvas.crop((left, top, left + side, top + side))
+    top = min(max(cy - side // 2, 0), h - side)
+    return src.crop((left, top, left + side, top + side))
 
 
 async def main():

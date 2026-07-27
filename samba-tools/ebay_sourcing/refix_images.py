@@ -123,15 +123,9 @@ async def main():
                     except Exception as e:
                         print(f"  imgX {nm[:30]} ({str(e)[:30]})")
                         continue
-                    import asyncio as _aio
                     buf = io.BytesIO()
                     out.save(buf, "JPEG", quality=94)
-                    final = await gemini_refine(gkey, gmodel, buf.getvalue())
-                    await _aio.sleep(1.5)  # rate-limit 회피
-                    if final is None:  # Gemini 블렌드 실패 → 컷아웃 게시 금지, 스킵
-                        skip_white += 1
-                        print(f"  SKIP(블렌드실패, 구이미지유지) {nm[:38]}")
-                        continue
+                    final = buf.getvalue()  # 포스트잇 합성 없음 — 깨끗한 카드만(Gemini 미사용)
                     if dry:
                         if fixed < 4:
                             open(f"/tmp/refix_{fixed}.jpg", "wb").write(final)
