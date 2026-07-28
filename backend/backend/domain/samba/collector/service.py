@@ -319,6 +319,17 @@ class SambaCollectorService:
         await self._ensure_category_mapping_row(
             _src, data.get("category", ""), data.get("tenant_id")
         )
+        # ★2026-07-28 근본수정 — 중복 INSERT 사전 차단.
+        # 아래 upsert 는 (COALESCE(tenant),source_site,site_product_id) 유니크 인덱스가
+        # 걸려 있어야 IntegrityError 로 진입한다. 그런데 운영 DB 에 그 인덱스가 없어
+        # (마이그레이션 zzzzzzzzzzzzzzz_dedupe_collected_product_unique 미적용) 예외가
+        # 나지 않았고, 롯데온 수집이 회차마다 같은 상품을 새 row 로 INSERT 해
+        # 사본 93,884건(전체의 96%)이 쌓였다. 제약 유무와 무관하게 막도록
+        # **명시적 사전조회**로 기존 row 를 찾아 update 경로로 보낸다.
+        if _src and _spid:
+            _pre = await self._find_existing_product(_src, _spid, data.get("tenant_id"))
+            if _pre is not None:
+                return await self._apply_update(_pre, data)
         try:
             return await self.product_repo.create_async(**data)
         except IntegrityError:
@@ -326,32 +337,52 @@ class SambaCollectorService:
             await self.product_repo.session.rollback()
             # tenant_id NULL-safe 필터 — 멀티테넌시에서 다른 테넌트 row를
             # 잘못 가져오는 것을 방지 (2026-05-10 중복 수집 재발방지)
-            _tid = data.get("tenant_id")
-            existing = (
-                (
-                    await self.product_repo.session.execute(
-                        select(SambaCollectedProduct).where(
-                            self.product_repo._tenant_filter(_tid),
-                            SambaCollectedProduct.source_site
-                            == data.get("source_site"),
-                            SambaCollectedProduct.site_product_id
-                            == data.get("site_product_id"),
-                        )
-                    )
-                )
-                .scalars()
-                .first()
+            existing = await self._find_existing_product(
+                data.get("source_site", ""),
+                data.get("site_product_id", ""),
+                data.get("tenant_id"),
             )
             if existing:
-                # 시스템 태그(__로 시작) 보존 — AI 이미지 변환/편집 흔적 유실 방지 (#227, #233)
-                prev_tags = list(existing.tags or [])
-                for k, v in data.items():
-                    if k not in ("id", "source_site", "site_product_id", "created_at"):
-                        setattr(existing, k, v)
-                existing.tags = _apply_preserved_system_tags(prev_tags, existing.tags)
-                await self.product_repo.session.flush()
-                return existing
+                return await self._apply_update(existing, data)
             raise
+
+    async def _find_existing_product(
+        self, source_site: str, site_product_id: str, tenant_id: Optional[str]
+    ):
+        """(테넌트, 소싱처, 소싱처 상품코드)로 기존 수집상품 조회.
+
+        tenant_id NULL-safe 필터 — 멀티테넌시에서 다른 테넌트 row 를 잘못 가져오는 것을
+        방지 (2026-05-10 중복 수집 재발방지).
+        """
+        if not source_site or not site_product_id:
+            return None
+        return (
+            (
+                await self.product_repo.session.execute(
+                    select(SambaCollectedProduct).where(
+                        self.product_repo._tenant_filter(tenant_id),
+                        SambaCollectedProduct.source_site == source_site,
+                        SambaCollectedProduct.site_product_id == site_product_id,
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    async def _apply_update(self, existing, data: Dict[str, Any]):
+        """기존 수집상품에 새 수집 데이터를 덮어쓴다(= 재수집 시 갱신).
+
+        id/소싱처/상품코드/생성시각은 보존하고, 시스템 태그(__ 접두)는 유실 방지를 위해
+        병합한다 (#227, #233).
+        """
+        prev_tags = list(existing.tags or [])
+        for k, v in data.items():
+            if k not in ("id", "source_site", "site_product_id", "created_at"):
+                setattr(existing, k, v)
+        existing.tags = _apply_preserved_system_tags(prev_tags, existing.tags)
+        await self.product_repo.session.flush()
+        return existing
 
     async def _fill_source_brand(self, data: Dict[str, Any]) -> None:
         """검색필터의 source_brand_name으로 빈 brand/manufacturer 자동 채움."""
