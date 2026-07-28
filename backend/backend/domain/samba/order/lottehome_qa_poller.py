@@ -27,17 +27,38 @@ async def _run_lottehome_qa_sync() -> tuple[int, int]:
     pending_items: list[tuple[str, str, str]] = []  # (product_id, acc_id, goods_no)
 
     async with get_write_session() as session:
+        # bare 키 우선 조회
         creds_result = await session.exec(
             select(SambaSettings).where(SambaSettings.key == "lottehome_credentials")
         )
         creds_row = creds_result.first()
+        # 멀티테넌트 격리(2026-05-18) 이후 설정은 '{tenant_id}:{key}' 로 저장되므로
+        # bare 키가 없으면 prefixed 키로 폴백한다. 이 폴백이 없어 credentials 를
+        # 못 찾고 조용히 return 0,0 → QA 마커가 영구 pending → 오토튠이 롯데홈
+        # 가격·재고를 전혀 갱신하지 못하던 버그(2026-07-27 발견).
+        # _get_setting() 과 동일한 폴백 규칙이며, 순환 임포트를 피해 직접 구현한다.
+        # (lottehome_credentials 는 ENCRYPTED_KEYS 가 아니므로 복호화 불필요)
         if not creds_row:
+            prefixed = await session.exec(
+                select(SambaSettings)
+                .where(SambaSettings.key.like("%:lottehome_credentials"))
+                .limit(2)
+            )
+            candidates = prefixed.all()
+            if len(candidates) > 1:
+                logger.warning(
+                    "[롯데QA폴러] 테넌트 후보 %d개 — 첫번째 사용", len(candidates)
+                )
+            creds_row = candidates[0] if candidates else None
+        if not creds_row:
+            logger.warning("[롯데QA폴러] lottehome_credentials 설정 없음 — 스킵")
             return 0, 0
         creds = creds_row.value or {}
 
         user_id = creds.get("userId", "")
         password = creds.get("password", "")
         if not user_id or not password:
+            logger.warning("[롯데QA폴러] credentials 에 userId/password 없음 — 스킵")
             return 0, 0
 
         # id + market_product_nos 만 조회 (heavy 컬럼 제외) + limit
