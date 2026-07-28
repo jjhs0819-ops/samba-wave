@@ -8095,7 +8095,17 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: SSG 주문 {len(_ssg_raw_orders)}건 조회"
                     )
                     _ssg_unconfirmed: list[tuple[str, str]] = []
+                    _ssg_exchange_skipped: list[str] = []
                     for _ssg_ro in _ssg_raw_orders:
+                        # 교환출고 배송지시는 신규주문이 아니다 — INSERT 하면 배송지가
+                        # 판매자 반품지로 박히고 원가 0 매출이 원주문과 이중계상되며
+                        # 아래 자동 발주확인까지 걸려 미출고 페널티 리스크가 생긴다.
+                        if _ssg_client.is_exchange_shipment(_ssg_ro):
+                            _ssg_exchange_skipped.append(
+                                f"{_ssg_ro.get('ordNo', '')}"
+                                f"(원주문 {_ssg_ro.get('orordNo', '')})"
+                            )
+                            continue
                         _ord = _ssg_client.parse_order(
                             _ssg_ro, account["id"], label, fee_rate=_ssg_fee_rate
                         )
@@ -8108,6 +8118,13 @@ async def sync_orders_from_markets(
                                     str(_ssg_ro.get("shppSeq", "")),
                                 )
                             )
+
+                    if _ssg_exchange_skipped:
+                        logger.info(
+                            f"[주문동기화] {label}: 교환출고 배송지시 "
+                            f"{len(_ssg_exchange_skipped)}건 신규주문 제외 — "
+                            f"{', '.join(_ssg_exchange_skipped[:10])}"
+                        )
 
                     # 자동 발주확인 (출고대기로 변경)
                     if _ssg_unconfirmed:
