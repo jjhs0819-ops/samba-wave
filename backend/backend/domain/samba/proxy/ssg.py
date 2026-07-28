@@ -2510,6 +2510,46 @@ class SSGClient:
             return None
         return dt.replace(tzinfo=KST).astimezone(timezone.utc)
 
+    @staticmethod
+    def is_exchange_shipment(raw: dict[str, Any]) -> bool:
+        """교환출고 배송지시인지 판별 — 신규주문 INSERT/자동 발주확인에서 제외할 대상.
+
+        SSG 교환건은 원주문(orordNo) 아래에 **별도 ordNo 로 발번된 '교환출고'
+        배송지시**로 발행되어 listShppDirection/listWarehouseOut 응답에 신규주문과
+        섞여 나온다. 이걸 신규주문으로 취급하면
+          ① 배송지/수령인이 판매자(반품지)로 박히고 — SSG 원문이 rcptpeNm=판매자,
+             shpplocAddr=반품지로 내려준다
+          ② 원가 0 으로 매출·이익이 원주문과 이중계상되고
+          ③ 자동 발주확인까지 걸려 배송예정일 미출고 페널티 리스크가 생긴다.
+        (2026-07-28 실측: ordNo 20260716CFDBEF / 20260723E77451)
+
+        반대로 클레임 상태행(ordItemDiv 021/031/041/042)과 교환요청 회수건
+        (shppDivDtlCd=22)은 원주문 상태를 취소/반품/교환요청으로 갱신하는 데
+        필요하므로 걸러내지 않는다.
+        """
+        # shppDivDtlCd 는 배송구분 확정 신호 — 있으면 이것만 보고 판정한다.
+        # 15=교환출고(제외 대상), 22=교환요청 회수 등 나머지는 상태 동기화에 필요.
+        _div_cd = str(raw.get("shppDivDtlCd", "") or "").strip()
+        if _div_cd:
+            return _div_cd == "15"
+
+        # 클레임 상태행은 원주문 상태 갱신용 → 제외 금지
+        if str(raw.get("ordItemDiv", "") or "").strip() in (
+            "021",
+            "031",
+            "041",
+            "042",
+        ):
+            return False
+
+        # listShppDirection 응답에는 shppDivDtlCd 가 없을 수 있다.
+        # '교환주문' + 원주문번호 별도 발번(orordNo != ordNo) 조합이 교환출고 시그니처.
+        if "교환" not in str(raw.get("ordItemDivNm", "") or ""):
+            return False
+        or_ord_no = str(raw.get("orordNo", "") or "").strip()
+        ord_no = str(raw.get("ordNo", "") or "").strip()
+        return bool(or_ord_no) and or_ord_no != ord_no
+
     def parse_order(
         self,
         raw: dict[str, Any],
