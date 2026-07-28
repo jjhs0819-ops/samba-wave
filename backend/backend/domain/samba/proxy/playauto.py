@@ -275,11 +275,25 @@ class PlayAutoClient:
         """상품 품절 처리 (PATCH /prods/soldout).
 
         '판매중', '수정대기', '종료대기' → '취소대기'로 변경.
+
+        data 는 반드시 **배열**이다. CSV 문자열(",".join)로 보내면 EMP 가 조용히
+        무시하고 빈 배열만 돌려준다 — 실패 사유도 안 준다. 이 형식 오류 때문에
+        판매중지(=마켓 삭제 경로)가 처음부터 동작하지 않았다.
+        실측 2026-07-28 (동일 MasterCode, 같은 계정):
+          {"data": "AM..."}                 → []                       (무시)
+          {"data": ["AM..."]}               → [{code, status, message}] (정상)
+          {"data": [{"MasterCode": "AM.."}]}→ 미등록 상품코드 오류
+        빈 응답은 성공으로 추론하지 않는다 — 요청이 먹지 않았다는 신호다.
         """
         url = f"{EMP_BASE_URL}/prods/soldout"
-        body = {"data": ",".join(master_codes)}
+        body = {"data": list(master_codes)}
         result = await self._call_api("PATCH", url, body=body)
         logger.info(f"[플레이오토] 상품 품절 응답: {result}")
+        if isinstance(result, list) and not result and master_codes:
+            logger.error(
+                f"[플레이오토] 품절 요청 {len(master_codes)}건에 빈 응답 — "
+                f"EMP 가 요청을 무시했다(본문 형식 확인 필요). 성공으로 간주하지 않음."
+            )
         return result if isinstance(result, list) else [result]
 
     async def get_product(self, master_code: str) -> dict:

@@ -743,13 +743,17 @@ class PlayAutoPlugin(MarketPlugin):
             # 2단계: 취소대기 전환
             results = await client.soldout_product([product_no])
             if not results:
+                # 빈 응답 = EMP 가 요청을 무시한 것(본문 형식 오류 등). 상품 상태
+                # 문제로 단정하면 안 된다 — 2026-07-28 실측에서 CSV 문자열 본문이
+                # 조용히 [] 만 반환했고, 그 탓에 판매중지가 내내 실패하고 있었다.
                 return {
                     "success": False,
-                    "message": "플레이오토 품절 실패: 상품이 판매중 상태가 아닙니다 (EMP에서 직접 삭제 필요)",
+                    "message": "플레이오토 품절 실패: EMP 빈 응답(요청 미반영) — 요청 형식/상품 상태 확인 필요",
                 }
             result = results[0] if isinstance(results, list) else results
             status = str(result.get("status", "false")).lower()
-            msg = result.get("msg", "")
+            # EMP 응답 키는 message — msg 만 보면 실패 사유가 늘 빈 문자열이 된다
+            msg = result.get("message") or result.get("msg") or ""
 
             if status == "true":
                 logger.info(f"[플레이오토] 취소대기 전환 성공: {product_no}")
