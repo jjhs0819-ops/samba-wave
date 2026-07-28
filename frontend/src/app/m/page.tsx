@@ -10,6 +10,7 @@ import type { SambaOrder } from '@/lib/samba/api/commerce'
 import { useTheme } from '@/lib/samba/useTheme'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { fmtNum } from '@/lib/samba/styles'
+import { STATUS_MAP } from '@/app/samba/orders/constants'
 
 // KST 기준 'YYYY-MM-DD' (sv-SE 로케일이 ISO 포맷 반환)
 const kstDate = (offsetDays = 0): string => {
@@ -39,6 +40,37 @@ const marketOf = (o: SambaOrder): string =>
 // 결제금액: 고객결제금액 우선, 없으면 판매가
 const amountOf = (o: SambaOrder): number =>
   o.total_payment_amount != null ? o.total_payment_amount : o.sale_price
+
+// 플레이오토 파생주문(사본-취소마감/반품마감, ★교환주문) — 수집 제외 대상.
+// 백엔드 is_derived_order(playauto.py)와 동일 판정. 폰 목록에서 숨김.
+const isDerivedOrder = (o: SambaOrder): boolean => {
+  const n = o.product_name || ''
+  return n.startsWith('[사본-') || n.includes('★교환주문')
+}
+
+// source_url 도메인 → 소싱처 코드 (PC OrderInfoCell.tsx의 sourceFromUrl과 동일 매핑)
+const sourceSiteFromUrl = (url?: string | null): string => {
+  const u = String(url || '').trim()
+  if (!u) return ''
+  const host = (() => {
+    try {
+      return new URL(u).hostname.toLowerCase()
+    } catch {
+      return u.toLowerCase()
+    }
+  })()
+  if (host.includes('musinsa.com')) return 'MUSINSA'
+  if (host.includes('kream.co.kr')) return 'KREAM'
+  if (host.includes('snkrdunk.com')) return 'SNKRDUNK'
+  if (host.includes('fashionplus.co.kr')) return 'FashionPlus'
+  if (host.includes('grandstage.a-rt.com')) return 'ABCmart'
+  if (host.includes('abcmart.a-rt.com') || host.includes('abcmart.co.kr')) return 'ABCmart'
+  if (host.includes('nike.com')) return 'Nike'
+  if (host.includes('ssg.com')) return 'SSG'
+  if (host.includes('lotteon.com')) return 'LOTTEON'
+  if (host.includes('gsshop.com')) return 'GSShop'
+  return ''
+}
 
 // 발주번호(소싱처 주문번호) 입력 여부
 const hasOrderNo = (o: SambaOrder): boolean =>
@@ -99,7 +131,7 @@ export default function SambaMobileOrdersPage() {
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
-  const [tab, setTab] = useState<'all' | 'unshipped'>('all')
+  const [tab, setTab] = useState<'all' | 'unshipped'>('unshipped')
   const [range, setRange] = useState<RangeKey>('today')
   const [market, setMarket] = useState<string>('') // '' = 전체 판매처
   const [orderInput, setOrderInput] = useState<'all' | 'has' | 'none'>('all') // 발주번호 입력 여부
@@ -122,7 +154,8 @@ export default function SambaMobileOrdersPage() {
         limit: 200,
         sort_by: 'date_desc',
       })
-      setOrders(res.items || [])
+      // 사본/교환 파생주문은 목록에서 제외 (PC 수집 제외 정책과 동일)
+      setOrders((res.items || []).filter((o) => !isDerivedOrder(o)))
       setTotalCount(res.total_count || 0)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '주문을 불러오지 못했습니다')
@@ -541,19 +574,20 @@ export default function SambaMobileOrdersPage() {
       {/* 카드 목록 */}
       <div style={{ padding: '0 0.85rem 2rem' }}>
         {shown.map((o) => {
-          // 뱃지 3종: 취소/반품 · 발송 · 미발송
-          const badge = isCancelled(o)
-            ? { text: '취소/반품', bg: c.surfaceAlt, fg: c.danger }
-            : isShipped(o)
-              ? { text: '발송', bg: c.surfaceAlt, fg: c.success }
-              : { text: '미발송', bg: c.accentBg, fg: c.warn }
+          // 상태 뱃지: PC 주문화면 상태 드롭다운(o.status → STATUS_MAP)과 동일 소스·라벨
+          const statusInfo = STATUS_MAP[o.status]
+          const badge = statusInfo
+            ? { text: statusInfo.label, bg: statusInfo.bg, fg: statusInfo.text }
+            : { text: o.status || '-', bg: c.surfaceAlt, fg: c.textSub }
           const cpid = o.collected_product_id || ''
           // 주문 값 우선, 없으면 collected_product 폴백 (KREAM/POIZON 등 이미지 누락 대응)
           const imgSrc = o.product_image || (cpid ? cpImages[cpid] : '') || ''
-          // 소싱처는 수집상품(collected_product) 값이 진짜 — 주문 source_site는 판매처(KREAM 등)와
-          // 같은 레거시값이 들어있어 신뢰 불가. collected 우선, 없으면 주문값 폴백.
-          const srcUrl = (cpid ? cpSourceUrl[cpid] : '') || o.source_url || ''
-          const srcSite = (cpid ? cpSourceSite[cpid] : '') || o.source_site || ''
+          // 원문링크: 주문 source_url 우선, 없으면 수집상품 폴백 (PC handleSourceLink와 동일 우선순위)
+          const srcUrl = o.source_url || (cpid ? cpSourceUrl[cpid] : '') || ''
+          // 소싱처 라벨: source_url 도메인 우선 → 수집상품 source_site.
+          // o.source_site는 라벨에 쓰지 않음 — 판매처(KREAM 등) 레거시값이 섞여있어 오표시 원인이었음
+          // (PC OrderInfoCell.tsx sourceBadgeLabel과 동일 우선순위).
+          const srcSite = sourceSiteFromUrl(srcUrl) || (cpid ? cpSourceSite[cpid] : '') || ''
           return (
             <div
               key={o.id}
