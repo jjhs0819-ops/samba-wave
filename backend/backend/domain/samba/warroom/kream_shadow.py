@@ -3256,7 +3256,25 @@ async def run_kream_unified_once() -> dict:
         _pre += await _buy_watch(psa_snapshot)
     except Exception as _be:
         logger.warning("[크림통합] 매수추천 알림 실패(무시): %s", _be)
+
     # ── 본문: 로컬 봇 슬랙 포맷 그대로 재현 (구분선 길이·문구·조건까지 동일) ──
+    # 카드/박스/카드팩 분리 [2026-07-28] — 카드=PSA옵션, 박스·카드팩은 옵션형식(해외배송(N개))이
+    # 동일해 상품명으로 구분(이름에 "카드팩"/"부스터팩"/"팩" 포함=카드팩, 그 외 "해외배송"=박스).
+    def _ask_kind(a):
+        opt = str(a.get("option") or "")
+        if "PSA" in opt.upper():
+            return "card"
+        if "해외배송" in opt:
+            nm = str(a.get("product_name_kr") or a.get("product_name") or "")
+            return "pack" if re.search(r"카드팩|부스터팩|팩\b", nm) else "box"
+        return "other"
+
+    _card_asks = [a for a in asks if _ask_kind(a) == "card"]
+    _box_asks = [a for a in asks if _ask_kind(a) == "box"]
+    _pack_asks = [a for a in asks if _ask_kind(a) == "pack"]
+    _r1c, _n1c, _gtc, _ncc = _rank_summary(_card_asks)
+    _r1b, _n1b, _gtb, _ncb = _rank_summary(_box_asks)
+    _r1p, _n1p, _gtp, _ncp = _rank_summary(_pack_asks)
     _r1, _n1, _gt, _nc = _rank_summary(asks)
     _ask_kids = {str(a.get("product_id") or "") for a in asks}
     _mapped = len([k for k in _ask_kids if k in kid_to_snkr])
@@ -3303,7 +3321,9 @@ async def run_kream_unified_once() -> dict:
         f"삭제 {_del_all:,}건 | 조정 {_upd_all:,}건"
         + (f" | ❌갱신실패 {_fail_all:,}건" if _fail_all else "")
         + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
+        f"  카드 1순위 {_r1c:,}/{_gtc:,} · 박스 {_r1b:,}/{_gtb:,} · 카드팩 {_r1p:,}/{_gtp:,}\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
+        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,})"
     )
     # 갱신실패 사유 breakdown — 실패 건수만 보이고 원인을 몰라 대응 못 하던 것 보완(로컬 포맷).
     if _fail_reasons:
