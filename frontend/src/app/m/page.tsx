@@ -615,32 +615,53 @@ export default function SambaMobileOrdersPage() {
                 </span>
               </div>
 
-              {/* 썸네일 + 상품정보 */}
+              {/* 썸네일 + 상품정보 — 이미지 없거나 로드 실패 시 PC와 동일하게 "No IMG" 박스 표시 */}
               <div style={{ display: 'flex', gap: 10 }}>
-                {imgSrc ? (
-                  <img
-                    src={imgSrc}
-                    alt=""
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                    onClick={() => {
-                      if (srcUrl) window.open(srcUrl, '_blank', 'noopener,noreferrer')
-                    }}
+                <div
+                  onClick={() => {
+                    if (srcUrl) window.open(srcUrl, '_blank', 'noopener,noreferrer')
+                  }}
+                  style={{
+                    width: 60,
+                    height: 60,
+                    borderRadius: 8,
+                    border: `1px solid ${c.border}`,
+                    flexShrink: 0,
+                    background: c.surfaceAlt,
+                    cursor: srcUrl ? 'pointer' : 'default',
+                    position: 'relative',
+                    overflow: 'hidden',
+                  }}
+                >
+                  {imgSrc && (
+                    <img
+                      src={imgSrc}
+                      alt=""
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      onError={(e) => {
+                        ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                        const ph = e.currentTarget.nextElementSibling as HTMLElement | null
+                        if (ph) ph.style.display = 'flex'
+                      }}
+                    />
+                  )}
+                  <span
                     style={{
-                      width: 60,
-                      height: 60,
-                      objectFit: 'cover',
-                      borderRadius: 8,
-                      border: `1px solid ${c.border}`,
-                      flexShrink: 0,
-                      background: c.surfaceAlt,
-                      cursor: srcUrl ? 'pointer' : 'default',
+                      display: imgSrc ? 'none' : 'flex',
+                      position: 'absolute',
+                      inset: 0,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 10,
+                      color: c.textMuted,
+                      textAlign: 'center',
                     }}
-                    onError={(e) => {
-                      ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                    }}
-                  />
-                ) : null}
+                  >
+                    No IMG
+                  </span>
+                </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 12, color: c.link, fontWeight: 600, marginBottom: 2 }}>
                     {marketOf(o)}
