@@ -95,6 +95,7 @@ async def pending_with_context(
                 "SELECT id FROM samba_cs_inquiry "
                 "WHERE is_hidden = false AND reply_status = 'pending' "
                 "AND COALESCE(draft_status, 'none') = 'none' "
+                "AND COALESCE(market, '') <> 'eBay' "
                 "ORDER BY inquiry_date DESC NULLS LAST LIMIT :lim"
             ),
             {"lim": limit},
@@ -175,6 +176,13 @@ async def auto_send(
         raise HTTPException(status_code=404, detail="문의 없음")
     if inq.reply_status == "replied":
         return {"ok": False, "sent": False, "reason": "이미 답변 완료"}
+
+    # 게이트 0: eBay 영구 차단 — 해외 구매자에게 한국어 정형문구 오발송 사고(2026-07-28)
+    if (inq.market or "") == "eBay":
+        cls_e = classify(inq.content, inq.inquiry_type, inq.market, inq.questioner)
+        return await _fallback_draft(
+            repo, body, cls_e.intent, "eBay 자동전송 영구 제외 — 초안만 저장"
+        )
 
     # 게이트 2: 서버 재분류 (클라이언트가 보낸 intent 신뢰 안 함)
     cls = classify(inq.content, inq.inquiry_type, inq.market, inq.questioner)
@@ -265,6 +273,8 @@ async def send_all_drafts(
 
     킬스위치·confidence 게이트 없음 — 운영자가 명시 호출하는 일괄전송 전용.
     이미 answered 건, is_hidden 건은 자동 제외.
+    eBay 는 자동답변 영구 제외 — 해외 구매자에게 한국어 정형문구가 오발송된 사고
+    (2026-07-28) 때문. eBay CS 는 수동 답변만.
     """
     from backend.api.v1.routers.samba.cs_inquiry import reply_cs_inquiry
     from backend.dtos.samba.cs_inquiry import CSInquiryReply
@@ -274,7 +284,9 @@ async def send_all_drafts(
             sa_text(
                 "SELECT id, draft_reply FROM samba_cs_inquiry "
                 "WHERE draft_status = 'suggested' AND reply_status = 'pending' "
-                "AND is_hidden = false ORDER BY drafted_at ASC"
+                "AND is_hidden = false "
+                "AND COALESCE(market, '') <> 'eBay' "
+                "ORDER BY drafted_at ASC"
             )
         )
     ).all()
@@ -324,7 +336,9 @@ async def send_reviews(
             sa_text(
                 "SELECT id, content FROM samba_cs_inquiry "
                 "WHERE inquiry_type = '상품평' AND reply_status = 'pending' "
-                "AND is_hidden = false ORDER BY inquiry_date ASC"
+                "AND is_hidden = false "
+                "AND COALESCE(market, '') <> 'eBay' "
+                "ORDER BY inquiry_date ASC"
             )
         )
     ).all()
