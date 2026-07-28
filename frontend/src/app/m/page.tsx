@@ -137,7 +137,6 @@ export default function SambaMobileOrdersPage() {
 
   // 주문 데이터
   const [orders, setOrders] = useState<SambaOrder[]>([])
-  const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [tab, setTab] = useState<'all' | 'unshipped'>('unshipped')
@@ -165,7 +164,6 @@ export default function SambaMobileOrdersPage() {
       })
       // 사본/교환 파생주문은 목록에서 제외 (PC 수집 제외 정책과 동일)
       setOrders((res.items || []).filter((o) => !isDerivedOrder(o)))
-      setTotalCount(res.total_count || 0)
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '주문을 불러오지 못했습니다')
     } finally {
@@ -566,7 +564,7 @@ export default function SambaMobileOrdersPage() {
 
       {/* 요약 */}
       <div style={{ padding: '0.6rem 0.85rem', fontSize: 12, color: c.textSub }}>
-        표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원 · 기간 총 {fmtNum(totalCount)}건
+        표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원 · 기간 총 {fmtNum(orders.length)}건
       </div>
 
       {/* 상태 메시지 */}
