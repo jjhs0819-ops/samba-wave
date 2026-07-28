@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import math as _math
 import re
+import time as _time
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
@@ -16,6 +17,84 @@ from backend.utils.logger import logger
 
 # goods_no → {opt_name: item_no} 캐시 (프로세스 내 영구 유지, 재시작 시 1회만 API 조회)
 _item_no_cache: dict[str, dict[str, str]] = {}
+# 빈 결과(음성캐시)를 저장한 시각 — TTL 만료 시 재조회한다
+_empty_item_no_cached_at: dict[str, float] = {}
+_EMPTY_ITEM_NO_TTL = 1800.0  # 30분
+
+
+def _item_no_cache_valid(goods_no: str) -> bool:
+    """캐시를 그대로 써도 되는지. 빈 결과는 TTL 이 지나면 무효로 본다."""
+    if goods_no not in _item_no_cache:
+        return False
+    if _item_no_cache[goods_no]:
+        return True
+    age = _time.monotonic() - _empty_item_no_cached_at.get(goods_no, 0.0)
+    return age < _EMPTY_ITEM_NO_TTL
+
+
+def _normalize_opt_key(name: str) -> str:
+    """옵션명 비교용 정규화 — 구분자·공백 차이를 흡수.
+
+    롯데홈 CorpItemNo 는 '블랙^230' / '인디고^XXX' 처럼 '^' 로 조합되는데
+    소싱 옵션명은 '230' / '인디고 / XXX' 처럼 다른 구분자를 쓴다.
+    '^' 와 '/' 를 같은 구분자로 보고 공백을 제거해 맞춘다.
+    """
+    return re.sub(r"\s+", "", str(name or "")).replace("^", "/").upper()
+
+
+def _build_source_opt_map(source_options: list[dict[str, Any]]) -> dict[str, int]:
+    """소싱 옵션 → {옵션키: 재고}. 등록 때와 같은 키(managedCode)를 반드시 포함한다.
+
+    ★등록(_transform)은 item_list 의 관리코드로 `managedCode or opt_name` 을 보내고
+    롯데홈은 그 값을 CorpItemNo 로 저장한다. 그런데 재고 갱신은 CorpItemNo 로 조회하므로
+    맵을 opt_name 으로만 만들면 managedCode 를 가진 상품(코오롱스포츠 등 색상^사이즈)은
+    영원히 미매칭 → 전 옵션 재고 0 전송 → 품절 박제된다(2026-07-28, 452건 발생).
+    name / managedCode / 정규화 키를 모두 등록해 양쪽 형식을 다 받는다.
+    """
+    opt_map: dict[str, int] = {}
+    for opt in source_options or []:
+        opt_name = str(
+            opt.get("name") or opt.get("value") or opt.get("size") or ""
+        ).strip()
+        managed = str(
+            opt.get("managedCode")
+            or opt.get("managed_code")
+            or opt.get("itemCode")
+            or ""
+        ).strip()
+        if not opt_name and not managed:
+            continue
+        is_sold_out = bool(opt.get("isSoldOut") or opt.get("sold_out"))
+        raw_stock = opt.get("stock")
+        stock_val = (
+            0
+            if is_sold_out
+            else (max(0, int(raw_stock)) if raw_stock is not None else 0)
+        )
+        for key in (opt_name, managed):
+            if key:
+                opt_map[key] = stock_val
+                opt_map.setdefault(_normalize_opt_key(key), stock_val)
+    return opt_map
+
+
+def _match_option_stock(opt_map: dict[str, int], lotte_opt: str) -> int | None:
+    """롯데 CorpItemNo 로 소싱 재고를 찾는다. 못 찾으면 None(=재고 0 전송 금지).
+
+    예전엔 `opt_map.get(lotte_opt, 0)` 이라 미매칭이 곧 품절 전송이었다.
+    매칭 실패와 실제 품절은 다른 사건이므로 구분해서 호출부가 스킵하게 한다.
+    """
+    if lotte_opt in opt_map:
+        return opt_map[lotte_opt]
+    norm = _normalize_opt_key(lotte_opt)
+    if norm in opt_map:
+        return opt_map[norm]
+    # '블랙/230' → '230' : 색상 접두가 붙은 조합키를 사이즈 단독 옵션과 맞춘다
+    if "/" in norm:
+        tail = norm.rsplit("/", 1)[-1]
+        if tail in opt_map:
+            return opt_map[tail]
+    return None
 
 
 def _sanitize_image_url(url: str) -> str:
@@ -828,7 +907,10 @@ class LotteHomePlugin(MarketPlugin):
                     # (searchStockList는 33MB 응답으로 타임아웃 발생 → goods view로 대체)
                     # 멤버십 체크(in)로 음성캐시 동작 보장 — 빈 dict 는 falsy 라
                     # truthiness 로 판단하면 옵션 매칭 0건 상품을 매 사이클 재호출하게 됨.
-                    if existing_no in _item_no_cache:
+                    # 단 음성캐시는 TTL 을 둔다: QA 승인 전 등록 직후엔 ItemInfo 가 비어
+                    # 있어 빈 맵이 잡히는데, 영구 캐시면 승인 뒤에도 재시작 전까지 재고가
+                    # 영영 안 나간다(2026-07-28 확인).
+                    if _item_no_cache_valid(existing_no):
                         item_no_map: dict[str, str] = _item_no_cache[existing_no]
                         logger.debug(
                             f"[롯데홈쇼핑] item_no_map 캐시 히트: {existing_no} ({len(item_no_map)}개 옵션)"
@@ -866,16 +948,19 @@ class LotteHomePlugin(MarketPlugin):
 
                         # 빈 결과도 음성캐시로 저장 → 다음 사이클 재호출 방지
                         # (search_goods_view 매 사이클 폭주 차단, IP 차단 예방).
-                        # 옵션이 나중에 등록되면 프로세스 재시작(배포) 시 갱신됨.
+                        # 단 음성캐시는 _EMPTY_ITEM_NO_TTL 후 만료돼 재조회된다
+                        # (QA 승인 뒤 옵션이 생기면 재시작 없이 따라잡기 위함).
                         _item_no_cache[existing_no] = item_no_map
                         if item_no_map:
+                            _empty_item_no_cached_at.pop(existing_no, None)
                             logger.info(
                                 f"[롯데홈쇼핑] item_no_map 캐시 저장: {existing_no} → {lotte_opt_names}"
                             )
                         else:
+                            _empty_item_no_cached_at[existing_no] = _time.monotonic()
                             logger.info(
                                 f"[롯데홈쇼핑] item_no_map 빈 결과 음성캐시: {existing_no} "
-                                f"(옵션 매칭 0건, 재호출 방지)"
+                                f"(옵션 매칭 0건, {int(_EMPTY_ITEM_NO_TTL)}초 후 재조회)"
                             )
 
                     if not item_no_map:
@@ -883,42 +968,23 @@ class LotteHomePlugin(MarketPlugin):
                             f"[롯데홈쇼핑] item_no_map 비어있음 — 재고 업데이트 건너뜀 ({existing_no})"
                         )
                     else:
-                        # 소싱사이트 옵션명 → stock 맵핑
-                        source_opt_map: dict[str, int] = {}
-                        for opt in source_options:
-                            opt_name = str(
-                                opt.get("name")
-                                or opt.get("value")
-                                or opt.get("size")
-                                or ""
-                            ).strip()
-                            if not opt_name:
-                                continue
-                            is_sold_out = bool(
-                                opt.get("isSoldOut") or opt.get("sold_out")
-                            )
-                            raw_stock = opt.get("stock")
-                            stock_val = (
-                                0
-                                if is_sold_out
-                                else (
-                                    max(0, int(raw_stock))
-                                    if raw_stock is not None
-                                    else 0
-                                )
-                            )
-                            source_opt_map[opt_name] = stock_val
+                        # 소싱사이트 옵션 → stock 맵핑 (name + managedCode 양쪽 키)
+                        source_opt_map = _build_source_opt_map(source_options)
 
                         # 롯데에 있는 옵션 → 소싱사이트 재고로 업데이트
-                        # 롯데에 있지만 소싱사이트에 없는 옵션 → 재고 0 (품절)
-                        # registStock: inv_qty=0이면 ItemSaleStatCd=20(품절) 자동 설정.
-                        # inv_qty>0은 InvQty만 업데이트되며 ItemSaleStatCd는 변경되지 않음.
+                        # ★매칭 실패는 품절이 아니다 — 재고 0 을 보내지 말고 건너뛴다.
+                        #   registStock 은 inv_qty=0 이면 ItemSaleStatCd=20(품절) 을 자동
+                        #   설정하는데, 한번 품절되면 되살리는 API 경로가 없어서(실측 2026-07-28)
+                        #   미매칭 → 0 전송이 곧 영구 품절이 된다.
+                        # inv_qty>0 은 InvQty만 업데이트되며 ItemSaleStatCd는 변경되지 않음.
                         max_stock = int(product.get("_max_stock") or 0)
                         stock_updated = False
+                        _unmatched: list[str] = []
                         for lotte_opt, item_no in item_no_map.items():
-                            stock_val = source_opt_map.get(
-                                lotte_opt, 0
-                            )  # 소싱에 없으면 0
+                            stock_val = _match_option_stock(source_opt_map, lotte_opt)
+                            if stock_val is None:
+                                _unmatched.append(lotte_opt)
+                                continue
                             if max_stock > 0:
                                 stock_val = min(stock_val, max_stock)
                             logger.info(
@@ -933,6 +999,12 @@ class LotteHomePlugin(MarketPlugin):
                                 logger.error(
                                     f"[롯데홈쇼핑] 재고 업데이트 오류: {lotte_opt} → {_se}"
                                 )
+                        if _unmatched:
+                            logger.warning(
+                                f"[롯데홈쇼핑] 옵션 미매칭 {len(_unmatched)}/{len(item_no_map)}건 "
+                                f"— 재고 전송 건너뜀({existing_no}): {_unmatched[:5]} "
+                                f"/ 소싱키 예시={list(source_opt_map)[:5]}"
+                            )
 
                         if stock_updated:
                             results["updated"].append("stock")
