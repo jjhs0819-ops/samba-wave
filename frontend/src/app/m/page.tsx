@@ -5,12 +5,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { userApi } from '@/lib/samba/api/operations'
-import { orderApi, collectorApi } from '@/lib/samba/api/commerce'
-import type { SambaOrder } from '@/lib/samba/api/commerce'
+import { orderApi, collectorApi, accountApi } from '@/lib/samba/api/commerce'
+import type { SambaOrder, SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { useTheme } from '@/lib/samba/useTheme'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { fmtNum } from '@/lib/samba/styles'
 import { STATUS_MAP } from '@/app/samba/orders/constants'
+import { useOrderLinks } from '@/app/samba/orders/hooks/useOrderLinks'
 
 // KST 기준 'YYYY-MM-DD' (sv-SE 로케일이 ISO 포맷 반환)
 const kstDate = (offsetDays = 0): string => {
@@ -36,60 +37,6 @@ const fmtKst = (iso?: string): string => {
 // 마켓명: 판매채널별칭 → 채널명 → source
 const marketOf = (o: SambaOrder): string =>
   o.sales_channel_alias || o.channel_name || o.source || o.source_site || '-'
-
-// 판매마켓 상품페이지 링크 — PC useOrderLinks.ts handleMarketLink 축약판.
-// 계정정보(storeSlug 등) 없이 productNo만으로 만들 수 있는 URL만 직접 생성,
-// 안 되면 PC와 동일하게 마켓 검색 URL로 폴백 (항상 뭔가는 열리도록).
-const buildMarketLink = (o: SambaOrder): string => {
-  const marketType = (o.source || '').toLowerCase()
-  const productNo = o.product_id || ''
-
-  if (marketType === 'playauto') {
-    const alias = (o.sales_channel_alias || o.source_site || '').trim()
-    const site = alias.split('(')[0]
-    const siteUrlMap: Record<string, (no: string) => string> = {
-      'GS이숍': (no) => `https://www.gsshop.com/prd/prd.gs?prdid=${no.length > 3 ? no.slice(0, -3) : no}`,
-      'G마켓': (no) => `https://item.gmarket.co.kr/Item?goodscode=${no}`,
-      '옥션': (no) => `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${no}`,
-      '11번가': (no) => `https://www.11st.co.kr/products/${no}`,
-      '스마트스토어': (no) => `https://smartstore.naver.com/search?q=${encodeURIComponent(no)}`,
-      '쿠팡': (no) => `https://www.coupang.com/vp/products/${no}`,
-      SSG: (no) => `https://www.ssg.com/item/itemView.ssg?itemId=${no}`,
-      '롯데ON': (no) => `https://www.lotteon.com/p/product/${no}`,
-      '롯데온': (no) => `https://www.lotteon.com/p/product/${no}`,
-      '롯데홈쇼핑': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
-      '롯데아이몰': (no) => `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${no}`,
-      '홈앤쇼핑': (no) => `https://www.hmall.com/md/pda/itemPtc?slitmCd=${no}`,
-      HMALL: (no) => `https://www.hmall.com/md/pda/itemPtc?slitmCd=${no}`,
-      '현대H몰': (no) => `https://www.hmall.com/md/pda/itemPtc?slitmCd=${no}`,
-    }
-    if (productNo && siteUrlMap[site]) return siteUrlMap[site](productNo)
-  } else if (productNo) {
-    const urlMap: Record<string, string> = {
-      smartstore: `https://smartstore.naver.com/search?q=${encodeURIComponent(productNo)}`,
-      coupang: `https://www.coupang.com/vp/products/${productNo}`,
-      '11st': `https://www.11st.co.kr/products/${productNo}`,
-      gmarket: `https://item.gmarket.co.kr/Item?goodscode=${productNo}`,
-      auction: `https://itempage3.auction.co.kr/DetailView.aspx?ItemNo=${productNo}`,
-      ssg: `https://www.ssg.com/item/itemView.ssg?itemId=${productNo}`,
-      lotteon: `https://www.lotteon.com/p/product/${productNo}`,
-      lottehome: `https://www.lotteimall.com/goods/viewGoodsDetail.lotte?goods_no=${productNo}`,
-      gsshop: `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`,
-      kream: `https://kream.co.kr/products/${productNo}`,
-      ebay: `https://www.ebay.com/itm/${productNo}`,
-    }
-    if (urlMap[marketType]) return urlMap[marketType]
-  }
-  // 폴백 — PC와 동일하게 마켓/상품명 검색으로
-  const searchMap: Record<string, string> = {
-    smartstore: 'https://search.shopping.naver.com/search/all?query=',
-    coupang: 'https://www.coupang.com/np/search?q=',
-    '11st': 'https://search.11st.co.kr/Search.tmall?kwd=',
-    ssg: 'https://www.ssg.com/search.ssg?query=',
-  }
-  const base = searchMap[marketType] || 'https://search.shopping.naver.com/search/all?query='
-  return base + encodeURIComponent(o.product_name || '')
-}
 
 // 결제금액: 고객결제금액 우선, 없으면 판매가
 const amountOf = (o: SambaOrder): number =>
@@ -179,6 +126,14 @@ export default function SambaMobileOrdersPage() {
   const [password, setPassword] = useState('')
   const [loginError, setLoginError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  // 마켓 계정 — PC 주문화면과 동일하게 useOrderLinks에 그대로 넘겨 원문/판매링크 생성 위임
+  const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
+  const { handleSourceLink, handleMarketLink } = useOrderLinks(accounts)
+
+  useEffect(() => {
+    accountApi.listActiveCached(setAccounts)
+  }, [])
 
   // 주문 데이터
   const [orders, setOrders] = useState<SambaOrder[]>([])
@@ -672,9 +627,7 @@ export default function SambaMobileOrdersPage() {
               {/* 썸네일 + 상품정보 — 이미지 없거나 로드 실패 시 PC와 동일하게 "No IMG" 박스 표시 */}
               <div style={{ display: 'flex', gap: 10 }}>
                 <div
-                  onClick={() => {
-                    if (srcUrl) window.open(srcUrl, '_blank', 'noopener,noreferrer')
-                  }}
+                  onClick={() => handleSourceLink(o)}
                   style={{
                     width: 60,
                     height: 60,
@@ -682,7 +635,7 @@ export default function SambaMobileOrdersPage() {
                     border: `1px solid ${c.border}`,
                     flexShrink: 0,
                     background: c.surfaceAlt,
-                    cursor: srcUrl ? 'pointer' : 'default',
+                    cursor: 'pointer',
                     position: 'relative',
                     overflow: 'hidden',
                   }}
@@ -718,7 +671,7 @@ export default function SambaMobileOrdersPage() {
                 </div>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div
-                    onClick={() => window.open(buildMarketLink(o), '_blank', 'noopener,noreferrer')}
+                    onClick={() => handleMarketLink(o)}
                     style={{ fontSize: 12, color: c.link, fontWeight: 600, marginBottom: 2, cursor: 'pointer' }}
                   >
                     {marketOf(o)}
@@ -730,19 +683,11 @@ export default function SambaMobileOrdersPage() {
                     <div style={{ fontSize: 12, color: c.textSub }}>옵션: {o.product_option}</div>
                   )}
                   {srcSite && (
-                    <div style={{ fontSize: 12, marginTop: 2 }}>
-                      {srcUrl ? (
-                        <a
-                          href={srcUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ color: c.link, textDecoration: 'underline' }}
-                        >
-                          {srcSite} ↗
-                        </a>
-                      ) : (
-                        <span style={{ color: c.textSub }}>{srcSite}</span>
-                      )}
+                    <div
+                      onClick={() => handleSourceLink(o)}
+                      style={{ fontSize: 12, marginTop: 2, color: c.link, textDecoration: 'underline', cursor: 'pointer' }}
+                    >
+                      {srcSite} ↗
                     </div>
                   )}
                 </div>
