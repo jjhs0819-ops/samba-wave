@@ -29,6 +29,31 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 
+# _client_kwargs(proxy_override) 기본값 센티널 — None(메인 IP)과 "미지정"을 구분.
+_UNSET: Any = object()
+
+# 검색 API IP 로테이션 설정 ──────────────────────────────────────────
+# 패플은 검색(goods/fetch)만 ~20req/IP에서 공격적으로 차단하고 그 상태가 ~48h
+# 지속된다(상세/옵션 API는 차단 안 됨). 그래서 검색 페이지네이션 동안 collect 용도
+# 프록시 풀을 이 요청수마다 순환해 IP당 검색요청을 임계 아래로 유지한다.
+# 모듈 레벨 카운터라 여러 카테고리/검색 호출에 걸쳐서도 끊김 없이 연속 순환한다.
+FP_SEARCH_ROTATE_EVERY = 8
+_fp_search_req_no = 0
+
+
+def _fp_collect_proxy_pool(fallback: str | None) -> list[str | None]:
+    """검색 로테이션용 collect 프록시 풀. DB 설정의 collect 프록시들, 없으면 fallback 단일.
+
+    refresher 지연 임포트(순환 임포트 회피).
+    """
+    try:
+        from backend.domain.samba.collector.refresher import get_collect_proxies
+
+        pool: list[str | None] = [p for p in get_collect_proxies() if p]
+    except Exception:
+        pool = []
+    return pool if pool else [fallback]
+
 
 def _norm_brand(s: str) -> str:
     """브랜드명 비교용 정규화 — 모든 공백 제거 + 소문자.
@@ -73,14 +98,20 @@ class FashionPlusClient:
         # 오토튠 IP 로테이션용 프록시 (무신사와 동일 패턴). None이면 메인 IP.
         self.proxy_url = proxy_url
 
-    def _client_kwargs(self) -> dict[str, Any]:
-        """httpx.AsyncClient 생성 인자 — 프록시 있으면 주입."""
+    def _client_kwargs(self, proxy_override: Any = _UNSET) -> dict[str, Any]:
+        """httpx.AsyncClient 생성 인자 — 프록시 있으면 주입.
+
+        proxy_override 지정 시 그 프록시로 클라이언트를 만든다(검색 IP 로테이션용).
+        미지정(_UNSET)이면 self.proxy_url을 쓴다. None은 "메인 IP"라는 유효값이므로
+        센티널로 미지정과 구분한다.
+        """
+        proxy = self.proxy_url if proxy_override is _UNSET else proxy_override
         kw: dict[str, Any] = {"timeout": 15, "follow_redirects": True}
         # 연결 수립 실패("All connection attempts failed")만 백오프(0.5→1→2초)
         # 자동 재시도 — HTTP 응답을 받은 뒤의 재시도가 아니므로 429/403 차단
         # 감지·품절 판정에는 영향 없음. transport 지정 시 proxy 인자가 무시되므로
         # 프록시도 transport 쪽에 함께 넣는다.
-        kw["transport"] = httpx.AsyncHTTPTransport(retries=3, proxy=self.proxy_url)
+        kw["transport"] = httpx.AsyncHTTPTransport(retries=3, proxy=proxy)
         return kw
 
     async def _seed_session(self, client: "httpx.AsyncClient") -> None:
@@ -263,14 +294,30 @@ class FashionPlusClient:
 
         max_count > 0이면 여러 페이지를 자동 순회하여 최대 max_count건 수집.
         """
+        global _fp_search_req_no
         all_products: list[dict[str, Any]] = []
         total = 0
         current_page = page
         last_error = ""
 
-        async with httpx.AsyncClient(**self._client_kwargs()) as client:
-            await self._seed_session(client)
+        # 검색 IP 로테이션 풀(collect 프록시). K요청마다 다음 IP로 순환해 차단 회피.
+        rot_pool = _fp_collect_proxy_pool(self.proxy_url)
+        client: httpx.AsyncClient | None = None
+        cur_proxy: Any = _UNSET
+        try:
             while True:
+                # 이번 요청에 쓸 프록시(모듈 카운터 기반 — 검색 호출 간에도 연속 순환)
+                want_proxy = rot_pool[
+                    (_fp_search_req_no // FP_SEARCH_ROTATE_EVERY) % len(rot_pool)
+                ]
+                if client is None or want_proxy != cur_proxy:
+                    if client is not None:
+                        await client.aclose()
+                    cur_proxy = want_proxy
+                    client = httpx.AsyncClient(**self._client_kwargs(want_proxy))
+                    # IP가 바뀔 때마다 그 IP로 세션 쿠키를 새로 시딩(쿠키는 IP별 발급).
+                    await self._seed_session(client)
+
                 params: dict[str, str] = {
                     "searchWord": keyword,
                     "page": str(current_page),
@@ -297,6 +344,7 @@ class FashionPlusClient:
                     # id 없을 때 폴백 — 서버 필터는 안 되고 아래 클라이언트 필터로 거른다
                     params["brands[][name]"] = str(brand_name)
 
+                _fp_search_req_no += 1
                 try:
                     resp = await client.get(
                         self.SEARCH_API, params=params, headers=HEADERS
@@ -359,6 +407,9 @@ class FashionPlusClient:
                     break
                 # 다음 페이지 요청 전 딜레이 — 차단 예방 (수집 안전 우선)
                 await asyncio.sleep(self.SEARCH_PAGE_DELAY)
+        finally:
+            if client is not None:
+                await client.aclose()
 
         return {"products": all_products, "total": total, "last_error": last_error}
 
