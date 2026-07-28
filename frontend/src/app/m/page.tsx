@@ -272,21 +272,27 @@ export default function SambaMobileOrdersPage() {
     setPassword('')
   }
 
-  // 로드된 주문에서 판매처 목록 추출 (건수순 정렬)
+  // 현재 탭(전체/미발송) 적용된 주문 — 판매처·발주필터 카운트는 전부 이 기준으로 통일해야
+  // "필터엔 2건인데 실제론 1건"처럼 탭에 걸러진 건이 카운트에만 남는 불일치가 안 생김
+  const tabFiltered = useMemo(
+    () => orders.filter((o) => (tab === 'unshipped' ? isUnshipped(o) : true)),
+    [orders, tab],
+  )
+
+  // 판매처 목록 추출 (건수순 정렬) — 현재 탭 기준
   const marketList = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const o of orders) {
+    for (const o of tabFiltered) {
       const m = marketOf(o)
       counts.set(m, (counts.get(m) || 0) + 1)
     }
     return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
-  }, [orders])
+  }, [tabFiltered])
 
   // 선택 판매처가 목록에 없으면 전체로 간주
   const activeMarket = marketList.some(([m]) => m === market) ? market : ''
 
-  const shown = orders
-    .filter((o) => (tab === 'unshipped' ? isUnshipped(o) : true))
+  const shown = tabFiltered
     .filter((o) => (activeMarket ? marketOf(o) === activeMarket : true))
     .filter((o) =>
       orderInput === 'all' ? true : orderInput === 'has' ? hasOrderNo(o) : !hasOrderNo(o),
@@ -515,7 +521,7 @@ export default function SambaMobileOrdersPage() {
             outline: 'none',
           }}
         >
-          <option value="">전체 판매처 ({fmtNum(orders.length)})</option>
+          <option value="">전체 판매처 ({fmtNum(tabFiltered.length)})</option>
           {marketList.map(([m, cnt]) => (
             <option key={m} value={m}>
               {m} ({fmtNum(cnt)})
@@ -532,10 +538,10 @@ export default function SambaMobileOrdersPage() {
           ] as [typeof orderInput, string][]).map(([key, label]) => {
             const cnt =
               key === 'all'
-                ? orders.length
+                ? tabFiltered.length
                 : key === 'has'
-                  ? orders.filter(hasOrderNo).length
-                  : orders.filter((o) => !hasOrderNo(o)).length
+                  ? tabFiltered.filter(hasOrderNo).length
+                  : tabFiltered.filter((o) => !hasOrderNo(o)).length
             return (
               <button
                 key={key}
