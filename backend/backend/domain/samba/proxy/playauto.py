@@ -150,6 +150,12 @@ class PlayAutoClient:
         if read_timeout is not None:
             # connect 는 기본(15초) 유지, read 만 상향
             kwargs["timeout"] = httpx.Timeout(read_timeout, connect=15.0)
+        # 쓰기 요청(POST/PATCH/DELETE)은 리다이렉트 자동 추종 금지 — 307/308 은
+        # 본문을 그대로 재전송하므로 EMP 등록이 요청 1회당 2~3건 복제된다
+        # (실측 2026-07-28: 푸마 701그룹 동일명 2~3중 등록, 간격 1~2초).
+        # 3xx 가 실제로 오면 아래에서 에러+로그로 드러나 원인(EMP/프록시)을 특정한다.
+        if method.upper() != "GET":
+            kwargs["follow_redirects"] = False
 
         # 연결 단계 실패(ConnectError/ConnectTimeout/PoolTimeout)는 서버 도달 전이라
         # 재시도 안전 → 1회 재시도. ReadTimeout 등 응답 단계 실패는 등록 중복 우려로 재시도 안 함.
@@ -176,6 +182,25 @@ class PlayAutoClient:
                 f"[플레이오토] 연결 실패 — GCP/클라우드 환경에서 PlayAuto 호스트가 차단됩니다. "
                 f"국내 ISP 정적 IP 프록시(전송 용도)를 설정하세요: {e}"
             ) from e
+
+        # 리다이렉트 차단 감지 — 쓰기 요청에 3xx 응답이 오면 자동 재전송 대신
+        # 명시적 실패로 처리하고 위치를 로그에 남긴다 (중복등록 원인 추적용).
+        # 등록 복제를 만드는 건 307/308(본문 그대로 재전송)이고, 301/302/303 은
+        # 원래 httpx 가 메서드를 GET 으로 바꿔 따라가던 코드다. 다만 위에서 쓰기
+        # 요청의 추종 자체를 껐으므로 어느 쪽이든 더는 따라가지 않는다. 그대로
+        # 두면 리다이렉트 본문을 JSON 파싱하다 엉뚱한 에러로 새므로, 3xx 는 전부
+        # 명시적 실패로 끊고 status/location 을 남긴다(진범 특정용).
+        if method.upper() != "GET" and resp.status_code in (301, 302, 303, 307, 308):
+            loc = resp.headers.get("location", "")
+            logger.error(
+                f"[플레이오토] 쓰기 요청에 리다이렉트 응답 — 재전송 차단: "
+                f"method={method} url={url} status={resp.status_code} "
+                f"location={loc[:200]} (307/308 이면 본문 재전송=중복등록 원인)"
+            )
+            raise PlayAutoApiError(
+                f"[플레이오토] {resp.status_code} 리다이렉트 응답 — 중복등록 방지 위해 차단됨. "
+                f"EMP/프록시 구성 확인 필요 (location={loc[:100]})"
+            )
 
         # 응답 파싱
         try:

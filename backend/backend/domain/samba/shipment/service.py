@@ -1376,6 +1376,52 @@ class SambaShipmentService:
             await self.session.flush()
             return shipment
 
+        # 옵션 0건 + 미갱신 방어 — SSG처럼 option_group_names 를 채우지 않는 소싱처는
+        # 위 가드가 잡지 못한다(실사례: SSG 수집 직후 옵션 파싱이 빈 상태로 전송돼
+        # 롯데홈에 단일상품 등록 — 이후 갱신에서 옵션 6건 회복). 파싱이 정상이면
+        # 진짜 단일상품도 대표단품 1개는 있으므로(filter_daepyo_options) 옵션 0건은
+        # 수집 미확정 신호다. 전송 직전 실시간 재조회가 옵션을 회복했으면 통과,
+        # 아니면 첫 갱신(last_refreshed_at)으로 확정될 때까지 신규 등록을 보류한다.
+        _eff_opts = (pending_refresh_updates or {}).get("options") or (
+            product_row.options or []
+        )
+        if (
+            not _eff_opts
+            and product_row.last_refreshed_at is None
+            and not _price_stock_only
+        ):
+            logger.warning(
+                f"[전송] 옵션 0건·미갱신 — 전송 보류: {(product_row.name or '')[:30]} "
+                f"({product_row.source_site})"
+            )
+            # 보류하더라도 이번 회차 갱신 결과(last_refreshed_at/options)는 반드시
+            # 저장한다. 이 return 은 아래 통합 저장(update_data) 지점을 건너뛰므로,
+            # 저장 없이 빠지면 last_refreshed_at 이 영원히 NULL → 다음 회차도 같은
+            # 조건으로 보류되는 무한 루프가 된다. 미등록 상품은 오토튠 갱신 대상이
+            # 아니라(registered_accounts 필터) 이 경로 말고는 채워줄 곳이 없어,
+            # 진짜 단일상품(옵션 0건 확정)이 영구 미등록으로 남는다.
+            if pending_refresh_updates:
+                try:
+                    await product_repo.update_async(
+                        product_id,
+                        **pending_refresh_updates,
+                        updated_at=datetime.now(UTC),
+                    )
+                except Exception as _persist_e:
+                    logger.warning(f"[전송] 보류 시 갱신결과 저장 실패: {_persist_e}")
+            shipment = SambaShipment(
+                product_id=product_id,
+                status="skipped",
+                update_result={"refresh": refresh_status} if refresh_status else None,
+                transmit_result={},
+                transmit_error={
+                    "_all": "옵션 0건(수집 미확정) — 소싱처 갱신으로 확정 후 재전송"
+                },
+            )
+            self.session.add(shipment)
+            await self.session.flush()
+            return shipment
+
         # 이미지/상세페이지 전송 판단
         is_price_stock_only = bool(update_items) and set(update_items) <= {
             "price",
