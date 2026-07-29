@@ -327,6 +327,53 @@ SHIPPING_LABEL_TO_STATUS_KEY = {
 # [2026-06-18] arrived(사무실도착)/shipping(국내배송중)/delivered(배송완료) 제거 — 이미 송장이
 #   나간 뒤라 '발주·송장 막기'가 불가능해 알람 취지에 안 맞음. 특히 배송완료 건의 마켓 '취소요청'은
 #   배송 후 반품요청(롯데온 등)이라 발주사고 방지와 무관 → 오탐 제거(배송완료 건 알람에서 빠짐).
+# ── POIZON 주문 상태 ──────────────────────────────────────────────────────
+# order_status 코드 → (내부 status, 마켓상태 라벨). 두 벌로 나눠 두면 코드가
+# 한쪽에만 추가돼 조용히 어긋나므로 한 맵으로 관리한다.
+POISON_ORDER_STATUS_MAP: dict[int, tuple[str, str]] = {
+    1000: ("pending", "결제대기"),
+    2000: ("preparing", "발송대기"),
+    2100: ("shipping", "발송완료"),
+    2200: ("shipping", "배송중"),
+    2500: ("shipping", "배송중"),
+    2550: ("shipping", "배송중"),
+    2600: ("shipping", "배송중"),
+    2650: ("shipping", "배송중"),
+    2700: ("shipping", "배송중"),
+    3040: ("shipping", "배송중"),
+    2800: ("delivered", "배송완료"),
+    4000: ("delivered", "구매확정"),
+    7000: ("cancelled", "거래실패"),
+    8000: ("cancelled", "거래실패"),
+    8010: ("cancelled", "거래실패"),
+    8080: ("cancelled", "거래실패"),
+}
+
+# 내부 status 서열 — 전진 전이만 허용해 역행 덮어쓰기를 막는다.
+# 맵에 없는 현재 상태(반품/취소요청/교환 등)는 -1이 아니라 "보호" 대상이다.
+POISON_STATUS_RANK = {
+    "pending": 0,
+    "preparing": 1,
+    "shipping": 2,
+    "delivered": 3,
+    "confirmed": 4,
+}
+
+# 마켓상태 라벨 서열. '송장전송완료'는 삼바가 송장 전송 후 직접 박는 내부 라벨로,
+# 포이즌이 아직 2000(발송대기)을 주는 구간에 덮이면 송장 전송 사실이 사라진다.
+# 발송대기보다 위에 두어 역행을 차단한다.
+POISON_LABEL_RANK = {
+    "": -1,
+    "결제대기": 0,
+    "발송대기": 1,
+    "송장전송완료": 2,
+    "발송완료": 3,
+    "배송중": 4,
+    "국내배송중": 4,
+    "배송완료": 5,
+    "구매확정": 6,
+}
+
 CANCEL_ALERT_SHIPPING_STATUSES = ("취소요청", "취소완료")
 CANCEL_ALERT_TARGET_STATUSES = (
     "pending",
@@ -10390,9 +10437,53 @@ async def sync_orders_from_markets(
                         _new_qty = 0
                     if _new_qty > 1 and (existing.quantity or 1) == 1:
                         update_fields["quantity"] = _new_qty
-                    # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
-                    # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
-                    new_ship_status = order_data.get("shipping_status")
+                    # POIZON — order_status 코드가 진실의 원천. 파서가 내부 status와
+                    # 마켓상태 라벨을 함께 주므로 전진 전이만 허용해 직접 갱신하고,
+                    # 아래 문자열 분기(타 마켓 취소/교환 클레임 규칙)는 타지 않는다.
+                    # (기존엔 shipping_status가 빈 값이라 최초 수집 상태로 고착 —
+                    # 발송완료/거래실패 전환이 삼바에 반영되지 않던 문제 수정)
+                    if order_data.get("source") == "poison":
+                        _pz_new = str(order_data.get("status") or "")
+                        _pz_cur = str(existing.status or "")
+                        if _pz_new and _pz_new != _pz_cur and _pz_cur != "cancelled":
+                            if _pz_new == "cancelled":
+                                # 거래실패는 마켓 종결 신호 — 그대로 반영
+                                update_fields["status"] = _pz_new
+                            elif (
+                                _pz_cur in POISON_STATUS_RANK
+                                and POISON_STATUS_RANK.get(_pz_new, -1)
+                                > POISON_STATUS_RANK[_pz_cur]
+                            ):
+                                update_fields["status"] = _pz_new
+                            # 서열에 없는 현재 상태(반품/교환/취소요청 등)는 보호.
+                            # 미지 상태를 최하위로 취급하면 어떤 값이든 전진으로
+                            # 판정돼 클레임 진행 주문을 덮어쓴다
+                        _pz_label = str(order_data.get("shipping_status") or "")
+                        _pz_cur_label = str(existing.shipping_status or "")
+                        if _pz_label and _pz_label != _pz_cur_label:
+                            if _pz_label == "거래실패":
+                                update_fields["shipping_status"] = _pz_label
+                            elif (
+                                _pz_cur_label in POISON_LABEL_RANK
+                                and POISON_LABEL_RANK.get(_pz_label, -1)
+                                > POISON_LABEL_RANK[_pz_cur_label]
+                            ):
+                                update_fields["shipping_status"] = _pz_label
+                            # 서열 밖 라벨(취소요청/반품요청 등)은 보호
+                        # 좀비 '취소요청' 해제는 아래 Recovery 블록에 맡긴다
+                        # (cancel_requested_at 정리까지 함께 이뤄져야 함)
+                        new_ship_status = (
+                            _pz_label
+                            if (
+                                existing.shipping_status == "취소요청"
+                                and _pz_label in ("배송완료", "구매확정")
+                            )
+                            else None
+                        )
+                    else:
+                        # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
+                        # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
+                        new_ship_status = order_data.get("shipping_status")
                     # Recovery — 마켓이 '배송완료'/'구매확정' 같은 종결 상태를 보낸 경우
                     # 좀비 '취소요청' 잔존을 자동 해제 (PlayAuto 5/19 수취확인됐는데
                     # DB는 13일째 취소요청으로 박혀있던 사고 방지).
@@ -11900,25 +11991,10 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         _status_code = int(order_status) if order_status is not None else 0
     except (TypeError, ValueError):
         _status_code = 0
-    poison_status_map = {
-        1000: "pending",
-        2000: "preparing",
-        2100: "shipping",
-        2200: "shipping",
-        2500: "shipping",
-        2550: "shipping",
-        2600: "shipping",
-        2650: "shipping",
-        2700: "shipping",
-        3040: "shipping",
-        2800: "delivered",
-        4000: "delivered",
-        7000: "cancelled",
-        8000: "cancelled",
-        8010: "cancelled",
-        8080: "cancelled",
-    }
-    status = poison_status_map.get(_status_code, "preparing")
+    # 마켓 상태 라벨 — 주문 화면의 '마켓주문상태' 표시용 + 기존 주문 갱신 신호.
+    # 빈 값이면 update 경로가 상태 갱신을 건너뛰어 최초 수집 상태로 고착되므로
+    # (발송완료/거래실패로 바뀌어도 삼바에 미반영) 코드→한글 라벨을 항상 채운다.
+    status, ship_label = POISON_ORDER_STATUS_MAP.get(_status_code, ("preparing", ""))
 
     # 결제일시 — "yyyy-MM-dd HH:mm:ss" (셀러 타임존 KST 가정) → UTC
     paid_at = kst_str_to_utc(item.get("pay_time") or "")
@@ -11978,7 +12054,7 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         "revenue": revenue,
         "cost": 0,
         "status": status,
-        "shipping_status": "",
+        "shipping_status": ship_label,
         "customer_name": customer_name,
         "customer_phone": customer_phone,
         "customer_address": customer_address,
