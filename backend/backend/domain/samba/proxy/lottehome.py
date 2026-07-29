@@ -29,6 +29,13 @@ _cert_cache: dict[str, tuple[str, datetime]] = {}
 # 동시 인증 방지 Lock
 _auth_locks: dict[str, asyncio.Lock] = {}
 
+# 마지막으로 새 인증키를 "발급"한 시각 (계정:env 단위).
+# 롯데홈은 새 키를 발급하면 이전 키가 무효화되므로, 오류 하나가 재인증 폭주를
+# 일으키면 같은 계정의 다른 호출이 줄줄이 [9001] 로 떨어진다. 오류 기반 강제
+# 재인증에는 쿨다운을 걸어 폭주를 막는다(정상 만료 갱신 경로는 영향 없음).
+_last_auth_issue: dict[str, datetime] = {}
+FORCE_AUTH_COOLDOWN = timedelta(minutes=5)
+
 
 async def _persist_cert_to_db(
     user_id: str, env: str, cert_key: str, expires_iso: str
@@ -436,11 +443,33 @@ class LotteHomeClient:
             return await self._call_api(endpoint, method, params, timeout_s=timeout_s)
         except LotteApiError as e:
             msg = (e.lotte_msg or "").lower()
+            _lotte_msg = e.lotte_msg or ""
+            # [2026-07-30] "인증키오류(데이터 존재하지 않음)" 오분류 차단.
+            # 롯데홈은 0001 을 데이터 미존재에 광범위하게 쓰는데, 이 메시지엔
+            # '인증' 글자가 들어 있어 아래 키워드 매칭이 인증 실패로 오판했다.
+            # → 재인증할 때마다 새 키가 발급되고 이전 키가 무효화되어, 같은
+            # 계정의 다른 호출(배송조회 등)이 [9001] 인증 실패로 떨어졌다.
+            # 실측: 재인증 직후 같은 호출이 또 0001 → 인증 문제가 아님이 확정.
+            _data_absent = "데이터 존재하지 않" in _lotte_msg
             is_auth = e.code in ("5001", "9001") or (
                 e.code == "0001"
-                and any(k in (e.lotte_msg or "") for k in ("인증", "토큰", "키"))
+                and not _data_absent
+                and any(k in _lotte_msg for k in ("인증", "토큰", "키"))
             )
             if is_auth:
+                _ck = f"{self.user_id}:{self.env}"
+                _last = _last_auth_issue.get(_ck)
+                _now = datetime.now(tz=timezone.utc)
+                if _last and (_now - _last) < FORCE_AUTH_COOLDOWN:
+                    # 방금 재발급했는데 또 인증 오류 → 재발급으로 풀리는 문제가
+                    # 아니다. 계속 발급하면 직전 키까지 무효화되어 같은 계정의
+                    # 다른 호출을 [9001] 로 끌어내린다. 쿨다운 중엔 그대로 raise.
+                    logger.warning(
+                        f"[롯데홈쇼핑] 재인증 쿨다운 중 — 재발급 생략하고 오류 전달 "
+                        f"(endpoint={endpoint}, code={e.code}, msg={e.lotte_msg}, "
+                        f"직전발급={_last.isoformat()})"
+                    )
+                    raise
                 logger.info(
                     f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint}, code={e.code}, msg={e.lotte_msg})"
                 )
@@ -534,6 +563,8 @@ class LotteHomeClient:
             self._cert_key = cert_key
             self._cert_expires_at = expires_at
             _cert_cache[cache_key] = (cert_key, expires_at)
+            # 폭주 가드용 — 새 키 발급 시각 기록 (이전 키는 이 시점에 무효화됨)
+            _last_auth_issue[cache_key] = now
             # DB 저장 (비동기 — 등록 흐름 지연 없음)
             asyncio.create_task(
                 _persist_cert_to_db(self.user_id, self.env, cert_key, expires_iso)
