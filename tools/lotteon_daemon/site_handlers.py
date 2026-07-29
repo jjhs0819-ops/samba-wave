@@ -214,16 +214,29 @@ _SSG_MARKER_JS = r"""
 (() => {
   try {
     const _src = document.documentElement ? document.documentElement.outerHTML : ''
+    // 어느 조건으로 staffOnly 판정됐는지 기록 (2026-07-29 진단용) — 리다이렉트/차단 페이지와
+    // 진짜 임직원 전용 상품을 백엔드 로그에서 구분하기 위함.
     if (_src.indexOf('임직원 및 사업자 회원') !== -1 || _src.indexOf('임직원만 구매') !== -1) {
       window.__SSG_STAFF_ONLY__ = true
+      window.__SSG_STAFF_ONLY_REASON__ = 'staff_marker'
       return true
     }
     const _href = location.href || ''
     if (_href.indexOf('member.ssg.com/member/login') !== -1) {
-      window.__SSG_STAFF_ONLY__ = true; return true
+      window.__SSG_STAFF_ONLY__ = true
+      window.__SSG_STAFF_ONLY_REASON__ = 'login_redirect'
+      return true
     }
-    if (document.title === 'flagMsg') { window.__SSG_STAFF_ONLY__ = true; return true }
-    if (_href && _href.indexOf('itemView.ssg') === -1) { window.__SSG_STAFF_ONLY__ = true; return true }
+    if (document.title === 'flagMsg') {
+      window.__SSG_STAFF_ONLY__ = true
+      window.__SSG_STAFF_ONLY_REASON__ = 'flagMsg'
+      return true
+    }
+    if (_href && _href.indexOf('itemView.ssg') === -1) {
+      window.__SSG_STAFF_ONLY__ = true
+      window.__SSG_STAFF_ONLY_REASON__ = 'href_not_itemview:' + _href.slice(0, 100)
+      return true
+    }
     const hasObj = !!(window.resultItemObj && window.resultItemObj.itemNm)
     if (!hasObj) return false
     return true
@@ -236,7 +249,12 @@ _SSG_EXTRACT_JS = r"""
 (() => {
   try {
     if (window.__SSG_STAFF_ONLY__) {
-      return { success: false, staffOnly: true, source_site: 'SSG' }
+      return {
+        success: false,
+        staffOnly: true,
+        error: 'ssg_staff_only reason=' + (window.__SSG_STAFF_ONLY_REASON__ || 'unknown'),
+        source_site: 'SSG',
+      }
     }
     const obj = window.resultItemObj || {}
     const _intVal = (v) => parseInt((v || '0').toString().replace(/[^0-9]/g, ''), 10) || 0
@@ -397,8 +415,29 @@ _SSG_EXTRACT_JS = r"""
       }
     } catch (_) {}
 
+    // 실패 진단 (2026-07-29) — success=false 인데 error 키가 없어 백엔드 로그에
+    // "error=" 빈값만 남던 문제. 오토튠 SSG 404건 전량이 이 경로였고 원인 구분이
+    // 불가능했다. 가격 0원 실패 시 페이지 실제 상태를 error 문자열에 실어 보낸다.
+    const _diag = () => {
+      let bodyLen = 0
+      try { bodyLen = (document.body && document.body.innerText || '').length } catch (_) {}
+      return (
+        'ssg_price_zero' +
+        ' href=' + (location.href || '').slice(0, 120) +
+        ' title=' + (document.title || '').slice(0, 60) +
+        ' hasObj=' + (obj && obj.itemNm ? '1' : '0') +
+        ' domSale=' + domSalePrice +
+        ' domCard=' + domCardPrice +
+        ' bestAmt=' + bestAmt +
+        ' sellprc=' + sellprc +
+        ' opts=' + (options ? options.length : 0) +
+        ' bodyLen=' + bodyLen
+      )
+    }
+
     return {
       success: salePrice > 0 || cost > 0,
+      error: salePrice > 0 || cost > 0 ? '' : _diag(),
       site_product_id: window.__PRD_ID__ || '',
       name: (obj.itemNm || document.querySelector('meta[property="og:title"]')?.content || '').trim(),
       original_price: originalPrice,

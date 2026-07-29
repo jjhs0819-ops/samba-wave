@@ -150,7 +150,8 @@ class SSGPlugin(SourcingPlugin):
             # (success:false 케이스이지만 일반 고객 구매 불가이므로 sold_out으로 자동 정리)
             if isinstance(_ext_result, dict) and _ext_result.get("staffOnly"):
                 logger.info(
-                    f"[SSG] 임직원 전용 상품(확장앱 신호) → sold_out 처리: {site_product_id}"
+                    f"[SSG] 임직원 전용 상품(확장앱 신호) → sold_out 처리: {site_product_id} "
+                    f"({(_ext_result.get('error') or '').strip() or 'reason 미전달'})"
                 )
                 return RefreshResult(
                     product_id=product_id,
@@ -437,8 +438,16 @@ class SSGPlugin(SourcingPlugin):
                 _ext_msg = ""
                 if isinstance(_ext_result, dict) and not _ext_result.get("success"):
                     _ext_msg = (_ext_result.get("message") or "").strip()
+                    # 데몬 진단 문자열(error) 도 채택 (2026-07-29) — 기존엔 message 만 읽어
+                    # 데몬이 보낸 실패 사유가 통째로 버려지고 "파싱 실패" 일반 문구만 남았다.
+                    if not _ext_msg:
+                        _ext_msg = (_ext_result.get("error") or "").strip()
                     if _ext_result.get("blocked"):
                         _ext_msg = "SSG 차단됨 (reCAPTCHA) — 잠시 후 재시도 해주세요"
+                    logger.warning(
+                        f"[SSG] 갱신 실패 진단: {site_product_id} — "
+                        f"{_ext_msg or '(사유 없음)'}"
+                    )
                 return RefreshResult(
                     product_id=product_id,
                     error=_ext_msg

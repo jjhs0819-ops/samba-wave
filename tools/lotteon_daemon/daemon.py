@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.53"
+DAEMON_VERSION = "1.4.54"
 
 # urllib 기본 User-Agent("Python-urllib/3.x")를 Cloudflare 가 봇으로 인식해 403 차단
 # (2026-07-13, GCP→Cloudflare Tunnel 전환 이후 신규 발생). self-update 관련 모든
