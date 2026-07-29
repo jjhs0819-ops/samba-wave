@@ -8691,6 +8691,21 @@ async def sync_orders_from_markets(
                 # 중복·취소불가([1000])의 근원이 됨 — 다음 동기화에서 실순번과 함께
                 # 등록된다 (동기화는 최근 구간을 반복 풀링하므로 누락 없음).
                 _lh_deferred = 0
+                # 보류 원인 진단용 실측 샘플 — SubOrdNo(공식 스펙상 배송단위일련번호
+                # 매핑)가 실제로 어떤 형태로 오는지 추측 없이 확인하려면 값이 필요하다.
+                # 로그 폭주를 막으려 사이클당 앞 5건만 남긴다.
+                _lh_defer_samples: list[str] = []
+
+                def _lh_note_defer(_why: str, _ro: dict, _pi: dict | None) -> None:
+                    if len(_lh_defer_samples) >= 5:
+                        return
+                    _sub = str(_ro.get("SubOrdNo") or "")
+                    _keys = sorted(_pi.keys()) if isinstance(_pi, dict) else []
+                    _lh_defer_samples.append(
+                        f"{_ro.get('OrdNo', '')}[{_why}] "
+                        f"SubOrdNo={_sub!r}(len={len(_sub)}) ProdInfo={_keys}"
+                    )
+
                 for _lh_sel in ["01", "02", "03"]:
                     try:
                         _lh_orders = await lh_client.search_new_orders(
@@ -8718,6 +8733,14 @@ async def sync_orders_from_markets(
                                 # 배송조회 실패 사이클도 폴백 없이 무조건 보류 —
                                 # 폴백이 상품코드 키 행을 만들어 사고의 재유입 경로가 됨
                                 _lh_deferred += 1
+                                _lh_note_defer(
+                                    "합배송:dlvsn없음",
+                                    ro,
+                                    _prod_info_raw[0]
+                                    if _prod_info_raw
+                                    and isinstance(_prod_info_raw[0], dict)
+                                    else None,
+                                )
                                 continue
                             # 상품 수 > DlvUnitSn 수 면 인덱스 매핑이 성립하지 않는다.
                             # 남는 상품이 인덱스 키(_lh_prod_idx = _i)로 저장되면
@@ -8726,6 +8749,14 @@ async def sync_orders_from_markets(
                                 1 for _pd in _prod_info_raw if isinstance(_pd, dict)
                             ):
                                 _lh_deferred += 1
+                                _lh_note_defer(
+                                    f"합배송:상품수>dlvsn수({len(_dlvsn_list)})",
+                                    ro,
+                                    _prod_info_raw[0]
+                                    if _prod_info_raw
+                                    and isinstance(_prod_info_raw[0], dict)
+                                    else None,
+                                )
                                 continue
                             for _i, _prod in enumerate(_prod_info_raw):
                                 _flat = dict(ro)
@@ -8778,6 +8809,11 @@ async def sync_orders_from_markets(
                                 # 실순번 미확보 — 이번 사이클 등록 보류 (추측 키 금지).
                                 # 배송조회 실패 사이클도 폴백 없이 보류한다
                                 _lh_deferred += 1
+                                _lh_note_defer(
+                                    "단건:dlvsn없음+SubOrdNo부적합",
+                                    ro,
+                                    _pi if isinstance(_pi, dict) else None,
+                                )
                                 continue
                             # 옛 키 계산은 파서(_parse_lottehome_order)의 폴백 체인과
                             # 반드시 동일해야 한다 — ProdSeq/ProdCode를 빼면 상품코드
@@ -8820,6 +8856,12 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: 실순번 미확보 신규주문 {_lh_deferred}건 등록 보류 "
                         f"(다음 사이클에 실순번과 함께 등록)"
                     )
+                    if _lh_defer_samples:
+                        # 보류가 계속되면 SubOrdNo 실측값으로 원인을 확정한다
+                        # (값 없음 / 자릿수 부족 / 다른 형식)
+                        logger.info(
+                            f"[주문동기화] {label}: 보류 샘플 — {_lh_defer_samples}"
+                        )
                 if _lh_axis_mixed:
                     # 계속 쌓이면 정상 DlvUnitSn 이 상세축 값과 겹쳐 오판되는 것일 수 있다
                     logger.info(
