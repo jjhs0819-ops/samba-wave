@@ -8489,10 +8489,25 @@ async def sync_orders_from_markets(
                 # 상세축 혼입으로 이번 사이클 보류한 주문 — 로그용
                 _lh_axis_mixed: set[str] = set()
 
+                def _lh_bsn_ok(_v: str) -> bool:
+                    """배송축(배송단위일련번호) 자릿수 검증 — 현행 10자리(1130-계열).
+
+                    상세축(현행 9자리, 912~914-계열)이 DlvUnitSn 필드에 혼입돼도
+                    교차 증거가 없으면 #4차 가드를 통과하던 구멍(7/29 실측 109건)을
+                    자릿수로 최종 차단한다. 상세축 시퀀스가 10억(10자리)에 도달하기
+                    전까지 유효 — 도달 시 이 기준을 재검토할 것.
+                    """
+                    return len(_v) >= 10 and _v.isdigit()
+
                 def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
                     _dsn = str(_pitem.get("DlvUnitSn") or "")
-                    if _dsn and _dsn not in _lh_dlvsn_map.get(_ono, []):
-                        _lh_dlvsn_map.setdefault(_ono, []).append(_dsn)
+                    if _dsn:
+                        if not _lh_bsn_ok(_dsn):
+                            # 자릿수 미달(상세축 혼입) — 맵을 오염시키지 않되,
+                            # 인덱스 정합성이 깨지므로 이 주문은 통째로 보류 표시
+                            _lh_axis_mixed.add(_ono)
+                        elif _dsn not in _lh_dlvsn_map.get(_ono, []):
+                            _lh_dlvsn_map.setdefault(_ono, []).append(_dsn)
                     for _k in (
                         "DlvUnitSn",
                         "OrdDtlSn",
@@ -8520,6 +8535,10 @@ async def sync_orders_from_markets(
                     폴백으로 새어 옛 인덱스 키 사고가 재유입된다. 다음 정상
                     사이클에 온전한 목록으로 등록된다.
                     """
+                    if _ono in _lh_axis_mixed:
+                        # 수집 단계에서 자릿수 미달 DlvUnitSn이 감지된 주문 —
+                        # 맵이 불완전하므로 통째로 보류
+                        return []
                     _bad = set(_lh_detail_axis.get(_ono, set()))
                     if _extra_detail:
                         for _k in ("OrdDtlSn", "OrgOrdDtlSn", "ProdSeq", "ProdCode"):
@@ -8538,6 +8557,8 @@ async def sync_orders_from_markets(
                     """행 생성용 검증 DlvUnitSn — 상세축 혼입이면 빈 문자열."""
                     _dsn = str(_pitem.get("DlvUnitSn") or "")
                     if not _dsn:
+                        return ""
+                    if not _lh_bsn_ok(_dsn):
                         return ""
                     if _dsn in _lh_detail_axis.get(_ono, set()):
                         return ""
@@ -8682,10 +8703,15 @@ async def sync_orders_from_markets(
                             # 신규주문 행의 상세축 값 학습 후, 혼입 제거된 목록 사용 (#4차)
                             if isinstance(_pi, dict):
                                 _lh_collect_ids(_no_key, _pi)
+                            # 공식 스펙: SubOrdNo[부주문번호] = 배송단위일련번호 매핑.
+                            # 10자리 배송축 값이 응답에 있으면 배송조회 주입·보류 없이
+                            # 파서(SubOrdNo 우선)가 바로 올바른 키로 등록한다.
+                            _sub_sn = str(ro.get("SubOrdNo") or "").strip()
+                            _has_sub = len(_sub_sn) >= 10 and _sub_sn.isdigit()
                             _dlvsn_list = _lh_clean_dlvsns(
                                 _no_key, _pi if isinstance(_pi, dict) else None
                             )
-                            if not _dlvsn_list:
+                            if not _dlvsn_list and not _has_sub:
                                 # 실순번 미확보 — 이번 사이클 등록 보류 (추측 키 금지).
                                 # 배송조회 실패 사이클도 폴백 없이 보류한다
                                 _lh_deferred += 1
@@ -12841,6 +12867,9 @@ def _parse_lottehome_order_multi(
         flat = dict(item)
         flat["ProdInfo"] = prod
         flat["_lh_prod_idx"] = i
+        # 합배송 표시 — SubOrdNo(부주문번호)는 주문 단위 값이라 라인 구분을
+        # 못 하므로, 다중 라인에서는 파서가 SubOrdNo 키 승격을 건너뛰게 한다
+        flat["_lh_multi"] = len(prod_info_raw) > 1
         parsed = _parse_lottehome_order(
             flat, account_id, label, prefer_org_dtl_sn=prefer_org_dtl_sn
         )
@@ -12905,15 +12934,31 @@ def _parse_lottehome_order(
             or ""
         )
     else:
-        ord_dtl_sn = str(
-            prod_info.get("OrdDtlSn")
-            or prod_info.get("DlvUnitSn")
-            or prod_info.get("OrgOrdDtlSn")
-            or prod_info.get("ProdSeq")
-            or prod_info.get("ProdCode")
-            or item.get("_lh_prod_idx", "")
-            or ""
-        )
+        # 공식 연동표준안(70.신규주문조회): OrderInfo.SubOrdNo[부주문번호] =
+        # "배송단위일련번호 매핑" — 취소·송장(registDeliver)이 요구하는 배송축
+        # 번호(현행 10자리, 1130-계열)가 신규주문 응답에 처음부터 들어있다.
+        # 상세축(OrdDtlSn/OrgOrdDtlSn 등, 현행 9자리)을 키로 쓰면 취소/송장이
+        # [1000]으로 전부 실패하므로, 10자리 이상 배송축 후보를 최우선 사용.
+        # 합배송(_lh_multi)은 SubOrdNo가 라인 구분을 못 해 기존 체인 유지.
+        _bsn = ""
+        if not item.get("_lh_multi"):
+            for _c in (sub_ord_no, prod_info.get("DlvUnitSn")):
+                _cs = str(_c or "").strip()
+                if len(_cs) >= 10 and _cs.isdigit():
+                    _bsn = _cs
+                    break
+        if _bsn:
+            ord_dtl_sn = _bsn
+        else:
+            ord_dtl_sn = str(
+                prod_info.get("OrdDtlSn")
+                or prod_info.get("DlvUnitSn")
+                or prod_info.get("OrgOrdDtlSn")
+                or prod_info.get("ProdSeq")
+                or prod_info.get("ProdCode")
+                or item.get("_lh_prod_idx", "")
+                or ""
+            )
     ext_order_number = (
         f"{order_no}:{ord_dtl_sn}" if (order_no and ord_dtl_sn) else order_no
     )

@@ -83,27 +83,38 @@ class TestCleanDlvsns:
 
 
 class TestValidDlvsn:
-    """_lh_valid_dlvsn — 행 생성용 단건 검증."""
+    """_lh_valid_dlvsn — 행 생성용 단건 검증 (+자릿수 축 판별, 7/29 109건 실사고)."""
 
     def setup_method(self) -> None:
         self.detail: dict = {}
-        self.fn = _load({"_lh_valid_dlvsn"}, {"_lh_detail_axis": self.detail})[
-            "_lh_valid_dlvsn"
-        ]
+        self.fn = _load(
+            {"_lh_bsn_ok", "_lh_valid_dlvsn"}, {"_lh_detail_axis": self.detail}
+        )["_lh_valid_dlvsn"]
 
     def test_valid_value_passes(self) -> None:
-        self.detail["AA"] = {"914001"}
+        self.detail["AA"] = {"914000001"}
         assert (
-            self.fn("AA", {"DlvUnitSn": "1130001", "OrdDtlSn": "914001"}) == "1130001"
+            self.fn("AA", {"DlvUnitSn": "1130000001", "OrdDtlSn": "914000001"})
+            == "1130000001"
         )
 
     def test_known_detail_axis_value_rejected(self) -> None:
-        self.detail["AA"] = {"914001"}
-        assert self.fn("AA", {"DlvUnitSn": "914001"}) == ""
+        self.detail["AA"] = {"914000001"}
+        assert self.fn("AA", {"DlvUnitSn": "914000001"}) == ""
 
     def test_same_value_as_own_detail_field_rejected(self) -> None:
         """맵 학습 전이라도 자기 행에서 양축 값이 같으면 혼입."""
-        assert self.fn("AA", {"DlvUnitSn": "914001", "OrgOrdDtlSn": "914001"}) == ""
+        assert (
+            self.fn("AA", {"DlvUnitSn": "914000001", "OrgOrdDtlSn": "914000001"}) == ""
+        )
+
+    def test_nine_digit_rejected_without_cross_evidence(self) -> None:
+        """교차 증거가 없어도 9자리(상세축 시퀀스)는 배송축으로 인정하지 않는다.
+
+        2026-07-29 실사고: DlvUnitSn 필드에 상세축 값만 달랑 오는 응답은
+        교차 증거 기반 가드(#689)를 통과해 109건이 잘못된 키로 생성됐다.
+        """
+        assert self.fn("AA", {"DlvUnitSn": "914736467"}) == ""
 
     def test_missing_value(self) -> None:
         assert self.fn("AA", {}) == ""
