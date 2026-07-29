@@ -987,7 +987,13 @@ export default function WarroomPage() {
       //    주소스로 써서 데몬 없이도 가격수집 동작 — 무신사와 동일하게 브라우저 dev 전담으로
       //    전환. 데몬 전용에 남겨두면 데몬 한 번도 안 켠 PC는 등록 자체가 조용히 스킵돼
       //    활성사이클이 0으로 보이던 버그(등록 로직이 실행 로직 변경을 못 따라감).
-      const _DAEMON_ONLY = new Set(['SSG', 'ABCmart', 'GrandStage'])
+      //  - SSG (2026-07-29 제외): SSG 가 상세(itemView)에서 Playwright 로 띄운 브라우저를
+      //    403 "서비스 이용 제한" 으로 차단 → 데몬은 가격 0원만 회신. 확장앱(실브라우저)은
+      //    같은 PC 에서 정상 200 이라 detail 을 확장앱 전담으로 되돌림(backend
+      //    DAEMON_ONLY_JOB_SITES["detail"] 예외와 짝). 여기 데몬 전용에 남겨두면 오토튠
+      //    페이지에서 SSG 를 체크해도 데몬 dev 에만 배정돼 확장앱 담당이 0대가 되고,
+      //    owner 미지정 잡이 되어 아무 PC나 편승 처리하는 회귀가 생긴다(2026-07-29 실측 3대).
+      const _DAEMON_ONLY = new Set(['ABCmart', 'GrandStage'])
       // ABCmart 체크 = ABCmart + GrandStage 자동 expand (같은 a-rt.com 도메인)
       const _SITE_EXPAND: Record<string, string[]> = {
         ABCmart: ['ABCmart', 'GrandStage'],
