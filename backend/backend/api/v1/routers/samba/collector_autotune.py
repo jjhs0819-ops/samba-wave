@@ -286,6 +286,18 @@ _pc_site_empty_hits: dict[str, dict[str, int]] = {}
 _pc_site_heartbeats: dict[str, dict[str, float]] = {}
 _pc_target_ids: dict[str, Optional[set]] = {}
 _AUTOTUNE_CYCLE_BATCH = int(os.environ.get("AUTOTUNE_CYCLE_BATCH", "200"))
+# 사이트별 사이클 배치 기본값 — 미지정 사이트는 _AUTOTUNE_CYCLE_BATCH(200).
+#
+# Watchdog heartbeat 는 사이클 진입 시 1회만 갱신되므로(_pc_hb 갱신 지점 참조),
+# "배치 전체 소요시간 < _SITE_STUCK_TIMEOUT_OVERRIDE" 가 성립해야 사이클이 완주한다.
+# SSG=40 (2026-07-29): 확장앱 전환 후 실측 잡 1건 52.1초(최대 99.3초), 동시 3건이라
+# 200건이면 약 3,470초가 필요한데 임계는 1,000초 → 매 사이클 30건쯤 처리하고 강제
+# 재시작. last_refreshed_at 이 갱신되지 않으니 다음 사이클이 오래된순 SELECT 로
+# 같은 상품을 다시 집어 무한 반복했다(실측: 6시간 발행 2,697건 중 고유 145건,
+# 중복 94%, 동일 상품 34회 재스크랩). 40건 ≈ 693초로 임계 대비 30% 여유를 둔다.
+_SITE_CYCLE_BATCH: dict[str, int] = {
+    "SSG": 40,
+}
 # 사이트별 적응 배치 크기 (device_id → site → int).
 # 직전 배치 소요시간 기준으로 다음 배치 SELECT limit 자동 조정. 미설정 시 env 기본값 사용.
 _pc_site_batch_size: dict[str, dict[str, int]] = {}
@@ -1534,7 +1546,9 @@ async def _site_autotune_loop(device_id: str, site: str):
                     _target_ids = _pc_target_ids.get(device_id)
                     if _target_ids:
                         _where.append(_CP.id.in_(_target_ids))
-                    _batch_limit = _pc_bs(device_id).get(site, _AUTOTUNE_CYCLE_BATCH)
+                    _batch_limit = _pc_bs(device_id).get(site) or _SITE_CYCLE_BATCH.get(
+                        site, _AUTOTUNE_CYCLE_BATCH
+                    )
                     # SNKRDUNK 소싱 플러그인은 refresh 시 extra_data(snkr_type)를 읽는다.
                     # 이 배치에 SNKRDUNK 가 있으면 extra_data 를 defer 하지 않는다 — defer 하면
                     # 세션 종료 후 접근 시 DetachedInstanceError 로 전 상품 갱신 실패(작은 컬럼이라
