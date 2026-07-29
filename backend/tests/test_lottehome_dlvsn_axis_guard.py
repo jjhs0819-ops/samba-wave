@@ -83,27 +83,38 @@ class TestCleanDlvsns:
 
 
 class TestValidDlvsn:
-    """_lh_valid_dlvsn — 행 생성용 단건 검증."""
+    """_lh_valid_dlvsn — 행 생성용 단건 검증 (+자릿수 축 판별, 7/29 109건 실사고)."""
 
     def setup_method(self) -> None:
         self.detail: dict = {}
-        self.fn = _load({"_lh_valid_dlvsn"}, {"_lh_detail_axis": self.detail})[
-            "_lh_valid_dlvsn"
-        ]
+        self.fn = _load(
+            {"_lh_bsn_ok", "_lh_valid_dlvsn"}, {"_lh_detail_axis": self.detail}
+        )["_lh_valid_dlvsn"]
 
     def test_valid_value_passes(self) -> None:
-        self.detail["AA"] = {"914001"}
+        self.detail["AA"] = {"914000001"}
         assert (
-            self.fn("AA", {"DlvUnitSn": "1130001", "OrdDtlSn": "914001"}) == "1130001"
+            self.fn("AA", {"DlvUnitSn": "1130000001", "OrdDtlSn": "914000001"})
+            == "1130000001"
         )
 
     def test_known_detail_axis_value_rejected(self) -> None:
-        self.detail["AA"] = {"914001"}
-        assert self.fn("AA", {"DlvUnitSn": "914001"}) == ""
+        self.detail["AA"] = {"914000001"}
+        assert self.fn("AA", {"DlvUnitSn": "914000001"}) == ""
 
     def test_same_value_as_own_detail_field_rejected(self) -> None:
         """맵 학습 전이라도 자기 행에서 양축 값이 같으면 혼입."""
-        assert self.fn("AA", {"DlvUnitSn": "914001", "OrgOrdDtlSn": "914001"}) == ""
+        assert (
+            self.fn("AA", {"DlvUnitSn": "914000001", "OrgOrdDtlSn": "914000001"}) == ""
+        )
+
+    def test_nine_digit_rejected_without_cross_evidence(self) -> None:
+        """교차 증거가 없어도 9자리(상세축 시퀀스)는 배송축으로 인정하지 않는다.
+
+        2026-07-29 실사고: DlvUnitSn 필드에 상세축 값만 달랑 오는 응답은
+        교차 증거 기반 가드(#689)를 통과해 109건이 잘못된 키로 생성됐다.
+        """
+        assert self.fn("AA", {"DlvUnitSn": "914736467"}) == ""
 
     def test_missing_value(self) -> None:
         assert self.fn("AA", {}) == ""
@@ -127,3 +138,166 @@ class TestCallSiteGuards:
         assert "상세축 혼입 감지" in self.src, (
             "혼입 보류가 로그에 안 남으면 오판(정상 주문 영구 보류)을 못 잡는다"
         )
+
+    def test_multi_line_new_order_marks_lh_multi(self) -> None:
+        """신규주문 list-ProdInfo 경로는 파서에 합배송 플래그를 넘겨야 한다.
+
+        빠지면 주문 단위 값인 SubOrdNo 가 모든 라인의 키가 되어
+        _lh_seen 중복제거에 첫 라인만 남고 나머지 라인이 통째로 소실된다.
+        """
+        idx = self.src.find("for _i, _prod in enumerate(_prod_info_raw):")
+        assert idx != -1
+        block = self.src[idx : idx + 800]
+        assert '_flat["_lh_multi"]' in block, (
+            "합배송 플래그 누락 — SubOrdNo 승격이 라인 구분을 뭉갠다"
+        )
+
+    def test_sub_ord_no_path_registers_old_key(self) -> None:
+        """SubOrdNo 승격으로 키가 바뀌면 옛 키 레코드를 삭제 대상에 넣어야 한다."""
+        idx = self.src.find("_has_sub = _lh_bsn_ok(_sub_sn)")
+        assert idx != -1
+        block = self.src[idx : idx + 2800]
+        assert "_lh_replaced_old_keys.append" in block, (
+            "옛 상세축 키 레코드를 안 지우면 같은 주문이 두 행으로 남는다"
+        )
+
+
+class TestOrderKeyMirrorsParser:
+    """_lh_order_key — 파서 키 산출과 동일해야 한다.
+
+    어긋나면 _lh_seen 에 담기는 값과 실제 저장 키가 달라져 배송조회 경로에서
+    같은 주문이 중복 행으로 들어온다.
+    """
+
+    def setup_method(self) -> None:
+        self.fn = _load({"_lh_bsn_ok", "_lh_order_key"}, {})["_lh_order_key"]
+
+    def test_sub_ord_no_promoted(self) -> None:
+        assert (
+            self.fn(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "1130815689",
+                    "ProdInfo": {"OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:1130815689"
+        )
+
+    def test_dlvunitsn_wins_over_sub_ord_no(self) -> None:
+        assert (
+            self.fn(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "1130815689",
+                    "ProdInfo": {"DlvUnitSn": "1130999999"},
+                }
+            )
+            == "A1:1130999999"
+        )
+
+    def test_multi_keeps_old_chain(self) -> None:
+        assert (
+            self.fn(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "1130815689",
+                    "_lh_multi": True,
+                    "ProdInfo": {"OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:914736467"
+        )
+
+    def test_short_sub_ord_no_not_promoted(self) -> None:
+        assert (
+            self.fn(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "12345",
+                    "ProdInfo": {"OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:914736467"
+        )
+
+
+class TestParserSubOrdNoKey:
+    """_parse_lottehome_order — 배송축 승격 키 산출 (공식 스펙 SubOrdNo)."""
+
+    def setup_method(self) -> None:
+        import logging
+
+        self.fn = _load(
+            {"_parse_lottehome_order"}, {"logger": logging.getLogger("test_lh")}
+        )["_parse_lottehome_order"]
+
+    def _key(self, item: dict) -> str:
+        return str(self.fn(item, "cid", "라벨").get("order_number", ""))
+
+    def test_sub_ord_no_promoted_over_detail_axis(self) -> None:
+        """상세축(9자리)만 있는 신규주문도 SubOrdNo(10자리)로 등록된다."""
+        assert (
+            self._key(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "1130815689",
+                    "ProdInfo": {"OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:1130815689"
+        )
+
+    def test_line_dlvunitsn_takes_priority(self) -> None:
+        """라인별 검증값(DlvUnitSn)이 주문 단위 SubOrdNo 보다 정확하다."""
+        assert (
+            self._key(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "1130815689",
+                    "ProdInfo": {"DlvUnitSn": "1130999999", "OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:1130999999"
+        )
+
+    def test_multi_line_keeps_old_chain(self) -> None:
+        """합배송은 SubOrdNo 가 라인 구분을 못 하므로 승격 금지 (라인 소실 방지)."""
+        assert (
+            self._key(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "1130815689",
+                    "_lh_multi": True,
+                    "ProdInfo": {"OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:914736467"
+        )
+
+    def test_short_sub_ord_no_ignored(self) -> None:
+        """10자리 미만은 배송축이 아니므로 승격하지 않는다."""
+        assert (
+            self._key(
+                {
+                    "OrdNo": "A1",
+                    "SubOrdNo": "12345",
+                    "ProdInfo": {"OrdDtlSn": "914736467"},
+                }
+            )
+            == "A1:914736467"
+        )
+
+    def test_claim_path_unaffected(self) -> None:
+        """취소/반품 경로(prefer_org_dtl_sn)는 원주문 매칭용 상세축을 유지한다."""
+        parsed = self.fn(
+            {
+                "OrdNo": "A1",
+                "SubOrdNo": "1130815689",
+                "ProdInfo": {"OrgOrdDtlSn": "914736467", "OrdDtlSn": "914999999"},
+            },
+            "cid",
+            "라벨",
+            prefer_org_dtl_sn=True,
+        )
+        assert parsed.get("order_number") == "A1:914736467"
