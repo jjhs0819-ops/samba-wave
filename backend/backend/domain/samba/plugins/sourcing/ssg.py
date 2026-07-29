@@ -121,23 +121,16 @@ class SSGPlugin(SourcingPlugin):
             # 수동 enrich(상품관리 업데이트 버튼): owner_device_id="" → 이 PC 확장앱 처리.
             # DAEMON_ONLY 제한은 오토튠 자동화용이고, 사용자가 직접 누른 단건 갱신은
             # 데몬 없어도 현재 PC 확장앱 탭으로 처리 가능해야 함.
-            from backend.domain.samba.proxy.daemon_pool import pick_daemon_owner
-
-            _ssg_owner = pick_daemon_owner("SSG")
+            # [2026-07-29] 데몬 owner 강제 제거 — SSG 가 Playwright 브라우저를 상세에서
+            # 403 차단(같은 PC 웨일은 200 실측)해 데몬으로 보내면 가격 0원만 돌아온다.
+            # owner 미지정 → SourcingQueue 가 _resolve_job_owner(site,"detail") 로 확장앱
+            # owner 를 뽑는다. 수동 enrich 만 owner="" (이 PC 확장앱 즉시 처리) 유지.
             if _is_manual:
-                # 수동: 데몬 있으면 데몬 우선, 없으면 "" (어느 확장앱이든)
                 _req_id, _future = SourcingQueue.add_detail_job(
                     "SSG",
                     site_product_id,
-                    owner_device_id=_ssg_owner or "",
+                    owner_device_id="",
                     priority=True,
-                )
-            elif _ssg_owner:
-                _req_id, _future = SourcingQueue.add_detail_job(
-                    "SSG",
-                    site_product_id,
-                    owner_device_id=_ssg_owner,
-                    priority=False,
                 )
             else:
                 _req_id, _future = SourcingQueue.add_detail_job(

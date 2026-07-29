@@ -950,7 +950,9 @@ def register_pc_allowed_sites(
     if not dev.startswith("samba-daemon-"):
         from backend.domain.samba.proxy.sourcing_queue import DAEMON_ONLY_SITES
 
-        _block = {s.upper() for s in DAEMON_ONLY_SITES} - {"LOTTEON"}
+        # SSG 추가 제외 (2026-07-29): SSG 상세는 Playwright 403 차단으로 데몬이 못 읽어
+        # 확장앱(실브라우저)으로 되돌림 — 브라우저 device 도 SSG 를 배정받아야 한다.
+        _block = {s.upper() for s in DAEMON_ONLY_SITES} - {"LOTTEON", "SSG"}
         sites = [s for s in sites if (s or "").strip().upper() not in _block]
     # GrandStage 는 abcmart.a-rt.com 의 GRAND STAGE 탭 — backend 수집이 두 탭 통합해
     # source_site='ABCmart' 로 저장. 별도 GrandStage 분담 불필요. 옛 데몬/UI 잔재 stale
@@ -1112,7 +1114,9 @@ async def restore_pc_allowed_sites_from_db() -> int:
         # 짝 맞춤. 이 함수는 서버 재시작마다 실행되는 자가치유 루틴이라, 예외를
         # 안 맞추면 재배포할 때마다 롯데ON 이 비데몬 device 에서 지워지고 그대로
         # DB 에 재저장돼버림 (재발 3회 확인, 2026-07-13~14).
-        _block = {s.upper() for s in DAEMON_ONLY_SITES} - {"LOTTEON"}
+        # SSG 추가 제외 (2026-07-29): SSG 상세는 Playwright 403 차단으로 데몬이 못 읽어
+        # 확장앱(실브라우저)으로 되돌림 — 브라우저 device 도 SSG 를 배정받아야 한다.
+        _block = {s.upper() for s in DAEMON_ONLY_SITES} - {"LOTTEON", "SSG"}
         for dev, sites in data.items():
             if not isinstance(dev, str) or not isinstance(sites, list):
                 continue
@@ -1421,11 +1425,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                 # 미등록이어도 refresh() 자체가 API 가격으로 정상 동작함
                 # (plugins/sourcing/lotteon.py::refresh 참조). cancel_order 잡 라우팅에
                 # 이미 있는 "LOTTEON만 예외" 패턴과 동일.
+                # SSG 도 예외 추가(2026-07-29): 상세가 Playwright 403 차단이라 확장앱
+                # 전담으로 되돌림 — 데몬이 없어도 사이클을 돌려야 갱신이 진행된다.
                 from backend.domain.samba.proxy.sourcing_queue import (
                     DAEMON_ONLY_SITES,
                 )
 
-                if site in (DAEMON_ONLY_SITES - {"LOTTEON"}):
+                if site in (DAEMON_ONLY_SITES - {"LOTTEON", "SSG"}):
                     from backend.domain.samba.proxy.daemon_pool import (
                         pick_daemon_owner,
                     )

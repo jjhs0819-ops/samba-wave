@@ -38,7 +38,13 @@ DAEMON_ONLY_SITES: set[str] = {"SSG", "ABCmart", "GrandStage", "LOTTEON"}
 # 사이트 추가 시 `tools/lotteon_daemon/site_handlers.py` 핸들러 + --sites CLI + 본 dict 동시 갱신 필수.
 DAEMON_ONLY_JOB_SITES: dict[str, set[str]] = {
     "search": DAEMON_ONLY_SITES,
-    "detail": DAEMON_ONLY_SITES,
+    # SSG 제외 (2026-07-29): SSG 가 department.ssg.com 상세(itemView)에서 Playwright 로
+    # 띄운 브라우저를 403 "서비스 이용 제한" 페이지로 차단. 같은 PC·같은 IP 에서
+    # 웨일(실사용 브라우저)은 200/가격정상, Playwright 는 헤드리스·창모드·프로필·쿠키주입·
+    # UA 무관 전량 403 실측. 검색/홈은 200 이라 IP 차단이 아니라 자동화 브라우저 탐지.
+    # → 오토튠 SSG 가격/재고 갱신이 21,069건 대상에 0건으로 멈춤(1002초 stuck 후 watchdog
+    #   강제 재시작 반복). LOTTEON cancel_order 를 같은 이유로 확장앱 전환한 선례와 동일.
+    "detail": DAEMON_ONLY_SITES - {"SSG"},
     # 적립(reward)은 데몬 핸들러가 없음 — 출석/리뷰 전부 확장앱 content script(content-reward-*.js)로만
     # 동작(데몬 site_handlers.py 는 ABC/SSG 가격수집[detail]만 지원). 따라서 어떤 사이트도 데몬전용 아님
     # → _reward_owner_override 가 트리거 device 를 owner 로 박아 "실행 누른 그 PC 에서만" 돌게 한다
@@ -94,6 +100,11 @@ def _resolve_job_owner(site: str, job_type: str) -> str | None:
     site_u = (site or "").upper()
     if site_u in {s.upper() for s in _daemon_only_for_job(job_type)}:
         return pick_daemon_owner(site)
+    # SSG 상세는 확장앱 전용 강제 (2026-07-29) — DAEMON_ONLY_JOB_SITES["detail"] 에서
+    # 뺀 것만으로는 pick_any_owner 가 "데몬 우선"이라 다시 데몬으로 새고,
+    # 데몬 Playwright 는 SSG 403 차단이라 가격 0원만 회신한다. 반드시 확장앱으로.
+    if job_type == "detail" and site_u == "SSG":
+        return pick_extension_owner(site)
     # 송장 전용 데몬 사이트(MUSINSA 등)의 비-송장 잡은 확장앱 전용.
     # 데몬이 detail 미지원이라, 데몬이 이 사이트를 active_sites 에 올려도(송장 처리용)
     # detail/search/reward/cancel 은 데몬으로 가면 안 됨 — 확장앱으로 강제해 가격수집 보호.
@@ -922,8 +933,14 @@ class SourcingQueue:
                 # 수정 PR #463) dequeue 단에서 차단돼 ABC/SSG/롯데ON 적립이 안 돌던 버그. detail/
                 # search(가격수집)만 데몬 전담 유지.
                 # owner_device_id='' (broadcast) 잡은 수동 enrich 단건 갱신 — 데몬 없어도 처리.
+                # [2026-07-29 SSG detail 확장앱 복구] SSG 상세는 Playwright 브라우저가
+                # 403 차단당해 데몬이 가격 0원만 회신(오토튠 갱신 0건). 확장앱(실브라우저)은
+                # 같은 PC 에서 정상 200 이라 detail 잡만 확장앱 dequeue 허용.
+                # 발행 측 DAEMON_ONLY_JOB_SITES["detail"] 예외와 짝 — 한쪽만 고치면
+                # owner 는 확장앱인데 dequeue 에서 막혀 잡이 그대로 적체된다.
                 conditions.append(
                     f"(job_type IN ('cancel_order', 'tracking', 'store_metrics', 'purchase', 'reward') "
+                    f"OR (job_type = 'detail' AND UPPER(site) = 'SSG') "
                     f"OR UPPER(site) NOT IN ({_dph}) "
                     f"OR owner_device_id = '')"
                 )
@@ -936,8 +953,14 @@ class SourcingQueue:
                 # store_metrics(파트너포털 점수수집)·purchase(가구매)도 데몬 차단 — 확장앱 세션 전용.
                 # [2026-06-22] 적립(reward)도 데몬 차단 — 출석/리뷰는 content-reward-*.js 전담이라
                 # 데몬 핸들러가 없음. 자동 스케줄러 적립(owner 미박힘)이 데몬으로 새지 않게.
+                # [2026-07-29 SSG detail 데몬 차단] SSG 상세는 Playwright 가 403 차단당해
+                # 가격 0원(bodyLen=122 "서비스 이용 제한" 페이지)만 회신한다. owner 미지정
+                # 브로드캐스트 잡을 데몬이 먼저 가로채면 확장앱으로 되돌린 의미가 없어져
+                # 실제로 배포 직후 일부 잡이 계속 데몬으로 새는 것을 로그로 확인 —
+                # tracking 과 동일하게 dequeue 단에서 원천 차단.
                 conditions.append(
-                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward')"
+                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward') "
+                    "AND NOT (job_type = 'detail' AND UPPER(site) = 'SSG')"
                 )
 
             # site 필터 — 케이싱 무관 매칭.
