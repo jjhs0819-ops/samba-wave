@@ -444,16 +444,14 @@ class LotteHomeClient:
         except LotteApiError as e:
             msg = (e.lotte_msg or "").lower()
             _lotte_msg = e.lotte_msg or ""
-            # [2026-07-30] "인증키오류(데이터 존재하지 않음)" 오분류 차단.
-            # 롯데홈은 0001 을 데이터 미존재에 광범위하게 쓰는데, 이 메시지엔
-            # '인증' 글자가 들어 있어 아래 키워드 매칭이 인증 실패로 오판했다.
-            # → 재인증할 때마다 새 키가 발급되고 이전 키가 무효화되어, 같은
-            # 계정의 다른 호출(배송조회 등)이 [9001] 인증 실패로 떨어졌다.
-            # 실측: 재인증 직후 같은 호출이 또 0001 → 인증 문제가 아님이 확정.
-            _data_absent = "데이터 존재하지 않" in _lotte_msg
+            # [2026-07-30] "인증키 오류(데이터 존재하지 않음)" 은 재인증 대상이다.
+            # 한때 데이터 미존재로 오판해 제외했었는데, 실호출 검증 결과 이 메시지는
+            # "그 인증키가 존재하지 않는다"(= 무효 키) 를 뜻한다. 제외하면 키가 무효가
+            # 된 뒤 스스로 회복하지 못해 롯데홈 연동이 전면 정지한다.
+            # 재발급해도 안 풀리는 경우는 createCertification 자체가 [9001] 로
+            # 거부되는 상황(계정 자격증명 문제)이며, 그건 아래 쿨다운이 폭주만 막는다.
             is_auth = e.code in ("5001", "9001") or (
                 e.code == "0001"
-                and not _data_absent
                 and any(k in _lotte_msg for k in ("인증", "토큰", "키"))
             )
             if is_auth:
@@ -470,6 +468,10 @@ class LotteHomeClient:
                         f"직전발급={_last.isoformat()})"
                     )
                     raise
+                # 발급 "시도" 시각을 먼저 남긴다 — createCertification 이 [9001] 로
+                # 거부되는 계정 문제 상황에선 성공 시각만 기록하면 쿨다운이 영원히
+                # 비어 있어 매 오류마다 발급을 재시도(폭주)한다.
+                _last_auth_issue[_ck] = _now
                 logger.info(
                     f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint}, code={e.code}, msg={e.lotte_msg})"
                 )
