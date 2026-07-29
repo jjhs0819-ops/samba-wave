@@ -10390,9 +10390,35 @@ async def sync_orders_from_markets(
                         _new_qty = 0
                     if _new_qty > 1 and (existing.quantity or 1) == 1:
                         update_fields["quantity"] = _new_qty
-                    # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
-                    # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
-                    new_ship_status = order_data.get("shipping_status")
+                    # POIZON — order_status 코드가 진실의 원천. 파서가 내부 status와
+                    # 마켓상태 라벨을 함께 주므로 전진 전이만 허용해 직접 갱신하고,
+                    # 아래 문자열 분기(타 마켓 취소/교환 클레임 규칙)는 타지 않는다.
+                    # (기존엔 shipping_status가 빈 값이라 최초 수집 상태로 고착 —
+                    # 발송완료/거래실패 전환이 삼바에 반영되지 않던 문제 수정)
+                    if order_data.get("source") == "poison":
+                        _pz_rank = {
+                            "pending": 0,
+                            "preparing": 1,
+                            "shipping": 2,
+                            "delivered": 3,
+                        }
+                        _pz_new = str(order_data.get("status") or "")
+                        _pz_cur = str(existing.status or "")
+                        if _pz_new and _pz_new != _pz_cur and _pz_cur != "cancelled":
+                            if _pz_new == "cancelled" or _pz_rank.get(
+                                _pz_new, -1
+                            ) > _pz_rank.get(_pz_cur, -1):
+                                update_fields["status"] = _pz_new
+                        _pz_label = str(order_data.get("shipping_status") or "")
+                        if _pz_label and _pz_label != str(
+                            existing.shipping_status or ""
+                        ):
+                            update_fields["shipping_status"] = _pz_label
+                        new_ship_status = None
+                    else:
+                        # 송장전송완료/배송중 이상 상태는 덮어쓰지 않음
+                        # 단, 롯데ON은 발송완료/배송중/배송완료로 진행된 경우 갱신 허용
+                        new_ship_status = order_data.get("shipping_status")
                     # Recovery — 마켓이 '배송완료'/'구매확정' 같은 종결 상태를 보낸 경우
                     # 좀비 '취소요청' 잔존을 자동 해제 (PlayAuto 5/19 수취확인됐는데
                     # DB는 13일째 취소요청으로 박혀있던 사고 방지).
@@ -11920,6 +11946,29 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
     }
     status = poison_status_map.get(_status_code, "preparing")
 
+    # 마켓 상태 라벨 — 주문 화면의 '마켓주문상태' 표시용 + 기존 주문 갱신 신호.
+    # 빈 값이면 update 경로가 상태 갱신을 건너뛰어 최초 수집 상태로 고착되므로
+    # (발송완료/거래실패로 바뀌어도 삼바에 미반영) 코드→한글 라벨을 항상 채운다.
+    poison_ship_label_map = {
+        1000: "결제대기",
+        2000: "발송대기",
+        2100: "발송완료",
+        2200: "배송중",
+        2500: "배송중",
+        2550: "배송중",
+        2600: "배송중",
+        2650: "배송중",
+        2700: "배송중",
+        3040: "배송중",
+        2800: "배송완료",
+        4000: "구매확정",
+        7000: "거래실패",
+        8000: "거래실패",
+        8010: "거래실패",
+        8080: "거래실패",
+    }
+    ship_label = poison_ship_label_map.get(_status_code, "")
+
     # 결제일시 — "yyyy-MM-dd HH:mm:ss" (셀러 타임존 KST 가정) → UTC
     paid_at = kst_str_to_utc(item.get("pay_time") or "")
 
@@ -11978,7 +12027,7 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         "revenue": revenue,
         "cost": 0,
         "status": status,
-        "shipping_status": "",
+        "shipping_status": ship_label,
         "customer_name": customer_name,
         "customer_phone": customer_phone,
         "customer_address": customer_address,
