@@ -8433,6 +8433,16 @@ async def sync_orders_from_markets(
                 _lh_seen: set[str] = set()
                 _lh_seen_ordno: set[str] = set()  # list-ProdInfo로 처리된 OrdNo
 
+                def _lh_bsn_ok(_v: str) -> bool:
+                    """배송축(배송단위일련번호) 자릿수 검증 — 현행 10자리(1130-계열).
+
+                    상세축(현행 9자리, 912~914-계열)이 DlvUnitSn 필드에 혼입돼도
+                    교차 증거가 없으면 #4차 가드를 통과하던 구멍(7/29 실측 109건)을
+                    자릿수로 최종 차단한다. 상세축 시퀀스가 10억(10자리)에 도달하기
+                    전까지 유효 — 도달 시 이 기준을 재검토할 것.
+                    """
+                    return len(_v) >= 10 and _v.isdigit()
+
                 def _lh_order_key(ro: dict) -> str:
                     prod = (
                         ro.get("ProdInfo", {})
@@ -8440,14 +8450,25 @@ async def sync_orders_from_markets(
                         else {}
                     )
                     _ord_no = str(ro.get("OrdNo", "") or "")
-                    _dtl_sn = str(
-                        prod.get("OrdDtlSn")
-                        or prod.get("DlvUnitSn")
-                        or prod.get("OrgOrdDtlSn")
-                        or prod.get("ProdSeq")
-                        or prod.get("ProdCode")
-                        or ""
-                    )
+                    # 파서(_parse_lottehome_order)의 키 산출 순서와 반드시 동일해야 한다.
+                    # 어긋나면 _lh_seen 에 담기는 값과 실제 저장 키가 달라져
+                    # 배송조회 경로에서 같은 주문이 중복 행으로 들어온다.
+                    _dtl_sn = ""
+                    if not ro.get("_lh_multi"):
+                        for _cand in (prod.get("DlvUnitSn"), ro.get("SubOrdNo")):
+                            _cs = str(_cand or "").strip()
+                            if _lh_bsn_ok(_cs):
+                                _dtl_sn = _cs
+                                break
+                    if not _dtl_sn:
+                        _dtl_sn = str(
+                            prod.get("OrdDtlSn")
+                            or prod.get("DlvUnitSn")
+                            or prod.get("OrgOrdDtlSn")
+                            or prod.get("ProdSeq")
+                            or prod.get("ProdCode")
+                            or ""
+                        )
                     if _ord_no and _dtl_sn:
                         return f"{_ord_no}:{_dtl_sn}"
                     return str(
@@ -8488,16 +8509,6 @@ async def sync_orders_from_markets(
                 _lh_detail_axis: dict[str, set[str]] = {}
                 # 상세축 혼입으로 이번 사이클 보류한 주문 — 로그용
                 _lh_axis_mixed: set[str] = set()
-
-                def _lh_bsn_ok(_v: str) -> bool:
-                    """배송축(배송단위일련번호) 자릿수 검증 — 현행 10자리(1130-계열).
-
-                    상세축(현행 9자리, 912~914-계열)이 DlvUnitSn 필드에 혼입돼도
-                    교차 증거가 없으면 #4차 가드를 통과하던 구멍(7/29 실측 109건)을
-                    자릿수로 최종 차단한다. 상세축 시퀀스가 10억(10자리)에 도달하기
-                    전까지 유효 — 도달 시 이 기준을 재검토할 것.
-                    """
-                    return len(_v) >= 10 and _v.isdigit()
 
                 def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
                     _dsn = str(_pitem.get("DlvUnitSn") or "")
@@ -8674,6 +8685,11 @@ async def sync_orders_from_markets(
                                 _flat["ProdInfo"] = (
                                     _prod if isinstance(_prod, dict) else {}
                                 )
+                                # 합배송 표시 — SubOrdNo(부주문번호)는 주문 단위 값이라
+                                # 라인 구분을 못 한다. 이 플래그가 없으면 파서가 모든
+                                # 라인에 같은 SubOrdNo 키를 붙여 아래 _lh_seen 중복제거에
+                                # 첫 라인만 남고 나머지 라인이 통째로 소실된다.
+                                _flat["_lh_multi"] = len(_prod_info_raw) > 1
                                 if _dlvsn_list and _i < len(_dlvsn_list):
                                     _flat["_lh_prod_idx"] = _dlvsn_list[_i]
                                     # DlvUnitSn 키로 교체 시 이전 index-format 레코드 삭제 대상 등록
@@ -8707,7 +8723,7 @@ async def sync_orders_from_markets(
                             # 10자리 배송축 값이 응답에 있으면 배송조회 주입·보류 없이
                             # 파서(SubOrdNo 우선)가 바로 올바른 키로 등록한다.
                             _sub_sn = str(ro.get("SubOrdNo") or "").strip()
-                            _has_sub = len(_sub_sn) >= 10 and _sub_sn.isdigit()
+                            _has_sub = _lh_bsn_ok(_sub_sn)
                             _dlvsn_list = _lh_clean_dlvsns(
                                 _no_key, _pi if isinstance(_pi, dict) else None
                             )
@@ -8716,13 +8732,11 @@ async def sync_orders_from_markets(
                                 # 배송조회 실패 사이클도 폴백 없이 보류한다
                                 _lh_deferred += 1
                                 continue
-                            if _dlvsn_list and isinstance(_pi, dict) and _no_key:
-                                # 단건 = 상품 1건 → DlvUnitSn 1개(첫 값) 사용
-                                _real_dsn = str(_dlvsn_list[0])
-                                # 옛 키 계산은 파서(_parse_lottehome_order)의 폴백 체인과
-                                # 반드시 동일해야 한다 — ProdSeq/ProdCode를 빼면 상품코드
-                                # 키로 저장된 옛 레코드가 삭제 대상에서 빠져 중복이 남음
-                                _cur_dsn = str(
+                            # 옛 키 계산은 파서(_parse_lottehome_order)의 폴백 체인과
+                            # 반드시 동일해야 한다 — ProdSeq/ProdCode를 빼면 상품코드
+                            # 키로 저장된 옛 레코드가 삭제 대상에서 빠져 중복이 남음
+                            _cur_dsn = (
+                                str(
                                     _pi.get("OrdDtlSn")
                                     or _pi.get("DlvUnitSn")
                                     or _pi.get("OrgOrdDtlSn")
@@ -8730,16 +8744,22 @@ async def sync_orders_from_markets(
                                     or _pi.get("ProdCode")
                                     or ""
                                 )
+                                if isinstance(_pi, dict)
+                                else ""
+                            )
+                            if _dlvsn_list and isinstance(_pi, dict) and _no_key:
+                                # 단건 = 상품 1건 → DlvUnitSn 1개(첫 값) 사용
+                                _real_dsn = str(_dlvsn_list[0])
                                 if _real_dsn and _cur_dsn != _real_dsn:
-                                    # 기존에 대체값(OrgOrdDtlSn)으로 저장된 레코드 →
-                                    # 새 키와 달라 중복이 남으므로 삭제 대상 등록
-                                    if _cur_dsn:
-                                        _lh_replaced_old_keys.append(
-                                            f"{_no_key}:{_cur_dsn}"
-                                        )
                                     ro = dict(ro)
                                     ro["ProdInfo"] = {**_pi, "DlvUnitSn": _real_dsn}
                             _oid = _lh_order_key(ro)
+                            # 새 키가 옛 폴백 체인 키와 다르면(배송조회 주입·SubOrdNo
+                            # 승격 모두) 상세축 키로 저장된 옛 레코드를 삭제 대상 등록.
+                            # 누락하면 같은 주문이 옛 키 + 새 키로 두 행 남는다
+                            # (7/29 상세축 키 109건).
+                            if _no_key and _cur_dsn and _oid != f"{_no_key}:{_cur_dsn}":
+                                _lh_replaced_old_keys.append(f"{_no_key}:{_cur_dsn}")
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)
                                 orders_data.append(
@@ -12940,9 +12960,11 @@ def _parse_lottehome_order(
         # 상세축(OrdDtlSn/OrgOrdDtlSn 등, 현행 9자리)을 키로 쓰면 취소/송장이
         # [1000]으로 전부 실패하므로, 10자리 이상 배송축 후보를 최우선 사용.
         # 합배송(_lh_multi)은 SubOrdNo가 라인 구분을 못 해 기존 체인 유지.
+        # 라인별 DlvUnitSn 이 우선 — 배송조회 경로는 _lh_valid_dlvsn 으로 라인마다
+        # 검증한 값이라 주문 단위 SubOrdNo 보다 정확하다. SubOrdNo 는 폴백.
         _bsn = ""
         if not item.get("_lh_multi"):
-            for _c in (sub_ord_no, prod_info.get("DlvUnitSn")):
+            for _c in (prod_info.get("DlvUnitSn"), sub_ord_no):
                 _cs = str(_c or "").strip()
                 if len(_cs) >= 10 and _cs.isdigit():
                     _bsn = _cs
