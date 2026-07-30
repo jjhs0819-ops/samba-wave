@@ -3756,6 +3756,33 @@ async def _site_autotune_loop(device_id: str, site: str):
                         _other_err = (
                             _err_count - _no_pid_count - _blocked_count - _timeout_count
                         )
+                        # 미분류("기타") 에러 사유 샘플 로깅 (2026-07-29) — SSG 배치가
+                        # "1성공 39실패 (기타 39)" 로 찍히는데 refresher/플러그인 어느 쪽에도
+                        # 실패 로그가 남지 않아 원인 추적이 불가능했다. error 문자열 자체를
+                        # 최대 3종까지 축약해 남긴다(같은 사유 반복이면 건수로 합산).
+                        if _other_err > 0:
+                            _other_msgs: dict[str, int] = {}
+                            for _r in results:
+                                if not _r.error:
+                                    continue
+                                if (
+                                    "site_product_id" in _r.error
+                                    or "차단" in _r.error
+                                    or "타임아웃" in _r.error
+                                    or "Timeout" in _r.error
+                                ):
+                                    continue
+                                _k = str(_r.error)[:160]
+                                _other_msgs[_k] = _other_msgs.get(_k, 0) + 1
+                            for _msg, _cnt in sorted(
+                                _other_msgs.items(), key=lambda x: -x[1]
+                            )[:3]:
+                                log.warning(
+                                    "[오토튠][%s][기타에러 %d건] %s",
+                                    site,
+                                    _cnt,
+                                    _msg,
+                                )
                         _now = datetime.now(timezone.utc)
                         _kst = _now + timedelta(hours=9)
                         # 에러 상세 문자열 구성

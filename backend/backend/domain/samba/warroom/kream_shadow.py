@@ -2172,6 +2172,166 @@ async def _process_shoe_restock(
     return c
 
 
+# 박스/카드팩 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지.
+_BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or 30)
+# 박스 신규 자동등록 실행 게이트 — 갱신/삭제(_EXEC_BOX)와 별도. 후보 검증 후 1.
+_EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
+# 밀봉품(박스/카드팩) 판정 — 로컬 _kream_restock_register 의 box_rows 편입 조건 동일.
+_SEALED_NAME_RE = re.compile(r"박스|카드 ?팩|팩 \(")
+
+
+async def _resolve_box_option(cli: httpx.AsyncClient, h: dict, kid: str) -> str:
+    """크림 실제 옵션명 확정 — '해외배송' 정확일치 → '해외배송…' 변형 → 옵션 1개뿐이면 그것
+    (밀봉품은 단일옵션 'ONE SIZE'로 박힌 상품이 있다). 없으면 빈 문자열."""
+    try:
+        r = await cli.get(f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h)
+        opts = (r.json() or {}).get("options") or [] if r.status_code == 200 else []
+    except Exception:
+        return ""
+    names = [str(o.get("name") or "") for o in opts]
+    if "해외배송" in names:
+        return "해외배송"
+    for n in names:
+        if n.startswith("해외배송"):
+            return n
+    return names[0] if len(names) == 1 else ""
+
+
+async def _process_box_restock(
+    asks: list, cooldown, rate: float, tariff: int, h: dict
+) -> dict:
+    """박스/카드팩 신규 자동등록 — verified 확정 밀봉품 중 라이브 입찰 없는 것.
+    로컬 봇(_kream_restock_register 박스 경로)이 07-22 정지하며 끊긴 경로를 백엔드로 이식.
+    카드/신발 리스톡과 동일 가드(2연속miss·재게시·실패쿨·거래이력·이행대기) + 원가상한 +
+    정책스킵(2등불가/국내못이김). 원가는 스니덩크 /v1/apparels 1박스 실시세.
+    _EXEC_BOX_RESTOCK=1 일 때만 실제 POST. 사이클당 _BOX_RESTOCK_MAX 상한."""
+    c = {
+        "cand": 0,
+        "post": 0,
+        "fail": 0,
+        "miss": 0,
+        "recent": 0,
+        "failed": 0,
+        "trade": 0,
+        "hold": 0,
+        "overcost": 0,
+        "policy": 0,
+        "optmiss": 0,
+        "soldout": 0,
+        "apifail": 0,
+        "capped": 0,
+    }
+    # 이미 라이브 입찰 있는 kid — 재등록 방지(밀봉품은 상품당 1옵션만 운용)
+    live_kids = {
+        str(a.get("product_id") or "")
+        for a in asks
+        if "해외배송" in str(a.get("option") or "")
+        or str(a.get("option") or "").strip().upper() == "ONE SIZE"
+    }
+    _sur = POLICY["box_pack_margin_rate"]
+    async with get_read_session() as s:
+        rows = (
+            await s.execute(
+                _text(
+                    "SELECT resell_matches->'kream'->>'product_id' AS kid, name, "
+                    "split_part(site_product_id, '#', 1) AS sid "
+                    "FROM samba_collected_product "
+                    "WHERE source_site='SNKRDUNK' "
+                    "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
+                    "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+                    "AND COALESCE(extra_data->>'snkr_type','') "
+                    "  NOT IN ('sneaker','apparel','watch') "
+                    "AND (name LIKE '%박스%' OR name LIKE '%카드 팩%' OR name LIKE '%팩 (%')"
+                )
+            )
+        ).all()
+    posted = 0
+    _now = _now_ts()
+    async with httpx.AsyncClient(timeout=25) as cli:
+        for kid, name, sid in rows:
+            kid, name, sid = str(kid or ""), str(name or ""), str(sid or "")
+            if not kid or not sid or kid in live_kids:
+                continue
+            if not _SEALED_NAME_RE.search(name):
+                continue
+            if not _trade_ok(kid, name):
+                c["trade"] += 1
+                continue
+            box = await _fetch_snkr_box(cli, sid)
+            if box["stock"] < 0:
+                c["apifail"] += 1  # 스니덩크 API 실패 — 다음 사이클 재시도
+                continue
+            if box["stock"] == 0 or box["price"] <= 0:
+                c["soldout"] += 1
+                continue
+            jpy = _guard_jpy(kid, "해외배송", int(box["price"]))
+            if jpy > POLICY["max_cost_jpy"]:
+                c["overcost"] += 1
+                continue
+            opt = await _resolve_box_option(cli, h, kid)
+            if not opt:
+                c["optmiss"] += 1
+                continue
+            _key = f"{kid}|{opt}"
+            _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
+            if _g_miss_counts[_key] < 2:
+                c["miss"] += 1  # 2사이클 연속 미검출 확인 후 등록(일시적 누락 방지)
+                continue
+            if _key in _g_recent_posts:
+                c["recent"] += 1
+                continue
+            if _key in _g_failed_posts:
+                c["failed"] += 1
+                continue
+            if (kid, opt.replace(" ", "")) in _g_unfulfilled:
+                c["hold"] += 1
+                continue
+            _mkt = next(
+                (
+                    a
+                    for a in asks
+                    if str(a.get("product_id") or "") == kid
+                    and str(a.get("option") or "") == opt
+                ),
+                {},
+            )
+            act, target, _adj, _nc = _decide_price_action(
+                0,
+                opt,
+                jpy,
+                int(_mkt.get("lowest_overseas_price") or 0),
+                int(_mkt.get("lowest_normal_price") or 0),
+                (kid, opt) in cooldown,
+                0,
+                rate,
+                tariff,
+                is_box=True,
+                surcharge_rate=_sur,
+            )
+            if "삭제" in act or target <= 0:
+                c["policy"] += 1  # 2등불가/국내못이김 — 등록해도 체결 안 됨
+                continue
+            c["cand"] += 1
+            if posted >= _BOX_RESTOCK_MAX:
+                c["capped"] += 1
+                continue
+            posted += 1
+            if _EXEC_BOX_RESTOCK:
+                ok, reason = await _exec_create_ask(cli, h, kid, int(target), opt)
+                if (not ok) and ("announcement" in reason or "고시" in reason):
+                    ok, reason = await _exec_create_ask(cli, h, kid, int(target), opt)
+                if ok:
+                    c["post"] += 1
+                    _g_recent_posts[_key] = _now
+                    _g_miss_counts.pop(_key, None)
+                else:
+                    c["fail"] += 1
+                    _g_failed_posts[_key] = _now
+                    logger.info("[크림통합] 박스등록 실패 %s %s: %s", kid, opt, reason)
+                await asyncio.sleep(0.12)
+    return c
+
+
 async def _process_box_asks(
     asks: list, kid_to_snkr: dict, cooldown, rate: float, tariff: int, h: dict
 ) -> dict:
@@ -3152,6 +3312,41 @@ async def run_kream_unified_once() -> dict:
             await _save_setting_map(_SET_FAILED, _g_failed_posts)
         await _save_setting_map(_SET_MISS, _g_miss_counts)
 
+    # ── [B-3] 박스/카드팩 신규 자동등록 — 로컬 봇 정지(07-22)로 끊겼던 경로. _EXEC_BOX_RESTOCK 게이트.
+    box_rs = await _process_box_restock(asks, cooldown, rate, tariff_threshold, h)
+    if box_rs.get("cand") or box_rs.get("post"):
+        logger.info(
+            "[크림통합] 박스등록 후보%d 등록%d 실패%d / 스킵[2연속%d 재게시%d 실패쿨%d 거래%d "
+            "이행대기%d 상한초과%d 정책%d 옵션없음%d 품절%d API실패%d 사이클상한%d] (%s)",
+            box_rs["cand"],
+            box_rs["post"],
+            box_rs["fail"],
+            box_rs["miss"],
+            box_rs["recent"],
+            box_rs["failed"],
+            box_rs["trade"],
+            box_rs["hold"],
+            box_rs["overcost"],
+            box_rs["policy"],
+            box_rs["optmiss"],
+            box_rs["soldout"],
+            box_rs["apifail"],
+            box_rs["capped"],
+            "실행ON" if _EXEC_BOX_RESTOCK else "섀도",
+        )
+        _bcap_txt = f" · 대기 {box_rs['capped']:,}" if box_rs["capped"] else ""
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[박스등록] 후보 {box_rs['cand']:,} — 등록 {box_rs['post']:,}"
+            f"{_fail_tag(box_rs['fail'])} (사이클상한 {_BOX_RESTOCK_MAX:,}{_bcap_txt}) "
+            f"({'실행ON' if _EXEC_BOX_RESTOCK else '섀도'})",
+        )
+        if _EXEC_BOX_RESTOCK and (box_rs["post"] or box_rs["fail"]):
+            await _save_setting_map(_SET_RECENT, _g_recent_posts)
+            await _save_setting_map(_SET_FAILED, _g_failed_posts)
+        await _save_setting_map(_SET_MISS, _g_miss_counts)
+
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
     if expired.get("total"):
@@ -3324,6 +3519,13 @@ async def run_kream_unified_once() -> dict:
         _restock_sec += "\n" + "\n".join(registered_lines[:10])
         if len(registered_lines) > 10:
             _restock_sec += f"\n외 {len(registered_lines) - 10:,}건"
+    # 박스/카드팩 신규등록 — 카드 리스톡과 경로가 달라 별도 줄로 노출(누락 감시).
+    if box_rs.get("cand") or box_rs.get("post"):
+        _restock_sec += (
+            f"\n박스/카드팩 등록 후보 {int(box_rs['cand']):,}건"
+            f" — 등록 {int(box_rs['post']):,} · 실패 {int(box_rs['fail']):,}"
+            f" ({'실행ON' if _EXEC_BOX_RESTOCK else '섀도'})"
+        )
     _restock_sec += "\n━━━━━━━━━━\n"
     _msg = (
         f"[크림 입찰갱신]\n"
