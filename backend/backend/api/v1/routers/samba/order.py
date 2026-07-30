@@ -8490,6 +8490,21 @@ async def sync_orders_from_markets(
                     """
                     return len(_v) >= 10 and _v.isdigit()
 
+                def _lh_pick_bsn(_pitem: dict) -> str:
+                    """배송축(배송단위일련번호, 10자리) 실순번 추출 — 필드명 무관.
+
+                    2026-07-30 실측(배송조회 24/24 라인): 롯데홈 응답은
+                    DlvUnitSn 필드에 9자리(상세축), OrdDtlSn/OrgOrdDtlSn 에
+                    10자리(배송축=송장/취소용)를 담는다. 필드명이 값과 어긋나므로
+                    "10자리 숫자값"을 배송축으로 채택한다(자릿수가 진실).
+                    DlvUnitSn 이 10자리로 돌아오는 사이클도 있어 우선 검사한다.
+                    """
+                    for _k in ("DlvUnitSn", "OrdDtlSn", "OrgOrdDtlSn"):
+                        _v = str(_pitem.get(_k) or "").strip()
+                        if _lh_bsn_ok(_v):
+                            return _v
+                    return ""
+
                 def _lh_order_key(ro: dict) -> str:
                     prod = (
                         ro.get("ProdInfo", {})
@@ -8558,14 +8573,12 @@ async def sync_orders_from_markets(
                 _lh_axis_mixed: set[str] = set()
 
                 def _lh_collect_ids(_ono: str, _pitem: dict) -> None:
-                    _dsn = str(_pitem.get("DlvUnitSn") or "")
-                    if _dsn:
-                        if not _lh_bsn_ok(_dsn):
-                            # 자릿수 미달(상세축 혼입) — 맵을 오염시키지 않되,
-                            # 인덱스 정합성이 깨지므로 이 주문은 통째로 보류 표시
-                            _lh_axis_mixed.add(_ono)
-                        elif _dsn not in _lh_dlvsn_map.get(_ono, []):
-                            _lh_dlvsn_map.setdefault(_ono, []).append(_dsn)
+                    # 배송축(10자리)을 필드명 무관하게 값으로 추출 (2026-07-30 실측:
+                    # DlvUnitSn=9자리, OrdDtlSn/OrgOrdDtlSn=10자리). 10자리 없으면
+                    # 아직 배송단계 미진입 → 맵에 안 담고 자연 보류.
+                    _dsn = _lh_pick_bsn(_pitem)
+                    if _dsn and _dsn not in _lh_dlvsn_map.get(_ono, []):
+                        _lh_dlvsn_map.setdefault(_ono, []).append(_dsn)
                     for _k in (
                         "DlvUnitSn",
                         "OrdDtlSn",
@@ -8576,7 +8589,9 @@ async def sync_orders_from_markets(
                         _v = str(_pitem.get(_k) or "")
                         if _v:
                             _lh_preserve_map.setdefault(_ono, set()).add(_v)
-                            if _k != "DlvUnitSn":
+                            # 9자리(상세축) 값만 혼입 후보로 표시 — 채택한 10자리
+                            # 배송축이 자기제외되지 않도록 자릿수로 구분한다.
+                            if _v != _dsn and not _lh_bsn_ok(_v):
                                 _lh_detail_axis.setdefault(_ono, set()).add(_v)
 
                 def _lh_clean_dlvsns(
@@ -8601,7 +8616,8 @@ async def sync_orders_from_markets(
                     if _extra_detail:
                         for _k in ("OrdDtlSn", "OrgOrdDtlSn", "ProdSeq", "ProdCode"):
                             _v = str(_extra_detail.get(_k) or "")
-                            if _v:
+                            # 9자리(상세축)만 제외 대상 — 10자리는 배송축이라 보존
+                            if _v and not _lh_bsn_ok(_v):
                                 _bad.add(_v)
                     _raw = _lh_dlvsn_map.get(_ono, [])
                     _clean = [_s for _s in _raw if _s not in _bad]
@@ -8612,18 +8628,12 @@ async def sync_orders_from_markets(
                     return _clean
 
                 def _lh_valid_dlvsn(_ono: str, _pitem: dict) -> str:
-                    """행 생성용 검증 DlvUnitSn — 상세축 혼입이면 빈 문자열."""
-                    _dsn = str(_pitem.get("DlvUnitSn") or "")
-                    if not _dsn:
-                        return ""
-                    if not _lh_bsn_ok(_dsn):
-                        return ""
-                    if _dsn in _lh_detail_axis.get(_ono, set()):
-                        return ""
-                    for _k in ("OrdDtlSn", "OrgOrdDtlSn", "ProdSeq", "ProdCode"):
-                        if _dsn == str(_pitem.get(_k) or ""):
-                            return ""
-                    return _dsn
+                    """행 생성용 검증 배송축(10자리) — 없으면 빈 문자열.
+
+                    필드명 무관하게 10자리 값을 배송축으로 채택(_lh_pick_bsn).
+                    10자리가 없으면(아직 배송단계 미진입) 빈 문자열 → 행 생성 보류.
+                    """
+                    return _lh_pick_bsn(_pitem)
 
                 def _lh_norm_prods(_ro: dict) -> list[dict]:
                     """_parse_lottehome_order_multi 와 동일한 ProdInfo 정규화."""
@@ -8890,15 +8900,15 @@ async def sync_orders_from_markets(
                                 _lh_dlv_replaced.add(_dlv_ord_no)
                             continue
 
-                        # 배송조회 경로도 검증된 DlvUnitSn이 있는 라인만 행 생성.
-                        # OrdDtlSn(914-계열)만 오는 열화 사이클에 그 값으로 키를 만들면
-                        # 취소/송장 [1000] 불가 행이 생기고 유령 정리를 오염시킨다.
-                        # 키가 OrdDtlSn 폴백으로 잡히지 않도록 파싱 전에 제거한다.
+                        # 배송조회 경로 — 10자리 배송축(_lh_valid_dlvsn)이 있는 라인만 행 생성.
+                        # 2026-07-30 실측: 배송조회 응답의 OrdDtlSn/OrgOrdDtlSn 이 10자리
+                        # 배송축(송장/취소용)이고 DlvUnitSn 이 9자리(상세축)다. 과거엔
+                        # OrdDtlSn 을 9자리로 오해해 제거했으나, 그러면 10자리 값이 사라져
+                        # 파서가 9자리 DlvUnitSn 을 키로 잡는다 → 제거하지 않는다.
                         if isinstance(_prod_info_raw, list):
                             _ro2 = dict(ro)
-                            # DlvUnitSn "값"까지 검증 — 상세축 혼입이면 제외 (#4차)
                             _ro2["ProdInfo"] = [
-                                {k: v for k, v in _it.items() if k != "OrdDtlSn"}
+                                _it
                                 for _it in _prod_info_raw
                                 if isinstance(_it, dict)
                                 and _lh_valid_dlvsn(_dlv_ord_no, _it)
@@ -8922,14 +8932,13 @@ async def sync_orders_from_markets(
                                 if isinstance(_prod_info_raw, dict)
                                 else {}
                             )
-                            # DlvUnitSn "값"까지 검증 — 상세축 혼입이면 보류 (#4차)
+                            # 10자리 배송축 확보된 라인만 (없으면 배송단계 미진입 → 보류)
                             if not _lh_valid_dlvsn(_dlv_ord_no, _pi_d):
                                 _lh_deferred += 1
                                 continue
+                            # OrdDtlSn(10자리 배송축) 보존 — 제거하면 파서가 9자리 키로 잡힘
                             ro = dict(ro)
-                            ro["ProdInfo"] = {
-                                k: v for k, v in _pi_d.items() if k != "OrdDtlSn"
-                            }
+                            ro["ProdInfo"] = _pi_d
                             _oid = _lh_order_key(ro)
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)

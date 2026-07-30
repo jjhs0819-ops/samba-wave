@@ -1198,7 +1198,17 @@ class LotteHomeClient:
                 for p in prods:
                     if not isinstance(p, dict):
                         continue
-                    sn = str(p.get("DlvUnitSn") or p.get("OrdDtlSn") or "")
+                    # 배송축(10자리) 실순번 채택 — 필드명 무관. 2026-07-30 실측:
+                    # DlvUnitSn=9자리(상세축), OrdDtlSn/OrgOrdDtlSn=10자리(배송축).
+                    # 10자리 값을 우선 채택하고, 없으면 종전 폴백을 유지한다.
+                    sn = ""
+                    for _k in ("DlvUnitSn", "OrdDtlSn", "OrgOrdDtlSn"):
+                        _cand = str(p.get(_k) or "").strip()
+                        if len(_cand) >= 10 and _cand.isdigit():
+                            sn = _cand
+                            break
+                    if not sn:
+                        sn = str(p.get("DlvUnitSn") or p.get("OrdDtlSn") or "")
                     if sn and sn not in seen:
                         seen.add(sn)
                         lines.append(
