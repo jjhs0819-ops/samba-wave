@@ -3524,7 +3524,11 @@ async function handleSourcingJob(job) {
     } else if (job.type === 'search' && job.site === 'GSShop') {
       await waitForGSShopSearchResults(tabId, 6000)
     } else if (job.type === 'detail' && job.site === 'SSG') {
-      // resultItemObj + 카드혜택가 DOM 모두 로드될 때까지 폴링 (최대 15초)
+      // resultItemObj + 카드혜택가 DOM 모두 로드될 때까지 폴링 (최대 25초)
+      // 15초 → 25초 상향 (2026-07-29): SSG 상세를 데몬에서 확장앱으로 되돌린 뒤
+      // 팝업 4개가 동시에 뜨면서 로딩이 15초를 넘겨 resultItemObj 없이 빈 응답을
+      // 보내는 건이 배치의 대부분을 차지했다(40건 중 39건 실패). 정상 페이지는
+      // hasObj 즉시 통과라 이 상향으로 느려지지 않는다.
       // 검증 결과(2026-05-05): resultItemObj만 기준 시 카드혜택가가 아직 AJAX 미반영
       //   상태에서 추출되어 domCardPrice=0 → 백엔드가 bestAmt fallback → cost 마진 손실 8-10%.
       // 수정: 카드혜택가 dt 텍스트가 DOM에 등장한 직후 추가 1초 대기 후 추출.
@@ -3532,7 +3536,7 @@ async function handleSourcingJob(job) {
         let ready = false
         let hasObj = false
         let staffOnly = false
-        for (let _i = 0; _i < 30; _i++) {
+        for (let _i = 0; _i < 50; _i++) {
           await wait(500)
           const [_chk] = await chrome.scripting.executeScript({
             target: { tabId: tid }, world: 'MAIN',
@@ -3911,6 +3915,20 @@ async function handleSourcingJob(job) {
         result = { success: false, staffOnly: true, message: 'SSG 임직원/사업자 회원 전용 상품' }
       } else {
         result = await extractDetailData(tabId, job.site, job.productId)
+        // 빈 응답 가드 (2026-07-29): resultItemObj 가 비어 있고 domSalePrice 도 0 이면
+        // 백엔드는 detail 을 구성하지 못해 "SSG 상세 조회 실패" 로 떨어진다. 그런데도
+        // success:true 로 보내면 실패 사유가 묻히고(오토튠 배치 "기타 39건"), 상품의
+        // last_refreshed_at 만 갱신돼 다음 사이클에서 재시도 우선순위도 밀린다.
+        // 백엔드가 detail 을 못 만드는 조건과 동일한 기준으로 여기서 실패로 회신한다.
+        const _rob = (result && result.resultItemObj) || {}
+        const _domSale = Number((result && result.domSalePrice) || 0)
+        if (result && result.success !== false && !_rob.itemNm && !(_domSale > 0)) {
+          console.log(`[SSG] 빈 응답(resultItemObj 없음 + domSalePrice 0) → 실패 회신: ${job.productId}`)
+          result = {
+            success: false,
+            message: 'SSG 빈 응답 — 페이지 로딩 미완료(resultItemObj 없음, domSalePrice 0)',
+          }
+        }
       }
     } else if (job.type === 'detail') {
       result = await extractDetailData(tabId, job.site, job.productId)
