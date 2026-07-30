@@ -3259,14 +3259,25 @@ async def run_kream_unified_once() -> dict:
 
     # ── 본문: 로컬 봇 슬랙 포맷 그대로 재현 (구분선 길이·문구·조건까지 동일) ──
     # 카드/박스/카드팩 분리 [2026-07-28] — 카드=PSA옵션, 박스·카드팩은 옵션형식(해외배송(N개))이
-    # 동일해 상품명으로 구분(이름에 "카드팩"/"부스터팩"/"팩" 포함=카드팩, 그 외 "해외배송"=박스).
+    # 동일해 상품명으로 구분.
+    # [2026-07-30 집계버그 수정] 기존 `팩\b` 정규식이 "확장팩 … 박스" / "부스터 팩 … 박스"를
+    # 카드팩으로 분류해 박스 칸이 영구 0/0으로 찍혔다(실제 박스 7건 입찰 중이었음).
+    #  → 이름에 "박스"가 있으면 박스로 우선 판정.
+    # 또 옵션 "ONE SIZE"로 박힌 TCG 박스(예: 랜덤박스·덱 더블박스) 2건이 other로 빠져
+    # 카드·박스·카드팩 합이 라이브 입찰수와 안 맞았다 → 이름에 박스/팩 있으면 같이 집계.
+    # (ONE SIZE 의류·시계를 끌어오지 않도록 이름 키워드 조건 필수)
     def _ask_kind(a):
         opt = str(a.get("option") or "")
         if "PSA" in opt.upper():
             return "card"
-        if "해외배송" in opt:
-            nm = str(a.get("product_name_kr") or a.get("product_name") or "")
-            return "pack" if re.search(r"카드팩|부스터팩|팩\b", nm) else "box"
+        nm = str(a.get("product_name_kr") or a.get("product_name") or "")
+        _tcg_sealed = "해외배송" in opt or (
+            opt.strip().upper() == "ONE SIZE" and re.search(r"박스|팩", nm)
+        )
+        if _tcg_sealed:
+            if "박스" in nm:
+                return "box"
+            return "pack" if re.search(r"카드팩|부스터팩|팩", nm) else "box"
         return "other"
 
     _card_asks = [a for a in asks if _ask_kind(a) == "card"]
