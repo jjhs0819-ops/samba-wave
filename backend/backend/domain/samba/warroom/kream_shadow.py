@@ -2254,7 +2254,10 @@ async def _process_box_restock(
                 continue
             if not _SEALED_NAME_RE.search(name):
                 continue
-            if not _trade_ok(kid, name):
+            # 밀봉품은 예외 없이 누적거래≥1 필수 — 로컬 봇 박스 경로와 동일.
+            # _trade_ok(needs_trade)는 등급토큰(GX 등)을 낱장 신호로 봐서 "프리미엄 트레이너
+            # 박스 태그 팀 GX" 같은 박스를 거래0인데 통과시킨다(거래0 박스=체결 후 소싱불가).
+            if _g_trade_counts.get(kid, 0) < 1:
                 c["trade"] += 1
                 continue
             box = await _fetch_snkr_box(cli, sid)
