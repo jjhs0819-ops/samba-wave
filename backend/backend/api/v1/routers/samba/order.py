@@ -8635,6 +8635,25 @@ async def sync_orders_from_markets(
                     """
                     return _lh_pick_bsn(_pitem)
 
+                def _lh_reg_9d_twins(_ono: str, _pitem: dict) -> None:
+                    """진행형 중복 방지 — 같은 주문의 9자리(상세축) 키 잔재를 교체목록에
+                    등록한다. 배송조회에서 10자리 배송축 행을 만들 때 과거 9자리 키로
+                    저장된 twin 을 자동 삭제(10886 DELETE)해 중복 재발을 막는다.
+                    (존재하지 않는 키를 등록해도 DELETE 는 no-op 이라 안전)
+                    """
+                    if not _ono:
+                        return
+                    for _k in (
+                        "DlvUnitSn",
+                        "OrdDtlSn",
+                        "OrgOrdDtlSn",
+                        "ProdSeq",
+                        "ProdCode",
+                    ):
+                        _v = str(_pitem.get(_k) or "").strip()
+                        if _v and not _lh_bsn_ok(_v):  # 9자리 상세축 값만
+                            _lh_replaced_old_keys.append(f"{_ono}:{_v}")
+
                 def _lh_norm_prods(_ro: dict) -> list[dict]:
                     """_parse_lottehome_order_multi 와 동일한 ProdInfo 정규화."""
                     _raw = _ro.get("ProdInfo", [])
@@ -8916,6 +8935,8 @@ async def sync_orders_from_markets(
                             if not _ro2["ProdInfo"]:
                                 _lh_deferred += 1
                                 continue
+                            for _it in _ro2["ProdInfo"]:
+                                _lh_reg_9d_twins(_dlv_ord_no, _it)
                             for _p in _parse_lottehome_order_multi(
                                 _ro2, account["id"], label, _fs
                             ):
@@ -8939,6 +8960,7 @@ async def sync_orders_from_markets(
                             # OrdDtlSn(10자리 배송축) 보존 — 제거하면 파서가 9자리 키로 잡힘
                             ro = dict(ro)
                             ro["ProdInfo"] = _pi_d
+                            _lh_reg_9d_twins(_dlv_ord_no, _pi_d)
                             _oid = _lh_order_key(ro)
                             if _oid and _oid not in _lh_seen:
                                 _lh_seen.add(_oid)
