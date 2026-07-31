@@ -211,8 +211,13 @@ def calc_market_price(
             if _ss_amount != 0:
                 calc_price += _ss_amount
 
-    if m_fee > 0 and calc_price > 0:
-        calc_price = math.ceil(calc_price / (1 - m_fee / 100))
+    # General 광고(adEnabled) 사용 시 adRate(판매당 광고비)도 그로스업에 포함한다.
+    # 안 그러면 광고로 팔릴 때 그 %만큼 마진에서 그대로 까인다(구매자 전가 X).
+    # adRate/adEnabled 는 eBay 등 market_policies(mp)에만 존재 — 없으면 0이라 무영향.
+    m_ad = float(mp.get("adRate", 0) or 0) if mp.get("adEnabled") else 0.0
+    total_fee = m_fee + m_ad
+    if total_fee > 0 and calc_price > 0:
+        calc_price = math.ceil(calc_price / (1 - total_fee / 100))
     if common_extra > 0:
         calc_price += common_extra
     # 롯데홈쇼핑: 100원 단위 올림 — 내림 시 수수료 gross-up 결과가 정책마진 가드
