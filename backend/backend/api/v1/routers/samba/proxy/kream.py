@@ -743,6 +743,8 @@ async def snkrdunk_compare_all_public(
         SELECT
             site_product_id AS snkr_id,
             name AS snkr_name,
+            -- 소싱처(SNKRDUNK/ONITSUKA) — 검수 링크 라우팅용(품번 알파벳 heuristic 오판 방지)
+            source_site,
             -- 소싱처 상품페이지 URL (오니츠카 공홈 등 직접링크용)
             COALESCE(source_url, '') AS source_url,
             -- 최근 가격/재고 확인 시각(KST) — restock/갱신이 snkr price·stock 갱신 시 updated_at=NOW()
@@ -940,7 +942,19 @@ async def snkrdunk_compare_all_public(
         # 크림 누적거래수 (없으면 -1 = 미수집 → 프론트가 KREAM_TRADES fallback)
         d["trade_count"] = trade_counts.get(d["kream_id"], -1) if d["kream_id"] else -1
         items.append(d)
-    return {"total": len(items), "items": items}
+    # 정책 max_cost_jpy — 검수 '고가' 임계를 하드코딩(25만엔) 대신 정책 연동. [2026-07-31]
+    max_cost_jpy = 250000
+    try:
+        from backend.domain.samba.policy.model import SambaPolicy
+
+        pres = await session.execute(select(SambaPolicy.market_policies))
+        for (mp,) in pres.all():
+            if isinstance(mp, dict) and isinstance(mp.get("KREAM"), dict):
+                max_cost_jpy = int(mp["KREAM"].get("kreamMaxCostJpy", 250000) or 250000)
+                break
+    except Exception:
+        pass
+    return {"total": len(items), "items": items, "max_cost_jpy": max_cost_jpy}
 
 
 class SnkrdunkVerifyPatchRequest(BaseModel):

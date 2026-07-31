@@ -2049,6 +2049,10 @@ async def _process_shoe_asks(
 
 # 신발 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지(사이즈별 다건). verified 확정 신발만.
 _SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 50)
+# 신발등록 사이클당 처리(=크림 API조회) 슬라이스 — 로테이션. 전 verified신발(1.4만+) 매사이클
+# 전량 API조회하면 사이클이 100분+로 폭발해 크림 오토튠 전체를 굶긴다(2026-07-31 사고). 슬라이스로 상한.
+_SHOE_RS_BATCH = int(os.environ.get("KREAM_SHOE_RS_BATCH") or 300)
+_shoe_rs_offset = 0  # 로테이션 위치(사이클마다 전진, 끝나면 0으로)
 
 
 def _cm_to_mm_variants(name: str) -> set[str]:
@@ -2088,25 +2092,42 @@ async def _process_shoe_restock(
         if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
     }
     _sur = POLICY["non_card_margin_rate"]
+    global _shoe_rs_offset
+    _base_where = (
+        "FROM samba_collected_product "
+        "WHERE source_site='SNKRDUNK' "
+        "AND extra_data->>'snkr_type' IN ('sneaker','apparel','watch') "
+        "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
+        "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+        "AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int) "
+        "  FROM jsonb_array_elements(options::jsonb) o),0)>0"
+    )
     async with get_read_session() as s:
+        _total = int(
+            (await s.execute(_text("SELECT COUNT(*) " + _base_where))).scalar() or 0
+        )
+        if _total and _shoe_rs_offset >= _total:
+            _shoe_rs_offset = 0
+        # 로테이션 슬라이스만 조회 — 매 사이클 _SHOE_RS_BATCH 개씩(API조회 상한)
         rows = (
             await s.execute(
                 _text(
                     "SELECT resell_matches->'kream'->>'product_id' AS kid, name, options::text "
-                    "FROM samba_collected_product "
-                    "WHERE source_site='SNKRDUNK' "
-                    "AND extra_data->>'snkr_type' IN ('sneaker','apparel','watch') "
-                    "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
-                    "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
-                    "AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int) "
-                    "  FROM jsonb_array_elements(options::jsonb) o),0)>0"
-                )
+                    + _base_where
+                    + " ORDER BY resell_matches->'kream'->>'product_id' "
+                    + "OFFSET :off LIMIT :lim"
+                ),
+                {"off": _shoe_rs_offset, "lim": _SHOE_RS_BATCH},
             )
         ).all()
+    c["scan"] = f"{min(_shoe_rs_offset + _SHOE_RS_BATCH, _total):,}/{_total:,}"
+    _shoe_rs_offset += _SHOE_RS_BATCH  # 다음 사이클 다음 슬라이스
     posted = 0
     _now = _now_ts()
     async with httpx.AsyncClient(timeout=25) as cli:
         for kid, name, opts_txt in rows:
+            if posted >= _SHOE_RESTOCK_MAX:
+                break  # 사이클 상한 도달 — 추가 크림 API조회 중단(사이클 시간 폭발 방지)
             kid = str(kid or "")
             try:
                 opts = json.loads(opts_txt) if opts_txt else []
@@ -3506,14 +3527,21 @@ async def run_kream_unified_once() -> dict:
             if "박스" in nm:
                 return "box"
             return "pack" if re.search(r"카드팩|부스터팩|팩", nm) else "box"
-        return "other"
+        # 신발(mm 사이즈 245 등) / 의류·시계·잡화(S/M/L/FREE 등)
+        if _SHOE_OPT_RE.fullmatch(opt.strip()):
+            return "shoe"
+        return "apparel"
 
     _card_asks = [a for a in asks if _ask_kind(a) == "card"]
     _box_asks = [a for a in asks if _ask_kind(a) == "box"]
     _pack_asks = [a for a in asks if _ask_kind(a) == "pack"]
+    _shoe_asks_r = [a for a in asks if _ask_kind(a) == "shoe"]
+    _apparel_asks_r = [a for a in asks if _ask_kind(a) == "apparel"]
     _r1c, _n1c, _gtc, _ncc = _rank_summary(_card_asks)
     _r1b, _n1b, _gtb, _ncb = _rank_summary(_box_asks)
     _r1p, _n1p, _gtp, _ncp = _rank_summary(_pack_asks)
+    _r1s, _n1s, _gts, _ncs = _rank_summary(_shoe_asks_r)
+    _r1a, _n1a, _gta, _nca = _rank_summary(_apparel_asks_r)
     _r1, _n1, _gt, _nc = _rank_summary(asks)
     _ask_kids = {str(a.get("product_id") or "") for a in asks}
     _mapped = len([k for k in _ask_kids if k in kid_to_snkr])
@@ -3568,8 +3596,9 @@ async def run_kream_unified_once() -> dict:
         + (f" | ❌갱신실패 {_fail_all:,}건" if _fail_all else "")
         + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
         f"  카드 1순위 {_r1c:,}/{_gtc:,} · 박스 {_r1b:,}/{_gtb:,} · 카드팩 {_r1p:,}/{_gtp:,}\n"
+        f"  신발 1순위 {_r1s:,}/{_gts:,} · 의류/잡화 {_r1a:,}/{_gta:,}\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
-        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,})"
+        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,}·신발{_ncs:,}·의류{_nca:,})"
     )
     # 갱신실패 사유 breakdown — 실패 건수만 보이고 원인을 몰라 대응 못 하던 것 보완(로컬 포맷).
     if _fail_reasons:

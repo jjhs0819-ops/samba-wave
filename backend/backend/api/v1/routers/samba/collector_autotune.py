@@ -330,6 +330,20 @@ _pending_cost_increase: dict[str, float] = {}
 SITE_EMPTY_SKIP_THRESHOLD = 3  # N회 연속 빈 결과 시 해당 소싱처 60초 제외
 _site_empty_skip_until: dict[str, float] = {}  # {소싱처: 제외 해제 시각(time.time())}
 
+# 차단 감지 자동 백오프 (사이트 단위 글로벌 — 모든 PC 공유, 2026-07-31)
+# 한 배치에서 차단 신호(에러 "차단" 포함, SSG는 "빈 응답"도 봇차단 페이지 신호)가
+# 임계 이상이면 해당 소싱처 사이클을 백오프 시간 동안 정지 — 차단 상태에서 계속
+# 두드려 IP 평판을 악화시키는 패턴 차단 (SSG 봇차단 반복 사고 대응).
+AUTOTUNE_BLOCK_BACKOFF_THRESHOLD = int(
+    os.getenv("AUTOTUNE_BLOCK_BACKOFF_THRESHOLD", "5")
+)
+AUTOTUNE_BLOCK_BACKOFF_SEC = int(os.getenv("AUTOTUNE_BLOCK_BACKOFF_SEC", "7200"))
+_site_block_backoff_until: dict[str, float] = {}  # {소싱처: 해제 시각(time.time())}
+
+# SSG 재수집 최소 간격 — N시간 내 갱신된 상품은 배치 SELECT 제외.
+# 하루 요청량을 카탈로그 1바퀴로 캡해 고정 IP(확장앱 실브라우저) 차단 리스크 완화.
+SSG_MIN_REFRESH_HOURS = int(os.getenv("AUTOTUNE_SSG_MIN_REFRESH_HOURS", "24"))
+
 # 무신사 자동로그인 쿠키 손실(refresher MUSINSA_AUTH_MISSING) 추적 —
 # 오토튠 무신사 사이클 중단 + 경고용. {device_id: 손실 감지 epoch}.
 # 재확인 인터벌 경과 시 1회 프로브 사이클을 허용해 쿠키 복구를 자동 감지한다.
@@ -1418,6 +1432,17 @@ async def _site_autotune_loop(device_id: str, site: str):
                     await asyncio.sleep(30)
                     continue
 
+                # 차단 백오프 확인 — 차단 신호 임계 초과로 정지된 사이트는 해제 시각까지 대기
+                _bo_until = _site_block_backoff_until.get(site, 0.0)
+                if time.time() < _bo_until:
+                    log.info(
+                        "[오토튠][%s] 차단 백오프 중 — %s초 후 재개",
+                        site,
+                        f"{int(_bo_until - time.time()):,}",
+                    )
+                    await asyncio.sleep(60)
+                    continue
+
                 # 무신사 자동로그인 쿠키 손실 — 사이클 스킵(빈 쿠키로 헛도는 갱신 +
                 # 상품마다 읽기세션 폭주 방지). 재확인 인터벌(5분) 경과 시 1회 프로브
                 # 사이클을 허용해 재로그인(쿠키 복구)을 자동 감지한다.
@@ -1542,6 +1567,17 @@ async def _site_autotune_loop(device_id: str, site: str):
                         # (refresh 대상 + 진행 분모 count(_where) 둘 다 동일하게 적용됨)
                         _CP.source_site.in_(_autotune_site_members(site)),
                     ]
+                    # SSG 재수집 최소 간격 — 최근 N시간 내 갱신된 상품 제외.
+                    # 오래된순 무한 회전으로 21,014개를 쉼 없이 재스크랩하던 요청량을
+                    # 하루 카탈로그 1바퀴로 캡 (고정 IP 봇차단 완화, 2026-07-31).
+                    if site == "SSG":
+                        _min_cutoff = now - timedelta(hours=SSG_MIN_REFRESH_HOURS)
+                        _where.append(
+                            or_(
+                                _CP.last_refreshed_at == None,  # noqa: E711
+                                _CP.last_refreshed_at < _min_cutoff,
+                            )
+                        )
                     # 단일 상품 오토튠 필터 (PC별)
                     _target_ids = _pc_target_ids.get(device_id)
                     if _target_ids:
@@ -3817,6 +3853,39 @@ async def _site_autotune_loop(device_id: str, site: str):
                         _cstats["synced"] += _synced_count
                         _cstats["deleted"] += deleted_count
                         _cstats["batches"] += 1
+
+                        # 차단 자동 백오프 트리거 — 이 배치의 차단 신호가 임계 이상이면
+                        # 해당 소싱처 사이클을 백오프 시간 동안 정지 (IP 평판 회복 대기).
+                        # SSG 봇차단 페이지는 확장앱에서 "빈 응답"으로 회신되므로 함께 집계.
+                        _block_signals = _blocked_count
+                        if site == "SSG":
+                            _block_signals += sum(
+                                1 for r in results if r.error and "빈 응답" in r.error
+                            )
+                        if _block_signals >= AUTOTUNE_BLOCK_BACKOFF_THRESHOLD:
+                            _site_block_backoff_until[site] = (
+                                time.time() + AUTOTUNE_BLOCK_BACKOFF_SEC
+                            )
+                            _bo_min = AUTOTUNE_BLOCK_BACKOFF_SEC // 60
+                            log.warning(
+                                "[오토튠][%s] 차단 신호 %s건(배치 %s건) — %s분 백오프 시작",
+                                site,
+                                f"{_block_signals:,}",
+                                f"{len(results):,}",
+                                f"{_bo_min:,}",
+                            )
+                            _ref_mod._refresh_log_buffer.append(
+                                {
+                                    "ts": _now.isoformat(),
+                                    "site": site,
+                                    "product_id": "",
+                                    "name": "",
+                                    "msg": f"[{_kst.strftime('%H:%M:%S')}] ⛔ [{site}] 차단 신호 {_block_signals:,}건 감지 — {_bo_min:,}분 백오프 (자동 재개)",
+                                    "level": "warning",
+                                    "source": "autotune",
+                                }
+                            )
+                            _ref_mod._refresh_log_total += 1
 
                         _g_idx_now = _autotune_global_idx.get(_gkey, 0)
                         _g_total_now = _autotune_global_total.get(_gkey, 0)
