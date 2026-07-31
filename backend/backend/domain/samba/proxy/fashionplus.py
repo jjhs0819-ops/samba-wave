@@ -29,6 +29,52 @@ HEADERS = {
     "X-Requested-With": "XMLHttpRequest",
 }
 
+
+def _result_url(keyword: str) -> str:
+    """검색 결과 페이지 URL — 세션 해제(WAF)용 + goods/fetch Referer."""
+    from urllib.parse import quote
+
+    return (
+        "https://www.fashionplus.co.kr/search/goods/result"
+        f"?searchWord={quote(keyword or '나이키')}"
+    )
+
+
+# 검색결과 페이지 진입(세션 해제)용 네비게이션 헤더 — 실제 브라우저 document 요청과 동일.
+NAV_HEADERS: dict[str, str] = {
+    "User-Agent": HEADERS["User-Agent"],
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "ko-KR,ko;q=0.9",
+    "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Upgrade-Insecure-Requests": "1",
+}
+
+
+def _search_headers(keyword: str) -> dict[str, str]:
+    """goods/fetch XHR 헤더 — 실제 프론트가 검색결과 페이지에서 보내는 것과 동일.
+
+    ★2026-07-31 실측: Referer=검색결과페이지 + Sec-Fetch same-origin 헤더가 있어야
+    WAF를 통과한다. (구 코드는 Referer=홈 + Sec-Fetch 누락 → 전량 403)
+    """
+    return {
+        "User-Agent": HEADERS["User-Agent"],
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ko-KR,ko;q=0.9",
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": _result_url(keyword),
+        "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
 # _client_kwargs(proxy_override) 기본값 센티널 — None(메인 IP)과 "미지정"을 구분.
 _UNSET: Any = object()
 
@@ -91,8 +137,11 @@ class FashionPlusClient:
     SEARCH_API = "https://www.fashionplus.co.kr/search/goods/fetch"
     DETAIL_URL = "https://www.fashionplus.co.kr/goods/detail"
 
-    # 수집 시 페이지 간 딜레이(초) — 차단 예방. 안전 우선(느려도 안 짤리게).
-    SEARCH_PAGE_DELAY = 1.0
+    # 수집 시 페이지 간 딜레이(초). 패플 차단은 IP/횟수 기반이 아니라 세션해제(결과페이지
+    # 시딩) 기반임이 확인돼(2026-07-31) 딜레이를 크게 줄였다. 소량 유지=예의상.
+    SEARCH_PAGE_DELAY = 0.3
+    # 검색 페이지 크기 — 요청수를 줄여 수집 속도를 높인다(pageSize=100 실측 정상).
+    SEARCH_PAGE_SIZE = 100
 
     def __init__(self, *, proxy_url: str | None = None) -> None:
         # 오토튠 IP 로테이션용 프록시 (무신사와 동일 패턴). None이면 메인 IP.
@@ -114,15 +163,26 @@ class FashionPlusClient:
         kw["transport"] = httpx.AsyncHTTPTransport(retries=3, proxy=proxy)
         return kw
 
-    async def _seed_session(self, client: "httpx.AsyncClient") -> None:
-        """검색 API 호출 전 홈페이지 1회 방문으로 세션 쿠키 획득.
+    async def _seed_session(
+        self, client: "httpx.AsyncClient", keyword: str = ""
+    ) -> None:
+        """검색 API 호출 전 세션 해제(WAF 통과 쿠키 발급).
 
-        패플 검색 API(goods/fetch)는 세션 쿠키가 없으면 403(HTML 에러페이지)을
-        반환한다(2026-07 사이트 변경). 실제 프론트가 홈 진입 시 쿠키를 받는 흐름과
-        동일. 쿠키는 client 쿠키자에 자동 저장돼 이후 검색 요청에 실린다.
+        ★2026-07-31 실측: 홈 방문만으론 부족(goods/fetch 403). 반드시
+        `/search/goods/result` 페이지를 한 번 GET 해야 WAF 해제 쿠키가 발급돼
+        이후 goods/fetch 가 200이 된다. 결과페이지 1회 방문이면 이 세션의 모든
+        키워드 검색이 해제된다(키워드 무관). 쿠키는 client 쿠키자에 자동 저장.
         """
         try:
-            await client.get("https://www.fashionplus.co.kr/", headers=HEADERS)
+            await client.get("https://www.fashionplus.co.kr/", headers=NAV_HEADERS)
+            await client.get(
+                _result_url(keyword),
+                headers={
+                    **NAV_HEADERS,
+                    "Sec-Fetch-Site": "same-origin",
+                    "Referer": "https://www.fashionplus.co.kr/",
+                },
+            )
         except Exception:
             # 시딩 실패해도 검색 시도는 진행(검색측 403 처리 로직이 잡음)
             pass
@@ -130,14 +190,16 @@ class FashionPlusClient:
     async def _fetch_search_meta(self, keyword: str) -> dict[str, Any]:
         """검색 API 호출 후 categories/brands 메타데이터 반환 (상품 목록은 1건만)."""
         async with httpx.AsyncClient(**self._client_kwargs()) as client:
-            await self._seed_session(client)
+            await self._seed_session(client, keyword)
             params: dict[str, str] = {
                 "searchWord": keyword,
                 "page": "1",
                 "pageSize": "1",
             }
             try:
-                resp = await client.get(self.SEARCH_API, params=params, headers=HEADERS)
+                resp = await client.get(
+                    self.SEARCH_API, params=params, headers=_search_headers(keyword)
+                )
                 # 429/403 차단 감지 (무신사와 동일 패턴)
                 if resp.status_code in (429, 403):
                     retry_after = int(resp.headers.get("Retry-After", "30"))
@@ -315,13 +377,14 @@ class FashionPlusClient:
                         await client.aclose()
                     cur_proxy = want_proxy
                     client = httpx.AsyncClient(**self._client_kwargs(want_proxy))
-                    # IP가 바뀔 때마다 그 IP로 세션 쿠키를 새로 시딩(쿠키는 IP별 발급).
-                    await self._seed_session(client)
+                    # 클라이언트(IP)가 바뀔 때마다 세션을 새로 해제(홈+검색결과 GET).
+                    # ★결과페이지 시딩이 있어야 goods/fetch 가 200 (2026-07-31 실측).
+                    await self._seed_session(client, keyword)
 
                 params: dict[str, str] = {
                     "searchWord": keyword,
                     "page": str(current_page),
-                    "pageSize": "40",
+                    "pageSize": str(self.SEARCH_PAGE_SIZE),
                 }
                 # URL 파라미터에서 추가 필터 전달
                 for k in (
@@ -347,7 +410,9 @@ class FashionPlusClient:
                 _fp_search_req_no += 1
                 try:
                     resp = await client.get(
-                        self.SEARCH_API, params=params, headers=HEADERS
+                        self.SEARCH_API,
+                        params=params,
+                        headers=_search_headers(keyword),
                     )
                     # 429/403 차단 감지 — 상위로 전파(무신사와 동일 패턴)
                     if resp.status_code in (429, 403):
@@ -400,7 +465,7 @@ class FashionPlusClient:
                 if len(all_products) >= max_count:
                     all_products = all_products[:max_count]
                     break
-                if len(items) < 40:
+                if len(items) < self.SEARCH_PAGE_SIZE:
                     break
                 current_page += 1
                 if current_page > 25:
