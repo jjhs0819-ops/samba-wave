@@ -146,7 +146,22 @@ def _tok(x: str) -> set:
     return set(re.findall(r"[a-z0-9]+", (x or "").lower())) - stop
 
 
-async def bunjang_pick(c, query: str, target_ko: str = ""):
+def card_no_of(title: str) -> str:
+    """eBay 제목에서 카드 고유번호 추출. 예: 040/M-P, 114/080, 087/063.
+    번호가 있으면 소스매칭·중복판정의 핵심 키가 된다."""
+    m = re.search(r"\d{2,3}/[0-9A-Za-z-]{1,6}", title or "")
+    return m.group(0).upper() if m else ""
+
+
+def card_key(title: str) -> str:
+    """중복 판정용 카드 신원 = 영문몬명 + 카드번호.
+    제목 표현이 달라도 같은 카드면 같은 키가 나온다."""
+    low = (title or "").lower()
+    en = next((k for k in EN2KO if k in low), "")
+    return f"{en}|{card_no_of(title)}"
+
+
+async def bunjang_pick(c, query: str, target_ko: str = "", need_no: str = ""):
     """SELLING·단일품목만 모아 2번째 저가를 고른다(1번째는 허위매물 잦음)."""
     r = await c.get(
         "https://api.bunjang.co.kr/api/1/find_v2.json",
@@ -173,6 +188,13 @@ async def bunjang_pick(c, query: str, target_ko: str = ""):
         # 대상 카드명이 제목에 실제로 있어야 한다(엉뚱한 카드 매칭 방지)
         if target_ko and target_ko not in nm:
             continue
+        # [A] eBay 제목에 카드번호가 있으면 번장 매물명에도 그 번호가 있어야 채택.
+        # 키링·스티커·시계 등 굿즈는 카드번호가 없어 자동 배제되고,
+        # 같은 몬이라도 다른 카드/굿즈로 헛매칭되는 것을 원천 차단한다.
+        if need_no:
+            num = need_no.split("/")[0]  # "040/M-P" → "040"
+            if need_no not in nm and num not in re.findall(r"\d{2,3}", nm):
+                continue
         if pr < 3000 or pr > 300000:
             continue
         cand.append((pr, str(it.get("pid")), nm))
@@ -274,28 +296,32 @@ async def main():
         live = {t2.lower() for _, t2 in await lst("ActiveList")}
         print(f"비활성 {len(unsold)} / 라이브 {len(live)}")
 
+        # [B] 라이브 + 이번 실행에서 이미 만든 카드 신원을 모은다.
+        # 카드가 죽어 종료목록에 있어도 같은 카드를 또 새로 만들지 않는다(중복=계정정지).
+        seen = {card_key(lt) for lt in live if card_key(lt) != "|"}
+
         async with httpx.AsyncClient(timeout=20, headers=H) as bc:
             for iid, title in unsold:
                 if only and only.lower() not in title.lower():
                     continue
-                # [중요] 제목 완전일치로만 보면 표현이 조금 달라진 중복을 놓친다 → 토큰 유사도로 판정
+                # [B] 카드 신원(영문몬명+번호)이 라이브/이미 처리분에 있으면 스킵.
+                # 종료목록에 있어도 같은 카드를 또 새 리스팅으로 만들지 않는다.
+                key = card_key(title)
+                if key != "|" and key in seen:
+                    print(f"SKIP(이미 존재/중복) {title[:46]}")
+                    continue
+                # 번호 없는 카드는 토큰 유사도로 라이브 중복 백업 판정
                 k = _tok(title)
-                dup = any(
+                if any(
                     k and _tok(lt) and len(k & _tok(lt)) / len(k | _tok(lt)) >= 0.5
                     for lt in live
-                )
-                if dup:
+                ):
                     print(f"SKIP(라이브에 이미 있음) {title[:46]}")
-                    continue
-                # [중요] 같은 카드가 이미 라이브면 스킵(중복등록=계정정지). 제목 표현이 달라도
-                # 포켓몬 영문명이 라이브 제목에 있으면 동일 카드로 본다(2026-07-27 잉어킹 중복사고).
-                en_name = next((kk for kk in EN2KO if kk in title.lower()), "")
-                if en_name and any(en_name in lt for lt in live):
-                    print(f"SKIP(같은 카드 라이브) {title[:46]}")
                     continue
                 q = kw_of(title)
                 ko = next((v for kk, v in EN2KO.items() if kk in title.lower()), "")
-                pid, cost, nm = await bunjang_pick(bc, q, ko)
+                no = card_no_of(title)
+                pid, cost, nm = await bunjang_pick(bc, q, ko, no)
                 if not pid:
                     print(f"NOSRC {title[:46]}")
                     continue
@@ -353,6 +379,8 @@ async def main():
                     s.add(p)
                     await s.commit()
                     print(f"   복구완료 → listing {lid}")
+                    if key != "|":
+                        seen.add(key)  # [B] 같은 실행 중 동일 카드 재등록 차단
                 else:
                     await s.rollback()
                     print(f"   실패: {str(res.get('message'))[:70]}")
