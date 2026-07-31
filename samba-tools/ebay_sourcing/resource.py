@@ -43,8 +43,16 @@ async def main():
     try:
         async with get_write_session() as s:
             acc = (
-                await s.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
-            ).scalars().first()
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == acc_id
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             addf = acc.additional_fields or {}
             c = EbayClient(
                 app_id=addf.get("clientId") or acc.api_key,
@@ -60,7 +68,9 @@ async def main():
             before = o.get("listing", {}).get("listingId")
             cat = o.get("categoryId", "")
             if o.get("status") != "PUBLISHED":
-                print(f"⚠️ offer status={o.get('status')} (ENDED면 재게시=수수료 발생). 계속하려면 확인 필요.")
+                print(
+                    f"⚠️ offer status={o.get('status')} (ENDED면 재게시=수수료 발생). 계속하려면 확인 필요."
+                )
             # 포스트잇 R2 업로드(검증완료 /tmp/postit.jpg)
             svc = ImageTransformService(s)
             url = await svc._save_image(
@@ -69,8 +79,16 @@ async def main():
             )
             # DB 갱신
             p = (
-                await s.execute(select(SambaCollectedProduct).where(SambaCollectedProduct.id == pid))
-            ).scalars().first()
+                (
+                    await s.execute(
+                        select(SambaCollectedProduct).where(
+                            SambaCollectedProduct.id == pid
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             p.source_url = f"https://m.bunjang.co.kr/products/{new_pid}"
             p.site_product_id = new_pid
             p.cost = new_cost
@@ -81,7 +99,11 @@ async def main():
             s.add(p)
             await s.flush()
             res = await dispatch_to_market(
-                s, "ebay", p.model_dump(), category_id=cat, account=acc,
+                s,
+                "ebay",
+                p.model_dump(),
+                category_id=cat,
+                account=acc,
                 existing_product_no=before,
             )
             print("revise:", json.dumps(res, ensure_ascii=False)[:160])
@@ -89,19 +111,32 @@ async def main():
         # 검증: 새 리스팅 여부
         async with get_write_session() as s2:
             acc = (
-                await s2.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
-            ).scalars().first()
+                (
+                    await s2.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == acc_id
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             addf = acc.additional_fields or {}
             c = EbayClient(
-                app_id=addf.get("clientId") or acc.api_key, dev_id=addf.get("devId", ""),
+                app_id=addf.get("clientId") or acc.api_key,
+                dev_id=addf.get("devId", ""),
                 cert_id=addf.get("clientSecret") or acc.api_secret,
                 refresh_token=addf.get("oauthToken") or acc.oauth_refresh_token,
             )
             o = (await c.get_offers_by_sku(pid))[0]
             after = o.get("listing", {}).get("listingId")
             print(
-                "after:", after, "price:", o.get("pricingSummary", {}).get("price", {}),
-                "★", ("새리스팅=수수료!" if after != before else "revise=수수료0"),
+                "after:",
+                after,
+                "price:",
+                o.get("pricingSummary", {}).get("price", {}),
+                "★",
+                ("새리스팅=수수료!" if after != before else "revise=수수료0"),
             )
     finally:
         current_tenant_id.reset(tok)

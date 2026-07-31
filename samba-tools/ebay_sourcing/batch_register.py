@@ -61,7 +61,11 @@ PROMPT = {
 
 async def gemini_titles(svc, names, kind):
     import httpx
-    key, model = await svc._get_gemini_config()  # gemini-2.5-flash-image = 텍스트도 정상
+
+    (
+        key,
+        model,
+    ) = await svc._get_gemini_config()  # gemini-2.5-flash-image = 텍스트도 정상
     numbered = "\n".join(f"{i + 1}. {n}" for i, n in enumerate(names))
     body = {"contents": [{"parts": [{"text": PROMPT[kind] + "\n\n" + numbered}]}]}
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
@@ -90,20 +94,45 @@ async def fetch_live_titles(session, acc_id):
     from sqlmodel import select
 
     ns = {"e": "urn:ebay:apis:eBLBaseComponents"}
-    acc = (await session.execute(
-        select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))).scalars().first()
+    acc = (
+        (
+            await session.execute(
+                select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id)
+            )
+        )
+        .scalars()
+        .first()
+    )
     ax = getattr(acc, "additional_fields", None) or {}
-    cr = await resolve_market_creds(session, TENANT, market_type="ebay", store_key="store_ebay") or {}
+    cr = (
+        await resolve_market_creds(
+            session, TENANT, market_type="ebay", store_key="store_ebay"
+        )
+        or {}
+    )
     ec = EbayClient(
-        cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+        cr.get("clientId")
+        or cr.get("appId")
+        or ax.get("clientId")
+        or ax.get("appId", ""),
         cr.get("devId") or ax.get("devId", ""),
-        cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-        cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+        cr.get("clientSecret")
+        or cr.get("certId")
+        or ax.get("clientSecret")
+        or ax.get("certId", ""),
+        cr.get("oauthToken")
+        or cr.get("authToken")
+        or ax.get("oauthToken")
+        or ax.get("authToken", ""),
+    )
     token = await ec._get_access_token()
     headers = {
-        "X-EBAY-API-CALL-NAME": "GetMyeBaySelling", "X-EBAY-API-SITEID": "0",
-        "X-EBAY-API-COMPATIBILITY-LEVEL": "1349", "X-EBAY-API-IAF-TOKEN": token,
-        "Content-Type": "text/xml"}
+        "X-EBAY-API-CALL-NAME": "GetMyeBaySelling",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+        "X-EBAY-API-IAF-TOKEN": token,
+        "Content-Type": "text/xml",
+    }
     titles, page = [], 1
     while True:
         xml = (
@@ -111,15 +140,20 @@ async def fetch_live_titles(session, acc_id):
             '<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
             "<ActiveList><Include>true</Include>"
             f"<Pagination><EntriesPerPage>100</EntriesPerPage><PageNumber>{page}</PageNumber></Pagination>"
-            "</ActiveList></GetMyeBaySellingRequest>")
+            "</ActiveList></GetMyeBaySellingRequest>"
+        )
         async with httpx.AsyncClient(timeout=40) as c:
             r = await c.post(f"{ec._base_url}/ws/api.dll", content=xml, headers=headers)
         if r.status_code != 200:
             break
         root = ET.fromstring(r.text)
-        titles += [(it.findtext("e:Title", "", ns) or "")
-                   for it in root.findall(".//e:ActiveList/e:ItemArray/e:Item", ns)]
-        total = root.findtext(".//e:ActiveList/e:PaginationResult/e:TotalNumberOfPages", "1", ns)
+        titles += [
+            (it.findtext("e:Title", "", ns) or "")
+            for it in root.findall(".//e:ActiveList/e:ItemArray/e:Item", ns)
+        ]
+        total = root.findtext(
+            ".//e:ActiveList/e:PaginationResult/e:TotalNumberOfPages", "1", ns
+        )
         if page >= int(total or 1):
             break
         page += 1
@@ -141,29 +175,58 @@ async def main():
     from sqlmodel import select
 
     dry = "--dry" in sys.argv
-    limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 30
+    limit = (
+        int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 30
+    )
     data = json.load(open("/tmp/cands.json", encoding="utf-8"))
     paper = ph.extract_paper("/tmp/postit_cut.png")
-    stop = {"pokemon", "card", "game", "korean", "korea", "ver", "sealed", "new",
-            "the", "of", "and", "tcg", "official", "photocard", "ateez"}
+    stop = {
+        "pokemon",
+        "card",
+        "game",
+        "korean",
+        "korea",
+        "ver",
+        "sealed",
+        "new",
+        "the",
+        "of",
+        "and",
+        "tcg",
+        "official",
+        "photocard",
+        "ateez",
+    }
 
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             svc = ImageTransformService(s)
             live = await fetch_live_titles(s, KV)
             live_kw = [_kw(x, stop) for x in live]
             print(f"라이브 리스팅 {len(live)}건 (dedup 기준)")
 
-            _pr, _mp = (await s.execute(
-                t("SELECT pricing,market_policies FROM samba_policy WHERE id=:i"),
-                {"i": POLICY})).first()
+            _pr, _mp = (
+                await s.execute(
+                    t("SELECT pricing,market_policies FROM samba_policy WHERE id=:i"),
+                    {"i": POLICY},
+                )
+            ).first()
             _pr = _pr if isinstance(_pr, dict) else json.loads(_pr or "{}")
             _mp = _mp if isinstance(_mp, dict) else json.loads(_mp or "{}")
 
-            only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+            only = (
+                sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
+            )
             for kind in ("ateez", "pokemon", "skz"):
                 if only and kind != only:
                     continue
@@ -185,13 +248,18 @@ async def main():
                             print(f"  skip(무구별) {title[:40]}")
                             continue
                         # dedup: 라이브 제목/이번 배치 제목과 키워드 유사
-                        if any(len(k & lk) / len(k | lk) >= 0.55 for lk in live_kw if lk):
+                        if any(
+                            len(k & lk) / len(k | lk) >= 0.55 for lk in live_kw if lk
+                        ):
                             print(f"  dup   {title[:44]}")
                             continue
                         # 대표사진 합성
                         try:
-                            raw = (await c.get(
-                                f"https://media.bunjang.co.kr/product/{bpid}_1_w856.jpg")).content
+                            raw = (
+                                await c.get(
+                                    f"https://media.bunjang.co.kr/product/{bpid}_1_w856.jpg"
+                                )
+                            ).content
                             out = ph.compose(Image.open(io.BytesIO(raw)), paper)
                             buf = io.BytesIO()
                             out.save(buf, "JPEG", quality=92)
@@ -199,29 +267,51 @@ async def main():
                         except Exception as e:
                             print(f"  imgX  {title[:40]} ({str(e)[:30]})")
                             continue
-                        sale = float(calc_market_price(float(cost), _pr, "ebay", _mp) or cost)
-                        print(f"  {'DRY' if dry else 'REG'} {done + 1:2d} {cost:,}원→${sale:,.2f} | {title[:46]}")
+                        sale = float(
+                            calc_market_price(float(cost), _pr, "ebay", _mp) or cost
+                        )
+                        print(
+                            f"  {'DRY' if dry else 'REG'} {done + 1:2d} {cost:,}원→${sale:,.2f} | {title[:46]}"
+                        )
                         if dry:
                             done += 1
                             live_kw.append(k)
                             continue
-                        img_url = await svc._save_image(img_bytes,
-                                                        f"https://media.bunjang.co.kr/product/{bpid}_1.jpg")
+                        img_url = await svc._save_image(
+                            img_bytes,
+                            f"https://media.bunjang.co.kr/product/{bpid}_1.jpg",
+                        )
                         p = SambaCollectedProduct(
-                            source_site="BUNJANG", name=cand["name"], name_en=title,
-                            original_price=cost, sale_price=sale, cost=cost,
-                            status="active", sale_status="in_stock",
+                            source_site="BUNJANG",
+                            name=cand["name"],
+                            name_en=title,
+                            original_price=cost,
+                            sale_price=sale,
+                            cost=cost,
+                            status="active",
+                            sale_status="in_stock",
                             source_url=f"https://m.bunjang.co.kr/products/{bpid}",
-                            site_product_id=bpid, images=[img_url],
-                            applied_policy_id=POLICY, tenant_id=TENANT,
-                            registered_accounts=[], stock_quantities={KV: 1})
+                            site_product_id=bpid,
+                            images=[img_url],
+                            applied_policy_id=POLICY,
+                            tenant_id=TENANT,
+                            registered_accounts=[],
+                            stock_quantities={KV: 1},
+                        )
                         s.add(p)
                         await s.flush()
                         res = await dispatch_to_market(
-                            s, "ebay", p.model_dump(), category_id=CAT[kind],
-                            account=acc, existing_product_no="")
+                            s,
+                            "ebay",
+                            p.model_dump(),
+                            category_id=CAT[kind],
+                            account=acc,
+                            existing_product_no="",
+                        )
                         if res.get("success"):
-                            lid = res.get("data", {}).get("listingId") or res.get("product_no")
+                            lid = res.get("data", {}).get("listingId") or res.get(
+                                "product_no"
+                            )
                             p.registered_accounts = [KV]
                             p.market_product_nos = {KV: lid}
                             s.add(p)

@@ -52,39 +52,78 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            hdr = {"X-EBAY-API-CALL-NAME": "GetMyeBaySelling", "X-EBAY-API-SITEID": "0",
-                   "X-EBAY-API-COMPATIBILITY-LEVEL": "1349", "X-EBAY-API-IAF-TOKEN": tk,
-                   "Content-Type": "text/xml"}
+            hdr = {
+                "X-EBAY-API-CALL-NAME": "GetMyeBaySelling",
+                "X-EBAY-API-SITEID": "0",
+                "X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+                "X-EBAY-API-IAF-TOKEN": tk,
+                "Content-Type": "text/xml",
+            }
 
             async def lst(name):
-                xml = ('<?xml version="1.0" encoding="utf-8"?>'
-                       '<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
-                       f"<{name}><Include>true</Include><Pagination><EntriesPerPage>200</EntriesPerPage>"
-                       f"<PageNumber>1</PageNumber></Pagination></{name}></GetMyeBaySellingRequest>")
+                xml = (
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
+                    f"<{name}><Include>true</Include><Pagination><EntriesPerPage>200</EntriesPerPage>"
+                    f"<PageNumber>1</PageNumber></Pagination></{name}></GetMyeBaySellingRequest>"
+                )
                 async with httpx.AsyncClient(timeout=60) as c:
-                    r = await c.post(f"{ec._base_url}/ws/api.dll", content=xml, headers=hdr)
-                return {i.findtext("e:ItemID", "", NS): i.findtext("e:Title", "", NS)
-                        for i in ET.fromstring(r.text).findall(f".//e:{name}/e:ItemArray/e:Item", NS)}
+                    r = await c.post(
+                        f"{ec._base_url}/ws/api.dll", content=xml, headers=hdr
+                    )
+                return {
+                    i.findtext("e:ItemID", "", NS): i.findtext("e:Title", "", NS)
+                    for i in ET.fromstring(r.text).findall(
+                        f".//e:{name}/e:ItemArray/e:Item", NS
+                    )
+                }
 
             active = await lst("ActiveList")
             unsold = await lst("UnsoldList")
             print(f"라이브 {len(active)} / 종료 {len(unsold)}")
 
-            rows = (await s.execute(t("""
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id, name_en, name, market_product_nos, stock_quantities, sale_status
                 FROM samba_collected_product
                 WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
             print(f"DB 등록됨 {len(rows)}")
 
             h = {"Authorization": f"Bearer {tk}"}
@@ -98,16 +137,29 @@ async def main():
                         continue
 
                     # 라이브에 없다 → SKU 기준으로 실제 상태 확인
-                    r = await c.get(f"{ec._base_url}/sell/inventory/v1/offer?sku={pid}", headers=h)
+                    r = await c.get(
+                        f"{ec._base_url}/sell/inventory/v1/offer?sku={pid}", headers=h
+                    )
                     offers = r.json().get("offers", []) if r.status_code == 200 else []
-                    pub = next((o for o in offers if o.get("status") == "PUBLISHED"), None)
+                    pub = next(
+                        (o for o in offers if o.get("status") == "PUBLISHED"), None
+                    )
                     if pub:
                         lid = (pub.get("listing") or {}).get("listingId", "")
                         stale += 1
                         print(f"번호불일치 {nm} DB={no or '-'} → 실제={lid}")
                         if fix and lid:
-                            p = (await s.execute(select(SambaCollectedProduct).where(
-                                SambaCollectedProduct.id == pid))).scalars().first()
+                            p = (
+                                (
+                                    await s.execute(
+                                        select(SambaCollectedProduct).where(
+                                            SambaCollectedProduct.id == pid
+                                        )
+                                    )
+                                )
+                                .scalars()
+                                .first()
+                            )
                             d = dict(p.market_product_nos or {})
                             d[KV] = lid
                             p.market_product_nos = d
@@ -115,7 +167,9 @@ async def main():
                             await s.commit()
                         continue
 
-                    unp = next((o for o in offers if o.get("status") != "PUBLISHED"), None)
+                    unp = next(
+                        (o for o in offers if o.get("status") != "PUBLISHED"), None
+                    )
                     have_qty = int((qty or {}).get(KV, 0) or 0)
                     if unp and have_qty > 0:
                         orphan += 1
@@ -123,22 +177,36 @@ async def main():
                         # eBay 제재 대상. 제목이 겹치면 복구하지 않는다.
                         title_key = _tok(en or ko or "")
                         dup = any(
-                            title_key and _tok(x) and
-                            len(title_key & _tok(x)) / len(title_key | _tok(x)) >= 0.6
+                            title_key
+                            and _tok(x)
+                            and len(title_key & _tok(x)) / len(title_key | _tok(x))
+                            >= 0.6
                             for x in active.values()
                         )
                         if dup:
-                            print(f"미게시(중복이라 복구안함) {nm} offer={unp.get('offerId')}")
+                            print(
+                                f"미게시(중복이라 복구안함) {nm} offer={unp.get('offerId')}"
+                            )
                             continue
                         print(f"미게시(복구가능) {nm} offer={unp.get('offerId')}")
                         if fix:
                             pr = await c.post(
                                 f"{ec._base_url}/sell/inventory/v1/offer/{unp['offerId']}/publish",
-                                headers={**h, "Content-Type": "application/json"})
+                                headers={**h, "Content-Type": "application/json"},
+                            )
                             if pr.status_code in (200, 201):
                                 lid = pr.json().get("listingId", "")
-                                p = (await s.execute(select(SambaCollectedProduct).where(
-                                    SambaCollectedProduct.id == pid))).scalars().first()
+                                p = (
+                                    (
+                                        await s.execute(
+                                            select(SambaCollectedProduct).where(
+                                                SambaCollectedProduct.id == pid
+                                            )
+                                        )
+                                    )
+                                    .scalars()
+                                    .first()
+                                )
                                 d = dict(p.market_product_nos or {})
                                 d[KV] = lid
                                 p.market_product_nos = d
@@ -147,22 +215,37 @@ async def main():
                                 revived += 1
                                 print(f"   복구 → {lid}")
                             else:
-                                print(f"   publish 실패 {pr.status_code} {pr.text[:90]}")
+                                print(
+                                    f"   publish 실패 {pr.status_code} {pr.text[:90]}"
+                                )
                         continue
 
                     # 살릴 수 없음 → DB 를 미등록으로 되돌려 재등록 대상이 되게 한다
                     print(f"종료됨(복구불가) {nm} DB={no or '-'} 재고={have_qty} {ss}")
                     if fix:
-                        p = (await s.execute(select(SambaCollectedProduct).where(
-                            SambaCollectedProduct.id == pid))).scalars().first()
-                        p.registered_accounts = [a for a in (p.registered_accounts or []) if a != KV]
+                        p = (
+                            (
+                                await s.execute(
+                                    select(SambaCollectedProduct).where(
+                                        SambaCollectedProduct.id == pid
+                                    )
+                                )
+                            )
+                            .scalars()
+                            .first()
+                        )
+                        p.registered_accounts = [
+                            a for a in (p.registered_accounts or []) if a != KV
+                        ]
                         d = dict(p.market_product_nos or {})
                         d.pop(KV, None)
                         p.market_product_nos = d
                         s.add(p)
                         await s.commit()
 
-            print(f"\n정상 {ok} / 번호불일치 {stale} / 미게시복구대상 {orphan} / 복구완료 {revived}")
+            print(
+                f"\n정상 {ok} / 번호불일치 {stale} / 미게시복구대상 {orphan} / 복구완료 {revived}"
+            )
             db_nos = {(n or {}).get(KV, "") for _, _, _, n, _, _ in rows}
             ghost = [(i, ti) for i, ti in active.items() if i not in db_nos]
             print(f"DB에 없는 라이브 리스팅 {len(ghost)}")

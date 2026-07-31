@@ -42,28 +42,61 @@ async def main():
     changed = revived = 0
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            h = {"Authorization": f"Bearer {tk}", "Accept": "application/json",
-                 "Content-Type": "application/json", "Content-Language": "en-US"}
+            h = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Content-Language": "en-US",
+            }
 
-            rows = (await s.execute(t("""
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id FROM samba_collected_product
                 WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
             print(f"대상 {len(rows)}건")
 
             async with httpx.AsyncClient(timeout=60) as c:
                 for (pid,) in rows:
-                    r = await c.get(f"{ec._base_url}/sell/inventory/v1/offer?sku={pid}", headers=h)
+                    r = await c.get(
+                        f"{ec._base_url}/sell/inventory/v1/offer?sku={pid}", headers=h
+                    )
                     offers = r.json().get("offers", []) if r.status_code == 200 else []
                     if not offers:
                         continue
@@ -72,8 +105,17 @@ async def main():
                     sold = int((o.get("listing") or {}).get("soldQuantity", 0) or 0)
                     total = avail + sold
 
-                    p = (await s.execute(select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == pid))).scalars().first()
+                    p = (
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == pid
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     nm = (p.name_en or p.name or "")[:38]
 
                     # 재고 있는데 미게시로 죽어 있으면 되살린다
@@ -82,7 +124,8 @@ async def main():
                         if not dry:
                             pr = await c.post(
                                 f"{ec._base_url}/sell/inventory/v1/offer/{o['offerId']}/publish",
-                                headers=h)
+                                headers=h,
+                            )
                             if pr.status_code in (200, 201):
                                 lid = pr.json().get("listingId", "")
                                 d = dict(p.market_product_nos or {})
@@ -91,11 +134,15 @@ async def main():
                                 revived += 1
                                 print(f"   → {lid}")
                             else:
-                                print(f"   publish 실패 {pr.status_code} {pr.text[:90]}")
+                                print(
+                                    f"   publish 실패 {pr.status_code} {pr.text[:90]}"
+                                )
 
                     cur = int((p.stock_quantities or {}).get(KV, 0) or 0)
                     if cur != total:
-                        print(f"재고동기화 {nm} | DB {cur} → {total} (가능 {avail} + 판매 {sold})")
+                        print(
+                            f"재고동기화 {nm} | DB {cur} → {total} (가능 {avail} + 판매 {sold})"
+                        )
                         changed += 1
                         if not dry:
                             d = dict(p.stock_quantities or {})
@@ -105,7 +152,10 @@ async def main():
                     if not dry:
                         s.add(p)
                         await s.commit()
-            print(f"\n완료: 재고갱신 {changed}건 / 되살림 {revived}건" + (" [DRY]" if dry else ""))
+            print(
+                f"\n완료: 재고갱신 {changed}건 / 되살림 {revived}건"
+                + (" [DRY]" if dry else "")
+            )
     finally:
         current_tenant_id.reset(tok)
 

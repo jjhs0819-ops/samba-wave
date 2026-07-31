@@ -51,7 +51,7 @@ CARDS = [
 
 
 def esc(s: str) -> str:
-    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 async def main():
@@ -73,23 +73,50 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
 
-            row = (await s.execute(t(
-                "SELECT top_html, top_image_s3_key FROM samba_detail_template WHERE id='dt_kpopcard_v1'"
-            ))).first()
+            row = (
+                await s.execute(
+                    t(
+                        "SELECT top_html, top_image_s3_key FROM samba_detail_template WHERE id='dt_kpopcard_v1'"
+                    )
+                )
+            ).first()
             desc = (row[0] or "") or (
                 '<div style="max-width:900px;margin:0 auto;">'
-                f'<img src="{row[1]}" style="width:100%;display:block;"></div>')
+                f'<img src="{row[1]}" style="width:100%;display:block;"></div>'
+            )
 
             variations = "".join(
                 "<Variation>"
@@ -137,11 +164,11 @@ async def main():
                 "<Value>No warning applicable</Value></NameValueList>"
                 "</ItemSpecifics>"
                 "<SellerProfiles>"
-                f"<SellerShippingProfile><ShippingProfileID>{ax.get('fulfillmentPolicyId','')}"
+                f"<SellerShippingProfile><ShippingProfileID>{ax.get('fulfillmentPolicyId', '')}"
                 "</ShippingProfileID></SellerShippingProfile>"
-                f"<SellerPaymentProfile><PaymentProfileID>{ax.get('paymentPolicyId','')}"
+                f"<SellerPaymentProfile><PaymentProfileID>{ax.get('paymentPolicyId', '')}"
                 "</PaymentProfileID></SellerPaymentProfile>"
-                f"<SellerReturnProfile><ReturnProfileID>{ax.get('returnPolicyId','')}"
+                f"<SellerReturnProfile><ReturnProfileID>{ax.get('returnPolicyId', '')}"
                 "</ReturnProfileID></SellerReturnProfile>"
                 "</SellerProfiles>"
                 "<PictureDetails>"
@@ -159,17 +186,26 @@ async def main():
                 "</Item></AddFixedPriceItemRequest>"
             )
             if dry:
-                print(f"[DRY] 변형 {len(CARDS)}개 / 개당 ${price} / 카테고리 {CATEGORY}")
+                print(
+                    f"[DRY] 변형 {len(CARDS)}개 / 개당 ${price} / 카테고리 {CATEGORY}"
+                )
                 for n, _ in CARDS:
                     print("   ", n)
                 return
 
-            hdr = {"X-EBAY-API-CALL-NAME": "AddFixedPriceItem", "X-EBAY-API-SITEID": "0",
-                   "X-EBAY-API-COMPATIBILITY-LEVEL": "1349", "X-EBAY-API-IAF-TOKEN": tk,
-                   "Content-Type": "text/xml"}
+            hdr = {
+                "X-EBAY-API-CALL-NAME": "AddFixedPriceItem",
+                "X-EBAY-API-SITEID": "0",
+                "X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+                "X-EBAY-API-IAF-TOKEN": tk,
+                "Content-Type": "text/xml",
+            }
             async with httpx.AsyncClient(timeout=120) as c:
-                r = await c.post(f"{ec._base_url}/ws/api.dll",
-                                 content=xml.encode("utf-8"), headers=hdr)
+                r = await c.post(
+                    f"{ec._base_url}/ws/api.dll",
+                    content=xml.encode("utf-8"),
+                    headers=hdr,
+                )
             root = ET.fromstring(r.text)
             ack = root.findtext(f".//{NS}Ack", "")
             print("Ack", ack, "| ItemID", root.findtext(f".//{NS}ItemID", "-"))

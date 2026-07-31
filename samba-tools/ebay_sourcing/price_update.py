@@ -50,22 +50,42 @@ async def main():
     from sqlmodel import select
 
     dry = "--dry" in sys.argv
-    min_delta = float(sys.argv[sys.argv.index("--min-delta") + 1]) if "--min-delta" in sys.argv else 0.05
-    max_cost = float(sys.argv[sys.argv.index("--max-cost") + 1]) if "--max-cost" in sys.argv else 300000
+    min_delta = (
+        float(sys.argv[sys.argv.index("--min-delta") + 1])
+        if "--min-delta" in sys.argv
+        else 0.05
+    )
+    max_cost = (
+        float(sys.argv[sys.argv.index("--max-cost") + 1])
+        if "--max-cost" in sys.argv
+        else 300000
+    )
 
     tok = current_tenant_id.set(TENANT)
     ok = skip = fail = 0
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
-            rows = (await s.execute(t("""
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id, name_en, site_product_id, cost, applied_policy_id, market_product_nos
                 FROM samba_collected_product
                 WHERE tenant_id = :tn AND source_site = 'BUNJANG'
                   AND registered_accounts @> CAST(:kv AS jsonb)
                 ORDER BY created_at DESC
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
             print(f"번장 등록분 {len(rows)}건")
 
             async with httpx.AsyncClient(timeout=30, headers=H) as c:
@@ -79,7 +99,8 @@ async def main():
                     for _try in range(3):
                         try:
                             r = await c.get(
-                                f"https://api.bunjang.co.kr/api/pms/v1/products/{bpid}/detail/web")
+                                f"https://api.bunjang.co.kr/api/pms/v1/products/{bpid}/detail/web"
+                            )
                             if r.status_code == 200:
                                 d = r.json().get("data", {}).get("product", {})
                                 break
@@ -105,17 +126,35 @@ async def main():
                         print(f"SKIP(원가 {new_cost:,}≥{int(max_cost):,}) {nm}")
                         continue
 
-                    _pr, _mp = (await s.execute(
-                        t("SELECT pricing, market_policies FROM samba_policy WHERE id=:i"),
-                        {"i": pol})).first()
+                    _pr, _mp = (
+                        await s.execute(
+                            t(
+                                "SELECT pricing, market_policies FROM samba_policy WHERE id=:i"
+                            ),
+                            {"i": pol},
+                        )
+                    ).first()
                     _pr = _pr if isinstance(_pr, dict) else json.loads(_pr or "{}")
                     _mp = _mp if isinstance(_mp, dict) else json.loads(_mp or "{}")
-                    sale = float(calc_market_price(float(new_cost), _pr, "ebay", _mp) or new_cost)
-                    print(f"{'DRY' if dry else 'RUN'} {nm} | {int(dc):,}→{new_cost:,}원 | 판매 {int(sale):,}")
+                    sale = float(
+                        calc_market_price(float(new_cost), _pr, "ebay", _mp) or new_cost
+                    )
+                    print(
+                        f"{'DRY' if dry else 'RUN'} {nm} | {int(dc):,}→{new_cost:,}원 | 판매 {int(sale):,}"
+                    )
                     if dry:
                         continue
-                    p = (await s.execute(select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == pid))).scalars().first()
+                    p = (
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == pid
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     p.cost = float(new_cost)
                     p.original_price = float(new_cost)
                     p.sale_price = sale
@@ -123,8 +162,13 @@ async def main():
                     await s.commit()
                     try:
                         res = await dispatch_to_market(
-                            s, "ebay", p.model_dump(), category_id="183454",
-                            account=acc, existing_product_no=lid)
+                            s,
+                            "ebay",
+                            p.model_dump(),
+                            category_id="183454",
+                            account=acc,
+                            existing_product_no=lid,
+                        )
                         if res.get("success"):
                             ok += 1
                         else:

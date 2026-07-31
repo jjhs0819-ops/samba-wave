@@ -33,31 +33,68 @@ async def main():
     from sqlalchemy import text as t
     from sqlmodel import select
 
-    limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    limit = (
+        int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    )
     tok = current_tenant_id.set(TENANT)
     ok = fail = 0
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             _ax = getattr(acc, "additional_fields", None) or {}
-            _cr = await resolve_market_creds(
-                s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            _cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ecli = EbayClient(
-                _cr.get("clientId") or _cr.get("appId") or _ax.get("clientId") or _ax.get("appId", ""),
+                _cr.get("clientId")
+                or _cr.get("appId")
+                or _ax.get("clientId")
+                or _ax.get("appId", ""),
                 _cr.get("devId") or _ax.get("devId", ""),
-                _cr.get("clientSecret") or _cr.get("certId") or _ax.get("clientSecret") or _ax.get("certId", ""),
-                _cr.get("oauthToken") or _cr.get("authToken") or _ax.get("oauthToken") or _ax.get("authToken", ""))
+                _cr.get("clientSecret")
+                or _cr.get("certId")
+                or _ax.get("clientSecret")
+                or _ax.get("certId", ""),
+                _cr.get("oauthToken")
+                or _cr.get("authToken")
+                or _ax.get("oauthToken")
+                or _ax.get("authToken", ""),
+            )
 
-            rows = (await s.execute(t("""
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id FROM samba_collected_product
                 WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
                 ORDER BY created_at
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
             print(f"대상 {len(rows)}건")
             for i, (pid,) in enumerate(rows[:limit], 1):
-                p = (await s.execute(select(SambaCollectedProduct).where(
-                    SambaCollectedProduct.id == pid))).scalars().first()
+                p = (
+                    (
+                        await s.execute(
+                            select(SambaCollectedProduct).where(
+                                SambaCollectedProduct.id == pid
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
                 no = (p.market_product_nos or {}).get(KV, "")
                 if not no:
                     continue
@@ -67,7 +104,8 @@ async def main():
                 cat = ""
                 try:
                     _o = await ecli._call(
-                        "GET", "/sell/inventory/v1/offer", params={"sku": p.id})
+                        "GET", "/sell/inventory/v1/offer", params={"sku": p.id}
+                    )
                     for _off in _o.get("offers", []):
                         cat = _off.get("categoryId") or ""
                         if cat:
@@ -75,17 +113,29 @@ async def main():
                 except Exception:
                     pass
                 if not cat:
-                    cat = "108857" if p.applied_policy_id in (
-                        "pol_kpopcard_v1", "pol_kpopgoods_v1") else "183454"
+                    cat = (
+                        "108857"
+                        if p.applied_policy_id
+                        in ("pol_kpopcard_v1", "pol_kpopgoods_v1")
+                        else "183454"
+                    )
                 try:
-                    res = await dispatch_to_market(s, "ebay", p.model_dump(), category_id=cat,
-                                                   account=acc, existing_product_no=no)
+                    res = await dispatch_to_market(
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id=cat,
+                        account=acc,
+                        existing_product_no=no,
+                    )
                     if res.get("success"):
                         ok += 1
                         print(f"{i:>3}. OK {(p.name_en or p.name)[:44]}")
                     else:
                         fail += 1
-                        print(f"{i:>3}. 실패 {(p.name_en or p.name)[:36]} — {str(res.get('message'))[:70]}")
+                        print(
+                            f"{i:>3}. 실패 {(p.name_en or p.name)[:36]} — {str(res.get('message'))[:70]}"
+                        )
                 except Exception as e:
                     fail += 1
                     print(f"{i:>3}. 예외 {(p.name_en or p.name)[:36]} — {str(e)[:70]}")

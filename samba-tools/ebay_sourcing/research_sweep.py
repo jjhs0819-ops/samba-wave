@@ -26,11 +26,16 @@ import websocket
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 CDP = "http://127.0.0.1:9223"
-BASE = ("https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD"
-        "&dayRange=7&categoryId=0&offset=0&limit=50"
-        "&sellerCountry=SellerLocation%3A%3A%3AKR&tz=Asia%2FSeoul")
-BLOCK = re.compile(r"pardon our interruption|unusual traffic|are you a robot|"
-                   r"verify you are a human", re.I)
+BASE = (
+    "https://www.ebay.com/sh/research?marketplace=EBAY-US&tabName=SOLD"
+    "&dayRange=7&categoryId=0&offset=0&limit=50"
+    "&sellerCountry=SellerLocation%3A%3A%3AKR&tz=Asia%2FSeoul"
+)
+BLOCK = re.compile(
+    r"pardon our interruption|unusual traffic|are you a robot|"
+    r"verify you are a human",
+    re.I,
+)
 
 
 class Tab:
@@ -41,15 +46,23 @@ class Tab:
         # [중요] ws 가 한 번 끊기면(웨일 재시작/절전/네트워크) 전체 스윕이 죽었다
         # (2026-07-24 12/300 에서 ConnectionResetError). 재연결로 이어가게 한다.
         tabs = json.load(urllib.request.urlopen(f"{CDP}/json/list"))
-        pages = [t for t in tabs if t.get("type") == "page"
-                 and "ebay.com/sh/research" in (t.get("url") or "")]
+        pages = [
+            t
+            for t in tabs
+            if t.get("type") == "page"
+            and "ebay.com/sh/research" in (t.get("url") or "")
+        ]
         if not pages:
-            pages = [t for t in tabs if t.get("type") == "page"
-                     and "ebay.com" in (t.get("url") or "")]
+            pages = [
+                t
+                for t in tabs
+                if t.get("type") == "page" and "ebay.com" in (t.get("url") or "")
+            ]
         if not pages:
             raise SystemExit("eBay 탭이 없다 — 웨일에서 셀러허브를 먼저 열어라")
         self.ws = websocket.create_connection(
-            pages[0]["webSocketDebuggerUrl"], timeout=90, suppress_origin=True)
+            pages[0]["webSocketDebuggerUrl"], timeout=90, suppress_origin=True
+        )
         self._id = 0
         self.cmd("Page.enable", _retry=False)
         self.cmd("Runtime.enable", _retry=False)
@@ -57,7 +70,9 @@ class Tab:
     def cmd(self, method, params=None, _retry=True):
         try:
             self._id += 1
-            self.ws.send(json.dumps({"id": self._id, "method": method, "params": params or {}}))
+            self.ws.send(
+                json.dumps({"id": self._id, "method": method, "params": params or {}})
+            )
             while True:
                 m = json.loads(self.ws.recv())
                 if m.get("id") == self._id:
@@ -71,8 +86,10 @@ class Tab:
             return self.cmd(method, params, _retry=False)
 
     def js(self, expr):
-        r = self.cmd("Runtime.evaluate", {"expression": expr, "returnByValue": True,
-                                          "awaitPromise": True})
+        r = self.cmd(
+            "Runtime.evaluate",
+            {"expression": expr, "returnByValue": True, "awaitPromise": True},
+        )
         return (r.get("result", {}).get("result", {}) or {}).get("value")
 
 
@@ -121,13 +138,21 @@ SEARCH_JS = r"""(async () => {
 
 def main():
     gap = int(sys.argv[sys.argv.index("--gap") + 1]) if "--gap" in sys.argv else 50
-    limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
-    out_path = (sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv
-                else "research_out.json")
+    limit = (
+        int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    )
+    out_path = (
+        sys.argv[sys.argv.index("--out") + 1]
+        if "--out" in sys.argv
+        else "research_out.json"
+    )
     # [중요] 목록 경로는 반드시 --todo 로 명시. 예전에 /tmp 경로 불일치로 옛 목록을
     # 읽어 엉뚱한 67개를 재수집했다(2026-07-24). 기본값도 스크립트 옆 파일로 둔다.
-    todo_path = (sys.argv[sys.argv.index("--todo") + 1] if "--todo" in sys.argv
-                 else "samba-tools/ebay_sourcing/todo20_full.json")
+    todo_path = (
+        sys.argv[sys.argv.index("--todo") + 1]
+        if "--todo" in sys.argv
+        else "samba-tools/ebay_sourcing/todo20_full.json"
+    )
     todo = json.load(open(todo_path, encoding="utf-8"))[:limit]
     print(f"목록 {todo_path} — {len(todo)}개")
 
@@ -151,7 +176,7 @@ def main():
             if "sellerCountry" not in cur:
                 continue
             raw = tab.js(READ_JS)
-            if raw and raw == prev_raw:   # 두 번 연속 같으면 로딩 끝
+            if raw and raw == prev_raw:  # 두 번 연속 같으면 로딩 끝
                 ready = True
                 break
             prev_raw = raw
@@ -175,22 +200,46 @@ def main():
             # 페이지는 정상 로드됐는데 지표가 없다 = 한국셀러 판매 0건(유효한 결과).
             # 실패로 세면 연속 0건에서 스윕이 조기 중단된다(2026-07-23).
             fails = 0
-            results.append({"cat": item["cat"], "kw": kw, "listings": "0",
-                            "sellers": "0", "avg": None, "sellThru": None,
-                            "avgShip": None})
+            results.append(
+                {
+                    "cat": item["cat"],
+                    "kw": kw,
+                    "listings": "0",
+                    "sellers": "0",
+                    "avg": None,
+                    "sellThru": None,
+                    "avgShip": None,
+                }
+            )
             print(f"{i:>3}/{len(todo)} {kw[:34]:34} 한국셀러 없음")
-            json.dump(results, open(out_path, "w", encoding="utf-8"),
-                      ensure_ascii=False, indent=1)
+            json.dump(
+                results,
+                open(out_path, "w", encoding="utf-8"),
+                ensure_ascii=False,
+                indent=1,
+            )
         else:
             fails = 0
-            row = {"cat": item["cat"], "kw": kw, "listings": d.get("sold"),
-                   "sellers": d.get("sellers"), "avg": d.get("avgPrice"),
-                   "sellThru": d.get("sellThru"), "avgShip": d.get("avgShip")}
+            row = {
+                "cat": item["cat"],
+                "kw": kw,
+                "listings": d.get("sold"),
+                "sellers": d.get("sellers"),
+                "avg": d.get("avgPrice"),
+                "sellThru": d.get("sellThru"),
+                "avgShip": d.get("avgShip"),
+            }
             results.append(row)
-            print(f"{i:>3}/{len(todo)} {kw[:34]:34} 셀러 {row['sellers']:>4} "
-                  f"| 평균가 ${row['avg'] or '-':>8} | 전환 {row['sellThru'] or '-'}%")
-            json.dump(results, open(out_path, "w", encoding="utf-8"),
-                      ensure_ascii=False, indent=1)
+            print(
+                f"{i:>3}/{len(todo)} {kw[:34]:34} 셀러 {row['sellers']:>4} "
+                f"| 평균가 ${row['avg'] or '-':>8} | 전환 {row['sellThru'] or '-'}%"
+            )
+            json.dump(
+                results,
+                open(out_path, "w", encoding="utf-8"),
+                ensure_ascii=False,
+                indent=1,
+            )
         time.sleep(gap)
 
     print(f"\n수집 {len(results)}건 → {out_path}")

@@ -28,8 +28,10 @@ NS = "{urn:ebay:apis:eBLBaseComponents}"
 def wrap(top_html: str, banner: str) -> str:
     if top_html:
         return top_html
-    return ('<div style="max-width:900px;margin:0 auto;">'
-            f'<img src="{banner}" style="width:100%;display:block;" alt="Store notice"></div>')
+    return (
+        '<div style="max-width:900px;margin:0 auto;">'
+        f'<img src="{banner}" style="width:100%;display:block;" alt="Store notice"></div>'
+    )
 
 
 async def main():
@@ -48,27 +50,62 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            hi = {"Authorization": f"Bearer {tk}", "Accept": "application/json",
-                  "Content-Type": "application/json", "Content-Language": "en-US"}
-            ht = {"X-EBAY-API-CALL-NAME": "GetItem", "X-EBAY-API-SITEID": "0",
-                  "X-EBAY-API-COMPATIBILITY-LEVEL": "1349", "X-EBAY-API-IAF-TOKEN": tk,
-                  "Content-Type": "text/xml"}
+            hi = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Content-Language": "en-US",
+            }
+            ht = {
+                "X-EBAY-API-CALL-NAME": "GetItem",
+                "X-EBAY-API-SITEID": "0",
+                "X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+                "X-EBAY-API-IAF-TOKEN": tk,
+                "Content-Type": "text/xml",
+            }
 
-            rows = (await s.execute(t("""
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id, name_en, name, applied_policy_id, market_product_nos
                 FROM samba_collected_product
                 WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
 
             tpl_cache: dict[str, tuple[str, str]] = {}
             ok = fail = 0
@@ -78,36 +115,63 @@ async def main():
                     nm = (en or ko or "")[:38]
                     if not lid:
                         continue
-                    r = await c.get(f"{ec._base_url}/sell/inventory/v1/offer?sku={pid}", headers=hi)
+                    r = await c.get(
+                        f"{ec._base_url}/sell/inventory/v1/offer?sku={pid}", headers=hi
+                    )
                     if r.status_code == 200 and r.json().get("offers"):
                         continue  # id 로 찾히는 정상 건
 
-                    xml = ('<?xml version="1.0" encoding="utf-8"?>'
-                           '<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
-                           f"<ItemID>{lid}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>")
-                    rt = await c.post(f"{ec._base_url}/ws/api.dll", content=xml, headers=ht)
-                    real = ET.fromstring(rt.text).findtext(f".//{NS}Item/{NS}SKU", "") or ""
+                    xml = (
+                        '<?xml version="1.0" encoding="utf-8"?>'
+                        '<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
+                        f"<ItemID>{lid}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>"
+                    )
+                    rt = await c.post(
+                        f"{ec._base_url}/ws/api.dll", content=xml, headers=ht
+                    )
+                    real = (
+                        ET.fromstring(rt.text).findtext(f".//{NS}Item/{NS}SKU", "")
+                        or ""
+                    )
                     if not real or real == pid:
-                        print(f"SKIP {nm} | listing {lid} | 실제SKU '{real}' (Trading 전용 추정)")
+                        print(
+                            f"SKIP {nm} | listing {lid} | 실제SKU '{real}' (Trading 전용 추정)"
+                        )
                         continue
 
-                    ro = await c.get(f"{ec._base_url}/sell/inventory/v1/offer?sku={real}", headers=hi)
-                    offers = ro.json().get("offers", []) if ro.status_code == 200 else []
+                    ro = await c.get(
+                        f"{ec._base_url}/sell/inventory/v1/offer?sku={real}", headers=hi
+                    )
+                    offers = (
+                        ro.json().get("offers", []) if ro.status_code == 200 else []
+                    )
                     if not offers:
-                        print(f"SKIP {nm} | 실제SKU {real} 로도 offer 없음 ({ro.status_code})")
+                        print(
+                            f"SKIP {nm} | 실제SKU {real} 로도 offer 없음 ({ro.status_code})"
+                        )
                         continue
 
                     tpl_id = DEFAULT_TPL
                     if pol_id:
                         pol = await SambaPolicyRepository(s).get_async(pol_id)
                         _ext = (getattr(pol, "extras", None) or {}) if pol else {}
-                        tpl_id = ((_ext.get("market_detail_templates") or {}).get("eBay")
-                                  or _ext.get("detail_template_id") or DEFAULT_TPL)
+                        tpl_id = (
+                            (_ext.get("market_detail_templates") or {}).get("eBay")
+                            or _ext.get("detail_template_id")
+                            or DEFAULT_TPL
+                        )
                     if tpl_id not in tpl_cache:
-                        row = (await s.execute(
-                            t("SELECT top_html, top_image_s3_key FROM samba_detail_template WHERE id=:i"),
-                            {"i": tpl_id})).first()
-                        tpl_cache[tpl_id] = (row[0] or "", row[1] or "") if row else ("", "")
+                        row = (
+                            await s.execute(
+                                t(
+                                    "SELECT top_html, top_image_s3_key FROM samba_detail_template WHERE id=:i"
+                                ),
+                                {"i": tpl_id},
+                            )
+                        ).first()
+                        tpl_cache[tpl_id] = (
+                            (row[0] or "", row[1] or "") if row else ("", "")
+                        )
                     desc = wrap(*tpl_cache[tpl_id])
 
                     print(f"{'DRY' if dry else 'RUN'} {nm} | id={pid} → SKU={real}")
@@ -127,8 +191,11 @@ async def main():
                             "quantityLimitPerBuyer": o.get("quantityLimitPerBuyer"),
                         }
                         payload = {k: v for k, v in payload.items() if v is not None}
-                        ru = await c.put(f"{ec._base_url}/sell/inventory/v1/offer/{o['offerId']}",
-                                         headers=hi, json=payload)
+                        ru = await c.put(
+                            f"{ec._base_url}/sell/inventory/v1/offer/{o['offerId']}",
+                            headers=hi,
+                            json=payload,
+                        )
                         if ru.status_code < 400:
                             ok += 1
                             print("   갱신완료")
@@ -136,8 +203,17 @@ async def main():
                             fail += 1
                             print(f"   실패 {ru.status_code} {ru.text[:150]}")
                     # 다음부터 추적 가능하도록 실제 SKU 를 남긴다
-                    p = (await s.execute(select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == pid))).scalars().first()
+                    p = (
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == pid
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     ed = dict(p.extra_data or {})
                     ed["ebay_sku"] = real
                     p.extra_data = ed

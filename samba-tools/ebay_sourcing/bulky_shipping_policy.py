@@ -71,22 +71,50 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            h = {"Authorization": f"Bearer {tk}", "Content-Type": "application/json",
-                 "Accept": "application/json", "Content-Language": "en-US"}
+            h = {
+                "Authorization": f"Bearer {tk}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Content-Language": "en-US",
+            }
 
             async with httpx.AsyncClient(timeout=60) as c:
                 rb = await c.get(
-                    f"{ec._base_url}/sell/account/v1/fulfillment_policy/{BASE_POLICY}", headers=h)
+                    f"{ec._base_url}/sell/account/v1/fulfillment_policy/{BASE_POLICY}",
+                    headers=h,
+                )
                 if rb.status_code != 200:
                     print("기준 정책 조회 실패", rb.status_code, rb.text[:200])
                     return
@@ -96,20 +124,32 @@ async def main():
                 # 이미 만들어 뒀으면 재사용 (중복 생성 금지)
                 r = await c.get(
                     f"{ec._base_url}/sell/account/v1/fulfillment_policy?marketplace_id=EBAY_US",
-                    headers=h)
-                found = next((p for p in r.json().get("fulfillmentPolicies", [])
-                              if p.get("name") == POLICY_NAME), None)
+                    headers=h,
+                )
+                found = next(
+                    (
+                        p
+                        for p in r.json().get("fulfillmentPolicies", [])
+                        if p.get("name") == POLICY_NAME
+                    ),
+                    None,
+                )
                 if found:
                     pid = found["fulfillmentPolicyId"]
                     r = await c.put(
                         f"{ec._base_url}/sell/account/v1/fulfillment_policy/{pid}",
-                        headers=h, json=pol_payload)
+                        headers=h,
+                        json=pol_payload,
+                    )
                     print(f"정책 갱신 {pid} {r.status_code}")
                     if r.status_code >= 400:
                         print(r.text[:400])
                 else:
-                    r = await c.post(f"{ec._base_url}/sell/account/v1/fulfillment_policy",
-                                     headers=h, json=pol_payload)
+                    r = await c.post(
+                        f"{ec._base_url}/sell/account/v1/fulfillment_policy",
+                        headers=h,
+                        json=pol_payload,
+                    )
                     if r.status_code >= 400:
                         print("정책 생성 실패", r.status_code, r.text[:500])
                         return
@@ -120,20 +160,40 @@ async def main():
                     print("(--apply 없음 → 리스팅 적용 생략)")
                     return
 
-                rows = (await s.execute(t("""
+                rows = (
+                    await s.execute(
+                        t("""
                     SELECT id, name_en FROM samba_collected_product
                     WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
                       AND applied_policy_id = ANY(:pols)
-                """), {"tn": TENANT, "kv": f'["{KV}"]', "pols": list(GOODS_POLICIES)})).all()
+                """),
+                        {"tn": TENANT, "kv": f'["{KV}"]', "pols": list(GOODS_POLICIES)},
+                    )
+                ).all()
                 print(f"적용 대상 {len(rows)}건")
                 for sku, nm in rows:
-                    ro = await c.get(f"{ec._base_url}/sell/inventory/v1/offer?sku={sku}", headers=h)
-                    for o in ro.json().get("offers", []) if ro.status_code == 200 else []:
+                    ro = await c.get(
+                        f"{ec._base_url}/sell/inventory/v1/offer?sku={sku}", headers=h
+                    )
+                    for o in (
+                        ro.json().get("offers", []) if ro.status_code == 200 else []
+                    ):
                         oid = o["offerId"]
                         cur = json.loads(json.dumps(o))  # 원본 그대로 두고 정책만 교체
-                        for k in ("offerId", "sku", "marketplaceId", "format", "listing",
-                                  "status", "listingDescription"):
-                            cur.pop(k, None) if k in ("offerId", "listing", "status") else None
+                        for k in (
+                            "offerId",
+                            "sku",
+                            "marketplaceId",
+                            "format",
+                            "listing",
+                            "status",
+                            "listingDescription",
+                        ):
+                            cur.pop(k, None) if k in (
+                                "offerId",
+                                "listing",
+                                "status",
+                            ) else None
                         payload = {
                             "sku": sku,
                             "marketplaceId": o.get("marketplaceId", "EBAY_US"),
@@ -152,10 +212,15 @@ async def main():
                             "quantityLimitPerBuyer": o.get("quantityLimitPerBuyer"),
                         }
                         payload = {k: v for k, v in payload.items() if v is not None}
-                        ru = await c.put(f"{ec._base_url}/sell/inventory/v1/offer/{oid}",
-                                         headers=h, json=payload)
-                        print(f"  {nm[:38]} offer={oid} → {ru.status_code}"
-                              + ("" if ru.status_code < 400 else f" {ru.text[:200]}"))
+                        ru = await c.put(
+                            f"{ec._base_url}/sell/inventory/v1/offer/{oid}",
+                            headers=h,
+                            json=payload,
+                        )
+                        print(
+                            f"  {nm[:38]} offer={oid} → {ru.status_code}"
+                            + ("" if ru.status_code < 400 else f" {ru.text[:200]}")
+                        )
     finally:
         current_tenant_id.reset(tok)
 

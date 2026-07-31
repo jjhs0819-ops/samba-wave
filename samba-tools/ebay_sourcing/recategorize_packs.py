@@ -43,25 +43,54 @@ async def main():
     from sqlmodel import select
 
     dry = "--dry" in sys.argv
-    limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    limit = (
+        int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    )
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
 
-            rows = (await s.execute(t("""
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id, name_en, name FROM samba_collected_product
                 WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
                 ORDER BY created_at
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
 
             targets = []
             for pid, en, ko in rows:
@@ -69,22 +98,37 @@ async def main():
                 if not SEALED.search(title):
                     continue
                 try:
-                    o = await ec._call("GET", "/sell/inventory/v1/offer", params={"sku": pid})
+                    o = await ec._call(
+                        "GET", "/sell/inventory/v1/offer", params={"sku": pid}
+                    )
                 except Exception:
                     continue
                 offers = o.get("offers", [])
-                cat = next((x.get("categoryId") for x in offers if x.get("categoryId")), "")
+                cat = next(
+                    (x.get("categoryId") for x in offers if x.get("categoryId")), ""
+                )
                 if cat and cat != NEW_CAT:
                     targets.append((pid, title, cat, offers))
 
             print(f"재등록 대상 {len(targets)}건 (현재 카테고리 ≠ {NEW_CAT})")
             ok = fail = 0
             for i, (pid, title, cat, offers) in enumerate(targets[:limit], 1):
-                print(f"{i:>2}. {'DRY' if dry else 'RUN'} {title[:44]} | {cat} → {NEW_CAT}")
+                print(
+                    f"{i:>2}. {'DRY' if dry else 'RUN'} {title[:44]} | {cat} → {NEW_CAT}"
+                )
                 if dry:
                     continue
-                p = (await s.execute(select(SambaCollectedProduct).where(
-                    SambaCollectedProduct.id == pid))).scalars().first()
+                p = (
+                    (
+                        await s.execute(
+                            select(SambaCollectedProduct).where(
+                                SambaCollectedProduct.id == pid
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
                 try:
                     # 기존 리스팅 종료 + Offer/Item 삭제 (카테고리 변경은 재등록만 가능)
                     for o in offers:
@@ -99,15 +143,24 @@ async def main():
                         except Exception:
                             pass
                     try:
-                        await ec._call("DELETE", f"/sell/inventory/v1/inventory_item/{pid}")
+                        await ec._call(
+                            "DELETE", f"/sell/inventory/v1/inventory_item/{pid}"
+                        )
                     except Exception:
                         pass
 
                     res = await dispatch_to_market(
-                        s, "ebay", p.model_dump(), category_id=NEW_CAT,
-                        account=acc, existing_product_no="")
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id=NEW_CAT,
+                        account=acc,
+                        existing_product_no="",
+                    )
                     if res.get("success"):
-                        lid = res.get("data", {}).get("listingId") or res.get("product_no")
+                        lid = res.get("data", {}).get("listingId") or res.get(
+                            "product_no"
+                        )
                         d = dict(p.market_product_nos or {})
                         d[KV] = lid
                         p.market_product_nos = d

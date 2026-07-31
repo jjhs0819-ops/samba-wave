@@ -1,10 +1,10 @@
-"""포스트잇을 카드 가로의 정확히 절반 크기로 결정론 합성 [컨테이너 실행].
+"""대표사진 생성(카드 검출 + 정사각 크롭) [컨테이너 실행].
 
-Gemini 에게 크기를 맡기면 매번 랜덤(카드보다 큰 포스트잇이 통과). 그래서 크기를
-사람이 정한다: 카드 폭을 검출 → 포스트잇 폭 = 카드 폭 x 0.5 로 강제 붙인다.
+**포스트잇 합성·배경 패딩 없음** — 2026-07-30 영구 금지(오려붙인 티/가짜 배경으로
+사용자 반복 격노). 파일명은 이력상 남아있을 뿐, 하는 일은 크롭뿐이다.
+라이브 불량 일괄 교정은 `fix_no_postit.py` 가 담당한다.
 
-카드 검출: 채도(홀로 무지개) 마스크를 침식해 손가락 연결을 끊고, 최대 연결블롭의
-bbox 를 카드로 본다. 배경은 상단 테두리 색으로 채워 정사각형으로 만든다.
+카드 검출: 테두리 최빈색을 배경으로 보고 색차 마스크 → 최대 블롭 → 행/열 투영.
 
 실행(생성만, eBay 미반영):
   docker cp postit_half.py local-samba-api-1:/tmp/postit_half.py
@@ -22,13 +22,11 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.path.insert(0, "/app/backend")
 
 import numpy as np  # noqa: E402
-from PIL import Image, ImageFilter  # noqa: E402
+from PIL import Image  # noqa: E402
 from scipy import ndimage  # noqa: E402
 
 TENANT = "tn_01KRX6H1Q97JGPXRPB011985QT"
 KV = "ma_01KXQCB67RZBBE99H8TM2J4K8J"
-POSTIT = "/tmp/postit_cut.png"
-NOTE_RATIO = 0.5  # 포스트잇 가로 = 카드 가로의 절반
 H = {"User-Agent": "Mozilla/5.0", "Referer": "https://m.bunjang.co.kr/"}
 
 # sku -> 번장 pid (사용자 확인 3건). 필요시 추가.
@@ -48,9 +46,14 @@ def _bg_color(a: np.ndarray):
     h, w = a.shape[:2]
     bt = max(3, int(h * 0.04))
     bs = max(3, int(w * 0.04))
-    ring = np.concatenate([
-        a[:bt].reshape(-1, 3), a[-bt:].reshape(-1, 3),
-        a[:, :bs].reshape(-1, 3), a[:, -bs:].reshape(-1, 3)])
+    ring = np.concatenate(
+        [
+            a[:bt].reshape(-1, 3),
+            a[-bt:].reshape(-1, 3),
+            a[:, :bs].reshape(-1, 3),
+            a[:, -bs:].reshape(-1, 3),
+        ]
+    )
     q = (ring // 16) * 16
     keys, counts = np.unique(q, axis=0, return_counts=True)
     return keys[int(np.argmax(counts))].astype(float) + 8
@@ -72,15 +75,19 @@ def _bbox_from_mask(m: np.ndarray, w: int, h: int):
         ys, xs = np.where(m)
         return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
     y0, y1 = int(good.min()), int(good.max())
-    cols = np.where(m[y0:y1 + 1].sum(0) > 0.30 * (y1 - y0 + 1))[0]
+    cols = np.where(m[y0 : y1 + 1].sum(0) > 0.30 * (y1 - y0 + 1))[0]
     if len(cols) < 3:
         xs = np.where(m.any(0))[0]
         x0, x1 = int(xs.min()), int(xs.max())
     else:
         x0, x1 = int(cols.min()), int(cols.max())
     pad = max(2, w // 250)
-    return (max(0, x0 - pad), max(0, y0 - pad),
-            min(w - 1, x1 + pad), min(h - 1, y1 + pad))
+    return (
+        max(0, x0 - pad),
+        max(0, y0 - pad),
+        min(w - 1, x1 + pad),
+        min(h - 1, y1 + pad),
+    )
 
 
 def detect_card_bbox(img: Image.Image):
@@ -98,31 +105,14 @@ def detect_card_bbox(img: Image.Image):
     return bb if bb else (0, 0, w - 1, h - 1)
 
 
-def extract_paper(path: str) -> Image.Image:
-    """긴 노란 포스트잇에서 종이만 잘라 RGBA(흰 바탕 투명)."""
-    p = Image.open(path).convert("RGB")
-    a = np.asarray(p).astype(int)
-    r, g, b = a[:, :, 0], a[:, :, 1], a[:, :, 2]
-    mx = a.max(2)
-    sat = mx - a.min(2)
-    # 흰 바탕 = 밝고 무채색. 종이(노랑)+글씨(검정)는 아님.
-    is_white = (mx > 205) & (sat < 25)
-    paper = ~is_white
-    paper = ndimage.binary_closing(paper, iterations=3)
-    ys, xs = np.where(paper)
-    x0, x1, y0, y1 = xs.min(), xs.max(), ys.min(), ys.max()
-    crop = a[y0:y1 + 1, x0:x1 + 1]
-    alpha = (~is_white[y0:y1 + 1, x0:x1 + 1]).astype(np.uint8) * 255
-    rgba = np.dstack([crop.astype(np.uint8), alpha])
-    return Image.fromarray(rgba, "RGBA")
+def extract_paper(path: str) -> None:
+    """[폐기] 포스트잇 종이 추출. 2026-07-30 포스트잇 합성 영구 금지로 제거.
 
-
-def _paste_note(canvas, note, nx, ny, note_w, note_h):
-    sh = Image.new("RGBA", (note_w, note_h), (0, 0, 0, 0))
-    sh.paste((0, 0, 0, 80), (0, 0, note_w, note_h))
-    sh = sh.filter(ImageFilter.GaussianBlur(max(3, note_h // 12)))
-    canvas.paste(sh, (nx, ny + max(2, note_h // 20)), sh)
-    canvas.paste(note, (nx, ny), note)
+    붙이는 도구가 남아 있으면 다시 쓰게 되므로 함수 본체를 없앤다.
+    """
+    raise RuntimeError(
+        "포스트잇 합성 영구 금지(2026-07-30). fix_no_postit.py 를 쓸 것."
+    )
 
 
 def compose(src: Image.Image, paper_src=None) -> Image.Image:
@@ -153,39 +143,65 @@ async def main():
     from sqlmodel import select
 
     apply = "--apply" in sys.argv
-    paper = extract_paper(POSTIT)
-    print(f"포스트잇 종이 {paper.size}, 비율 {NOTE_RATIO}")
+    print("대표사진 = 원본 크롭만(포스트잇·패딩 없음)")
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             svc = ImageTransformService(s)
             async with httpx.AsyncClient(timeout=40, headers=H) as c:
                 for sku, (nm, pid) in TARGETS.items():
                     url = f"https://media.bunjang.co.kr/product/{pid}_1_w856.jpg"
                     raw = (await c.get(url)).content
                     src = Image.open(io.BytesIO(raw))
-                    out = compose(src, paper)
+                    out = compose(src)
                     buf = io.BytesIO()
                     out.save(buf, "JPEG", quality=92)
                     open(f"/tmp/half_{nm}.jpg", "wb").write(buf.getvalue())
                     print(f"[{nm}] 생성 {out.size} → /tmp/half_{nm}.jpg")
                     if not apply:
                         continue
-                    p = (await s.execute(select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == sku))).scalars().first()
+                    p = (
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == sku
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     lid = (p.market_product_nos or {}).get(KV, "")
                     new_url = await svc._save_image(buf.getvalue(), url)
                     p.images = [new_url] + list(p.images or [])[1:]
                     s.add(p)
                     await s.commit()
-                    cat = "108857" if p.applied_policy_id in (
-                        "pol_kpopcard_v1", "pol_kpopgoods_v1") else "183454"
+                    cat = (
+                        "108857"
+                        if p.applied_policy_id
+                        in ("pol_kpopcard_v1", "pol_kpopgoods_v1")
+                        else "183454"
+                    )
                     res = await dispatch_to_market(
-                        s, "ebay", p.model_dump(), category_id=cat,
-                        account=acc, existing_product_no=lid)
-                    print(f"[{nm}] eBay revise {'OK' if res.get('success') else res.get('message')}")
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id=cat,
+                        account=acc,
+                        existing_product_no=lid,
+                    )
+                    print(
+                        f"[{nm}] eBay revise {'OK' if res.get('success') else res.get('message')}"
+                    )
     finally:
         current_tenant_id.reset(tok)
 

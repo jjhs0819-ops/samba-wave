@@ -49,7 +49,9 @@ async def main():
                 try:
                     bp, dc = float(bp), float(dc)
                     if dc > 0 and abs(bp - dc) / dc >= 0.05:
-                        price_changed.append((r["id"], r["name"][:28], pid, int(dc), int(bp)))
+                        price_changed.append(
+                            (r["id"], r["name"][:28], pid, int(dc), int(bp))
+                        )
                 except (TypeError, ValueError):
                     pass
             else:
@@ -57,7 +59,9 @@ async def main():
     finally:
         w.close()
 
-    print(f"\n=== SELLING {alive} / 품절·삭제 {len(problems)} / 가격변동 {len(price_changed)} ===")
+    print(
+        f"\n=== SELLING {alive} / 품절·삭제 {len(problems)} / 가격변동 {len(price_changed)} ==="
+    )
     print("── 품절·삭제(대체 필요) ──")
     for pid_id, name, pid, st in problems:
         print(f"  [{st}] {name} pid={pid} ({pid_id})")

@@ -12,12 +12,20 @@ DEFAULT만 보면 과대계상돼 판매가가 부풀고 경쟁력을 잃는다.
   docker exec local-samba-api-1 /app/backend/.venv/bin/python3 /tmp/cost_sweep.py
 """
 
-import asyncio, sys, io, json, httpx
+import asyncio
+import sys
+import io
+import json
+import httpx
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.path.insert(0, "/app/backend")
 
-H = {"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://m.bunjang.co.kr/"}
+H = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://m.bunjang.co.kr/",
+}
 KV = "ma_01KXQCB67RZBBE99H8TM2J4K8J"
 TEN = "tn_01KRX6H1Q97JGPXRPB011985QT"
 
@@ -50,11 +58,15 @@ async def main():
 
     tok = current_tenant_id.set(TEN)
     async with get_write_session() as s:
-        rows = (await s.execute(t(
-            "SELECT id, site_product_id FROM samba_collected_product "
-            "WHERE source_site='BUNJANG' AND registered_accounts::text LIKE '%ma_01KXQCB67%' "
-            "ORDER BY id"
-        ))).fetchall()
+        rows = (
+            await s.execute(
+                t(
+                    "SELECT id, site_product_id FROM samba_collected_product "
+                    "WHERE source_site='BUNJANG' AND registered_accounts::text LIKE '%ma_01KXQCB67%' "
+                    "ORDER BY id"
+                )
+            )
+        ).fetchall()
     print("대상:", len(rows))
 
     async with httpx.AsyncClient(timeout=20, headers=H) as c:
@@ -70,9 +82,36 @@ async def main():
             newcost = price + fee
             try:
                 async with get_write_session() as s:
-                    acc = (await s.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
-                    p = (await s.execute(select(SambaCollectedProduct).where(SambaCollectedProduct.id == pid_db))).scalars().first()
-                    pr, mp = (await s.execute(t("SELECT pricing,market_policies FROM samba_policy WHERE id=:i"), {"i": p.applied_policy_id})).first()
+                    acc = (
+                        (
+                            await s.execute(
+                                select(SambaMarketAccount).where(
+                                    SambaMarketAccount.id == KV
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    p = (
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == pid_db
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    pr, mp = (
+                        await s.execute(
+                            t(
+                                "SELECT pricing,market_policies FROM samba_policy WHERE id=:i"
+                            ),
+                            {"i": p.applied_policy_id},
+                        )
+                    ).first()
                     pr = pr if isinstance(pr, dict) else json.loads(pr or "{}")
                     mp = mp if isinstance(mp, dict) else json.loads(mp or "{}")
                     newprice = calc_market_price(float(newcost), pr, "ebay", mp)
@@ -83,11 +122,28 @@ async def main():
                     s.add(p)
                     await s.flush()
                     nm = p.name_en or ""
-                    cat = "183455" if "Booster Box" in nm else ("108857" if p.applied_policy_id in ("pol_kpopcard_v1", "pol_kpopgoods_v1") else "183454")
-                    res = await dispatch_to_market(s, "ebay", p.model_dump(), category_id=cat,
-                                                   account=acc, existing_product_no=str((p.market_product_nos or {}).get(KV)))
+                    cat = (
+                        "183455"
+                        if "Booster Box" in nm
+                        else (
+                            "108857"
+                            if p.applied_policy_id
+                            in ("pol_kpopcard_v1", "pol_kpopgoods_v1")
+                            else "183454"
+                        )
+                    )
+                    res = await dispatch_to_market(
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id=cat,
+                        account=acc,
+                        existing_product_no=str((p.market_product_nos or {}).get(KV)),
+                    )
                     ok = res.get("success")
-                    print(f"{'OK' if ok else 'FAIL'} 원가{oldc}→{newcost}(배송{fee}) 판매{oldp}→{int(newprice)} | {nm[:36]}")
+                    print(
+                        f"{'OK' if ok else 'FAIL'} 원가{oldc}→{newcost}(배송{fee}) 판매{oldp}→{int(newprice)} | {nm[:36]}"
+                    )
                     if ok:
                         await s.commit()
                     else:

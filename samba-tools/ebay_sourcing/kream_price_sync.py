@@ -44,21 +44,72 @@ async def main():
     tok = current_tenant_id.set(TEN)
     try:
         async with get_write_session() as s:
-            kacc = (await s.execute(select(SambaMarketAccount).where(SambaMarketAccount.market_type == "kream"))).scalars().first()
-            kext = kacc.additional_fields if isinstance(kacc.additional_fields, dict) else {}
-            kcli = KreamPartnerClient(str(kext.get("apiService") or ""), str(kext.get("apiKey") or kacc.api_key or ""), str(kext.get("apiSecret") or kacc.api_secret or ""))
-
-            acc = (await s.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
-            aext = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TEN, market_type="ebay", store_key="store_ebay") or {}
-            ecli = EbayClient(cr.get("clientId") or cr.get("appId") or aext.get("clientId") or aext.get("appId", ""), cr.get("devId") or aext.get("devId", ""), cr.get("clientSecret") or cr.get("certId") or aext.get("clientSecret") or aext.get("certId", ""), cr.get("oauthToken") or cr.get("authToken") or aext.get("oauthToken") or aext.get("authToken", ""))
-
-            rows = (await s.execute(
-                select(SambaCollectedProduct).where(
-                    SambaCollectedProduct.source_site == "KREAM",
-                    SambaCollectedProduct.registered_accounts.isnot(None),
+            kacc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.market_type == "kream"
+                        )
+                    )
                 )
-            )).scalars().all()
+                .scalars()
+                .first()
+            )
+            kext = (
+                kacc.additional_fields
+                if isinstance(kacc.additional_fields, dict)
+                else {}
+            )
+            kcli = KreamPartnerClient(
+                str(kext.get("apiService") or ""),
+                str(kext.get("apiKey") or kacc.api_key or ""),
+                str(kext.get("apiSecret") or kacc.api_secret or ""),
+            )
+
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+            aext = getattr(acc, "additional_fields", None) or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TEN, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
+            ecli = EbayClient(
+                cr.get("clientId")
+                or cr.get("appId")
+                or aext.get("clientId")
+                or aext.get("appId", ""),
+                cr.get("devId") or aext.get("devId", ""),
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or aext.get("clientSecret")
+                or aext.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or aext.get("oauthToken")
+                or aext.get("authToken", ""),
+            )
+
+            rows = (
+                (
+                    await s.execute(
+                        select(SambaCollectedProduct).where(
+                            SambaCollectedProduct.source_site == "KREAM",
+                            SambaCollectedProduct.registered_accounts.isnot(None),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
             targets = [p for p in rows if KV in (p.registered_accounts or [])]
             print(f"KREAM 등록분: {len(targets)}")
 
@@ -73,12 +124,18 @@ async def main():
                 opts = body.get("options") or [{}]
                 new_cost = None
                 for o in opts:
-                    new_cost = o.get(price_key) or o.get("lowest_normal_price") or o.get("lowest_100_price")
+                    new_cost = (
+                        o.get(price_key)
+                        or o.get("lowest_normal_price")
+                        or o.get("lowest_100_price")
+                    )
                     if new_cost:
                         break
                 old_cost = float(p.cost or 0)
                 if not new_cost:
-                    print(f"  {p.name_en[:35]} | KREAM 품절/무가격 → 판매중지 필요(수동확인)")
+                    print(
+                        f"  {p.name_en[:35]} | KREAM 품절/무가격 → 판매중지 필요(수동확인)"
+                    )
                     continue
                 # [중요] 크림 표시가는 매입 실비가 아니다. 배송비 5,000원 + 수수료 3.3%가
                 # 별도로 나가므로 이걸 더해야 진짜 원가다(common.py::kream_real_cost 와 동일 규칙).
@@ -90,13 +147,17 @@ async def main():
                     print(f"  {p.name_en[:35]} | 변동없음 (₩{int(old_cost):,})")
                     continue
                 # 기존 offer 카테고리 유지
-                offr = await ecli._call("GET", "/sell/inventory/v1/offer", params={"sku": p.id})
+                offr = await ecli._call(
+                    "GET", "/sell/inventory/v1/offer", params={"sku": p.id}
+                )
                 cat = ""
                 for o in offr.get("offers", []):
                     cat = o.get("categoryId") or ""
                     if cat:
                         break
-                print(f"  {p.name_en[:35]} | ₩{int(old_cost):,} → ₩{int(new_cost):,} ({'+' if delta>0 else ''}{int(delta):,}) cat={cat}{' [DRY]' if dry else ''}")
+                print(
+                    f"  {p.name_en[:35]} | ₩{int(old_cost):,} → ₩{int(new_cost):,} ({'+' if delta > 0 else ''}{int(delta):,}) cat={cat}{' [DRY]' if dry else ''}"
+                )
                 if dry:
                     continue
                 # [중요] sale_price 에 원가를 그대로 넣으면 원가판매(=적자)가 된다.
@@ -105,17 +166,31 @@ async def main():
 
                 from backend.domain.samba.shipment.service import calc_market_price
 
-                _pr, _mp = (await s.execute(
-                    t("SELECT pricing, market_policies FROM samba_policy WHERE id=:i"),
-                    {"i": p.applied_policy_id})).first()
+                _pr, _mp = (
+                    await s.execute(
+                        t(
+                            "SELECT pricing, market_policies FROM samba_policy WHERE id=:i"
+                        ),
+                        {"i": p.applied_policy_id},
+                    )
+                ).first()
                 _pr = _pr if isinstance(_pr, dict) else _json.loads(_pr or "{}")
                 _mp = _mp if isinstance(_mp, dict) else _json.loads(_mp or "{}")
                 p.cost = new_cost
-                p.sale_price = float(calc_market_price(new_cost, _pr, "ebay", _mp) or new_cost)
+                p.sale_price = float(
+                    calc_market_price(new_cost, _pr, "ebay", _mp) or new_cost
+                )
                 p.original_price = new_cost
                 s.add(p)
                 await s.flush()
-                res = await dispatch_to_market(s, "ebay", p.model_dump(), category_id=cat or "108857", account=acc, existing_product_no=str(lid))
+                res = await dispatch_to_market(
+                    s,
+                    "ebay",
+                    p.model_dump(),
+                    category_id=cat or "108857",
+                    account=acc,
+                    existing_product_no=str(lid),
+                )
                 print(f"      revise: {res.get('success')}")
             if not dry:
                 await s.commit()

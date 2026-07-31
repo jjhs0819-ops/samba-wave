@@ -55,15 +55,24 @@ async def main():
     from sqlmodel import select
 
     dry = "--dry" in sys.argv
-    limit = int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    limit = (
+        int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 999
+    )
     only = sys.argv[sys.argv.index("--only") + 1] if "--only" in sys.argv else None
 
     tok = current_tenant_id.set(TENANT)
     ok = skip = fail = 0
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             q = t("""
                 SELECT id, name_en, site_product_id, images, market_product_nos, applied_policy_id
                 FROM samba_collected_product
@@ -85,9 +94,16 @@ async def main():
                         skip += 1
                         continue  # 이미 여러 장
                     try:
-                        d = (await c.get(
-                            f"https://api.bunjang.co.kr/api/pms/v1/products/{bpid}/detail/web"
-                        )).json().get("data", {}).get("product", {})
+                        d = (
+                            (
+                                await c.get(
+                                    f"https://api.bunjang.co.kr/api/pms/v1/products/{bpid}/detail/web"
+                                )
+                            )
+                            .json()
+                            .get("data", {})
+                            .get("product", {})
+                        )
                     except Exception as e:
                         print(f"  {nm} 상세조회 실패 {str(e)[:40]}")
                         fail += 1
@@ -100,11 +116,20 @@ async def main():
                     print(f"{'DRY' if dry else 'RUN'} {nm} | 추가 {len(extra)}장")
                     if dry:
                         continue
-                    p = (await s.execute(select(SambaCollectedProduct).where(
-                        SambaCollectedProduct.id == pid))).scalars().first()
+                    p = (
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == pid
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     svc = ImageTransformService(s)
                     new_imgs = list(p.images or [])  # 대표 유지
-                    for u in extra[:23 - len(new_imgs)]:
+                    for u in extra[: 23 - len(new_imgs)]:
                         try:
                             raw = (await c.get(u)).content
                             if len(raw) < 3000:
@@ -119,8 +144,13 @@ async def main():
                     s.add(p)
                     await s.commit()
                     res = await dispatch_to_market(
-                        s, "ebay", p.model_dump(), category_id="183454",
-                        account=acc, existing_product_no=(p.market_product_nos or {}).get(KV, ""))
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id="183454",
+                        account=acc,
+                        existing_product_no=(p.market_product_nos or {}).get(KV, ""),
+                    )
                     if res.get("success"):
                         ok += 1
                         print(f"   보충완료 총 {len(new_imgs)}장")

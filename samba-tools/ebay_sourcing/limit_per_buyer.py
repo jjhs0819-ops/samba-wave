@@ -37,21 +37,49 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            h = {"Authorization": f"Bearer {tk}", "Content-Type": "application/json",
-                 "Accept": "application/json", "Content-Language": "en-US"}
+            h = {
+                "Authorization": f"Bearer {tk}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "Content-Language": "en-US",
+            }
 
             async with httpx.AsyncClient(timeout=60) as c:
-                r = await c.get(f"{ec._base_url}/sell/inventory/v1/offer?sku={sku}", headers=h)
+                r = await c.get(
+                    f"{ec._base_url}/sell/inventory/v1/offer?sku={sku}", headers=h
+                )
                 offers = r.json().get("offers", []) if r.status_code == 200 else []
                 if not offers:
                     print(f"Offer 없음 {sku} ({r.status_code})")
@@ -73,13 +101,22 @@ async def main():
                         "quantityLimitPerBuyer": limit if limit > 0 else None,
                     }
                     payload = {k: v for k, v in payload.items() if v is not None}
-                    ru = await c.put(f"{ec._base_url}/sell/inventory/v1/offer/{oid}",
-                                     headers=h, json=payload)
-                    print(f"offer={oid} " + (f"1인당 최대 {limit}개" if limit > 0 else "1인당 한도 해제") + f" → {ru.status_code}"
-                          + ("" if ru.status_code < 400 else f" {ru.text[:250]}"))
+                    ru = await c.put(
+                        f"{ec._base_url}/sell/inventory/v1/offer/{oid}",
+                        headers=h,
+                        json=payload,
+                    )
+                    print(
+                        f"offer={oid} "
+                        + (f"1인당 최대 {limit}개" if limit > 0 else "1인당 한도 해제")
+                        + f" → {ru.status_code}"
+                        + ("" if ru.status_code < 400 else f" {ru.text[:250]}")
+                    )
                     if ru.status_code < 400 and o.get("status") == "PUBLISHED":
                         pr = await c.post(
-                            f"{ec._base_url}/sell/inventory/v1/offer/{oid}/publish", headers=h)
+                            f"{ec._base_url}/sell/inventory/v1/offer/{oid}/publish",
+                            headers=h,
+                        )
                         print(f"  재게시 {pr.status_code}")
     finally:
         current_tenant_id.reset(tok)

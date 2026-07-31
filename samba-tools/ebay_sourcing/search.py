@@ -41,7 +41,9 @@ def main():
             st = p.get("saleStatus")
             if st == "SELLING":
                 ok.append((pid, p.get("price"), p.get("imageCount"), nm))
-                print(f"  ✅ {pid} | {p.get('price')}원 img{p.get('imageCount')} | {nm[:34]}")
+                print(
+                    f"  ✅ {pid} | {p.get('price')}원 img{p.get('imageCount')} | {nm[:34]}"
+                )
         print(f"\n=== SELLING 최종 {len(ok)}건 ===")
     finally:
         w.close()

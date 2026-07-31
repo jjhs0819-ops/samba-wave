@@ -45,18 +45,24 @@ async def main():
                 if path not in cache:
                     cache[path] = await svc._save_image(open(path, "rb").read(), path)
                 await s.execute(
-                    t("UPDATE samba_detail_template SET top_image_s3_key = :u WHERE id = :i"),
-                    {"u": cache[path], "i": tid})
+                    t(
+                        "UPDATE samba_detail_template SET top_image_s3_key = :u WHERE id = :i"
+                    ),
+                    {"u": cache[path], "i": tid},
+                )
                 print(f"배너 교체 {tid} → {cache[path]}")
 
             tid, hp = GOODS_HTML
             html = open(hp, encoding="utf-8").read()
             if len(html) > 4000:
-                print(f"경고: 굿즈 상세 {len(html)}자 — eBay 한도 4,000자 초과라 반영 안 함")
+                print(
+                    f"경고: 굿즈 상세 {len(html)}자 — eBay 한도 4,000자 초과라 반영 안 함"
+                )
             else:
                 await s.execute(
                     t("UPDATE samba_detail_template SET top_html = :h WHERE id = :i"),
-                    {"h": html, "i": tid})
+                    {"h": html, "i": tid},
+                )
                 print(f"굿즈 상세 HTML 교체 {len(html)}자")
             await s.commit()
     finally:

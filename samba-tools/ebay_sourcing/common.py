@@ -21,8 +21,18 @@ CDP = "http://localhost:9223"
 
 # 번장 제외 키워드 (구매글/일괄/등급)
 BAD_KW = [
-    "일괄", "세트", "삽니다", "매입", "구해", "구합", "구매", "psa",
-    "묶음", "한꺼번에", "팝니다만", "일판",  # 일판=일본판(한판 리스팅과 다름)
+    "일괄",
+    "세트",
+    "삽니다",
+    "매입",
+    "구해",
+    "구합",
+    "구매",
+    "psa",
+    "묶음",
+    "한꺼번에",
+    "팝니다만",
+    "일판",  # 일판=일본판(한판 리스팅과 다름)
 ]
 
 
@@ -67,7 +77,9 @@ class Whale:
 
     def _cmd(self, method, params=None):
         self._id += 1
-        self.ws.send(json.dumps({"id": self._id, "method": method, "params": params or {}}))
+        self.ws.send(
+            json.dumps({"id": self._id, "method": method, "params": params or {}})
+        )
         while True:
             m = json.loads(self.ws.recv())
             if m.get("id") == self._id:
@@ -122,7 +134,9 @@ class Whale:
         except Exception:
             pass
         time.sleep(2)
-        self.ws = websocket.create_connection(_whale_tab(), timeout=60, suppress_origin=True)
+        self.ws = websocket.create_connection(
+            _whale_tab(), timeout=60, suppress_origin=True
+        )
         self._id = 0
         self._cmd("Runtime.enable")
         time.sleep(2)
@@ -160,7 +174,6 @@ def bunjang_image_urls(product: dict) -> list:
     imageUrl 은 "..._{cnt}_타임스탬프_w{res}.jpg" 템플릿, imageCount 가 장수.
     뒷면 문의가 많아 대표 1장만이 아니라 전체를 등록한다(2026-07-24).
     """
-    import re as _re
 
     tmpl = str(product.get("imageUrl") or "")
     cnt = int(product.get("imageCount") or 1)

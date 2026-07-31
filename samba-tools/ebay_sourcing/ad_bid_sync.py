@@ -36,24 +36,51 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             # 광고 API 는 sell.marketing scope 전용 토큰이 필요하다(공용 토큰은 403)
             tk = await ec._get_marketing_token()
-            h = {"Authorization": f"Bearer {tk}", "Accept": "application/json",
-                 "Content-Type": "application/json", "Content-Language": "en-US"}
+            h = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Content-Language": "en-US",
+            }
 
             async with httpx.AsyncClient(timeout=60) as c:
                 r = await c.get(
                     f"{ec._base_url}/sell/marketing/v1/ad_campaign?campaign_status=RUNNING&limit=50",
-                    headers=h)
+                    headers=h,
+                )
                 if r.status_code != 200:
                     print("캠페인 조회 실패", r.status_code, r.text[:200])
                     return
@@ -63,7 +90,9 @@ async def main():
                     while True:
                         ra = await c.get(
                             f"{ec._base_url}/sell/marketing/v1/ad_campaign/{cid}/ad"
-                            f"?limit=200&offset={off}", headers=h)
+                            f"?limit=200&offset={off}",
+                            headers=h,
+                        )
                         if ra.status_code != 200:
                             print("  광고 조회 실패", ra.status_code, ra.text[:150])
                             break
@@ -73,9 +102,13 @@ async def main():
                             break
                         off += 200
                     before = Counter(str(a.get("bidPercentage")) for a in ads)
-                    targets = [a for a in ads if str(a.get("bidPercentage")) != str(rate)]
-                    print(f"캠페인 {cid} | 광고 {len(ads)}건 {dict(before)} | 조정대상 {len(targets)}건"
-                          + (" [DRY]" if dry else ""))
+                    targets = [
+                        a for a in ads if str(a.get("bidPercentage")) != str(rate)
+                    ]
+                    print(
+                        f"캠페인 {cid} | 광고 {len(ads)}건 {dict(before)} | 조정대상 {len(targets)}건"
+                        + (" [DRY]" if dry else "")
+                    )
                     if dry:
                         continue
                     ok = fail = 0
@@ -84,12 +117,16 @@ async def main():
                         ru = await c.post(
                             f"{ec._base_url}/sell/marketing/v1/ad_campaign/{cid}"
                             f"/ad/{a['adId']}/update_bid",
-                            headers=h, json={"bidPercentage": str(rate)})
+                            headers=h,
+                            json={"bidPercentage": str(rate)},
+                        )
                         if ru.status_code < 400:
                             ok += 1
                         else:
                             fail += 1
-                            print(f"  실패 adId={a['adId']} {ru.status_code} {ru.text[:150]}")
+                            print(
+                                f"  실패 adId={a['adId']} {ru.status_code} {ru.text[:150]}"
+                            )
                     print(f"  → {rate}% 로 조정: 성공 {ok} / 실패 {fail}")
     finally:
         current_tenant_id.reset(tok)

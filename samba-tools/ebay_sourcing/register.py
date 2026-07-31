@@ -46,15 +46,35 @@ async def _fetch_live_titles(session, acc_id: str) -> list[str]:
 
     ns = {"e": "urn:ebay:apis:eBLBaseComponents"}
     acc = (
-        await session.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
-    ).scalars().first()
+        (
+            await session.execute(
+                select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id)
+            )
+        )
+        .scalars()
+        .first()
+    )
     ax = getattr(acc, "additional_fields", None) or {}
-    cr = await resolve_market_creds(session, TENANT, market_type="ebay", store_key="store_ebay") or {}
+    cr = (
+        await resolve_market_creds(
+            session, TENANT, market_type="ebay", store_key="store_ebay"
+        )
+        or {}
+    )
     ec = EbayClient(
-        cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+        cr.get("clientId")
+        or cr.get("appId")
+        or ax.get("clientId")
+        or ax.get("appId", ""),
         cr.get("devId") or ax.get("devId", ""),
-        cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-        cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""),
+        cr.get("clientSecret")
+        or cr.get("certId")
+        or ax.get("clientSecret")
+        or ax.get("certId", ""),
+        cr.get("oauthToken")
+        or cr.get("authToken")
+        or ax.get("oauthToken")
+        or ax.get("authToken", ""),
     )
     token = await ec._get_access_token()
     headers = {
@@ -83,7 +103,9 @@ async def _fetch_live_titles(session, acc_id: str) -> list[str]:
             (it.findtext("e:Title", "", ns) or "")
             for it in root.findall(".//e:ActiveList/e:ItemArray/e:Item", ns)
         ]
-        total = root.findtext(".//e:ActiveList/e:PaginationResult/e:TotalNumberOfPages", "1", ns)
+        total = root.findtext(
+            ".//e:ActiveList/e:PaginationResult/e:TotalNumberOfPages", "1", ns
+        )
         if page >= int(total or 1):
             break
         page += 1
@@ -97,7 +119,6 @@ async def main():
     from backend.domain.samba.account.model import SambaMarketAccount
     from backend.domain.samba.collector.model import SambaCollectedProduct
     from backend.domain.samba.image.service import ImageTransformService
-    from backend.domain.samba.proxy.ebay import EbayClient
     from backend.domain.samba.shipment.dispatcher import dispatch_to_market
     from sqlalchemy import text as t
     from sqlmodel import select
@@ -107,7 +128,9 @@ async def main():
     locked = _opt("--locked")
     stock = int(_opt("--stock", "1"))
     acc_id = _opt("--account", KV)
-    pol_id = _opt("--policy", POLICY)  # 기본=이베이_카드, 앨범은 --policy pol_01KY2VR2...
+    pol_id = _opt(
+        "--policy", POLICY
+    )  # 기본=이베이_카드, 앨범은 --policy pol_01KY2VR2...
 
     tok = current_tenant_id.set(TENANT)
     try:
@@ -118,8 +141,21 @@ async def main():
             import re as _re
 
             def _kw(x: str) -> set:
-                stop = {"pokemon", "card", "game", "korean", "korea", "ver",
-                        "sealed", "new", "the", "of", "and", "tcg", "official"}
+                stop = {
+                    "pokemon",
+                    "card",
+                    "game",
+                    "korean",
+                    "korea",
+                    "ver",
+                    "sealed",
+                    "new",
+                    "the",
+                    "of",
+                    "and",
+                    "tcg",
+                    "official",
+                }
                 return set(_re.findall(r"[a-z0-9]+", (x or "").lower())) - stop
 
             live_titles = await _fetch_live_titles(s, acc_id)
@@ -127,7 +163,9 @@ async def main():
             for lt in live_titles:
                 lk = _kw(lt)
                 if k and lk and len(k & lk) / len(k | lk) >= 0.55:
-                    print(f"!! 이미 eBay에 라이브: '{lt[:60]}' → 신규등록 금지(revise 하세요)")
+                    print(
+                        f"!! 이미 eBay에 라이브: '{lt[:60]}' → 신규등록 금지(revise 하세요)"
+                    )
                     return
             # DB 보조 체크
             dup = await s.execute(
@@ -141,8 +179,16 @@ async def main():
                 print("!! 이미 등록됨(중복 방지) → resource.py로 revise 하세요")
                 return
             acc = (
-                await s.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
-            ).scalars().first()
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(
+                            SambaMarketAccount.id == acc_id
+                        )
+                    )
+                )
+                .scalars()
+                .first()
+            )
             svc = ImageTransformService(s)
             url = await svc._save_image(
                 open("/tmp/postit.jpg", "rb").read(),
@@ -163,12 +209,20 @@ async def main():
             sale = float(calc_market_price(float(cost), _pr, "ebay", _mp) or cost)
 
             p = SambaCollectedProduct(
-                source_site="BUNJANG", name=name, name_en=name_en,
-                original_price=cost, sale_price=sale, cost=cost,
-                status="active", sale_status="in_stock",
+                source_site="BUNJANG",
+                name=name,
+                name_en=name_en,
+                original_price=cost,
+                sale_price=sale,
+                cost=cost,
+                status="active",
+                sale_status="in_stock",
                 source_url=f"https://m.bunjang.co.kr/products/{bpid}",
-                site_product_id=bpid, images=[url],
-                applied_policy_id=pol_id, tenant_id=TENANT, registered_accounts=[],
+                site_product_id=bpid,
+                images=[url],
+                applied_policy_id=pol_id,
+                tenant_id=TENANT,
+                registered_accounts=[],
             )
             if locked:
                 p.price_locked = True
@@ -178,7 +232,11 @@ async def main():
             await s.flush()
             pid = p.id
             res = await dispatch_to_market(
-                s, "ebay", p.model_dump(), category_id=cat, account=acc,
+                s,
+                "ebay",
+                p.model_dump(),
+                category_id=cat,
+                account=acc,
                 existing_product_no="",
             )
             print("register:", json.dumps(res, ensure_ascii=False)[:180])

@@ -43,12 +43,28 @@ async def main():
     ok = skip = fail = 0
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             for u in updates:
                 sku, new_cost = u["sku"], int(u["new"])
-                p = (await s.execute(select(SambaCollectedProduct).where(
-                    SambaCollectedProduct.id == sku))).scalars().first()
+                p = (
+                    (
+                        await s.execute(
+                            select(SambaCollectedProduct).where(
+                                SambaCollectedProduct.id == sku
+                            )
+                        )
+                    )
+                    .scalars()
+                    .first()
+                )
                 if not p:
                     continue
                 lid = (p.market_product_nos or {}).get(KV, "")
@@ -59,13 +75,22 @@ async def main():
                     skip += 1
                     print(f"SKIP(원가 {new_cost:,}) {nm}")
                     continue
-                _pr, _mp = (await s.execute(
-                    t("SELECT pricing, market_policies FROM samba_policy WHERE id=:i"),
-                    {"i": p.applied_policy_id})).first()
+                _pr, _mp = (
+                    await s.execute(
+                        t(
+                            "SELECT pricing, market_policies FROM samba_policy WHERE id=:i"
+                        ),
+                        {"i": p.applied_policy_id},
+                    )
+                ).first()
                 _pr = _pr if isinstance(_pr, dict) else json.loads(_pr or "{}")
                 _mp = _mp if isinstance(_mp, dict) else json.loads(_mp or "{}")
-                sale = float(calc_market_price(float(new_cost), _pr, "ebay", _mp) or new_cost)
-                print(f"{'DRY' if dry else 'RUN'} {nm} | {int(p.cost or 0):,}→{new_cost:,} | 판매 {int(sale):,}")
+                sale = float(
+                    calc_market_price(float(new_cost), _pr, "ebay", _mp) or new_cost
+                )
+                print(
+                    f"{'DRY' if dry else 'RUN'} {nm} | {int(p.cost or 0):,}→{new_cost:,} | 판매 {int(sale):,}"
+                )
                 if dry:
                     continue
                 p.cost = float(new_cost)
@@ -73,12 +98,20 @@ async def main():
                 p.sale_price = sale
                 s.add(p)
                 await s.commit()
-                cat = "108857" if p.applied_policy_id in (
-                    "pol_kpopcard_v1", "pol_kpopgoods_v1") else "183454"
+                cat = (
+                    "108857"
+                    if p.applied_policy_id in ("pol_kpopcard_v1", "pol_kpopgoods_v1")
+                    else "183454"
+                )
                 try:
                     res = await dispatch_to_market(
-                        s, "ebay", p.model_dump(), category_id=cat,
-                        account=acc, existing_product_no=lid)
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id=cat,
+                        account=acc,
+                        existing_product_no=lid,
+                    )
                     if res.get("success"):
                         ok += 1
                     else:
@@ -87,7 +120,9 @@ async def main():
                 except Exception as e:
                     fail += 1
                     print(f"   예외 {str(e)[:60]}")
-            print(f"\n완료: 갱신 {ok} / 상한초과 {skip} / 실패 {fail} / 대상 {len(updates)}")
+            print(
+                f"\n완료: 갱신 {ok} / 상한초과 {skip} / 실패 {fail} / 대상 {len(updates)}"
+            )
     finally:
         current_tenant_id.reset(tok)
 

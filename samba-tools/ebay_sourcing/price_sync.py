@@ -38,11 +38,18 @@ async def main():
     # 계정/클라이언트 1회 로드 (세션 무관)
     async with get_write_session() as s0:
         acc = (
-            await s0.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
-        ).scalars().first()
+            (
+                await s0.execute(
+                    select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id)
+                )
+            )
+            .scalars()
+            .first()
+        )
         addf = acc.additional_fields or {}
     c = EbayClient(
-        app_id=addf.get("clientId") or acc.api_key, dev_id=addf.get("devId", ""),
+        app_id=addf.get("clientId") or acc.api_key,
+        dev_id=addf.get("devId", ""),
         cert_id=addf.get("clientSecret") or acc.api_secret,
         refresh_token=addf.get("oauthToken") or acc.oauth_refresh_token,
     )
@@ -52,7 +59,9 @@ async def main():
             try:
                 offs = await c.get_offers_by_sku(pid)
                 if not offs or offs[0].get("status") != "PUBLISHED":
-                    print(f"  SKIP {pid} offer {offs[0].get('status') if offs else '없음'}")
+                    print(
+                        f"  SKIP {pid} offer {offs[0].get('status') if offs else '없음'}"
+                    )
                     fail += 1
                     continue
                 before = offs[0].get("listing", {}).get("listingId")
@@ -60,18 +69,38 @@ async def main():
                 # 아이템별 세션 (브랜드매핑 충돌 격리)
                 async with get_write_session() as s:
                     acc2 = (
-                        await s.execute(select(SambaMarketAccount).where(SambaMarketAccount.id == acc_id))
-                    ).scalars().first()
+                        (
+                            await s.execute(
+                                select(SambaMarketAccount).where(
+                                    SambaMarketAccount.id == acc_id
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     p = (
-                        await s.execute(select(SambaCollectedProduct).where(SambaCollectedProduct.id == pid))
-                    ).scalars().first()
+                        (
+                            await s.execute(
+                                select(SambaCollectedProduct).where(
+                                    SambaCollectedProduct.id == pid
+                                )
+                            )
+                        )
+                        .scalars()
+                        .first()
+                    )
                     p.cost = cost
                     p.sale_price = cost
                     p.original_price = cost
                     s.add(p)
                     await s.flush()
                     res = await dispatch_to_market(
-                        s, "ebay", p.model_dump(), category_id=cat, account=acc2,
+                        s,
+                        "ebay",
+                        p.model_dump(),
+                        category_id=cat,
+                        account=acc2,
                         existing_product_no=before,
                     )
                     await s.commit()
@@ -80,7 +109,9 @@ async def main():
                 px = after.get("pricingSummary", {}).get("price", {}).get("value")
                 flag = "★새리스팅!" if aid != before else "revise0"
                 good = res.get("success")
-                print(f"  {'OK' if good else 'FAIL'} {pid} 원가{int(cost):,}→${px} [{flag}] {'' if good else res.get('message','')[:40]}")
+                print(
+                    f"  {'OK' if good else 'FAIL'} {pid} 원가{int(cost):,}→${px} [{flag}] {'' if good else res.get('message', '')[:40]}"
+                )
                 ok += 1 if good else 0
                 fail += 0 if good else 1
             except Exception as e:

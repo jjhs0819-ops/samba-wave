@@ -41,23 +41,51 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            h = {"Authorization": f"Bearer {tk}", "Accept": "application/json",
-                 "Content-Type": "application/json", "Content-Language": "en-US"}
+            h = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Content-Language": "en-US",
+            }
 
             async with httpx.AsyncClient(timeout=60) as c:
                 for pid in POLICIES:
                     r = await c.get(
-                        f"{ec._base_url}/sell/account/v1/fulfillment_policy/{pid}", headers=h)
+                        f"{ec._base_url}/sell/account/v1/fulfillment_policy/{pid}",
+                        headers=h,
+                    )
                     if r.status_code != 200:
                         print(f"{pid} 조회 실패 {r.status_code} {r.text[:150]}")
                         continue
@@ -67,15 +95,23 @@ async def main():
                     have = {x.get("regionName") for x in exc}
                     add = [x for x in BLOCK if x not in have]
                     exc.extend({"regionName": x} for x in add)
-                    print(f"{pid} {d.get('name')} | 기존 제외 {len(have)}개 → 추가 {len(add)}개 {add}"
-                          + (" [DRY]" if dry else ""))
+                    print(
+                        f"{pid} {d.get('name')} | 기존 제외 {len(have)}개 → 추가 {len(add)}개 {add}"
+                        + (" [DRY]" if dry else "")
+                    )
                     if dry or not add:
                         continue
                     d.pop("fulfillmentPolicyId", None)
                     d.setdefault("globalShipping", False)
                     ru = await c.put(
-                        f"{ec._base_url}/sell/account/v1/fulfillment_policy/{pid}", headers=h, json=d)
-                    print(f"  → {ru.status_code}" + ("" if ru.status_code < 400 else f" {ru.text[:250]}"))
+                        f"{ec._base_url}/sell/account/v1/fulfillment_policy/{pid}",
+                        headers=h,
+                        json=d,
+                    )
+                    print(
+                        f"  → {ru.status_code}"
+                        + ("" if ru.status_code < 400 else f" {ru.text[:250]}")
+                    )
     finally:
         current_tenant_id.reset(tok)
 

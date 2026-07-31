@@ -42,27 +42,62 @@ async def main():
     tok = current_tenant_id.set(TENANT)
     try:
         async with get_write_session() as s:
-            acc = (await s.execute(
-                select(SambaMarketAccount).where(SambaMarketAccount.id == KV))).scalars().first()
+            acc = (
+                (
+                    await s.execute(
+                        select(SambaMarketAccount).where(SambaMarketAccount.id == KV)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             ax = getattr(acc, "additional_fields", None) or {}
-            cr = await resolve_market_creds(s, TENANT, market_type="ebay", store_key="store_ebay") or {}
+            cr = (
+                await resolve_market_creds(
+                    s, TENANT, market_type="ebay", store_key="store_ebay"
+                )
+                or {}
+            )
             ec = EbayClient(
-                cr.get("clientId") or cr.get("appId") or ax.get("clientId") or ax.get("appId", ""),
+                cr.get("clientId")
+                or cr.get("appId")
+                or ax.get("clientId")
+                or ax.get("appId", ""),
                 cr.get("devId") or ax.get("devId", ""),
-                cr.get("clientSecret") or cr.get("certId") or ax.get("clientSecret") or ax.get("certId", ""),
-                cr.get("oauthToken") or cr.get("authToken") or ax.get("oauthToken") or ax.get("authToken", ""))
+                cr.get("clientSecret")
+                or cr.get("certId")
+                or ax.get("clientSecret")
+                or ax.get("certId", ""),
+                cr.get("oauthToken")
+                or cr.get("authToken")
+                or ax.get("oauthToken")
+                or ax.get("authToken", ""),
+            )
             tk = await ec._get_access_token()
-            hi = {"Authorization": f"Bearer {tk}", "Accept": "application/json",
-                  "Content-Type": "application/json", "Content-Language": "en-US"}
-            ht = {"X-EBAY-API-CALL-NAME": "GetItem", "X-EBAY-API-SITEID": "0",
-                  "X-EBAY-API-COMPATIBILITY-LEVEL": "1349", "X-EBAY-API-IAF-TOKEN": tk,
-                  "Content-Type": "text/xml"}
+            hi = {
+                "Authorization": f"Bearer {tk}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Content-Language": "en-US",
+            }
+            ht = {
+                "X-EBAY-API-CALL-NAME": "GetItem",
+                "X-EBAY-API-SITEID": "0",
+                "X-EBAY-API-COMPATIBILITY-LEVEL": "1349",
+                "X-EBAY-API-IAF-TOKEN": tk,
+                "Content-Type": "text/xml",
+            }
 
-            rows = (await s.execute(t("""
+            rows = (
+                await s.execute(
+                    t("""
                 SELECT id, name_en, name, images, market_product_nos
                 FROM samba_collected_product
                 WHERE tenant_id = :tn AND registered_accounts @> CAST(:kv AS jsonb)
-            """), {"tn": TENANT, "kv": f'["{KV}"]'})).all()
+            """),
+                    {"tn": TENANT, "kv": f'["{KV}"]'},
+                )
+            ).all()
 
             bad, ok, fail = [], 0, 0
             async with httpx.AsyncClient(timeout=60) as c:
@@ -70,12 +105,20 @@ async def main():
                     lid = (nos or {}).get(KV, "")
                     if not lid:
                         continue
-                    xml = ('<?xml version="1.0" encoding="utf-8"?>'
-                           '<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
-                           f"<ItemID>{lid}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>")
-                    r = await c.post(f"{ec._base_url}/ws/api.dll", content=xml, headers=ht)
-                    pics = [x.text or "" for x in ET.fromstring(r.text).findall(
-                        f".//{NS}Item/{NS}PictureDetails/{NS}PictureURL")]
+                    xml = (
+                        '<?xml version="1.0" encoding="utf-8"?>'
+                        '<GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents">'
+                        f"<ItemID>{lid}</ItemID><DetailLevel>ReturnAll</DetailLevel></GetItemRequest>"
+                    )
+                    r = await c.post(
+                        f"{ec._base_url}/ws/api.dll", content=xml, headers=ht
+                    )
+                    pics = [
+                        x.text or ""
+                        for x in ET.fromstring(r.text).findall(
+                            f".//{NS}Item/{NS}PictureDetails/{NS}PictureURL"
+                        )
+                    ]
                     # eBay CDN 으로 안 옮겨진 것 = 수집 실패
                     if pics and not any("ebayimg.com" in p for p in pics):
                         bad.append((pid, (en or ko or "")[:40], imgs or []))
@@ -85,7 +128,10 @@ async def main():
                     print(f"{'DRY' if dry else 'RUN'} {nm}")
                     if dry or not imgs:
                         continue
-                    ri = await c.get(f"{ec._base_url}/sell/inventory/v1/inventory_item/{pid}", headers=hi)
+                    ri = await c.get(
+                        f"{ec._base_url}/sell/inventory/v1/inventory_item/{pid}",
+                        headers=hi,
+                    )
                     if ri.status_code != 200:
                         fail += 1
                         print(f"   item 조회 실패 {ri.status_code}")
@@ -96,8 +142,11 @@ async def main():
                     item.setdefault("product", {})["imageUrls"] = [
                         (u + ("&" if "?" in u else "?") + "r=1") for u in imgs
                     ]
-                    ru = await c.put(f"{ec._base_url}/sell/inventory/v1/inventory_item/{pid}",
-                                     headers=hi, json=item)
+                    ru = await c.put(
+                        f"{ec._base_url}/sell/inventory/v1/inventory_item/{pid}",
+                        headers=hi,
+                        json=item,
+                    )
                     if ru.status_code < 400:
                         ok += 1
                         print("   이미지 재전송 완료")

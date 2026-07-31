@@ -33,7 +33,13 @@ SITE_CONCURRENCY: dict[str, int] = {
     "GrandStage": 5,
     "REXMONDE": 5,
     # SSG/LOTTEON: 확장앱 경로 — owner deviceId 필터링 적용 후 실행 PC 1대만 처리
-    "SSG": 3,  # worker._SSG_BATCH=3과 통일
+    # SSG 3→8 (2026-07-29): 데몬(Playwright 403 차단)에서 확장앱으로 되돌린 뒤 실측
+    # 결과 잡 1건의 실처리는 14.2초(최대 38초)로 짧은데 대기가 162.9초로 전체의 92%였다
+    # — 병목은 페이지 로딩이 아니라 동시 3개 제한이다. 8이면 시간당 약 2,000건으로
+    # 21,000건 한 바퀴가 27시간→10시간. 확장앱은 _POPUP_SITES_MIN_CAP(4)와
+    # max() 비교라 이 값이 그대로 반영된다. SSG 는 Akamai Bot Manager 를 쓰므로
+    # 더 올릴 때는 차단 여부를 하루 단위로 확인하고 단계적으로만 올릴 것.
+    "SSG": 8,  # worker._SSG_BATCH 와 별개(확장앱 팝업 동시 처리 캡)
     "LOTTEON": 2,  # worker BATCH 별도 미정의 — 보수값 유지
     "LOTTEON_SELLERSHOP": 2,  # LOTTEON 동일(WAF 보수)
     "GSShop": 5,

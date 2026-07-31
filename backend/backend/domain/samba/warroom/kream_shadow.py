@@ -1579,6 +1579,11 @@ _GRADE_RE = re.compile(
 )
 # 리스톡 가드 상태(사이클 시작 시 로드): (kid,opt)→값
 _g_trade_counts: dict[str, int] = {}
+# 카드 브랜드(kid→대문자 브랜드) — 비포켓몬 TCG(원피스/유희왕/MTG 등) 거래게이트 판별용.
+# SNKRDUNK 영문 카드명이라 needs_trade 문자열검사가 원피스/유희왕을 못 잡던 사고(2026-07-31)
+# 재발 방지: brand 로 확실히 판별. 신발/의류(sneaker/apparel/watch)는 로드서 제외(팬텀PSA 오게이트 방지).
+_g_card_brand: dict[str, str] = {}
+_POKEMON_BRANDS = {"포켓몬카드", "POKÉMON", "POKEMON"}
 _g_unfulfilled: set[tuple[str, str]] = set()
 # 즉시판매 보류 [로컬 이식] — 직전 스냅샷엔 있었는데 지금 사라진 입찰=팔린 것. 주문폴링(랙)
 # 을 기다리지 않고 판매 즉시 재입찰 차단. 소싱완료(sourcing_order_number)되면 해제, 6h 만료.
@@ -1749,6 +1754,7 @@ async def _load_restock_guards() -> None:
 
     now = _t.time()
     _g_trade_counts.clear()
+    _g_card_brand.clear()
     _g_unfulfilled.clear()
     _g_recent_posts.clear()
     _g_failed_posts.clear()
@@ -1761,6 +1767,23 @@ async def _load_restock_guards() -> None:
                 )
             ).all():
                 _g_trade_counts[str(pid)] = int(ts or 0)
+            # 카드 브랜드 로드 — 카드만(신발/의류/시계 제외, 팬텀PSA 오게이트 방지).
+            # 비포켓몬 TCG 는 영문명이라 needs_trade 가 못 잡음 → brand 로 거래게이트 강제.
+            for kid, br in (
+                await s.execute(
+                    _text(
+                        "SELECT resell_matches->'kream'->>'product_id' AS kid, "
+                        "UPPER(TRIM(brand)) AS br FROM samba_collected_product "
+                        "WHERE source_site='SNKRDUNK' "
+                        "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+                        "AND COALESCE(NULLIF(TRIM(brand),''),'')<>'' "
+                        "AND COALESCE(extra_data->>'snkr_type','') "
+                        "  NOT IN ('sneaker','apparel','watch')"
+                    )
+                )
+            ).all():
+                if kid and br:
+                    _g_card_brand[str(kid)] = str(br)
             # 이행대기 — 소싱주문번호 없는 미이행 주문(판매 후 소싱 전 재입찰 보류)
             for kid, opt in (
                 await s.execute(
@@ -1787,7 +1810,14 @@ async def _load_restock_guards() -> None:
 
 
 def _trade_ok(kid: str, name: str) -> bool:
-    """거래이력 게이트 — needs_trade 상품은 누적거래수≥1 이어야 등록 허용."""
+    """거래이력 게이트 — 거래≥1 필요 상품은 누적거래수≥1 이어야 등록 허용.
+    비포켓몬 TCG 카드(원피스/유희왕/MTG/유니온아레나 등)는 SNKRDUNK 영문 카드명이라
+    needs_trade 문자열검사가 못 잡음 → brand 로 확실히 판별(2026-07-31 사고 재발방지)."""
+    br = _g_card_brand.get(str(kid), "")
+    if br and br not in _POKEMON_BRANDS:
+        # 비포켓몬 TCG = 항상 거래≥1 필수(시세 불안정 → 무리한 입찰 시 소싱불가 손실)
+        return _g_trade_counts.get(str(kid), 0) >= 1
+    # 포켓몬/미상 카드 or 비카드 — 기존 name 기반(팩/박스 + 원피스/유희왕 문자열 폴백)
     if not needs_trade(name):
         return True
     return _g_trade_counts.get(str(kid), 0) >= 1
