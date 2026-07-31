@@ -2047,12 +2047,14 @@ async def _process_shoe_asks(
     return c
 
 
-# 신발 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지(사이즈별 다건). verified 확정 신발만.
-_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 50)
+# 신발 신규 자동등록 사이클당 상한 — 로테이션 슬라이스와 동일(슬라이스가 실질 상한 역할).
+_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 500)
 # 신발등록 사이클당 처리(=크림 API조회) 슬라이스 — 로테이션. 전 verified신발(1.4만+) 매사이클
 # 전량 API조회하면 사이클이 100분+로 폭발해 크림 오토튠 전체를 굶긴다(2026-07-31 사고). 슬라이스로 상한.
-_SHOE_RS_BATCH = int(os.environ.get("KREAM_SHOE_RS_BATCH") or 300)
-_shoe_rs_offset = 0  # 로테이션 위치(사이클마다 전진, 끝나면 0으로)
+# 500개 조회 ≈ 1분(sem6 병렬). 14k ÷ 500 = 한 바퀴 ~28사이클(~4시간)에 전량 평가.
+_SHOE_RS_BATCH = int(os.environ.get("KREAM_SHOE_RS_BATCH") or 500)
+_shoe_rs_offset = 0  # 로테이션 위치 — DB(_SET_SHOE_RS_OFFSET) 백업으로 재시작에도 유지
+_SET_SHOE_RS_OFFSET = "kream_shoe_rs_offset"
 
 
 def _cm_to_mm_variants(name: str) -> set[str]:
@@ -2093,6 +2095,15 @@ async def _process_shoe_restock(
     }
     _sur = POLICY["non_card_margin_rate"]
     global _shoe_rs_offset
+    # 로테이션 위치 DB 복원 — 카드(_unified_offset)와 동일. 재시작(재빌드)에도 유지돼야
+    # 앞부분만 반복하지 않고 전량 등록된다(2026-07-31 사고: 메모리만 써서 재빌드마다 0 리셋).
+    if _shoe_rs_offset == 0:
+        try:
+            _shoe_rs_offset = int(
+                (await _load_setting_map(_SET_SHOE_RS_OFFSET)).get("v", 0) or 0
+            )
+        except Exception:
+            _shoe_rs_offset = 0
     _base_where = (
         "FROM samba_collected_product "
         "WHERE source_site='SNKRDUNK' "
@@ -2122,6 +2133,9 @@ async def _process_shoe_restock(
         ).all()
     c["scan"] = f"{min(_shoe_rs_offset + _SHOE_RS_BATCH, _total):,}/{_total:,}"
     _shoe_rs_offset += _SHOE_RS_BATCH  # 다음 사이클 다음 슬라이스
+    await _save_setting_map(
+        _SET_SHOE_RS_OFFSET, {"v": _shoe_rs_offset}
+    )  # 재시작 대비 저장
     posted = 0
     _now = _now_ts()
     async with httpx.AsyncClient(timeout=25) as cli:
@@ -2172,11 +2186,9 @@ async def _process_shoe_restock(
                     continue
                 mm_opt = str(api_opt.get("name"))
                 _key = f"{kid}|{mm_opt}"
-                # 카드 리스톡 동일 가드 순서
-                _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-                if _g_miss_counts[_key] < 2:
-                    c["miss"] += 1
-                    continue
+                # 신발/의류는 verified=재고확실이라 2연속 대기 없이 즉시 등록(속도).
+                # 재고 사라지면 갱신(_process_shoe_asks)이 다음 사이클에 삭제하므로 안전.
+                # 재게시(2h)·실패(6h)·이행대기 가드는 유지(중복/무의미 재시도 차단).
                 if _key in _g_recent_posts:
                     c["recent"] += 1
                     continue
