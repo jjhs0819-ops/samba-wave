@@ -64,7 +64,34 @@ if ($notRunning.Count -gt 0) {
   }
   Write-Host "자동 기동 성공 — 전 컨테이너 running" -ForegroundColor Green
 }
-if ($upFailed -and $notRunning.Count -eq 0) { throw "기동 실패 (compose 오류, 위 출력 확인)" }
+# up -d 는 실패했는데 컨테이너는 전부 running 인 경우가 있다(예: 컨테이너 이름 conflict —
+# 다른 세션이 동시에 배포하면 발생). 이때 두 갈래로 갈린다:
+#   (a) 컨테이너가 방금 빌드한 이미지로 이미 교체됨 → 배포는 사실상 성공. 막으면 오탐.
+#   (b) 옛 컨테이너가 그대로 살아있음 → 새 코드가 반영 안 된 채 "정상"으로 보인다. 이게 더 위험.
+# 그래서 running 이라는 사실만으로 판단하지 않고, 실제 이미지 ID 를 대조한다.
+if ($upFailed) {
+  $appCtrs = @(
+    'local-samba-api-1', 'local-samba-worker-1',
+    'local-samba-kream-1', 'local-samba-reconciler-1'
+  )
+  $builtId = (docker image inspect -f '{{.Id}}' local-samba-api 2>$null)
+  if ($LASTEXITCODE -ne 0 -or -not $builtId) {
+    throw "기동 실패 (compose 오류) — 빌드 이미지 확인 불가. 위 출력 확인"
+  }
+  $stale = @()
+  foreach ($n in $appCtrs) {
+    $img = (docker inspect -f '{{.Image}}' $n 2>$null)
+    if ($LASTEXITCODE -ne 0) { continue }
+    if ($img -ne $builtId) { $stale += $n }
+  }
+  if ($stale.Count -gt 0) {
+    Write-Host "!! compose 실패 + 옛 이미지로 동작 중 — 새 코드가 반영되지 않았다:" -ForegroundColor Red
+    Write-Host "   $($stale -join ', ')" -ForegroundColor Red
+    Write-Host "   재시도: docker compose --env-file local.env -f $compose up -d --force-recreate" -ForegroundColor Red
+    throw "기동 실패 — 컨테이너 $($stale -join ', ') 가 옛 이미지로 동작 중(코드 미반영)"
+  }
+  Write-Host "compose 는 오류를 냈지만(이름 conflict 등) 전 컨테이너가 최신 이미지로 동작 중 — 계속 진행" -ForegroundColor Yellow
+}
 
 Write-Host "[4/4] 헬스체크 (최대 90초)..." -ForegroundColor Cyan
 $ok = $false
