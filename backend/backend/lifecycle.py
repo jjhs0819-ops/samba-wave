@@ -1049,68 +1049,6 @@ async def _start_tetris_sync_scheduler() -> None:
     )
 
 
-async def _kream_stall_dumper() -> None:
-    """[행 진단] 60초마다 오래 매달린(pending) asyncio 태스크의 스택을 로그로 노출.
-    py-spy 는 suspended 코루틴 라인을 못 보여주지만 이건 정확한 await 지점을 찍는다.
-    KREAM_STALL_DUMP=0 이면 비활성."""
-    import asyncio as _a
-
-    _log = logging.getLogger("backend.lifecycle")
-    if os.environ.get("KREAM_STALL_DUMP") == "0":
-        return
-
-    def _chain(task):
-        """coroutine 의 cr_await 체인을 직접 걸어 innermost 서스펜드 지점까지 file:line 수집."""
-        out = []
-        coro = task.get_coro()
-        seen = 0
-        while coro is not None and seen < 40:
-            seen += 1
-            fr = getattr(coro, "cr_frame", None) or getattr(coro, "gi_frame", None)
-            if fr is not None:
-                fn = fr.f_code.co_filename.split("/")[-1]
-                out.append(f"{fn}:{fr.f_lineno} {fr.f_code.co_name}")
-            nxt = getattr(coro, "cr_await", None)
-            if nxt is None:
-                nxt = getattr(coro, "gi_yieldfrom", None)
-            if nxt is not None and (
-                hasattr(nxt, "cr_frame") or hasattr(nxt, "gi_frame")
-            ):
-                coro = nxt
-            else:
-                if nxt is not None:
-                    out.append(f"<await {type(nxt).__name__}>")
-                coro = None
-        return out
-
-    me = _a.current_task()
-    while True:
-        await _a.sleep(60)
-        try:
-            for t in _a.all_tasks():
-                if t is me or t.done():
-                    continue
-                ch = _chain(t)
-                joined = " -> ".join(ch)
-                if any(
-                    k in joined
-                    for k in (
-                        "kream_shadow",
-                        "run_kream",
-                        "_process",
-                        "_fetch",
-                        "asyncpg",
-                    )
-                ):
-                    _log.warning(
-                        "[스톨진단] task '%s' 체인:\n  %s",
-                        t.get_name(),
-                        "\n  ".join(ch),
-                    )
-        except Exception as _e:
-            _log.warning("[스톨진단] 실패(무시): %s", _e)
-
-
 async def _kream_shadow_loop() -> None:
     """크림 섀도(Phase2) 주기 루프 — 20분마다 target 계산 로그. 쓰기·POST 절대 없음."""
     import asyncio as _asyncio
@@ -1118,16 +1056,7 @@ async def _kream_shadow_loop() -> None:
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
     _unified = os.environ.get("KREAM_UNIFIED") == "1"
-    # 루프 행 감시 워치독 시작 — API 호출 행 시 자동 재기동(offset DB저장이라 이어감)
-    from backend.domain.samba.warroom.kream_shadow import (
-        start_kream_watchdog,
-        touch_kream_heartbeat,
-    )
-
-    start_kream_watchdog()
-    _asyncio.create_task(_kream_stall_dumper())  # [진단] 행난 await 라인 로그로 노출
     while True:
-        touch_kream_heartbeat()  # 매 사이클 시작 신호(행 감시 하트비트)
         try:
             if _unified:
                 # [Step 3] 스니덩크 전수순회 통합(갱신+리스톡+삭제)

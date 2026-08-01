@@ -461,6 +461,53 @@ def _register_auto_cancel_trigger() -> None:
             obj.status = new_status
             obj.updated_at = datetime.now(tz=timezone.utc)
 
+    # 발주 전(=아직 소싱처에 주문 안 넣은) 단계의 status 들.
+    # 이 구간에서만 원가 기입을 막는다 — 발송 이후는 과거 정산값이라 손대지 않는다.
+    _PRE_FULFILL_STATUSES = {"pending", "preparing", "wait_ship", "payment_waiting"}
+
+    # 포이즌 미이행 주문 실구매가 차단 [2026-08-01 사고]
+    # 실제 발주(소싱주문번호 확보) 전에 cost 가 채워지면 주문이 이행된 것처럼 보여
+    # 직원이 발주를 건너뛴다 → 고객 환불 요구로 이어졌다.
+    # HTTP(PUT/POST)·잡워커·외부 스크립트 등 경로가 여러 개라 경계마다 막는 대신
+    # ORM flush 단계에서 일괄 차단한다(모든 쓰기 경로가 여기를 통과).
+    # 소싱주문번호가 채워지는 순간(=이행 완료)부터는 정상적으로 원가가 저장된다.
+    @event.listens_for(Session, "before_flush")
+    def _block_cost_before_fulfillment(session, flush_context, instances) -> None:  # noqa: ARG001
+        for obj in list(session.new) + list(session.dirty):
+            if not isinstance(obj, SambaOrder):
+                continue
+            if (obj.source or "").strip().lower() != "poison":
+                continue
+            if (obj.sourcing_order_number or "").strip():
+                continue  # 이행 완료 — 원가 저장 허용
+            # 이미 발송/배송/완료된 주문은 과거 정산값이므로 건드리지 않는다.
+            # (소싱주문번호가 비어 있어도 실제로는 발주된 건 — 여기서 0 으로 지우면
+            #  매출·수익 집계가 소급 파괴된다.)
+            if (obj.status or "").strip().lower() not in _PRE_FULFILL_STATUSES:
+                continue
+            try:
+                cost = float(obj.cost or 0)
+            except (TypeError, ValueError):
+                continue
+            if cost <= 0:
+                continue
+            obj.cost = 0
+            # 원가를 지웠으므로 실수익/수익률도 같은 기준으로 다시 계산
+            revenue = float(obj.revenue or 0)
+            ship_fee = float(obj.shipping_fee or 0)
+            obj.profit = revenue - ship_fee
+            obj.profit_rate = (
+                f"{((revenue - ship_fee) / revenue * 100):.2f}"
+                if revenue > 0
+                else "0.00"
+            )
+            _log.warning(
+                "[미이행원가차단] 포이즌 주문 %s 미이행(소싱주문번호 없음) — "
+                "실구매가 %s 기입 차단",
+                obj.order_number,
+                f"{cost:,.0f}",
+            )
+
     @event.listens_for(Session, "after_flush")
     def _on_session_flush(session, flush_context) -> None:  # noqa: ARG001
         for obj in session.dirty:
