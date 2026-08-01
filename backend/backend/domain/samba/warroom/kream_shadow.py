@@ -1530,13 +1530,14 @@ async def _load_matched_products() -> list[dict]:
                     "SELECT site_product_id AS snkr_id, "
                     "resell_matches->'kream'->>'product_id' AS kid, "
                     "(resell_matches->'kream'->>'ambiguous')='true' AS ambiguous, "
-                    "options::text AS opts, name "
+                    "options::text AS opts, name, "
+                    "(resell_matches->'kream'->>'verified')='true' AS verified "
                     "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                 )
             )
         ).all()
-    for snkr_id, kid, ambiguous, opts_txt, name in rows:
+    for snkr_id, kid, ambiguous, opts_txt, name, verified in rows:
         db_opts: dict = {}
         fixed: dict = {}
         if opts_txt:
@@ -1559,6 +1560,7 @@ async def _load_matched_products() -> list[dict]:
                 "ambiguous": bool(ambiguous),
                 "kid": str(kid or ""),
                 "name": str(name or ""),
+                "verified": bool(verified),  # 검수 확정 — 비카드 리스톡 신규등록 게이트
                 "db_opts": db_opts,
                 "fixed": fixed,
             }
@@ -2879,7 +2881,47 @@ async def run_kream_unified_once() -> dict:
             # 로컬 봇에 위임. 카드 판정: DB 옵션에 PSA 존재. 비카드는 snkr fetch 없이 즉시 skip.
             has_psa_opt = any("PSA" in str(n).upper() for n in prod["db_opts"])
             if not has_psa_opt:
+                # 비카드(신발/의류/시계/박스) — 같은 사이클·같은 로테이션 안에서 리스톡만 판정.
+                # [2026-08-01] 별도 전량조회 경로(_process_shoe_restock 등)로 빼면 갱신 사이클이
+                # 같이 느려져 20분 주기가 깨진다. 카테고리 구분 없이 이 큐에서 회차마다 이어서.
                 r["noncard"] = 1
+                if not prod.get("verified"):
+                    return r  # 검수 확정분만 신규등록 대상
+                for _nm, _d in (prod.get("db_opts") or {}).items():
+                    _st, _pr = int(_d.get("stock") or 0), int(_d.get("price") or 0)
+                    if _st <= 0 or _pr <= 0:
+                        continue
+                    if (kid, _nm) in ask_index:
+                        continue  # 이미 입찰 있음
+                    if _pr > POLICY["max_cost_jpy"]:
+                        continue
+                    _base = calc_base(
+                        _pr, rate, True, False, POLICY["non_card_margin_rate"]
+                    )
+                    _mp = calc_min_price(
+                        _pr, rate, True, False, POLICY["non_card_margin_rate"]
+                    )
+                    _nc = (
+                        math.ceil(
+                            _base
+                            * (1 + POLICY["no_competition_margin_rate"] / 100)
+                            / 1000
+                        )
+                        * 1000
+                    )
+                    r["rows"].append(
+                        (
+                            "restock",
+                            "리스톡",
+                            kid,
+                            _nm,
+                            0,
+                            max(_nc, _mp),
+                            True,
+                            prod["name"],
+                            False,
+                        )
+                    )
                 return r
             live = await _fetch_snkr_used(scli, snkr_id) if snkr_id else None
             if live is None:
@@ -3308,77 +3350,11 @@ async def run_kream_unified_once() -> dict:
             f"{_fail_tag(box['fail'])} ({'실행ON' if _EXEC_BOX else '섀도'})",
         )
 
-    # ── [B-2] 신발 신규 자동등록 — verified 확정 신발/의류/시계 미등록분(사이즈 mm↔cm 매칭).
-    # 카드 리스톡과 동일 가드 + 원가상한 + 정책스킵. 사이클당 상한. _EXEC_SHOE 게이트.
-    shoe_rs = await _process_shoe_restock(
-        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h
-    )
-    if shoe_rs.get("cand") or shoe_rs.get("post"):
-        logger.info(
-            "[크림통합] 신발등록 후보%d 등록%d 실패%d / 스킵[2연속%d 재게시%d 실패쿨%d 거래%d "
-            "이행대기%d 상한초과%d 정책%d 옵션없음%d 사이클상한%d] (%s)",
-            shoe_rs["cand"],
-            shoe_rs["post"],
-            shoe_rs["fail"],
-            shoe_rs["miss"],
-            shoe_rs["recent"],
-            shoe_rs["failed"],
-            shoe_rs["trade"],
-            shoe_rs["hold"],
-            shoe_rs["overcost"],
-            shoe_rs["policy"],
-            shoe_rs["optmiss"],
-            shoe_rs["capped"],
-            "실행ON" if _EXEC_SHOE_RESTOCK else "섀도",
-        )
-        _cap_txt = f" · 대기 {shoe_rs['capped']:,}" if shoe_rs["capped"] else ""
-        _emit_autotune_log(
-            "KREAM",
-            "",
-            f"[신발등록] 후보 {shoe_rs['cand']:,} — 등록 {shoe_rs['post']:,}"
-            f"{_fail_tag(shoe_rs['fail'])} (사이클상한 {_SHOE_RESTOCK_MAX:,}{_cap_txt}) "
-            f"({'실행ON' if _EXEC_SHOE_RESTOCK else '섀도'})",
-        )
-        # 재게시/실패 가드 갱신분 저장(카드 저장 이후 변동분 반영)
-        if _EXEC_SHOE_RESTOCK and (shoe_rs["post"] or shoe_rs["fail"]):
-            await _save_setting_map(_SET_RECENT, _g_recent_posts)
-            await _save_setting_map(_SET_FAILED, _g_failed_posts)
-        await _save_setting_map(_SET_MISS, _g_miss_counts)
-
-    # ── [B-3] 박스/카드팩 신규 자동등록 — 로컬 봇 정지(07-22)로 끊겼던 경로. _EXEC_BOX_RESTOCK 게이트.
-    box_rs = await _process_box_restock(asks, cooldown, rate, tariff_threshold, h)
-    if box_rs.get("cand") or box_rs.get("post"):
-        logger.info(
-            "[크림통합] 박스등록 후보%d 등록%d 실패%d / 스킵[2연속%d 재게시%d 실패쿨%d 거래%d "
-            "이행대기%d 상한초과%d 정책%d 옵션없음%d 품절%d API실패%d 사이클상한%d] (%s)",
-            box_rs["cand"],
-            box_rs["post"],
-            box_rs["fail"],
-            box_rs["miss"],
-            box_rs["recent"],
-            box_rs["failed"],
-            box_rs["trade"],
-            box_rs["hold"],
-            box_rs["overcost"],
-            box_rs["policy"],
-            box_rs["optmiss"],
-            box_rs["soldout"],
-            box_rs["apifail"],
-            box_rs["capped"],
-            "실행ON" if _EXEC_BOX_RESTOCK else "섀도",
-        )
-        _bcap_txt = f" · 대기 {box_rs['capped']:,}" if box_rs["capped"] else ""
-        _emit_autotune_log(
-            "KREAM",
-            "",
-            f"[박스등록] 후보 {box_rs['cand']:,} — 등록 {box_rs['post']:,}"
-            f"{_fail_tag(box_rs['fail'])} (사이클상한 {_BOX_RESTOCK_MAX:,}{_bcap_txt}) "
-            f"({'실행ON' if _EXEC_BOX_RESTOCK else '섀도'})",
-        )
-        if _EXEC_BOX_RESTOCK and (box_rs["post"] or box_rs["fail"]):
-            await _save_setting_map(_SET_RECENT, _g_recent_posts)
-            await _save_setting_map(_SET_FAILED, _g_failed_posts)
-        await _save_setting_map(_SET_MISS, _g_miss_counts)
+    # ── [B-2/B-3 제거·2026-08-01] 신발/의류/박스 신규등록은 별도 전량조회 경로였다 →
+    # 갱신 사이클이 같이 느려져 20분 주기가 깨졌다. 이제 _process(리스톡 로테이션) 안에서
+    # 카테고리 구분 없이 회차마다 이어서 처리한다.
+    shoe_rs = {"cand": 0, "post": 0, "fail": 0}
+    box_rs = {"cand": 0, "post": 0, "fail": 0}
 
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
