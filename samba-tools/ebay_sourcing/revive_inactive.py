@@ -294,7 +294,22 @@ async def main():
 
         unsold = await lst("UnsoldList")
         live = {t2.lower() for _, t2 in await lst("ActiveList")}
-        print(f"비활성 {len(unsold)} / 라이브 {len(live)}")
+        # [B] DB에 이미 있는 카드(등록/고정가/재고)도 dedup 대상 — eBay 리스팅이 종료돼
+        # live에서 사라져도 같은 카드를 다시 만들지 않는다(중복=계정정지, 한 달째 재발원인).
+        _db_titles = (
+            await s.execute(
+                t(
+                    "SELECT DISTINCT name_en FROM samba_collected_product "
+                    "WHERE tenant_id=:tn AND name_en IS NOT NULL AND name_en <> '' "
+                    "AND (registered_accounts @> CAST(:kvj AS jsonb) "
+                    "     OR price_locked = TRUE "
+                    "     OR (stock_quantities->>:kv) IS NOT NULL)"
+                ),
+                {"tn": TENANT, "kvj": f'["{KV}"]', "kv": KV},
+            )
+        ).all()
+        live |= {(r[0] or "").lower() for r in _db_titles if r[0]}
+        print(f"비활성 {len(unsold)} / dedup기준(live+DB) {len(live)}")
 
         # [B] 라이브 + 이번 실행에서 이미 만든 카드 신원을 모은다.
         # 카드가 죽어 종료목록에 있어도 같은 카드를 또 새로 만들지 않는다(중복=계정정지).

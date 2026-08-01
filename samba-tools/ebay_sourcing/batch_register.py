@@ -21,7 +21,7 @@ sys.path.insert(0, "/app/backend")
 sys.path.insert(0, "/tmp")
 
 from PIL import Image  # noqa: E402
-import postit_half as ph  # noqa: E402  (import 시 stdout utf-8 재설정됨)
+import fix_no_postit as fp  # noqa: E402  (compose_clean = 크롭만, 포스트잇/패딩 없음 · 2026-07-30 결정)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -179,7 +179,6 @@ async def main():
         int(sys.argv[sys.argv.index("--limit") + 1]) if "--limit" in sys.argv else 30
     )
     data = json.load(open("/tmp/cands.json", encoding="utf-8"))
-    paper = ph.extract_paper("/tmp/postit_cut.png")
     stop = {
         "pokemon",
         "card",
@@ -212,8 +211,27 @@ async def main():
             )
             svc = ImageTransformService(s)
             live = await fetch_live_titles(s, KV)
+            # [B] DB에 이미 있는 카드(등록/고정가/재고 보유분)도 dedup 대상에 포함.
+            # eBay 리스팅이 소스품절로 종료돼 live에서 사라져도 같은 카드를 다시
+            # 신규등록하면 중복=계정정지. live만 보던 게 한 달째 중복 재발 원인.
+            db_titles = [
+                r[0]
+                for r in (
+                    await s.execute(
+                        t(
+                            "SELECT DISTINCT name_en FROM samba_collected_product "
+                            "WHERE tenant_id=:tn AND name_en IS NOT NULL AND name_en <> '' "
+                            "AND (registered_accounts @> CAST(:kvj AS jsonb) "
+                            "     OR price_locked = TRUE "
+                            "     OR (stock_quantities->>:kv) IS NOT NULL)"
+                        ),
+                        {"tn": TENANT, "kvj": f'["{KV}"]', "kv": KV},
+                    )
+                ).all()
+            ]
+            live = live + [x for x in db_titles if x]
             live_kw = [_kw(x, stop) for x in live]
-            print(f"라이브 리스팅 {len(live)}건 (dedup 기준)")
+            print(f"dedup 기준 {len(live)}건 (eBay live + DB 등록/고정가/재고)")
 
             _pr, _mp = (
                 await s.execute(
@@ -253,6 +271,20 @@ async def main():
                         ):
                             print(f"  dup   {title[:44]}")
                             continue
+                        # 이미 DB에 있는 bpid는 INSERT 시 unique 위반(uq_scp_tenant_source_product_v2)
+                        # → 중복수집. 스킵(전체 배치 crash 방지).
+                        _exists = (
+                            await s.execute(
+                                select(SambaCollectedProduct.id).where(
+                                    SambaCollectedProduct.tenant_id == TENANT,
+                                    SambaCollectedProduct.source_site == "BUNJANG",
+                                    SambaCollectedProduct.site_product_id == bpid,
+                                )
+                            )
+                        ).first()
+                        if _exists:
+                            print(f"  exists {title[:40]}")
+                            continue
                         # 대표사진 합성
                         try:
                             raw = (
@@ -260,7 +292,7 @@ async def main():
                                     f"https://media.bunjang.co.kr/product/{bpid}_1_w856.jpg"
                                 )
                             ).content
-                            out = ph.compose(Image.open(io.BytesIO(raw)), paper)
+                            out, _reason = fp.compose_clean(Image.open(io.BytesIO(raw)))
                             buf = io.BytesIO()
                             out.save(buf, "JPEG", quality=92)
                             img_bytes = buf.getvalue()
@@ -274,6 +306,10 @@ async def main():
                             f"  {'DRY' if dry else 'REG'} {done + 1:2d} {cost:,}원→${sale:,.2f} | {title[:46]}"
                         )
                         if dry:
+                            with open(
+                                f"/tmp/prev_{done + 1:02d}_{bpid}.jpg", "wb"
+                            ) as _pf:
+                                _pf.write(img_bytes)
                             done += 1
                             live_kw.append(k)
                             continue
