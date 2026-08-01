@@ -39,6 +39,8 @@ _EXEC_BOX = os.environ.get("KREAM_EXEC_BOX") == "1"
 _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 # 신발 신규 자동등록 실행 게이트 — 갱신/삭제와 별도. 섀도 후보 검증 후 KREAM_EXEC_SHOE_RESTOCK=1.
 _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
+# 비카드(신발/의류) 우선처리 상한 — 매 사이클 리스톡 슬라이스 외 추가 포함 수. DB옵션만 보므로 가볍다.
+_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 3000)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
@@ -2888,7 +2890,19 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(
         _SET_OFFSET, {"v": int(_unified_offset)}
     )  # 다음 재시작 대비 영속화
-    products = live_products + rest_slice
+    # [2026-08-01] verified 비카드(신발/의류/시계)는 매 사이클 우선 포함 — 통화교정 후 등록
+    # 대기분 4천여개가 1,500/사이클 로테이션으로는 32바퀴(수시간) 걸려 신규입찰이 안 돌았다.
+    # 비카드는 snkr fetch 없이 DB 옵션만 보므로 사이클 부담이 작다(카드처럼 API 조회 안 함).
+    _pri_kids = {p["kid"] for p in rest_slice}
+    _pri_noncard = [
+        p
+        for p in rest_products
+        if p["kid"] not in _pri_kids
+        and p.get("verified")
+        and str(p.get("currency") or "JPY").upper() == "JPY"
+        and not any("PSA" in str(n).upper() for n in (p.get("db_opts") or {}))
+    ][:_NONCARD_PRIORITY_MAX]
+    products = live_products + rest_slice + _pri_noncard
     rest_total = len(rest_products)  # 리스톡 탐색 로테이션 분모(진행률 표시용)
     logger.info(
         "[크림통합] 대상선정 — 갱신(live)%d 전량 + 리스톡탐색 %d/%d (offset %d)",
@@ -3543,14 +3557,21 @@ async def run_kream_unified_once() -> dict:
             if "박스" in nm:
                 return "box"
             return "pack" if re.search(r"카드팩|부스터팩|팩", nm) else "box"
-        return "other"
+        # 신발(mm 사이즈 '245') / 의류·시계·잡화(S/M/L·FREE 등)
+        if _SHOE_OPT_RE.fullmatch(opt.strip()):
+            return "shoe"
+        return "apparel"
 
     _card_asks = [a for a in asks if _ask_kind(a) == "card"]
     _box_asks = [a for a in asks if _ask_kind(a) == "box"]
     _pack_asks = [a for a in asks if _ask_kind(a) == "pack"]
+    _shoe_asks_r = [a for a in asks if _ask_kind(a) == "shoe"]
+    _apparel_asks_r = [a for a in asks if _ask_kind(a) == "apparel"]
     _r1c, _n1c, _gtc, _ncc = _rank_summary(_card_asks)
     _r1b, _n1b, _gtb, _ncb = _rank_summary(_box_asks)
     _r1p, _n1p, _gtp, _ncp = _rank_summary(_pack_asks)
+    _r1s, _n1s, _gts, _ncs = _rank_summary(_shoe_asks_r)
+    _r1a, _n1a, _gta, _nca = _rank_summary(_apparel_asks_r)
     _r1, _n1, _gt, _nc = _rank_summary(asks)
     _ask_kids = {str(a.get("product_id") or "") for a in asks}
     _mapped = len([k for k in _ask_kids if k in kid_to_snkr])
@@ -3605,8 +3626,9 @@ async def run_kream_unified_once() -> dict:
         + (f" | ❌갱신실패 {_fail_all:,}건" if _fail_all else "")
         + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
         f"  카드 1순위 {_r1c:,}/{_gtc:,} · 박스 {_r1b:,}/{_gtb:,} · 카드팩 {_r1p:,}/{_gtp:,}\n"
+        f"  신발 1순위 {_r1s:,}/{_gts:,} · 의류/잡화 {_r1a:,}/{_gta:,}\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
-        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,})"
+        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,}·신발{_ncs:,}·의류{_nca:,})"
     )
     # 갱신실패 사유 breakdown — 실패 건수만 보이고 원인을 몰라 대응 못 하던 것 보완(로컬 포맷).
     if _fail_reasons:
