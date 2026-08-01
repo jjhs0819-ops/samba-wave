@@ -171,8 +171,9 @@ export default function AnalyticsPage() {
     textAlign: 'center',
     whiteSpace: 'nowrap',
     position: 'sticky',
-    // 앱 헤더(69px) + 섹션 제목 높이(41px) 밑에 컬럼 제목행 고정 — 페이지 스크롤 시에도 유지
-    top: 'calc(var(--header-h, 69px) + 41px)',
+    // overflowX:auto 스크롤 컨테이너 안이라 top:0 = 테이블 상단 고정(정위치).
+    // 페이지 오프셋(110px) 쓰면 컨테이너 기준으로 밀려 헤더가 2~3월 행에 겹침(2026-08-01 수정).
+    top: 0,
     background: c.surface,
     zIndex: 2,
   }
