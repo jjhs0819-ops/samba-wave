@@ -154,8 +154,10 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
             const tagged = res.logs.map(l => ({ ...l, __seq: ++seqRef.current }))
             const next = [...prev, ...tagged]
             // slice 전에 선택된 소싱처 필터 적용 — 다른 소싱처 로그가 30개 버퍼 채워 밀려나는 현상 방지
-            const fs = filterSourcesRef.current
-            const kept = fs && fs.length > 0 ? next.filter(l => shouldShowLog(l.msg, fs)) : next
+            // fs=[](전체 해제)를 "필터 없음"과 같이 취급해 전체 로그가 새던 버그 (2026-08-01) —
+            // shouldShowLog 자체는 null/[]/일반 배열을 이미 올바르게 구분하므로 항상 통과시킨다.
+            const fs = filterSourcesRef.current ?? null
+            const kept = next.filter(l => shouldShowLog(l.msg, fs))
             // KREAM(크림 오토튠)은 5분 주기로 몰아서 찍히는 백엔드 흐름 — 타 사이트가 초당 여러 줄
             // 쏟아내면 30줄 창에서 즉시 밀려나 "활성인데 로그 없음"으로 보임. 별도로 최근 20줄 보존.
             const isK = (m: string) => { const s = extractSiteFromLog(m); return s === 'SNKRDUNK' || s === 'KREAM' }
