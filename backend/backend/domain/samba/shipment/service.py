@@ -3194,9 +3194,15 @@ class SambaShipmentService:
         ):
             logger.info("[전송] 최신화 실패 → 상품 데이터 변경 안 함")
         else:
+            # ★registered_accounts/market_product_nos 는 여기서 full-replace 하지 않는다.
+            # 위 "DB 업데이트 ①" 이 계정별 atomic delta 로 이미 반영했는데, in-memory
+            # 스냅샷(existing/existing_nos) 기준으로 다시 통째 덮어쓰면 ① 이후 ~ 여기
+            # 사이에 다른 전송 그룹이 기록한 상품번호까지 날아간다. 특히 빈 dict 를
+            # None 으로 저장해 **컬럼 자체를 null 로 만드는** 경로가 치명적이었다
+            # (2026-07-27 685건 링크분실 사고: 마커 null → 주문동기화 역매핑 실패로
+            #  원가 0 허수주문 + 마커 없는 상품이 오토튠 스캔에서도 통째 제외).
+            # 신규등록(POST) 실패 계정 정리는 아래에서 delta 로만 적용한다.
             update_data: dict[str, Any] = {
-                "registered_accounts": new_accounts if new_accounts else None,
-                "market_product_nos": new_nos if new_nos else None,
                 "status": "registered" if new_accounts else "collected",
                 "updated_at": datetime.now(UTC),
             }
@@ -3204,6 +3210,50 @@ class SambaShipmentService:
             if pending_refresh_updates:
                 update_data.update(pending_refresh_updates)
             await product_repo.update_async(product_id, **update_data)
+
+            # 신규등록 실패 계정만 B칸(market_product_nos)/A칸(registered_accounts)에서
+            # 제거 — 다른 계정 키는 건드리지 않는 계정별 atomic 삭제.
+            if removable_failed:
+                try:
+                    from sqlalchemy import text as _rf_sa_text  # noqa: F811
+
+                    _rf_keys: list[str] = []
+                    for _rf_aid in removable_failed:
+                        _rf_keys += [
+                            _rf_aid,
+                            f"{_rf_aid}_origin",
+                            f"{_rf_aid}_master",
+                            f"{_rf_aid}_site",
+                        ]
+                    await self.session.execute(
+                        _rf_sa_text(
+                            "UPDATE samba_collected_product SET"
+                            "  market_product_nos = ("
+                            "    (CASE WHEN jsonb_typeof(market_product_nos) = 'object'"
+                            "          THEN market_product_nos ELSE '{}'::jsonb END)"
+                            "    - CAST(:nos_keys AS text[])"
+                            "  ),"
+                            "  registered_accounts = ("
+                            "    COALESCE(registered_accounts, '[]'::jsonb)"
+                            "    - CAST(:reg_keys AS text[])"
+                            "  )"
+                            " WHERE id = CAST(:pid AS text)"
+                        ),
+                        {
+                            "nos_keys": _rf_keys,
+                            "reg_keys": list(removable_failed),
+                            "pid": product_id,
+                        },
+                    )
+                    await self.session.commit()
+                except Exception as _rf_e:
+                    logger.warning(
+                        f"[전송] 신규등록 실패 계정 정리 실패: {_rf_e}"
+                    )
+                    try:
+                        await self.session.rollback()
+                    except Exception:
+                        pass
 
         # 전 옵션 품절 + 마켓에 남은 등록 없음 → 수집상품 자체 DB 삭제.
         # 첫등록 전송잡에서 전옵션 품절 상품은 등록을 안 하므로(위 1595 블록에서
