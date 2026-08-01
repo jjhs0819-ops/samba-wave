@@ -209,7 +209,11 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
                     pass  # LotteHomeClient는 per-request httpx — close 불필요
 
             elif market_type == "poison":
-                from backend.domain.samba.proxy.poison import PoisonClient
+                from backend.domain.samba.proxy.poison import (
+                    PoisonClient,
+                    is_buyer_cancelable,
+                    is_canceled,
+                )
 
                 app_key = (
                     extras.get("app_key", "")
@@ -228,6 +232,13 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
                 client = PoisonClient(app_key, app_secret)
                 raw_orders = await client.get_orders(days=7)
                 for ro in raw_orders:
+                    # 구매자 취소가능 창(결제 후 1시간) 내 주문은 order_sync 가
+                    # 수집을 보류하고, 수집 전에 취소된 주문은 영영 수집되지 않는다
+                    # → 폴러도 동일하게 제외해야 한다. 안 그러면 DB 에 안 들어오는
+                    # 번호를 매 주기 "신규 주문"으로 오인 → order_sync 잡 무한 발행
+                    # + 카톡 알림 스팸 (playauto 파생주문 제외와 같은 원리).
+                    if is_buyer_cancelable(ro) or is_canceled(ro):
+                        continue
                     oid = str(ro.get("order_no", "") or "")
                     if oid:
                         raw_order_numbers.append(oid)

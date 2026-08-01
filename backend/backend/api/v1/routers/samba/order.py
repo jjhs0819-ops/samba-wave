@@ -6730,8 +6730,50 @@ async def sync_orders_from_markets(
                 logger.info(
                     f"[주문동기화] {label}: POIZON 주문 {len(raw_orders)}건 조회"
                 )
+                # 구매자 취소가능 창(결제 후 1시간, 기본 70분) 내 주문은 수집 보류 —
+                # 창이 지난 뒤 다음 동기화에서 자동 유입된다. 창 안에서 이미 취소된
+                # 주문(삼바에 없는 취소건)은 영구 제외해 유령 주문 유입을 막는다.
+                # 단, 삼바에 이미 있는 주문의 취소는 상태 갱신이 필요하므로 포함.
+                from backend.domain.samba.proxy.poison import (
+                    is_buyer_cancelable,
+                    is_canceled,
+                )
+
+                _po_cancel_nos = [
+                    str(ro.get("order_no") or "")
+                    for ro in raw_orders
+                    if is_canceled(ro) and ro.get("order_no")
+                ]
+                _po_known_cancels: set[str] = set()
+                if _po_cancel_nos:
+                    from sqlalchemy import text as _po_text
+
+                    _po_rows = await session.execute(
+                        _po_text(
+                            "SELECT order_number FROM samba_order "
+                            "WHERE order_number = ANY(:nums) AND channel_id = :cid"
+                        ),
+                        {"nums": _po_cancel_nos, "cid": account["id"]},
+                    )
+                    _po_known_cancels = {r[0] for r in _po_rows}
+                _po_held = 0
+                _po_dropped = 0
                 for ro in raw_orders:
+                    if is_buyer_cancelable(ro):
+                        _po_held += 1
+                        continue
+                    if (
+                        is_canceled(ro)
+                        and str(ro.get("order_no") or "") not in _po_known_cancels
+                    ):
+                        _po_dropped += 1
+                        continue
                     orders_data.append(_parse_poison_order(ro, account["id"], label))
+                if _po_held or _po_dropped:
+                    logger.info(
+                        f"[주문동기화] {label}: POIZON 취소가능 창 내 보류 "
+                        f"{_po_held}건 · 수집 전 취소 제외 {_po_dropped}건"
+                    )
 
             elif market_type == "playauto":
                 from datetime import UTC, datetime, timedelta

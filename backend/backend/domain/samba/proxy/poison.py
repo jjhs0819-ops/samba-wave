@@ -14,6 +14,7 @@ POIZON은 KREAM과 동일한 카탈로그형 리셀 마켓이다.
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from typing import Any
 from urllib.parse import quote_plus
@@ -21,6 +22,57 @@ from urllib.parse import quote_plus
 import httpx
 
 from backend.utils.logger import logger
+
+# ── 구매자 취소가능 창 ────────────────────────────────────────────────────
+# POIZON 은 결제 후 1시간 동안 구매자가 자유롭게 취소할 수 있다. 이 창 안의
+# 주문을 삼바에 미리 수집하면 곧바로 취소돼 유령 주문이 남으므로, 수집 경로
+# (order_sync·주문폴러)는 창이 지난 주문만 받는다. 시계 오차·경계 대비 여유
+# 10분을 더한 70분이 기본값.
+POISON_CANCEL_WINDOW_MIN = int(os.environ.get("POISON_CANCEL_WINDOW_MIN", "70"))
+
+# 취소/거래실패 상태 코드 하한 — 7000/8000/8010/8080 (order.py 상태맵과 동일 기준)
+_CANCELED_STATUS_MIN = 7000
+
+
+def is_canceled(order: dict[str, Any]) -> bool:
+    """주문이 이미 취소/거래실패 상태(order_status 7000 이상)인지."""
+    try:
+        return int(order.get("order_status") or 0) >= _CANCELED_STATUS_MIN
+    except (TypeError, ValueError):
+        return False
+
+
+def is_buyer_cancelable(
+    order: dict[str, Any], window_min: int | None = None
+) -> bool:
+    """주문이 아직 구매자 취소가능 창(결제 후 1시간) 안인지 판정.
+
+    - order_status 1000(결제대기): 결제 전 → 항상 취소가능으로 본다.
+    - 이미 취소된 주문(7000 이상)은 창 판정 대상이 아니다(False) — 수집 여부는
+      호출부가 is_canceled 로 별도 판단.
+    - pay_time("yyyy-MM-dd HH:mm:ss", 셀러 타임존 KST)이 window_min 분 이내면 True.
+    - pay_time 이 없거나 파싱 불가면 기존 동작 유지(False → 수집).
+    """
+    from datetime import datetime, timedelta, timezone
+
+    win = POISON_CANCEL_WINDOW_MIN if window_min is None else window_min
+    try:
+        status = int(order.get("order_status") or 0)
+    except (TypeError, ValueError):
+        status = 0
+    if status == 1000:
+        return True
+    if status >= _CANCELED_STATUS_MIN:
+        return False
+    raw = str(order.get("pay_time") or "").strip()
+    if not raw:
+        return False
+    kst = timezone(timedelta(hours=9))
+    try:
+        paid = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S").replace(tzinfo=kst)
+    except ValueError:
+        return False
+    return datetime.now(tz=kst) - paid < timedelta(minutes=win)
 
 
 class PoisonClient:
