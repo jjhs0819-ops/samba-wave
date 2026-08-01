@@ -1574,7 +1574,7 @@ async def product_dashboard_stats(
     from sqlalchemy import text
 
     # 캐시 키 테넌트 분리 — 운영자/임성희 등이 같은 캐시 공유하면 격리 깨짐
-    cache_key = f"products:dashboard-stats-v7:{tenant_id or 'global'}"
+    cache_key = f"products:dashboard-stats-v8:{tenant_id or 'global'}"
     # 부분 실패 시 빈 결과로 덮지 않도록, 마지막 성공값을 따로 길게 백업
     stale_key = f"{cache_key}:stale"
     cached = await cache.get(cache_key)
@@ -1704,18 +1704,25 @@ async def product_dashboard_stats(
             return kream_rows, poison_rows
 
     async def _run_sold():
+        # 판매비중 분모 — 주문 대시보드 '이행매출'과 동일 기준: 이행 상태 주문의
+        # SUM(sale_price), paid_at 기준 최근 30일. 건수로 세면 크림 같은
+        # 고단가·저건수 마켓 비중이 왜곡된다 (order.py FULFILLMENT_STATUSES 동일).
         async with get_read_session() as s:
             stmt = text("""
-                SELECT channel_id, COUNT(DISTINCT collected_product_id) AS sold_cnt
+                SELECT channel_id, SUM(sale_price) AS sales
                 FROM samba_order
-                WHERE collected_product_id IS NOT NULL
-                  AND channel_id IS NOT NULL
-                  AND COALESCE(paid_at, created_at) >= NOW() - INTERVAL '30 days'
+                WHERE channel_id IS NOT NULL
+                  AND paid_at >= NOW() - INTERVAL '30 days'
+                  AND status IN (
+                    'pending', 'wait_ship', 'processing', 'arrived', 'ship_failed',
+                    'shipping', 'shipped', 'delivered', 'exchanged', 'exchanging',
+                    'exchange_requested'
+                  )
                   AND (:tid IS NULL OR tenant_id = :tid)
                 GROUP BY channel_id
             """).bindparams(tid=tenant_id)
             rows = (await s.execute(stmt)).all()
-            return {r.channel_id: int(r.sold_cnt) for r in rows}
+            return {r.channel_id: float(r.sales or 0) for r in rows}
 
     # single-flight: 캐시 미스 시 동시 요청이 풀스캔을 중복 실행 → read 풀 고갈 방지.
     # 락 안에서 캐시 재확인(double-check) — 먼저 계산한 요청 결과를 그대로 재사용.
@@ -1857,7 +1864,7 @@ async def product_dashboard_stats(
                     "market_name": acct_map[aid]["market_name"],
                     "account_label": acct_map[aid].get("account_label", ""),
                     "registered": cnt,
-                    "sold_products": sold_by_acct.get(aid, 0),
+                    "sales_amount": sold_by_acct.get(aid, 0),
                     "count_unit": resell_units.get(aid, ""),
                     "brands": brand_by_acct.get(aid, []),
                 }

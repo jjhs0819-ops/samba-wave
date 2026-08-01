@@ -13,10 +13,10 @@ function formatShortDate(d: Date) {
 type SourceBrand = { brand: string; total: number; registered: number; sold_out: number }
 type SourceStat = { source_site: string; total: number; registered: number; sold_out: number; brands: SourceBrand[] }
 type AccountBrand = { source_site: string; brand: string; registered: number }
-type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; sold_products?: number; count_unit?: string; brands: AccountBrand[] }
+type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; sales_amount?: number; count_unit?: string; brands: AccountBrand[] }
 type MarketSourceStat = { source_site: string; registered: number; brands: { brand: string; registered: number }[] }
-type MarketAcctStat = { account_id: string; account_label: string; registered: number; sold_products?: number; count_unit?: string; sources: MarketSourceStat[] }
-type MarketStat = { market_name: string; registered: number; sold_products: number; count_unit?: string; accounts: MarketAcctStat[] }
+type MarketAcctStat = { account_id: string; account_label: string; registered: number; sales_amount?: number; count_unit?: string; sources: MarketSourceStat[] }
+type MarketStat = { market_name: string; registered: number; sales_amount: number; count_unit?: string; accounts: MarketAcctStat[] }
 
 // 마켓 내부코드 → 표시명 (크림/포이즌은 계정명이 내부코드 그대로라 보기 좋게 치환)
 const MARKET_DISPLAY: Record<string, string> = { poison: 'POIZON' }
@@ -66,14 +66,14 @@ export default function SambaDashboard() {
   }
 
   const byMarket = useMemo((): MarketStat[] => {
-    const marketMap = new Map<string, { registered: number; sold_products: number; count_unit?: string; accts: Map<string, { account_id: string; account_label: string; registered: number; sold_products: number; count_unit?: string; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
+    const marketMap = new Map<string, { registered: number; sales_amount: number; count_unit?: string; accts: Map<string, { account_id: string; account_label: string; registered: number; sales_amount: number; count_unit?: string; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
     for (const acct of byAccount) {
       const mKey = acct.market_name
-      const mEntry = marketMap.get(mKey) ?? { registered: 0, sold_products: 0, count_unit: undefined, accts: new Map() }
+      const mEntry = marketMap.get(mKey) ?? { registered: 0, sales_amount: 0, count_unit: undefined, accts: new Map() }
       mEntry.registered += acct.registered
-      mEntry.sold_products += acct.sold_products ?? 0
+      mEntry.sales_amount += acct.sales_amount ?? 0
       if (acct.count_unit) mEntry.count_unit = acct.count_unit
-      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, sold_products: acct.sold_products ?? 0, count_unit: acct.count_unit || undefined, srcMap: new Map() }
+      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, sales_amount: acct.sales_amount ?? 0, count_unit: acct.count_unit || undefined, srcMap: new Map() }
       for (const b of acct.brands) {
         const sEntry = aEntry.srcMap.get(b.source_site) ?? { registered: 0, brandMap: new Map() }
         sEntry.registered += b.registered
@@ -87,14 +87,14 @@ export default function SambaDashboard() {
       .map(([market_name, mData]) => ({
         market_name,
         registered: mData.registered,
-        sold_products: mData.sold_products,
+        sales_amount: mData.sales_amount,
         count_unit: mData.count_unit,
         accounts: Array.from(mData.accts.values())
           .map(a => ({
             account_id: a.account_id,
             account_label: a.account_label,
             registered: a.registered,
-            sold_products: a.sold_products,
+            sales_amount: a.sales_amount,
             count_unit: a.count_unit,
             sources: Array.from(a.srcMap.entries())
               .map(([source_site, sData]) => ({
@@ -112,7 +112,7 @@ export default function SambaDashboard() {
   }, [byAccount])
 
   // 판매비중 분모 = 전 마켓 판매합(30일) — 마켓/계정 행 비중의 합이 100%가 되게
-  const totalSoldAll = useMemo(() => byMarket.reduce((acc, m) => acc + m.sold_products, 0), [byMarket])
+  const totalSalesAll = useMemo(() => byMarket.reduce((acc, m) => acc + m.sales_amount, 0), [byMarket])
 
   const now = new Date()
   const year = now.getFullYear()
@@ -452,10 +452,10 @@ export default function SambaDashboard() {
                         {MARKET_DISPLAY[m.market_name] ?? m.market_name}
                       </td>
                       {(() => {
-                        const ratio = totalSoldAll > 0 ? m.sold_products / totalSoldAll * 100 : 0
+                        const ratio = totalSalesAll > 0 ? m.sales_amount / totalSalesAll * 100 : 0
                         return (
                           <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: c.text }}>
-                            {totalSoldAll > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                            {totalSalesAll > 0 ? `${ratio.toFixed(1)}%` : '-'}
                           </td>
                         )
                       })()}
@@ -476,10 +476,10 @@ export default function SambaDashboard() {
                               {a.account_label || a.account_id}
                             </td>
                             {(() => {
-                              const ratio = totalSoldAll > 0 ? (a.sold_products ?? 0) / totalSoldAll * 100 : 0
+                              const ratio = totalSalesAll > 0 ? (a.sales_amount ?? 0) / totalSalesAll * 100 : 0
                               return (
                                 <td style={{ padding: '0.4rem 0', textAlign: 'right', fontSize: '0.8125rem', color: c.textSub }}>
-                                  {totalSoldAll > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                                  {totalSalesAll > 0 ? `${ratio.toFixed(1)}%` : '-'}
                                 </td>
                               )
                             })()}
@@ -530,7 +530,7 @@ export default function SambaDashboard() {
                   <tr style={{ borderTop: `1px solid ${c.border}` }}>
                     <td style={{ padding: '0.5rem 0', color: c.text, fontWeight: 600 }}>합계</td>
                     <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: c.text }}>
-                      {totalSoldAll > 0 ? '100.0%' : '-'}
+                      {totalSalesAll > 0 ? '100.0%' : '-'}
                     </td>
                     <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(totalReg)}</td>
                   </tr>
