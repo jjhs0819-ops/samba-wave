@@ -557,8 +557,11 @@ class JobWorker:
                     job_type="autotune_transmit",
                 )
                 total = recovered + at_recovered
+                # [2026-08-01] 복구 0건이어도 반드시 commit — 안 하면 SELECT 로 열린 트랜잭션이
+                # 안 닫힌 채 세션 반환돼 idle in transaction 좀비가 폴링마다 쌓인다(146개 누적 →
+                # DB 커넥션 고갈 → 크림 오토튠이 DB 못 잡아 정지). 조건부 commit 금지.
+                await session.commit()
                 if total:
-                    await session.commit()
                     logger.info(
                         f"[잡워커] stuck running 잡 {total}건 → pending/failed 복구"
                         + (
@@ -989,6 +992,10 @@ class JobWorker:
                         )
 
                 if job is None:
+                    # [2026-08-01] 잡 없을 때도 반드시 commit — SELECT 로 열린 트랜잭션이 안 닫힌 채
+                    # 세션 반환돼 idle in transaction 좀비가 폴링마다 누적(130개+ → 커넥션 고갈 →
+                    # 크림 오토튠 DB 못 잡아 정지). 대부분 폴링이 이 경로라 최대 누수원이었다.
+                    await session.commit()
                     break
                 self._active_job_ids.add(job.id)
                 await session.commit()
@@ -1392,6 +1399,9 @@ class JobWorker:
                 job = await session.get(SambaJob, job_id)
                 if not job:
                     logger.error(f"[잡워커] 수집 잡 없음: {job_id}")
+                    # [2026-08-01] commit 후 return — 안 하면 SELECT 로 열린 트랜잭션이 안 닫힌 채
+                    # 세션 반환돼 idle in transaction 좀비 누적(WHERE id=$1 쿼리 30개+ 관측).
+                    await session.commit()
                     return
                 try:
                     await self._run_collect(job, repo, session)
@@ -1437,6 +1447,9 @@ class JobWorker:
                 job = await session.get(SambaJob, job_id)
                 if not job:
                     logger.error(f"[잡워커] 전송 잡 없음: {job_id}")
+                    # [2026-08-01] commit 후 return — 안 하면 SELECT 로 열린 트랜잭션이 안 닫힌 채
+                    # 세션 반환돼 idle in transaction 좀비 누적(WHERE id=$1 쿼리 30개+ 관측).
+                    await session.commit()
                     return
                 try:
                     await self._run_transmit(job, repo, session)

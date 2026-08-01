@@ -702,7 +702,7 @@ _rank_fix = {"used": 0, "cap": 300}
 async def _fetch_highest_bid(cli, h, pid: str, opt: str) -> int:
     """옵션별 최고구매입찰가 — 크림 판매입찰가는 이 값 이상이어야 등록/수정된다."""
     try:
-        r = await cli.get(f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
+        r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
         if r.status_code != 200:
             return 0
         for o in (r.json() or {}).get("options") or []:
@@ -739,8 +739,8 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
         _pbody = {"price": int(target)}
         if _pkey not in _keep_impossible:
             _pbody["is_keep_on_deferred"] = True
-        r = await cli.patch(
-            f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h, json=_pbody
+        r = await _rq(
+            "PATCH", f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h, json=_pbody
         )
         # 보관 불가 상품(400 '보관 신청이 불가능') → keep 빼고 재시도(갱신 자체는 성공)
         if (
@@ -750,8 +750,8 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
         ):
             _keep_impossible.add(_pkey)
             _pbody.pop("is_keep_on_deferred")
-            r = await cli.patch(
-                f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h, json=_pbody
+            r = await _rq(
+                "PATCH", f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h, json=_pbody
             )
         if r.status_code not in (200, 201):
             # 사유 기록 — 그동안 실패 건수만 보이고 원인을 몰라 대응이 불가했다.
@@ -774,7 +774,8 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                     return "fail", None
                 if hb > 0 and hb != int(target):
                     _hb_clamp["used"] += 1
-                    r2 = await cli.patch(
+                    r2 = await _rq(
+                        "PATCH",
                         f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
                         headers=h,
                         json={"price": int(hb)},
@@ -816,7 +817,8 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
             _new = int(target) - 1000
             if _new > 0 and _floor > 0 and _new >= _floor:
                 _rank_fix["used"] += 1
-                r3 = await cli.patch(
+                r3 = await _rq(
+                    "PATCH",
                     f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
                     headers=h,
                     json={"price": _new},
@@ -824,7 +826,8 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                 if r3.status_code in (200, 201):
                     return "ok", (r3.json() or {}).get("live_rank")
         if is_nocomp and rank is not None and rank != 1:
-            await cli.patch(
+            await _rq(
+                "PATCH",
                 f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
                 headers=h,
                 json={"price": int(cur)},
@@ -919,25 +922,64 @@ async def _fetch_live_asks(h: dict) -> list[dict]:
     return await _fetch_asks_by_status(h, "live")
 
 
-async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
-    """상태별 내 입찰 전량(공식 OpenAPI, 페이징). status='live'|'expired' 등. 읽기 전용."""
-    out: list[dict] = []
-    page = 1
-    async with httpx.AsyncClient(timeout=25) as cli:
-        while True:
-            r = await cli.get(
-                f"{KREAM_OPENAPI_BASE}/asks",
-                headers=h,
-                params={"status": status, "page": page, "per_page": _PER_PAGE},
+async def _rq(method: str, url: str, *, headers=None, params=None, json=None, tries=4):
+    """터널 경유 요청 — 응답이 11초 안 오면 그 요청을 버리고(취소불가 TLS stuck) 새 연결로 재시도.
+    [2026-08-01] 크림/스니덩크 호출 하나가 anyio TLS 락에서 영구 매달려(httpx timeout·cancel 무효)
+    사이클 전체가 멈추던 것 해소. 매번 새 연결(keep-alive off)."""
+
+    async def _do():
+        async with httpx.AsyncClient(
+            timeout=10, limits=httpx.Limits(max_keepalive_connections=0)
+        ) as c:
+            return await c.request(
+                method, url, headers=headers, params=params, json=json
             )
-            r.raise_for_status()
-            d = r.json()
-            items = d.get("items") or []
-            out.extend(items)
-            total = int(d.get("total") or 0)
-            if not items or page * _PER_PAGE >= total:
-                break
-            page += 1
+
+    for attempt in range(tries):
+        task = asyncio.ensure_future(_do())
+        done, _p = await asyncio.wait({task}, timeout=11)
+        if task in done:
+            exc = task.exception()
+            if exc is None:
+                return task.result()
+            if attempt >= tries - 1:
+                raise exc
+            await asyncio.sleep(0.3)
+            continue
+        task.cancel()
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+    raise TimeoutError(f"{method} stuck: {url[:60]}")
+
+
+async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
+    """상태별 내 입찰 전량(공식 OpenAPI). 읽기 전용.
+    [2026-08-01] 6천건=120페이지 순차면 stuck 하나에 사이클 정지 → page1로 총수 파악 후
+    나머지 8개씩 동시 조회(~23초), 각 페이지는 _rq 로 stuck-버리고-재시도."""
+
+    async def _page(p: int) -> dict:
+        r = await _rq(
+            "GET",
+            f"{KREAM_OPENAPI_BASE}/asks",
+            headers=h,
+            params={"status": status, "page": p, "per_page": _PER_PAGE},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    d1 = await _page(1)
+    out: list[dict] = list(d1.get("items") or [])
+    total = int(d1.get("total") or 0)
+    npages = (total + _PER_PAGE - 1) // _PER_PAGE
+    if npages <= 1 or not out:
+        return out
+    sem = asyncio.Semaphore(8)
+
+    async def _one(p: int) -> dict:
+        async with sem:
+            return await _page(p)
+
+    for d in await asyncio.gather(*[_one(p) for p in range(2, npages + 1)]):
+        out.extend(d.get("items") or [])
     return out
 
 
@@ -1017,7 +1059,8 @@ async def _fetch_snkr_used(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
     page = 1
     while page <= 20:
         try:
-            r = await cli.get(
+            r = await _rq(
+                "GET",
                 _SNKR_USED_URL.format(id=snkr_id),
                 headers=_SNKR_HEADERS,
                 params={
@@ -1531,13 +1574,14 @@ async def _load_matched_products() -> list[dict]:
                     "resell_matches->'kream'->>'product_id' AS kid, "
                     "(resell_matches->'kream'->>'ambiguous')='true' AS ambiguous, "
                     "options::text AS opts, name, "
-                    "(resell_matches->'kream'->>'verified')='true' AS verified "
+                    "(resell_matches->'kream'->>'verified')='true' AS verified, "
+                    "COALESCE(extra_data->>'currency','JPY') AS currency "
                     "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                 )
             )
         ).all()
-    for snkr_id, kid, ambiguous, opts_txt, name, verified in rows:
+    for snkr_id, kid, ambiguous, opts_txt, name, verified, currency in rows:
         db_opts: dict = {}
         fixed: dict = {}
         if opts_txt:
@@ -1561,6 +1605,9 @@ async def _load_matched_products() -> list[dict]:
                 "kid": str(kid or ""),
                 "name": str(name or ""),
                 "verified": bool(verified),  # 검수 확정 — 비카드 리스톡 신규등록 게이트
+                # [2026-08-01] 옵션가 통화 — 스니덩크 글로벌은 KRW/USD 로 저장된다.
+                # 코드가 전부 JPY 로 가정해 원화값을 엔화로 곱해 9배 부풀린 입찰 사고 발생.
+                "currency": str(currency or "JPY").upper(),
                 "db_opts": db_opts,
                 "fixed": fixed,
             }
@@ -1840,7 +1887,7 @@ async def _exec_create_ask(
     if _key not in _keep_impossible:
         body["is_keep_on_deferred"] = True
     try:
-        r = await cli.post(f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
+        r = await _rq("POST", f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
         if r.status_code in (200, 201):
             return True, "ok"
         detail = str((r.json() or {}).get("detail") or r.text)[:200]
@@ -1848,7 +1895,7 @@ async def _exec_create_ask(
         if "보관" in detail and "is_keep_on_deferred" in body:
             _keep_impossible.add(_key)
             body.pop("is_keep_on_deferred")
-            r = await cli.post(f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
+            r = await _rq("POST", f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
             if r.status_code in (200, 201):
                 return True, "ok"
             detail = str((r.json() or {}).get("detail") or r.text)[:200]
@@ -1859,7 +1906,7 @@ async def _exec_create_ask(
 
 async def _exec_delete_ask(cli: httpx.AsyncClient, h: dict, ask_id) -> bool:
     try:
-        r = await cli.delete(f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h)
+        r = await _rq("DELETE", f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h)
         return r.status_code in (200, 204)
     except Exception:
         return False
@@ -1981,7 +2028,11 @@ async def _process_shoe_asks(
             if kid in live_map:
                 od = live_map[kid].get(opt) or {"price": 0, "stock": 0}
             else:
-                od = (kid_to_opts.get(kid) or {}).get(opt)
+                # [2026-08-01 통화사고] DB 폴백 금지 — 신발 DB 원가에 원화(KRW)로 저장된 오염분이
+                # 2만개 있어 엔화로 오인하면 9배 부풀린 조정이 나간다. 실시간(JP native, 엔화)
+                # 조회 실패 시엔 이번 사이클 건너뛴다(다음 사이클 재시도).
+                c["hold"] += 1
+                continue
             if od is None:
                 c["nocost"] += 1
                 continue
@@ -2887,12 +2938,22 @@ async def run_kream_unified_once() -> dict:
                 r["noncard"] = 1
                 if not prod.get("verified"):
                     return r  # 검수 확정분만 신규등록 대상
+                # [2026-08-01 통화가드] 옵션가가 JPY 가 아니면(스니덩크 글로벌 KRW/USD) 등록 금지.
+                # 코드 전체가 JPY 가정이라 원화·달러값을 엔으로 곱해 9배~100배 부풀린 입찰 사고 발생
+                # (DC7695-003: ¥9,999 상품을 236만원에 입찰). 환산 정합 확인 전까지 차단.
+                if str(prod.get("currency") or "JPY").upper() != "JPY":
+                    return r
                 for _nm, _d in (prod.get("db_opts") or {}).items():
                     _st, _pr = int(_d.get("stock") or 0), int(_d.get("price") or 0)
                     if _st <= 0 or _pr <= 0:
                         continue
                     if (kid, _nm) in ask_index:
                         continue  # 이미 입찰 있음
+                    # [2026-08-01 오염가드] DB 원가가 상식범위 밖이면 등록 금지.
+                    # 실사고: ¥294(실제 ¥40,000)·¥188,000(실제 ¥13,950) 오염값으로 계산해
+                    # 56만~262만원 이상입찰 23건(5,595만원) 발생. 신발/의류 하한 5,000엔.
+                    if _pr < 5000:
+                        continue
                     if _pr > POLICY["max_cost_jpy"]:
                         continue
                     _base = calc_base(
