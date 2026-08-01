@@ -240,9 +240,19 @@ class SambaCSInquiryService:
                     external_sent=False,
                     account_id=account_id,
                     account_name=account_label,
-                    market_order_id=note.get("ordNo"),
-                    questioner=note.get("regpeId"),
-                    product_name=note.get("itemNm"),
+                    # SSG 가 ordNo/regpeId 를 JSON number 로 내려주는 쪽지가 있어
+                    # str 캐스팅 없이는 varchar 바인딩 실패 → 문의 저장 누락 (2026-08-02)
+                    market_order_id=(
+                        str(note["ordNo"]) if note.get("ordNo") is not None else None
+                    ),
+                    questioner=(
+                        str(note["regpeId"])
+                        if note.get("regpeId") is not None
+                        else None
+                    ),
+                    product_name=(
+                        str(note["itemNm"]) if note.get("itemNm") is not None else None
+                    ),
                     content=content,
                     reply_status="pending",
                     inquiry_date=parsed_date,
@@ -285,9 +295,16 @@ class SambaCSInquiryService:
                     external_sent=False,
                     account_id=account_id,
                     account_name=account_label,
-                    market_order_id=qna.get("ordNo"),
-                    questioner=qna.get("regpeId"),
-                    product_name=qna.get("itemNm"),
+                    # 쪽지와 동일 — Q&A 도 ordNo/regpeId 숫자 응답 대비 str 캐스팅
+                    market_order_id=(
+                        str(qna["ordNo"]) if qna.get("ordNo") is not None else None
+                    ),
+                    questioner=(
+                        str(qna["regpeId"]) if qna.get("regpeId") is not None else None
+                    ),
+                    product_name=(
+                        str(qna["itemNm"]) if qna.get("itemNm") is not None else None
+                    ),
                     content=qna.get("postngCntt") or qna.get("postngTitleNm") or "",
                     reply_status="pending",
                     inquiry_date=parsed_date,
