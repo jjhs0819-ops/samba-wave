@@ -292,7 +292,13 @@ async def main():
                                     f"https://media.bunjang.co.kr/product/{bpid}_1_w856.jpg"
                                 )
                             ).content
-                            out, _reason = fp.compose_clean(Image.open(io.BytesIO(raw)))
+                            _pim = Image.open(io.BytesIO(raw))
+                            # [2026-08-01] 눕혀찍은/파노라마(가로>세로) 사진은 정사각화 시 찌그러짐/잘림
+                            # → 등록 거부. 세로 카드 사진만 통과(계정 이미지품질).
+                            if _pim.width / max(_pim.height, 1) > 1.2:
+                                print(f"  wide사진skip {title[:38]}")
+                                continue
+                            out, _reason = fp.compose_clean(_pim)
                             buf = io.BytesIO()
                             out.save(buf, "JPEG", quality=92)
                             img_bytes = buf.getvalue()

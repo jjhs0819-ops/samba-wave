@@ -112,14 +112,14 @@ class Whale:
             return d
         return d.get("data", {}).get("product", {})
 
-    def search(self, keyword, n=40):
-        """번장 키워드 검색 → list (find_v2)."""
+    def search(self, keyword, n=40, page=0):
+        """번장 키워드 검색 → list (find_v2). page 넘기면 뒤쪽(덜 유명한) 매물."""
         import urllib.parse as up
 
         d = self.fetch_json(
             "https://api.bunjang.co.kr/api/1/find_v2.json?q="
             + up.quote(keyword)
-            + f"&order=score&page=0&n={n}&req_ref=search&stat_device=w&version=5"
+            + f"&order=score&page={page}&n={n}&req_ref=search&stat_device=w&version=5"
         )
         return d.get("list", []) if not d.get("_err") else []
 

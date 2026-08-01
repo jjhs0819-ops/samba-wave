@@ -19,7 +19,8 @@ utf8_stdout()
 
 MAX_COST = 300000
 MIN_COST = 500
-WANT = 70  # 목표 30 + 같은카드/기존KV dedup 여유(넉넉히)
+WANT = 150  # 목표 30 + dedup(기등록분) 여유 크게 — 페이지네이션으로 뒤쪽 신규카드 확보
+PAGES = 5  # 키워드당 검색 페이지 수 — page0=인기(기등록), 뒤 페이지=덜 유명한 신규
 
 ATEEZ_KW = [
     "에이티즈 골든아워 포토카드",
@@ -93,6 +94,51 @@ POKE_KW = [
     "우롱 ex",
     "안농 ar",
     "장크로 ex",
+    # [2026-08-01] 키워드 대폭 확장 — 인기몬 44종이 대부분 등록완료라 신규 확보 위해 추가.
+    "이상해꽃 ex",
+    "거북왕 ex",
+    "갸라도스 ex",
+    "한카리아스 ex",
+    "칠색조 ex",
+    "루기아 v",
+    "다크라이 ex",
+    "지라치 ex",
+    "제크로무 ex",
+    "레시라무 ex",
+    "큐레무 vmax",
+    "이벨타르 ex",
+    "제르네아스 ex",
+    "솔가레오 ex",
+    "루나아라 ex",
+    "네크로즈마 ex",
+    "펄기아 ex",
+    "디아루가 ex",
+    "기라티나 ex",
+    "아르세우스 ex",
+    "그란돈 ex",
+    "가이오가 vmax",
+    "라이코 ex",
+    "스이쿤 ex",
+    "메타그로스 ex",
+    "밀로틱 ex",
+    "글라이온 ex",
+    "마기아나 ex",
+    "볼케니온 ex",
+    "제라오라 ex",
+    "루가루간 ex",
+    "가랄 파이어 ex",
+    "레지에레키 vmax",
+    "버섯모 ex",
+    "찌리비 ex",
+    "펜드라 ex",
+    "님피아 sar",
+    "에이스번 ex",
+    "고릴타 ex",
+    "인텔리레온 ex",
+    "리엔트 ex",
+    "만마드 ex",
+    "타부자고 sar",
+    "레쿠쟈 vmax",
 ]
 
 
@@ -291,7 +337,7 @@ def _norm(nm: str) -> str:
     return re.sub(r"[^가-힣a-z0-9]", "", (nm or "").lower())
 
 
-PER_KW = 3  # 키워드당 최대 채택(다양성 강제 — 인기카드 한 종이 슬롯 독식 방지)
+PER_KW = 8  # 키워드당 최대 채택 — 페이지네이션으로 뒤쪽 신규카드까지 넉넉히
 
 
 def _safe(w, fn_name, *a):
@@ -319,7 +365,15 @@ def collect(w: Whale, keywords, label):
         # 포켓몬: 번장 검색이 fuzzy(인기카드 flood)라, 결과 이름에 이 키워드의
         # 몬 이름이 실제로 있어야 채택 → 검색어 다양성이 유지된다.
         kw_core = kw.split()[0] if label == "P" else ""
-        items = _safe(w, "search", kw, 40) or []
+        # 여러 페이지 넘겨 뒤쪽(덜 유명한=미등록) 매물까지 긁는다. page0만 보면 인기카드뿐.
+        items = []
+        for _pg in range(PAGES):
+            if kw_taken >= PER_KW or len(out) >= WANT:
+                break
+            pg = _safe(w, "search", kw, 40, _pg) or []
+            if not pg:
+                break
+            items += pg
         for it in items:
             if len(out) >= WANT or kw_taken >= PER_KW:
                 break
