@@ -671,9 +671,13 @@ async def get_kream_margin_policy_public(
                 "overseas_base_fee": k.get("kreamOverseasBaseFee", 1370),
                 "overseas_fee_rate": k.get("kreamOverseasFeeRate", 3.3),
                 # 실물(신발/의류/시계) 정산 수수료 — 기본(원) + 등급율(%) + VAT(%). PSA 낱장 무료.
+                # 등급율은 판매등급(kreamSellerLevel 1~5)에서 크림 수수료표대로 자동 도출(일반 기준).
                 "item_fee_base": k.get("kreamItemFeeBase", 2500),
-                "item_fee_rate": k.get("kreamItemFeeRate", 5.60),
+                "item_fee_rate": {5: 5.50, 4: 5.60, 3: 5.70, 2: 5.85, 1: 6.00}.get(
+                    int(k.get("kreamSellerLevel", 4) or 4), 5.60
+                ),
                 "item_fee_vat": k.get("kreamItemFeeVat", 10),
+                "kream_seller_level": int(k.get("kreamSellerLevel", 4) or 4),
             }
     raise HTTPException(status_code=404, detail="KREAM 정책 설정 없음")
 

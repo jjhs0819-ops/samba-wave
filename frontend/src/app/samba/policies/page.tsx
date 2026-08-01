@@ -146,7 +146,7 @@ interface MarketPolicyForm {
   kreamOverseasBaseFee?: number       // 해외판매 기본수수료 (원) — 정산 차감
   kreamOverseasFeeRate?: number       // 해외판매 수수료율 (%) — 판매가 대비, 정산 차감
   kreamItemFeeBase?: number           // 실물(신발/의류/시계) 기본수수료 (원) — 정산 차감
-  kreamItemFeeRate?: number           // 실물 등급수수료율 (%) — 판매등급별, 매달 변동
+  kreamSellerLevel?: number           // 크림 판매등급 (1~5) — 등급수수료율 자동 도출(매달 변동)
   kreamItemFeeVat?: number            // 실물 수수료 VAT율 (%) — 별도 부과
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
@@ -1675,9 +1675,15 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발/의류/시계 주문 정산 차감(PSA 낱장 무료·해외배송 제외). 크림 판매등급 기본수수료</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 등급수수료율</span>
-                    <NumInput value={mp.kreamItemFeeRate ?? 5.6} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamItemFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>매달 판매등급 따라 변동(Level4=5.60·Level1=6.00). 정산=판매가−(기본+판매가×이율)×(1+VAT)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>내 판매등급</span>
+                    <select style={{ ...inputStyle, width: 'auto' }} value={mp.kreamSellerLevel ?? 4} onChange={(e) => { setCurrentMarketPolicy({ ...mp, kreamSellerLevel: Number(e.target.value) }); triggerAutoSave() }}>
+                      <option value={5}>Level 5 · 6,000만↑ (5.50%)</option>
+                      <option value={4}>Level 4 · 2,000만~6,000만 (5.60%)</option>
+                      <option value={3}>Level 3 · 1,000만~2,000만 (5.70%)</option>
+                      <option value={2}>Level 2 · 200만~1,000만 (5.85%)</option>
+                      <option value={1}>Level 1 · 200만 미만 (6.00%)</option>
+                    </select>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>크림 판매등급 선택 → 등급수수료율 자동 적용(일반 기준). 매달 등급 바뀌면 여기만 변경</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 VAT</span>
