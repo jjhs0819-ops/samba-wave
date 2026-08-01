@@ -1439,7 +1439,11 @@ async def _sourcing_job_cleanup_loop() -> None:
         # 활성(pending/running)은 절대 건드리지 않음.
         #  ① transmit 종료 잡: 7일↑ 삭제
         #  ② tetris_sync 출처 transmit: 3일↑ 삭제 (churn 다발)
-        #  ③ autotune_transmit 종료 잡: 1일↑ 삭제 (#459 — 고볼륨 transient sync)
+        #  ③ autotune_transmit 완료 잡: 1시간↑ 삭제 — 일 10만건 규모라 1일 보존 시
+        #     테이블 13만행 적체 → 워커 폴링이 seq scan 으로 플립되어 Postgres CPU 500%,
+        #     오토튠 사이클 48s→108s 반토막 (2026-08-02 실측). 슬롯 처리량 계산
+        #     (job/worker.py)은 최근 10분 완료잡만 읽으므로 1시간 보존이면 충분.
+        #     failed/cancelled 는 디버깅 근거로 1일 보존 유지.
         _tx_old_deleted = 0
         _tetris_job_deleted = 0
         _autotune_tx_deleted = 0
@@ -1480,8 +1484,10 @@ async def _sourcing_job_cleanup_loop() -> None:
                     text(
                         "DELETE FROM samba_jobs "
                         "WHERE job_type = 'autotune_transmit' "
-                        "AND status IN ('completed', 'failed', 'cancelled') "
-                        "AND created_at < now() - interval '1 day'"
+                        "AND (   (status = 'completed' "
+                        "         AND created_at < now() - interval '1 hour') "
+                        "     OR (status IN ('failed', 'cancelled') "
+                        "         AND created_at < now() - interval '1 day'))"
                     )
                 )
                 await session.commit()
@@ -1498,7 +1504,7 @@ async def _sourcing_job_cleanup_loop() -> None:
             or _autotune_tx_deleted
         ):
             _log.info(
-                "[sourcing-cleanup] expired=%d deleted=%d transmit_7d=%d tetris_3d=%d autotune_1d=%d",
+                "[sourcing-cleanup] expired=%d deleted=%d transmit_7d=%d tetris_3d=%d autotune_1h=%d",
                 _expired_n,
                 _deleted_n,
                 _tx_old_deleted,
