@@ -962,15 +962,23 @@ async def _fetch_live_asks(h: dict) -> list[dict]:
 
 
 async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
-    """상태별 내 입찰 전량(공식 OpenAPI, 페이징). status='live'|'expired' 등. 읽기 전용."""
+    """상태별 내 입찰 전량(공식 OpenAPI, 페이징). status='live'|'expired' 등. 읽기 전용.
+    [2026-08-01 행 수정] keep-alive 연결이 half-open 으로 죽으면 TLS 읽기가 anyio 락 대기서
+    무한 매달려 httpx timeout 이 안 먹었다(매 사이클 시작서 크림 오토튠 전체 정지). →
+    keep-alive 끔(매번 새 연결) + asyncio.wait_for 하드 타임아웃(stuck 시 끊고 재시도)."""
     out: list[dict] = []
     page = 1
-    async with httpx.AsyncClient(timeout=25) as cli:
+    async with httpx.AsyncClient(
+        timeout=25, limits=httpx.Limits(max_keepalive_connections=0)
+    ) as cli:
         while True:
-            r = await cli.get(
-                f"{KREAM_OPENAPI_BASE}/asks",
-                headers=h,
-                params={"status": status, "page": page, "per_page": _PER_PAGE},
+            r = await asyncio.wait_for(
+                cli.get(
+                    f"{KREAM_OPENAPI_BASE}/asks",
+                    headers=h,
+                    params={"status": status, "page": page, "per_page": _PER_PAGE},
+                ),
+                timeout=40,
             )
             r.raise_for_status()
             d = r.json()

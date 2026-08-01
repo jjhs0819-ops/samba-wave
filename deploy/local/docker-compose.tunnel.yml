@@ -174,6 +174,8 @@ services:
   samba-kream:
     image: local-samba-api
     restart: unless-stopped
+    # py-spy 스택 덤프용(루프 행 원인 진단). ptrace 권한 필요. [2026-08-01]
+    cap_add: [SYS_PTRACE]
     depends_on:
       postgres:
         condition: service_healthy
@@ -197,7 +199,7 @@ services:
       KREAM_EXEC_BOX: "1"  # [A] 박스(해외배송) 갱신/삭제 실행 — 섀도 검증 완료(175건 계산정확)
       KREAM_EXEC_SHOE: "1"  # [B] 신발(mm) 갱신/삭제 실행 — 실시간 사이즈시세 이식 후 섀도검증
                             # (247상품 100% 조회, 갱신198·삭제60, 샘플 전건 인상/삭제·인하 0)
-      KREAM_WATCHDOG_STALL_SEC: "300"  # 루프 행 감시 — 5분 무진행 시 자동 재기동(반복 정지 대응)
+      KREAM_WATCHDOG_STALL_SEC: "600"  # 루프 행 감시 — 5분 무진행 시 자동 재기동(반복 정지 대응)
       # [2026-08-01 임시차단] 신발/박스 신규등록 restock 이 매사이클 크림/스니덩크 API 대량조회 →
       # 소켓 압박으로 카드 갱신루프까지 행 유발 의심. 카드 루프 안정화 확인 후 재활성.
       KREAM_EXEC_SHOE_RESTOCK: "0"  # [B-2] 신발 신규 자동등록 — 임시 OFF(안정화 진단)

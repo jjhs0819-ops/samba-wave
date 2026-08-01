@@ -444,7 +444,10 @@ class SSGPlugin(SourcingPlugin):
                 return RefreshResult(
                     product_id=product_id,
                     error=_ext_msg
-                    or f"SSG 상세 조회 실패 (데몬/DOM위임 미응답 또는 파싱 실패): {site_product_id}",
+                    # SSG 상세조회는 2026-07-29부터 확장앱 전용 강제(sourcing_queue.py
+                    # _resolve_job_owner) — "데몬" 표현은 실제 라우팅과 안 맞아 혼선만
+                    # 유발한다(2026-08-01 확인: 실패건 owner가 전부 확장앱 device_id였음).
+                    or f"SSG 상세 조회 실패 (확장앱 미응답 또는 파싱 실패): {site_product_id}",
                 )
 
             new_sale_price = detail.get("salePrice", 0)

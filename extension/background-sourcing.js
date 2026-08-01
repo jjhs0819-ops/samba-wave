@@ -2944,9 +2944,23 @@ async function pollSourcingOnce() {
   // 4, 6, 8번이 먼저 끝나는 현상 발생 (직렬 처리 무용). 한 번에 한 호출만 허용.
   if (globalThis._pollSourcingInflight) return false
   globalThis._pollSourcingInflight = true
+  // 워치독 — _pollSourcingOnceImpl 내부(탭/네트워크 등)가 타임아웃 없이 영원히
+  // 멈추면 finally가 영영 안 돌아 락이 고착되고 이후 모든 폴링이 영구 정지된다.
+  // 2026-08-01 사고: 백엔드 재기동 중 응답 끊긴 요청이 이 상태로 남아 SSG/MUSINSA
+  // 등 확장앱 라우팅 사이트 전체가 멈췄다. 3분 넘으면 강제로 락만 풀어 다음 폴링이
+  // 재개되게 한다(내부에서 멈춘 개별 작업 자체는 못 살리지만 전체 정지는 막는다).
+  let watchdogTimer
+  const watchdog = new Promise(resolve => {
+    watchdogTimer = setTimeout(() => {
+      console.error('[소싱] pollSourcingOnce 워치독 발동 — 3분 초과, 락 강제 해제')
+      resolve('watchdog-timeout')
+    }, 180000)
+  })
   try {
-    return await _pollSourcingOnceImpl()
+    const result = await Promise.race([_pollSourcingOnceImpl(), watchdog])
+    return result === 'watchdog-timeout' ? false : result
   } finally {
+    clearTimeout(watchdogTimer)
     globalThis._pollSourcingInflight = false
   }
 }
@@ -3897,7 +3911,10 @@ async function handleSourcingJob(job) {
           const _redirectStaff = href && href.indexOf('itemView.ssg') === -1
           const _flagMsgTitle = document.title === 'flagMsg'
           return {
-            captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다'),
+            // 2026-08-01: SSG 차단 페이지 문구 변경 확인 — "비정상적인 접근 또는
+            // 자동화된 환경(봇)이 감지되어" 신규 문구 추가. 기존 문구도 구버전 대비 유지.
+            captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다') ||
+                     body.includes('비정상적인 접근') || body.includes('자동화된 환경'),
             staffOnly: src.indexOf('임직원 및 사업자 회원') !== -1 ||
                        src.indexOf('임직원만 구매') !== -1 ||
                        _redirectStaff ||
@@ -3909,6 +3926,9 @@ async function handleSourcingJob(job) {
       if (_pc.captcha) {
         console.log(`[SSG] reCAPTCHA 차단 감지: ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
+        // 차단 감지됐는데도 곧바로 다음 잡을 계속 당겨오면 차단 중에 계속 두드리는
+        // 꼴이라 더 굳어질 위험 — 감지된 순간 전체 폴링 5분 멈춰서 식힌다.
+        pauseCollectPolling(300000, 'SSG reCAPTCHA 차단 감지')
       } else if (_pc.staffOnly) {
         // 임직원/사업자 회원 전용 — 일반 고객 구매 불가 → 백엔드에서 sold_out 처리하도록 명시적 신호 전달
         console.log(`[SSG] 임직원 전용 상품 감지 → staffOnly 신호 전송: ${job.productId}`)

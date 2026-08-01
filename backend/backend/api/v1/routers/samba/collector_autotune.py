@@ -1613,6 +1613,26 @@ async def _site_autotune_loop(device_id: str, site: str):
                             products.append(p)
 
                     if products:
+                        # 동시성 클레임 — 같은 사이트를 담당하는 다른 PC가 last_refreshed_at
+                        # 오래된순으로 동시에 SELECT하면 이 배치가 실제로 refresh 완료되기
+                        # 전까지(사이트당 수십초~수분) 동일 상품을 그대로 재선택해 중복
+                        # 요청을 보낸다. SSG 4PC 동시 폭주 → WAF 봇차단 사고(2026-08-01)
+                        # 원인. SELECT 직후 즉시 last_refreshed_at을 찍어 클레임하면
+                        # 다른 PC의 다음 SELECT부터 이 배치가 후순위로 밀려 겹치지 않는다.
+                        # _on_result/에러 후처리가 실제 완료 시각으로 다시 덮어쓰므로
+                        # 최종값에는 영향 없음 — race window만 제거한다.
+                        try:
+                            await session.execute(
+                                sa_update(_CP)
+                                .where(_CP.id.in_([p.id for p in products]))
+                                .values(last_refreshed_at=now)
+                            )
+                        except Exception as _claim_e:
+                            log.warning(
+                                "[오토튠][%s] 배치 클레임 스탬프 실패(무시): %s",
+                                site,
+                                _claim_e,
+                            )
                         filtered_count = len(products)
                         _gkey = (device_id, site)
                         _prev_idx = _autotune_global_idx.get(_gkey, 0)
