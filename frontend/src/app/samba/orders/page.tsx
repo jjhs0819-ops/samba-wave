@@ -471,7 +471,6 @@ export default function OrdersPage() {
   })
   const [trackingOrder, setTrackingOrder] = useState<SambaOrder | null>(null)
   const [trackingSyncing, setTrackingSyncing] = useState(false)
-  const [kreamExcelUploading, setKreamExcelUploading] = useState(false)
   // 주문 자동실행 인터벌 (분 단위, 0=OFF)
   const [autoSyncIntervalInput, setAutoSyncIntervalInput] = useState<number>(60)
   const [autoSyncEnabled, setAutoSyncEnabled] = useState<boolean>(false)
@@ -592,7 +591,6 @@ export default function OrdersPage() {
   // 백엔드가 dispatch 성공 시 order.status='shipping' / shipping_status='국내배송중'
   // 으로 갱신하므로 드롭박스가 자동으로 '국내배송중' 으로 바뀐다.
   const lastSentCountRef = useRef<number>(0)
-  const kreamExcelInputRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     if (!trackingStatusOpen) {
       lastSentCountRef.current = 0
@@ -670,41 +668,6 @@ export default function OrdersPage() {
       setLogMessages(prev => [...prev, `[송장 일괄] 오류: ${(err as Error).message}`])
     } finally {
       setTrackingSyncing(false)
-    }
-  }
-  const handleKreamExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    e.target.value = ''
-    setKreamExcelUploading(true)
-    try {
-      const form = new FormData()
-      form.append('file', f)
-      const res = await fetchWithAuth(`${SAMBA_PREFIX}/orders/kream-excel`, {
-        method: 'POST',
-        body: form,
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || '업로드 실패')
-      if (data.mode === 'cost_backfill') {
-        // 마스터 엑셀(샵마인 시트) — 실구매가/소싱주문번호 백필 + 스니덩크 해외송장 수집 + 허브넷 기입
-        let msg = `실구매가 ${fmtNum(data.filled)}건 채움 · 해외송장 ${fmtNum(data.tracking_shipped)}/${fmtNum(data.tracking_checked)}건 수집 · 허브넷 ${fmtNum(data.hubnet_updated ?? 0)}건 기입 · 미매칭 ${fmtNum(data.unmatched)}건`
-        if (data.cookie_missing) msg += ' (SNKRDUNK 세션쿠키 없음 — 확장앱으로 로그인 필요, 송장은 건너뜀)'
-        if (data.hubnet_error) msg += ` (허브넷 오류: ${data.hubnet_error})`
-        await showAlert(msg, data.cookie_missing ? 'info' : 'success')
-      } else {
-        let msg = `크림주문 등록 완료: ${fmtNum(data.created)}건 생성, ${fmtNum(data.skipped)}건 중복 건너뜀`
-        if (data.tracking_checked !== undefined) {
-          msg += ` · 해외송장 ${fmtNum(data.tracking_shipped ?? 0)}/${fmtNum(data.tracking_checked ?? 0)}건 수집 · 허브넷 ${fmtNum(data.hubnet_updated ?? 0)}건 기입`
-        }
-        if (data.hubnet_error) msg += ` (허브넷 오류: ${data.hubnet_error})`
-        await showAlert(msg, 'success')
-      }
-      await loadOrders()
-    } catch (err) {
-      await showAlert((err as Error).message || '엑셀 업로드 실패', 'error')
-    } finally {
-      setKreamExcelUploading(false)
     }
   }
 
@@ -955,25 +918,6 @@ export default function OrdersPage() {
           }}
         >
           {trackingSyncing ? '큐 적재 중...' : '송장수집'}
-        </button>
-        <input
-          ref={kreamExcelInputRef}
-          type='file'
-          accept='.xlsx,.xls,.xlsm'
-          style={{ display: 'none' }}
-          onChange={handleKreamExcelUpload}
-        />
-        <button
-          onClick={() => kreamExcelInputRef.current?.click()}
-          disabled={kreamExcelUploading}
-          style={{
-            ...btn('secondary'),
-            ...(kreamExcelUploading ? btnDisabled : null),
-            padding: '6px 14px',
-            fontSize: 13,
-          }}
-        >
-          {kreamExcelUploading ? '등록 중...' : '크림주문'}
         </button>
         {selectedIds.size > 0 && (
           <button

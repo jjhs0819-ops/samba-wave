@@ -110,6 +110,9 @@ def create_application() -> FastAPI:
     from backend.middleware.api_gateway import ApiGatewayMiddleware
     from backend.middleware.security_headers import SecurityHeadersMiddleware
     from backend.middleware.tenant_context_middleware import TenantContextMiddleware
+    from backend.middleware.order_write_audit_middleware import (
+        OrderWriteAuditMiddleware,
+    )
     from backend.db.tenant_filter import register_tenant_filter_events
 
     # ORM 자동 tenant 필터 이벤트 등록 (앱 시작 1회)
@@ -123,6 +126,9 @@ def create_application() -> FastAPI:
     # - SecurityHeaders 가 모든 응답에 보안 헤더 부착 (HSTS/CSP/X-Frame)
     # - GZip 이 가장 바깥 — 모든 응답 본문 압축. minimum_size=500 으로 짧은 응답 skip.
     app.add_middleware(TenantContextMiddleware)
+    # [임시 진단] 포이즌 주문 실구매가/소싱주문번호 자동기입 호출자 추적.
+    # 원인 확정 후 이 라인과 order_write_audit_middleware.py 를 함께 제거할 것.
+    app.add_middleware(OrderWriteAuditMiddleware)
     app.add_middleware(ApiGatewayMiddleware, api_key=settings.api_gateway_key)
     app.add_middleware(
         CORSMiddleware,

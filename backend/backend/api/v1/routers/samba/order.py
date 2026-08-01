@@ -8,12 +8,10 @@ from typing import Any, Optional
 from fastapi import (
     APIRouter,
     Depends,
-    File,
     Header,
     HTTPException,
     Query,
     Request,
-    UploadFile,
 )
 from pydantic import BaseModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -3037,6 +3035,56 @@ async def fix_musinsa_fashionplus_mismatch(
     return {"fixed": fixed, "skipped": skipped, "total_checked": len(rows)}
 
 
+# 소싱처 상품 URL 에서 상품번호 추출 (무신사 /products/123, ABC /goods/123 등).
+# 소싱'주문'번호 칸에 상품번호가 잘못 박히는 사고를 잡기 위한 대조용.
+_PRODUCT_NO_IN_URL = re.compile(r"/(?:products|goods|app/goods|prod)/(\d+)")
+
+
+async def _reject_product_no_as_sourcing_order_no(
+    data: dict[str, Any], order_id: str, session: AsyncSession
+) -> None:
+    """소싱주문번호에 '소싱처 상품번호'가 들어오면 그 필드만 버린다 (in-place).
+
+    [2026-08-01 사고] 포이즌 주문 수집 중 외부 오토비더(python-httpx)가
+    PUT /orders/{id} 로 `source_url=musinsa.com/products/6563445` 와
+    `sourcing_order_number=6563445` 를 함께 보내 상품번호가 소싱주문번호 칸에
+    박혔다. 실제 발주를 안 한 주문이 '이행됨'으로 보이고, 송장수집은 그 번호로
+    소싱처를 조회해 영구 실패한다(무신사 주문번호는 18자리 날짜형).
+
+    어느 클라이언트가 보내든 경계에서 막는다. cost 등 나머지 필드는 그대로 둔다
+    (실구매가 자체는 유효할 수 있고, 여기서 판단할 근거가 없다).
+    """
+    from sqlalchemy import text as _guard_text  # noqa: F811
+
+    sono = str(data.get("sourcing_order_number") or "").strip()
+    if not sono:
+        return
+    # 같은 요청의 source_url 우선, 없으면 DB 에 저장된 기존 source_url 과 대조
+    url = str(data.get("source_url") or "").strip()
+    if not url:
+        try:
+            row = await session.execute(
+                _guard_text("SELECT source_url FROM samba_order WHERE id = :oid"),
+                {"oid": order_id},
+            )
+            url = str((row.scalar() or "")).strip()
+        except Exception as exc:  # 가드가 정상 수정을 막으면 안 됨
+            logger.warning("[소싱번호가드] source_url 조회 실패(통과): %s", exc)
+            return
+    if not url:
+        return
+    m = _PRODUCT_NO_IN_URL.search(url)
+    if m and m.group(1) == sono:
+        data.pop("sourcing_order_number", None)
+        logger.warning(
+            "[소싱번호가드] 상품번호를 소싱주문번호로 기입 시도 차단: "
+            "order=%s 값=%s url=%s",
+            order_id,
+            sono,
+            url,
+        )
+
+
 @router.put("/{order_id}", response_model=SambaOrder)
 async def update_order(
     order_id: str,
@@ -3047,6 +3095,7 @@ async def update_order(
 
     svc = _write_service(session)
     data = body.model_dump(exclude_unset=True)
+    await _reject_product_no_as_sourcing_order_no(data, order_id, session)
     order = await svc.update_order(order_id, data)
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
@@ -13702,346 +13751,18 @@ async def poison_source_links(
     return {"ok": True, "received": len(body.items), "updated": updated}
 
 
-async def _kream_cost_backfill_from_shopmine(
-    ws, session: AsyncSession, tenant_id: Optional[str]
-) -> dict:
-    """마스터 엑셀 '샵마인' 시트 → 크림주문 실구매가(cost)+소싱주문번호 백필 후
-    스니덩크 해외송장 자동수집.
-
-    컬럼(0-based): B(1)/C(2)=쇼핑몰·별칭(크림 필터), H(7)=오픈마켓주문번호(매칭키),
-    P(15)=소싱주문번호, Q(16)=매입금액(실구매가). profit·수익률은 화면에서 자동계산되므로
-    저장하지 않는다.
-    """
-    import asyncio
-    from datetime import datetime, timezone
-
-    from sqlalchemy import func, select
-
-    # 1) 샵마인 크림행 파싱 → {오픈마켓주문번호: (소싱주문번호, 실구매가)}
-    sheet_map: dict[str, tuple[str, float]] = {}
-    for r in ws.iter_rows(min_row=2, values_only=True):
-        if not r or len(r) < 17:
-            continue
-        if "크림" not in (str(r[1] or "") + str(r[2] or "")):
-            continue
-        h = str(r[7] or "").strip()  # 앞 개행 포함될 수 있어 strip 필수
-        if not h:
-            continue
-        p, q = r[15], r[16]
-        sono = str(p).strip() if p is not None else ""
-        try:
-            cost = float(round(float(q))) if q not in (None, "") else None
-        except (TypeError, ValueError):
-            cost = None
-        if cost is None:
-            continue
-        sheet_map[h] = (sono, cost)
-
-    # 2) 크림주문 매칭 → cost + sourcing_order_number 갱신
-    stmt = select(SambaOrder).where(
-        func.upper(func.coalesce(SambaOrder.source_site, "")) == "KREAM"
-    )
-    if tenant_id is not None:
-        stmt = stmt.where(SambaOrder.tenant_id == tenant_id)
-    kream_orders = (await session.execute(stmt)).scalars().all()
-
-    filled = 0
-    unmatched = 0
-    for o in kream_orders:
-        key = (o.order_number or "").strip()
-        if key not in sheet_map:
-            unmatched += 1
-            continue
-        sono, cost = sheet_map[key]
-        changed = False
-        if float(o.cost or 0) != cost:
-            o.cost = cost
-            changed = True
-        if sono and (o.sourcing_order_number or "") != sono:
-            o.sourcing_order_number = sono
-            changed = True
-        # 소싱주문번호 있으면 상태 '배송대기중'(wait_ship) — 이미 진행된 상태는 유지(역행 방지)
-        _advanced = {
-            "shipping",
-            "delivered",
-            "confirmed",
-            "cancelled",
-            "returned",
-            "cancel_requested",
-            "return_requested",
-            "ship_failed",
-        }
-        if (
-            (o.sourcing_order_number or "")
-            and o.status not in _advanced
-            and o.status != "wait_ship"
-        ):
-            o.status = "wait_ship"
-            changed = True
-        if changed:
-            o.updated_at = datetime.now(timezone.utc)
-            filled += 1
-    await session.commit()
-
-    # 3) 스니덩크 해외송장 자동수집 (확장앱 세션쿠키 필요, 소싱주문번호 有 & 송장 空)
-    tracking_checked = 0
-    tracking_shipped = 0
-    cookie = await _get_snkr_session_cookie(session)
-    if cookie:
-        tstmt = select(SambaOrder).where(
-            func.upper(func.coalesce(SambaOrder.source_site, "")) == "KREAM",
-            SambaOrder.sourcing_order_number.is_not(None),
-            SambaOrder.sourcing_order_number != "",
-            (SambaOrder.overseas_tracking_number.is_(None))
-            | (SambaOrder.overseas_tracking_number == ""),
-        )
-        if tenant_id is not None:
-            tstmt = tstmt.where(SambaOrder.tenant_id == tenant_id)
-        tstmt = tstmt.limit(500)
-        targets = (await session.execute(tstmt)).scalars().all()
-        for o in targets:
-            tracking_checked += 1
-            res = await _apply_snkr_overseas_tracking(session, o, cookie)
-            if res.get("shipped"):
-                tracking_shipped += 1
-            await asyncio.sleep(0.3)  # SNKRDUNK 레이트리밋 보수값
-
-    # 4) 허브넷 택배번호 자동기입 (해외송장 보유 주문 전체)
-    hubnet = await _push_hubnet_tracking(session)
-
-    return {
-        "ok": True,
-        "mode": "cost_backfill",
-        "filled": filled,
-        "unmatched": unmatched,
-        "tracking_checked": tracking_checked,
-        "tracking_shipped": tracking_shipped,
-        "hubnet_updated": hubnet.get("updated", 0),
-        "hubnet_error": hubnet.get("error"),
-        "cookie_missing": not cookie,
-    }
-
-
 @router.post("/kream-api-sync")
 async def sync_kream_orders_api(
     dry_run: bool = True,
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
-    """KREAM 공식 파트너 API 주문 수집 — 발송완료 엑셀 업로드 대체용.
+    """KREAM 공식 파트너 API 주문 수집.
 
-    기존 `/kream-excel` 은 그대로 둔다(이관 검증 전까지 병행). 생성 전용이라
-    이미 있는 주문은 건드리지 않는다 — 정산/원가/송장 덮어쓰기 사고 방지.
+    옛 발송완료 엑셀 업로드(`/kream-excel`)와 샵마인 백필은 폐기됨(2026-08-01).
+    생성 전용이라 이미 있는 주문은 건드리지 않는다 — 정산/원가/송장 덮어쓰기 사고 방지.
 
     dry_run=True(기본) 면 쓰지 않고 생성 예정 목록만 반환.
     """
     from backend.domain.samba.order.kream_api_sync import sync_kream_orders_from_api
 
     return await sync_kream_orders_from_api(tenant_id=tenant_id, dry_run=dry_run)
-
-
-@router.post("/kream-excel")
-async def import_kream_excel(
-    file: UploadFile = File(...),
-    session: AsyncSession = Depends(get_write_session_dependency),
-    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
-):
-    """KREAM 발송완료내역 엑셀 업로드 → 주문 생성."""
-    import openpyxl  # noqa: F811
-    from datetime import timezone
-    from io import BytesIO
-
-    from sqlalchemy import text as sa_text
-
-    from backend.domain.samba.account.model import SambaMarketAccount
-
-    # KREAM 계정 조회 (channel_id 용)
-    acc_stmt = select(SambaMarketAccount).where(
-        SambaMarketAccount.market_type == "kream"
-    )
-    if tenant_id is not None:
-        acc_stmt = acc_stmt.where(SambaMarketAccount.tenant_id == tenant_id)
-    acc_row = await session.execute(acc_stmt)
-    kream_acc = acc_row.scalars().first()
-    kream_channel_id = kream_acc.id if kream_acc else None
-
-    # 크림 주문의 실제 소싱처는 SNKRDUNK(성희 계정) — 주문계정 자동 선택.
-    # 기본 로그인 계정 우선, 없으면 활성 계정 중 최초.
-    snkr_sourcing_account_id = None
-    try:
-        from sqlalchemy import func as _sfunc
-
-        from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
-
-        _snkr_base = (
-            select(SambaSourcingAccount.id)
-            .where(
-                _sfunc.upper(SambaSourcingAccount.site_name) == "SNKRDUNK",
-                SambaSourcingAccount.is_active.is_(True),
-            )
-            .order_by(
-                SambaSourcingAccount.is_login_default.desc(),
-                SambaSourcingAccount.created_at,
-            )
-        )
-        if tenant_id is not None:
-            snkr_sourcing_account_id = (
-                (
-                    await session.execute(
-                        _snkr_base.where(SambaSourcingAccount.tenant_id == tenant_id)
-                    )
-                )
-                .scalars()
-                .first()
-            )
-        if not snkr_sourcing_account_id:
-            snkr_sourcing_account_id = (
-                (await session.execute(_snkr_base)).scalars().first()
-            )
-    except Exception as _e:
-        logger.warning(f"[KREAM엑셀] SNKRDUNK 주문계정 조회 실패(무시): {_e}")
-        snkr_sourcing_account_id = None
-
-    content = await file.read()
-    wb = openpyxl.load_workbook(BytesIO(content), read_only=True, data_only=True)
-    # 마스터 엑셀('샵마인' 시트) 감지 → 발송완료 주문생성 대신 실구매가/소싱주문번호 백필 +
-    # 스니덩크 해외송장 자동수집 모드로 분기.
-    _shopmine_sheet = next((s for s in wb.sheetnames if "샵마인" in s), None)
-    if _shopmine_sheet is not None:
-        _sm_result = await _kream_cost_backfill_from_shopmine(
-            wb[_shopmine_sheet], session, tenant_id
-        )
-        wb.close()
-        return _sm_result
-    ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
-    wb.close()
-
-    # kream product_id → collected_product_id + 한글 상품명 역매칭
-    kream_pids = [str(r[3]) for r in rows if r and len(r) > 3 and r[3]]
-    cp_map: dict[str, str] = {}
-    cp_name_map: dict[str, str] = {}
-    if kream_pids:
-        tid_cond = "AND tenant_id = :tid" if tenant_id is not None else ""
-        bind = {"pids": kream_pids}
-        if tenant_id is not None:
-            bind["tid"] = tenant_id
-        cp_rows = await session.execute(
-            sa_text(f"""
-                SELECT id, name, resell_matches->'kream'->>'product_id' AS kream_pid
-                FROM samba_collected_product
-                WHERE source_site = 'SNKRDUNK'
-                  AND resell_matches->'kream'->>'product_id' = ANY(:pids)
-                  {tid_cond}
-            """),
-            bind,
-        )
-        for cp_row in cp_rows.mappings():
-            pid = str(cp_row["kream_pid"])
-            cp_map[pid] = str(cp_row["id"])
-            cp_name_map[pid] = cp_row["name"] or ""
-
-    def _parse_dt(val):
-        if val is None:
-            return None
-        if isinstance(val, datetime):
-            return val.replace(tzinfo=timezone.utc) if val.tzinfo is None else val
-        try:
-            return datetime.fromisoformat(str(val).replace(" ", "T")).replace(
-                tzinfo=timezone.utc
-            )
-        except Exception:
-            return None
-
-    created = 0
-    skipped = 0
-    for row in rows:
-        if not row or not row[0]:
-            continue
-        order_number = str(row[0]).strip()
-        paid_at_raw = row[2] if len(row) > 2 else None
-        kream_pid = str(row[3]).strip() if len(row) > 3 and row[3] else ""
-        product_name = cp_name_map.get(kream_pid, "")
-        option_name = str(row[6]).strip() if len(row) > 6 and row[6] else ""
-        sale_price = float(row[7]) if len(row) > 7 and row[7] else 0.0
-        tracking_number = str(row[9]).strip() if len(row) > 9 and row[9] else ""
-        shipped_at_raw = row[10] if len(row) > 10 else None
-
-        # 중복 체크
-        dup_stmt = select(SambaOrder.id).where(SambaOrder.order_number == order_number)
-        if tenant_id is not None:
-            dup_stmt = dup_stmt.where(SambaOrder.tenant_id == tenant_id)
-        dup = await session.execute(dup_stmt)
-        if dup.scalar():
-            skipped += 1
-            continue
-
-        order = SambaOrder(
-            tenant_id=tenant_id,
-            order_number=order_number,
-            channel_id=kream_channel_id,
-            channel_name="KREAM",
-            source_site="KREAM",
-            product_id=kream_pid or None,
-            product_name=product_name,
-            product_option=option_name,
-            sale_price=sale_price,
-            # 정산금액 = 결제금액과 동일 표시 (크림 해외판매 — 마켓수수료 별도)
-            revenue=sale_price,
-            cost=0.0,
-            # 배송비 기본 8,000원 자동 입력 (크림 해외배송 고정)
-            shipping_fee=8000.0,
-            profit=0.0,
-            tracking_number=tracking_number or None,
-            shipped_at=_parse_dt(shipped_at_raw),
-            paid_at=_parse_dt(paid_at_raw),
-            status="pending",
-            shipping_status="결제완료",
-            shipping_company="허브넷로지스틱스",
-            collected_product_id=cp_map.get(kream_pid) if kream_pid else None,
-            sourcing_account_id=snkr_sourcing_account_id,
-        )
-        session.add(order)
-        created += 1
-
-    await session.commit()
-
-    # 발송완료 업로드 후에도 스니덩크 해외송장 수집 + 허브넷 기입 자동 수행
-    # (기존 주문 중 소싱주문번호 있고 송장 없는 것 대상 — 방금 생성분은 소싱번호 없어 스킵됨)
-    from sqlalchemy import func as _kfunc
-
-    tracking_checked = 0
-    tracking_shipped = 0
-    snkr_cookie = await _get_snkr_session_cookie(session)
-    if snkr_cookie:
-        tstmt = (
-            select(SambaOrder)
-            .where(
-                _kfunc.upper(_kfunc.coalesce(SambaOrder.source_site, "")) == "KREAM",
-                SambaOrder.sourcing_order_number.is_not(None),
-                SambaOrder.sourcing_order_number != "",
-                (SambaOrder.overseas_tracking_number.is_(None))
-                | (SambaOrder.overseas_tracking_number == ""),
-            )
-            .limit(500)
-        )
-        if tenant_id is not None:
-            tstmt = tstmt.where(SambaOrder.tenant_id == tenant_id)
-        for o in (await session.execute(tstmt)).scalars().all():
-            tracking_checked += 1
-            res = await _apply_snkr_overseas_tracking(session, o, snkr_cookie)
-            if res.get("shipped"):
-                tracking_shipped += 1
-            await asyncio.sleep(0.3)
-
-    hubnet = await _push_hubnet_tracking(session)
-
-    return {
-        "ok": True,
-        "created": created,
-        "skipped": skipped,
-        "tracking_checked": tracking_checked,
-        "tracking_shipped": tracking_shipped,
-        "hubnet_updated": hubnet.get("updated", 0),
-        "hubnet_error": hubnet.get("error"),
-        "cookie_missing": not snkr_cookie,
-    }

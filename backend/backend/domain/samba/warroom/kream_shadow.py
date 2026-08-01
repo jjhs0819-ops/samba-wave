@@ -41,48 +41,6 @@ _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
-
-# ── 크림 루프 워치독 [2026-08-01] — 크림 API 호출이 타임아웃 없이 행(hung)나면 컨테이너는
-# 살아있는데 루프만 죽어 오토튠이 조용히 멈춘다(반복 재발). 별도 OS 스레드가 하트비트를 감시,
-# stall 시 프로세스 강제종료 → Docker restart:unless-stopped 재기동 → 루프 재개(offset DB저장이라 이어감).
-_kream_heartbeat = 0.0  # 마지막 사이클 진행 시각. 0=아직 시작 안 함(감시 보류)
-_KREAM_STALL_SEC = int(
-    os.environ.get("KREAM_WATCHDOG_STALL_SEC") or 900
-)  # 무진행 15분=행
-
-
-def touch_kream_heartbeat() -> None:
-    """사이클 진행 신호 — cycle 시작·각 단계서 호출. 이벤트루프 살아있음 증명."""
-    global _kream_heartbeat
-    import time as _t
-
-    _kream_heartbeat = _t.time()
-
-
-def start_kream_watchdog() -> None:
-    """별도 데몬 스레드 워치독 — 이벤트루프가 블로킹돼도 동작(async 감시론 못 잡음).
-    하트비트가 _KREAM_STALL_SEC 초 넘게 안 갱신되면 행으로 보고 프로세스 종료."""
-    import threading
-    import time as _t
-
-    def _run() -> None:
-        while True:
-            _t.sleep(60)
-            hb = _kream_heartbeat
-            if hb <= 0:
-                continue  # 아직 첫 사이클 전
-            age = _t.time() - hb
-            if age > _KREAM_STALL_SEC:
-                logger.error(
-                    "[크림워치독] 사이클 %d초 무진행(행 판단) — 프로세스 강제종료 → 자동 재기동",
-                    int(age),
-                )
-                os._exit(1)
-
-    threading.Thread(target=_run, daemon=True, name="kream-watchdog").start()
-    logger.info("[크림워치독] 시작 — stall 상한 %d초", _KREAM_STALL_SEC)
-
-
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
 # 웹훅 URL은 비밀이라 local.env(KREAM_SLACK_WEBHOOK)로만 주입(리포지토리 비커밋).
 _SLACK_WEBHOOK = os.environ.get("KREAM_SLACK_WEBHOOK", "")
@@ -962,23 +920,15 @@ async def _fetch_live_asks(h: dict) -> list[dict]:
 
 
 async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
-    """상태별 내 입찰 전량(공식 OpenAPI, 페이징). status='live'|'expired' 등. 읽기 전용.
-    [2026-08-01 행 수정] keep-alive 연결이 half-open 으로 죽으면 TLS 읽기가 anyio 락 대기서
-    무한 매달려 httpx timeout 이 안 먹었다(매 사이클 시작서 크림 오토튠 전체 정지). →
-    keep-alive 끔(매번 새 연결) + asyncio.wait_for 하드 타임아웃(stuck 시 끊고 재시도)."""
+    """상태별 내 입찰 전량(공식 OpenAPI, 페이징). status='live'|'expired' 등. 읽기 전용."""
     out: list[dict] = []
     page = 1
-    async with httpx.AsyncClient(
-        timeout=25, limits=httpx.Limits(max_keepalive_connections=0)
-    ) as cli:
+    async with httpx.AsyncClient(timeout=25) as cli:
         while True:
-            r = await asyncio.wait_for(
-                cli.get(
-                    f"{KREAM_OPENAPI_BASE}/asks",
-                    headers=h,
-                    params={"status": status, "page": page, "per_page": _PER_PAGE},
-                ),
-                timeout=40,
+            r = await cli.get(
+                f"{KREAM_OPENAPI_BASE}/asks",
+                headers=h,
+                params={"status": status, "page": page, "per_page": _PER_PAGE},
             )
             r.raise_for_status()
             d = r.json()
@@ -2097,14 +2047,8 @@ async def _process_shoe_asks(
     return c
 
 
-# 신발 신규 자동등록 사이클당 상한 — 로테이션 슬라이스와 동일(슬라이스가 실질 상한 역할).
-_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 500)
-# 신발등록 사이클당 처리(=크림 API조회) 슬라이스 — 로테이션. 전 verified신발(1.4만+) 매사이클
-# 전량 API조회하면 사이클이 100분+로 폭발해 크림 오토튠 전체를 굶긴다(2026-07-31 사고). 슬라이스로 상한.
-# 500개 조회 ≈ 1분(sem6 병렬). 14k ÷ 500 = 한 바퀴 ~28사이클(~4시간)에 전량 평가.
-_SHOE_RS_BATCH = int(os.environ.get("KREAM_SHOE_RS_BATCH") or 500)
-_shoe_rs_offset = 0  # 로테이션 위치 — DB(_SET_SHOE_RS_OFFSET) 백업으로 재시작에도 유지
-_SET_SHOE_RS_OFFSET = "kream_shoe_rs_offset"
+# 신발 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지(사이즈별 다건). verified 확정 신발만.
+_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 50)
 
 
 def _cm_to_mm_variants(name: str) -> set[str]:
@@ -2122,10 +2066,7 @@ async def _process_shoe_restock(
     """신발/의류/시계 신규 자동등록 — verified 확정 + 재고O + 해당 사이즈 미등록만.
     카드 리스톡 동일 가드(2연속miss·재게시2h·실패6h·거래·이행대기) + 원가상한 + 정책(2등불가/
     국내못이김) 스킵. 사이즈 옵션명 크림(mm)↔DB(cm) 변환 매칭. _EXEC_SHOE=1 일 때만 실제 POST.
-    사이클당 _SHOE_RESTOCK_MAX 상한(사이즈별 다건이라 폭주 방지).
-    _EXEC_SHOE_RESTOCK=0 이면 크림 API조회 자체 생략(완전 차단) — 루프 안정화용."""
-    if not _EXEC_SHOE_RESTOCK:
-        return {"cand": 0, "post": 0, "fail": 0, "off": 1}
+    사이클당 _SHOE_RESTOCK_MAX 상한(사이즈별 다건이라 폭주 방지)."""
     c = {
         "cand": 0,
         "post": 0,
@@ -2147,54 +2088,25 @@ async def _process_shoe_restock(
         if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
     }
     _sur = POLICY["non_card_margin_rate"]
-    global _shoe_rs_offset
-    # 로테이션 위치 DB 복원 — 카드(_unified_offset)와 동일. 재시작(재빌드)에도 유지돼야
-    # 앞부분만 반복하지 않고 전량 등록된다(2026-07-31 사고: 메모리만 써서 재빌드마다 0 리셋).
-    if _shoe_rs_offset == 0:
-        try:
-            _shoe_rs_offset = int(
-                (await _load_setting_map(_SET_SHOE_RS_OFFSET)).get("v", 0) or 0
-            )
-        except Exception:
-            _shoe_rs_offset = 0
-    _base_where = (
-        "FROM samba_collected_product "
-        "WHERE source_site='SNKRDUNK' "
-        "AND extra_data->>'snkr_type' IN ('sneaker','apparel','watch') "
-        "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
-        "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
-        "AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int) "
-        "  FROM jsonb_array_elements(options::jsonb) o),0)>0"
-    )
     async with get_read_session() as s:
-        _total = int(
-            (await s.execute(_text("SELECT COUNT(*) " + _base_where))).scalar() or 0
-        )
-        if _total and _shoe_rs_offset >= _total:
-            _shoe_rs_offset = 0
-        # 로테이션 슬라이스만 조회 — 매 사이클 _SHOE_RS_BATCH 개씩(API조회 상한)
         rows = (
             await s.execute(
                 _text(
                     "SELECT resell_matches->'kream'->>'product_id' AS kid, name, options::text "
-                    + _base_where
-                    + " ORDER BY resell_matches->'kream'->>'product_id' "
-                    + "OFFSET :off LIMIT :lim"
-                ),
-                {"off": _shoe_rs_offset, "lim": _SHOE_RS_BATCH},
+                    "FROM samba_collected_product "
+                    "WHERE source_site='SNKRDUNK' "
+                    "AND extra_data->>'snkr_type' IN ('sneaker','apparel','watch') "
+                    "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
+                    "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+                    "AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int) "
+                    "  FROM jsonb_array_elements(options::jsonb) o),0)>0"
+                )
             )
         ).all()
-    c["scan"] = f"{min(_shoe_rs_offset + _SHOE_RS_BATCH, _total):,}/{_total:,}"
-    _shoe_rs_offset += _SHOE_RS_BATCH  # 다음 사이클 다음 슬라이스
-    await _save_setting_map(
-        _SET_SHOE_RS_OFFSET, {"v": _shoe_rs_offset}
-    )  # 재시작 대비 저장
     posted = 0
     _now = _now_ts()
     async with httpx.AsyncClient(timeout=25) as cli:
         for kid, name, opts_txt in rows:
-            if posted >= _SHOE_RESTOCK_MAX:
-                break  # 사이클 상한 도달 — 추가 크림 API조회 중단(사이클 시간 폭발 방지)
             kid = str(kid or "")
             try:
                 opts = json.loads(opts_txt) if opts_txt else []
@@ -2239,9 +2151,11 @@ async def _process_shoe_restock(
                     continue
                 mm_opt = str(api_opt.get("name"))
                 _key = f"{kid}|{mm_opt}"
-                # 신발/의류는 verified=재고확실이라 2연속 대기 없이 즉시 등록(속도).
-                # 재고 사라지면 갱신(_process_shoe_asks)이 다음 사이클에 삭제하므로 안전.
-                # 재게시(2h)·실패(6h)·이행대기 가드는 유지(중복/무의미 재시도 차단).
+                # 카드 리스톡 동일 가드 순서
+                _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
+                if _g_miss_counts[_key] < 2:
+                    c["miss"] += 1
+                    continue
                 if _key in _g_recent_posts:
                     c["recent"] += 1
                     continue
@@ -2320,9 +2234,7 @@ async def _process_box_restock(
     로컬 봇(_kream_restock_register 박스 경로)이 07-22 정지하며 끊긴 경로를 백엔드로 이식.
     카드/신발 리스톡과 동일 가드(2연속miss·재게시·실패쿨·거래이력·이행대기) + 원가상한 +
     정책스킵(2등불가/국내못이김). 원가는 스니덩크 /v1/apparels 1박스 실시세.
-    _EXEC_BOX_RESTOCK=1 일 때만 동작(off면 스니덩크 API조회 자체 생략 — 루프 안정화용)."""
-    if not _EXEC_BOX_RESTOCK:
-        return {"cand": 0, "post": 0, "fail": 0, "off": 1}
+    _EXEC_BOX_RESTOCK=1 일 때만 실제 POST. 사이클당 _BOX_RESTOCK_MAX 상한."""
     c = {
         "cand": 0,
         "post": 0,
@@ -3171,7 +3083,6 @@ async def run_kream_unified_once() -> dict:
             return r
 
     _emitted = 0
-    touch_kream_heartbeat()  # 카드 전수처리 진입 신호(워치독)
     async with httpx.AsyncClient(timeout=20) as scli:
         results = await asyncio.gather(
             *[_process(p, scli) for p in products], return_exceptions=True
@@ -3343,7 +3254,6 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(_SET_GUARD, _g_price_guard)  # 급락 가드 직전가 유지
 
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
-    touch_kream_heartbeat()  # 신발 갱신 진입 신호(워치독)
     shoe = await _process_shoe_asks(
         asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr, sized_kids
     )
@@ -3400,7 +3310,6 @@ async def run_kream_unified_once() -> dict:
 
     # ── [B-2] 신발 신규 자동등록 — verified 확정 신발/의류/시계 미등록분(사이즈 mm↔cm 매칭).
     # 카드 리스톡과 동일 가드 + 원가상한 + 정책스킵. 사이클당 상한. _EXEC_SHOE 게이트.
-    touch_kream_heartbeat()  # 신발 신규등록 진입 신호(워치독)
     shoe_rs = await _process_shoe_restock(
         asks, kid_to_snkr, cooldown, rate, tariff_threshold, h
     )
@@ -3472,7 +3381,6 @@ async def run_kream_unified_once() -> dict:
         await _save_setting_map(_SET_MISS, _g_miss_counts)
 
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
-    touch_kream_heartbeat()  # 만료회수 진입 신호(워치독)
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
     if expired.get("total"):
         logger.info(
@@ -3598,21 +3506,14 @@ async def run_kream_unified_once() -> dict:
             if "박스" in nm:
                 return "box"
             return "pack" if re.search(r"카드팩|부스터팩|팩", nm) else "box"
-        # 신발(mm 사이즈 245 등) / 의류·시계·잡화(S/M/L/FREE 등)
-        if _SHOE_OPT_RE.fullmatch(opt.strip()):
-            return "shoe"
-        return "apparel"
+        return "other"
 
     _card_asks = [a for a in asks if _ask_kind(a) == "card"]
     _box_asks = [a for a in asks if _ask_kind(a) == "box"]
     _pack_asks = [a for a in asks if _ask_kind(a) == "pack"]
-    _shoe_asks_r = [a for a in asks if _ask_kind(a) == "shoe"]
-    _apparel_asks_r = [a for a in asks if _ask_kind(a) == "apparel"]
     _r1c, _n1c, _gtc, _ncc = _rank_summary(_card_asks)
     _r1b, _n1b, _gtb, _ncb = _rank_summary(_box_asks)
     _r1p, _n1p, _gtp, _ncp = _rank_summary(_pack_asks)
-    _r1s, _n1s, _gts, _ncs = _rank_summary(_shoe_asks_r)
-    _r1a, _n1a, _gta, _nca = _rank_summary(_apparel_asks_r)
     _r1, _n1, _gt, _nc = _rank_summary(asks)
     _ask_kids = {str(a.get("product_id") or "") for a in asks}
     _mapped = len([k for k in _ask_kids if k in kid_to_snkr])
@@ -3667,9 +3568,8 @@ async def run_kream_unified_once() -> dict:
         + (f" | ❌갱신실패 {_fail_all:,}건" if _fail_all else "")
         + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
         f"  카드 1순위 {_r1c:,}/{_gtc:,} · 박스 {_r1b:,}/{_gtb:,} · 카드팩 {_r1p:,}/{_gtp:,}\n"
-        f"  신발 1순위 {_r1s:,}/{_gts:,} · 의류/잡화 {_r1a:,}/{_gta:,}\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
-        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,}·신발{_ncs:,}·의류{_nca:,})"
+        f" (카드{_ncc:,}·박스{_ncb:,}·카드팩{_ncp:,})"
     )
     # 갱신실패 사유 breakdown — 실패 건수만 보이고 원인을 몰라 대응 못 하던 것 보완(로컬 포맷).
     if _fail_reasons:

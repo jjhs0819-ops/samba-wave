@@ -110,6 +110,19 @@ export default function OrderInfoCell(props: Props) {
     : ''
   // 타마켓주문링크 표시값 — http(s) URL 형식만 노출(내부 주문번호 오염값 차단)
   const extOrderDisplay = o.ext_order_number && /^https?:\/\//i.test(o.ext_order_number) ? o.ext_order_number : ''
+  // 편집 중 입력값. null = 미편집(DB 표시값 사용)
+  const [extOrderEdit, setExtOrderEdit] = React.useState<string | null>(null)
+
+  // 타마켓주문링크 저장/삭제 — 빈 문자열을 그대로 보내야 삭제된다.
+  // (undefined 로 보내면 JSON.stringify 가 키를 빼고, PUT 은 exclude_unset 이라 무시됨)
+  const saveExtOrderNumber = async (value: string) => {
+    try {
+      await orderApi.update(o.id, { ext_order_number: value })
+      loadOrders()
+    } catch (err) {
+      showAlert(err instanceof Error ? err.message : '저장 실패', 'error')
+    }
+  }
   const aliasBadgeRaw = (() => {
     const fromNew = String(o.sales_channel_alias || '').trim()
     if (fromNew) return fromNew
@@ -500,19 +513,33 @@ export default function OrderInfoCell(props: Props) {
           placeholder="타마켓 주문링크 URL"
           // 153d7f04 회귀 방지 — 롯데홈쇼핑 등에서 내부 주문번호가 잘못 들어간 오염값은
           // 입력란에 표시하지 않는다(URL 형식만 노출). DB값은 유지, 사용자가 입력 시에만 덮어씀.
-          defaultValue={extOrderDisplay}
+          // 편집 중에는 입력값(extOrderEdit)을 우선 — 저장 후 loadOrders 결과가 바로 반영되도록
+          // uncontrolled(defaultValue) 대신 controlled 로 둔다.
+          value={extOrderEdit ?? extOrderDisplay}
+          onChange={(e) => setExtOrderEdit(e.target.value)}
           onBlur={async (e) => {
             const val = e.target.value.trim()
+            setExtOrderEdit(null)
             // 표시값(URL만) 기준 비교 — 클릭만 하고 나가도 DB 오염값이 지워지지 않음
             if (val === extOrderDisplay) return
-            try {
-              await orderApi.update(o.id, { ext_order_number: val || undefined })
-              loadOrders()
-            } catch (err) { showAlert(err instanceof Error ? err.message : '저장 실패', 'error') }
+            await saveExtOrderNumber(val)
           }}
           onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur() }}
           style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', fontFamily: 'monospace', minWidth: 0 }}
         />
+        {/* 삭제 — DB에 값이 있으면(URL 아닌 오염값 포함) 노출. 입력란은 오염값을 감추므로
+            빈칸 blur 로는 지울 수 없어(표시값과 동일 판정) 별도 버튼이 필요하다. */}
+        {(o.ext_order_number || '').trim() ? (
+          <button
+            onClick={async () => {
+              if (!await showConfirm('타마켓 주문링크를 삭제하시겠습니까?')) return
+              setExtOrderEdit(null)
+              await saveExtOrderNumber('')
+            }}
+            title="타마켓 주문링크 삭제"
+            style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer', flexShrink: 0 }}
+          >삭제</button>
+        ) : null}
       </div>
     </td>
   )
