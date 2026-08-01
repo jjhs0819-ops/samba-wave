@@ -145,6 +145,9 @@ interface MarketPolicyForm {
   kreamAdjustDeadbandKrw?: number     // 조정 데드밴드 (원) — 미만 차이는 조정 생략
   kreamOverseasBaseFee?: number       // 해외판매 기본수수료 (원) — 정산 차감
   kreamOverseasFeeRate?: number       // 해외판매 수수료율 (%) — 판매가 대비, 정산 차감
+  kreamItemFeeBase?: number           // 실물(신발/의류/시계) 기본수수료 (원) — 정산 차감
+  kreamItemFeeRate?: number           // 실물 등급수수료율 (%) — 판매등급별, 매달 변동
+  kreamItemFeeVat?: number            // 실물 수수료 VAT율 (%) — 별도 부과
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
   adEnabled?: boolean // eBay General 광고 사용 여부 — 등록/수정 시 자동 활성
@@ -1665,6 +1668,21 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 수수료율</span>
                     <NumInput value={mp.kreamOverseasFeeRate ?? 3.3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송 주문 판매가 대비 수수료율. 정산=판매가−(기본수수료+판매가×이율)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 기본수수료</span>
+                    <NumInput value={mp.kreamItemFeeBase ?? 2500} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamItemFeeBase: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발/의류/시계 주문 정산 차감(PSA 낱장 무료·해외배송 제외). 크림 판매등급 기본수수료</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 등급수수료율</span>
+                    <NumInput value={mp.kreamItemFeeRate ?? 5.6} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamItemFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>매달 판매등급 따라 변동(Level4=5.60·Level1=6.00). 정산=판매가−(기본+판매가×이율)×(1+VAT)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 VAT</span>
+                    <NumInput value={mp.kreamItemFeeVat ?? 10} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamItemFeeVat: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발/의류 수수료에 별도 부과하는 VAT율(%)</span>
                   </div>
                 </>
               )}

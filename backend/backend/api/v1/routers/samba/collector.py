@@ -1591,15 +1591,34 @@ async def product_dashboard_stats(
                 SELECT source_site,
                        COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
                        COUNT(*) AS total,
+                       -- 등록: 일반마켓=registered_accounts+market_product_nos /
+                       -- 크림리셀(SNKRDUNK·ONITSUKA)=크림 라이브입찰 존재 [2026-08-01]
                        COUNT(*) FILTER (
-                         WHERE registered_accounts IS NOT NULL
+                         WHERE (
+                           source_site IN ('SNKRDUNK', 'ONITSUKA')
+                           AND resell_matches->'kream'->>'product_id'
+                               IN (SELECT product_id FROM kream_live_asks)
+                         ) OR (
+                           source_site NOT IN ('SNKRDUNK', 'ONITSUKA')
+                           AND registered_accounts IS NOT NULL
                            AND jsonb_typeof(registered_accounts) = 'array'
                            AND registered_accounts != '[]'::jsonb
                            AND market_product_nos IS NOT NULL
                            AND market_product_nos::text != 'null'
                            AND market_product_nos::text != '{}'
+                         )
                        ) AS registered,
-                       COUNT(*) FILTER (WHERE sale_status = 'sold_out') AS sold_out
+                       -- 품절: 일반마켓=sale_status / 크림리셀=옵션 재고합 0(sale_status 미사용)
+                       COUNT(*) FILTER (
+                         WHERE (
+                           source_site IN ('SNKRDUNK', 'ONITSUKA')
+                           AND COALESCE((SELECT SUM(NULLIF(o->>'stock', '')::int)
+                             FROM jsonb_array_elements(options::jsonb) o), 0) = 0
+                         ) OR (
+                           source_site NOT IN ('SNKRDUNK', 'ONITSUKA')
+                           AND sale_status = 'sold_out'
+                         )
+                       ) AS sold_out
                 FROM samba_collected_product
                 WHERE source_site IS NOT NULL AND source_site != ''
                   AND (:tid IS NULL OR tenant_id = :tid)
