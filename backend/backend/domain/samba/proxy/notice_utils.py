@@ -119,7 +119,6 @@ _CATEGORY_GROUP: dict[str, str] = {
     "슈즈": "shoes",
     "워킹화": "shoes",
     "골프화": "shoes",
-    "축구화": "shoes",
     "풋살화": "shoes",
     "아쿠아슈즈": "shoes",
     "테니스화": "shoes",

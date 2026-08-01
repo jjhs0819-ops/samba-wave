@@ -1574,7 +1574,7 @@ async def product_dashboard_stats(
     from sqlalchemy import text
 
     # 캐시 키 테넌트 분리 — 운영자/임성희 등이 같은 캐시 공유하면 격리 깨짐
-    cache_key = f"products:dashboard-stats-v5:{tenant_id or 'global'}"
+    cache_key = f"products:dashboard-stats-v6:{tenant_id or 'global'}"
     # 부분 실패 시 빈 결과로 덮지 않도록, 마지막 성공값을 따로 길게 백업
     stale_key = f"{cache_key}:stale"
     cached = await cache.get(cache_key)
@@ -1652,6 +1652,52 @@ async def product_dashboard_stats(
             """).bindparams(tid=tenant_id)
             return (await s.execute(stmt)).all()
 
+    async def _run_resell():
+        """크림/포이즌 리셀 입찰 집계 — registered_accounts 미기록이라 별도 소스에서.
+
+        크림=kream_live_asks(실시간 라이브 입찰), 포이즌=resell_matches.poison.sizes.
+        단위는 상품수가 아니라 입찰갯수.
+        """
+        async with get_read_session() as s:
+            kream_stmt = text("""
+                WITH ask_counts AS (
+                    SELECT product_id, COUNT(*) AS asks
+                    FROM kream_live_asks
+                    GROUP BY product_id
+                )
+                SELECT COALESCE(cp.source_site, '미매칭') AS source_site,
+                       COALESCE(NULLIF(TRIM(cp.brand), ''), '기타') AS brand_name,
+                       SUM(ac.asks) AS cnt
+                FROM ask_counts ac
+                LEFT JOIN (
+                    SELECT DISTINCT ON (resell_matches->'kream'->>'product_id')
+                           resell_matches->'kream'->>'product_id' AS kpid,
+                           source_site, brand
+                    FROM samba_collected_product
+                    WHERE resell_matches->'kream'->>'product_id' IS NOT NULL
+                      AND (:tid IS NULL OR tenant_id = :tid)
+                ) cp ON cp.kpid = ac.product_id
+                GROUP BY 1, 2
+                ORDER BY cnt DESC
+            """).bindparams(tid=tenant_id)
+            kream_rows = (await s.execute(kream_stmt)).all()
+
+            poison_stmt = text("""
+                SELECT source_site,
+                       COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
+                       SUM((SELECT COUNT(*)
+                            FROM jsonb_object_keys(resell_matches->'poison'->'sizes') k
+                       )) AS cnt
+                FROM samba_collected_product
+                WHERE resell_matches->'poison' ? 'sizes'
+                  AND jsonb_typeof(resell_matches->'poison'->'sizes') = 'object'
+                  AND (:tid IS NULL OR tenant_id = :tid)
+                GROUP BY 1, 2
+                ORDER BY cnt DESC
+            """).bindparams(tid=tenant_id)
+            poison_rows = (await s.execute(poison_stmt)).all()
+            return kream_rows, poison_rows
+
     async def _run_sold():
         async with get_read_session() as s:
             stmt = text("""
@@ -1674,11 +1720,17 @@ async def product_dashboard_stats(
         if cached:
             return cached
 
-        # 3개 무거운 쿼리 병렬 실행 — return_exceptions 로 부분 실패 허용
-        brand_site_rows, brand_acct_rows, sold_by_acct = await asyncio.gather(
+        # 4개 무거운 쿼리 병렬 실행 — return_exceptions 로 부분 실패 허용
+        (
+            brand_site_rows,
+            brand_acct_rows,
+            sold_by_acct,
+            resell_rows,
+        ) = await asyncio.gather(
             _run_brand_site(),
             _run_brand_acct(),
             _run_sold(),
+            _run_resell(),
             return_exceptions=True,
         )
         # 성공 여부 추적 — 실패한 부분을 빈 결과로 캐시해 빈칸이 굳는 것 방지
@@ -1693,6 +1745,9 @@ async def product_dashboard_stats(
         if isinstance(sold_by_acct, Exception):
             logger.warning("대시보드 sold 조회 실패: %s", sold_by_acct)
             sold_by_acct = {}
+        if isinstance(resell_rows, Exception):
+            logger.warning("대시보드 resell 조회 실패: %s", resell_rows)
+            resell_rows = ([], [])
 
         # 소싱처별 합계는 brand_site 집계에서 Python 합산으로 도출 — 추가 쿼리 불필요
         brand_by_source: dict[str, list[dict]] = defaultdict(list)
@@ -1740,6 +1795,38 @@ async def product_dashboard_stats(
             )
             acct_totals[r.aid] += r.cnt
 
+        # 크림/포이즌 리셀 입찰 합류 — 단위=입찰갯수 (registered_accounts 미기록 마켓)
+        resell_units: dict[str, str] = {}
+        kream_rows, poison_rows = resell_rows
+        if kream_rows or poison_rows:
+            try:
+                rm_stmt = select(_MA.id, _MA.market_name).where(
+                    _MA.market_name.in_(["KREAM", "poison"])
+                )
+                rm_map = {
+                    m.market_name: m.id for m in (await session.execute(rm_stmt)).all()
+                }
+                for market_name, rows in (
+                    ("KREAM", kream_rows),
+                    ("poison", poison_rows),
+                ):
+                    aid = rm_map.get(market_name)
+                    if not aid:
+                        continue
+                    for r in rows:
+                        brand_by_acct[aid].append(
+                            {
+                                "source_site": r.source_site,
+                                "brand": r.brand_name,
+                                "registered": int(r.cnt or 0),
+                            }
+                        )
+                        acct_totals[aid] += int(r.cnt or 0)
+                    if acct_totals.get(aid):
+                        resell_units[aid] = "입찰"
+            except Exception as e:
+                logger.warning("대시보드 리셀 계정 매핑 실패: %s", e)
+
         # 계정 ID → 마켓명/계정라벨 매핑 (작은 쿼리, 메인 세션 사용)
         acct_ids = list(acct_totals.keys())
         acct_map: dict[str, dict[str, str]] = {}
@@ -1766,6 +1853,7 @@ async def product_dashboard_stats(
                     "account_label": acct_map[aid].get("account_label", ""),
                     "registered": cnt,
                     "sold_products": sold_by_acct.get(aid, 0),
+                    "count_unit": resell_units.get(aid, ""),
                     "brands": brand_by_acct.get(aid, []),
                 }
                 for aid, cnt in acct_totals.items()

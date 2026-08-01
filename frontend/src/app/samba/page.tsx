@@ -13,10 +13,13 @@ function formatShortDate(d: Date) {
 type SourceBrand = { brand: string; total: number; registered: number; sold_out: number }
 type SourceStat = { source_site: string; total: number; registered: number; sold_out: number; brands: SourceBrand[] }
 type AccountBrand = { source_site: string; brand: string; registered: number }
-type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; sold_products?: number; brands: AccountBrand[] }
+type AccountStat = { account_id: string; market_name: string; account_label: string; registered: number; sold_products?: number; count_unit?: string; brands: AccountBrand[] }
 type MarketSourceStat = { source_site: string; registered: number; brands: { brand: string; registered: number }[] }
-type MarketAcctStat = { account_id: string; account_label: string; registered: number; sold_products?: number; sources: MarketSourceStat[] }
-type MarketStat = { market_name: string; registered: number; accounts: MarketAcctStat[] }
+type MarketAcctStat = { account_id: string; account_label: string; registered: number; sold_products?: number; count_unit?: string; sources: MarketSourceStat[] }
+type MarketStat = { market_name: string; registered: number; sold_products: number; count_unit?: string; accounts: MarketAcctStat[] }
+
+// 마켓 내부코드 → 표시명 (크림/포이즌은 계정명이 내부코드 그대로라 보기 좋게 치환)
+const MARKET_DISPLAY: Record<string, string> = { poison: 'POIZON' }
 
 export default function SambaDashboard() {
   const c = useTheme()
@@ -63,12 +66,14 @@ export default function SambaDashboard() {
   }
 
   const byMarket = useMemo((): MarketStat[] => {
-    const marketMap = new Map<string, { registered: number; accts: Map<string, { account_id: string; account_label: string; registered: number; sold_products: number; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
+    const marketMap = new Map<string, { registered: number; sold_products: number; count_unit?: string; accts: Map<string, { account_id: string; account_label: string; registered: number; sold_products: number; count_unit?: string; srcMap: Map<string, { registered: number; brandMap: Map<string, number> }> }> }>()
     for (const acct of byAccount) {
       const mKey = acct.market_name
-      const mEntry = marketMap.get(mKey) ?? { registered: 0, accts: new Map() }
+      const mEntry = marketMap.get(mKey) ?? { registered: 0, sold_products: 0, count_unit: undefined, accts: new Map() }
       mEntry.registered += acct.registered
-      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, sold_products: acct.sold_products ?? 0, srcMap: new Map() }
+      mEntry.sold_products += acct.sold_products ?? 0
+      if (acct.count_unit) mEntry.count_unit = acct.count_unit
+      const aEntry = mEntry.accts.get(acct.account_id) ?? { account_id: acct.account_id, account_label: acct.account_label, registered: acct.registered, sold_products: acct.sold_products ?? 0, count_unit: acct.count_unit || undefined, srcMap: new Map() }
       for (const b of acct.brands) {
         const sEntry = aEntry.srcMap.get(b.source_site) ?? { registered: 0, brandMap: new Map() }
         sEntry.registered += b.registered
@@ -82,12 +87,15 @@ export default function SambaDashboard() {
       .map(([market_name, mData]) => ({
         market_name,
         registered: mData.registered,
+        sold_products: mData.sold_products,
+        count_unit: mData.count_unit,
         accounts: Array.from(mData.accts.values())
           .map(a => ({
             account_id: a.account_id,
             account_label: a.account_label,
             registered: a.registered,
             sold_products: a.sold_products,
+            count_unit: a.count_unit,
             sources: Array.from(a.srcMap.entries())
               .map(([source_site, sData]) => ({
                 source_site,
@@ -438,10 +446,17 @@ export default function SambaDashboard() {
                     >
                       <td style={{ padding: '0.5rem 0', color: c.text, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                         <span style={{ fontSize: '0.625rem', color: c.textMuted, display: 'inline-block', transform: mExpanded ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▶</span>
-                        {m.market_name}
+                        {MARKET_DISPLAY[m.market_name] ?? m.market_name}
                       </td>
-                      <td style={{ padding: '0.5rem 0', textAlign: 'right' }} />
-                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(m.registered)}</td>
+                      {(() => {
+                        const ratio = m.registered > 0 ? m.sold_products / m.registered * 100 : 0
+                        return (
+                          <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: ratio >= 3 ? c.success : ratio >= 1 ? c.warn : c.danger }}>
+                            {m.registered > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                          </td>
+                        )
+                      })()}
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(m.registered)}{m.count_unit ? ` ${m.count_unit}` : ''}</td>
                     </tr>
                     {mExpanded && m.accounts.map((a) => {
                       const acctKey = `${m.market_name}::${a.account_id}`
@@ -465,7 +480,7 @@ export default function SambaDashboard() {
                                 </td>
                               )
                             })()}
-                            <td style={{ padding: '0.4rem 0', textAlign: 'right', color: c.text, fontSize: '0.8125rem' }}>{fmtNum(a.registered)}</td>
+                            <td style={{ padding: '0.4rem 0', textAlign: 'right', color: c.text, fontSize: '0.8125rem' }}>{fmtNum(a.registered)}{a.count_unit ? ` ${a.count_unit}` : ''}</td>
                           </tr>
                           {aExpanded && a.sources.map((s) => {
                             const srcKey = `${a.account_id}::${s.source_site}`
@@ -503,13 +518,22 @@ export default function SambaDashboard() {
                   </React.Fragment>
                 )
               })}
-              {byMarket.length > 0 && (
-                <tr style={{ borderTop: `1px solid ${c.border}` }}>
-                  <td style={{ padding: '0.5rem 0', color: c.text, fontWeight: 600 }}>합계</td>
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right' }} />
-                  <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(byMarket.reduce((a, m) => a + m.registered, 0))}</td>
-                </tr>
-              )}
+              {byMarket.length > 0 && (() => {
+                // 합계는 상품 단위만 합산 — 입찰 단위(크림/포이즌)는 단위가 달라 제외
+                const prodMarkets = byMarket.filter(m => !m.count_unit)
+                const totalReg = prodMarkets.reduce((a, m) => a + m.registered, 0)
+                const totalSold = prodMarkets.reduce((a, m) => a + m.sold_products, 0)
+                const ratio = totalReg > 0 ? totalSold / totalReg * 100 : 0
+                return (
+                  <tr style={{ borderTop: `1px solid ${c.border}` }}>
+                    <td style={{ padding: '0.5rem 0', color: c.text, fontWeight: 600 }}>합계</td>
+                    <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: ratio >= 3 ? c.success : ratio >= 1 ? c.warn : c.danger }}>
+                      {totalReg > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                    </td>
+                    <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(totalReg)}</td>
+                  </tr>
+                )
+              })()}
               {byMarket.length === 0 && (
                 <tr><td colSpan={3} style={{ padding: '1.5rem 0', textAlign: 'center', color: c.textMuted }}>데이터 없음</td></tr>
               )}
