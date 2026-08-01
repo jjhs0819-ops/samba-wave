@@ -456,7 +456,7 @@ export default function SambaDashboard() {
                           </td>
                         )
                       })()}
-                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(m.registered)}{m.count_unit ? ` ${m.count_unit}` : ''}</td>
+                      <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(m.registered)}</td>
                     </tr>
                     {mExpanded && m.accounts.map((a) => {
                       const acctKey = `${m.market_name}::${a.account_id}`
@@ -480,7 +480,7 @@ export default function SambaDashboard() {
                                 </td>
                               )
                             })()}
-                            <td style={{ padding: '0.4rem 0', textAlign: 'right', color: c.text, fontSize: '0.8125rem' }}>{fmtNum(a.registered)}{a.count_unit ? ` ${a.count_unit}` : ''}</td>
+                            <td style={{ padding: '0.4rem 0', textAlign: 'right', color: c.text, fontSize: '0.8125rem' }}>{fmtNum(a.registered)}</td>
                           </tr>
                           {aExpanded && a.sources.map((s) => {
                             const srcKey = `${a.account_id}::${s.source_site}`

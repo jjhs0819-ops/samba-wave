@@ -1574,7 +1574,7 @@ async def product_dashboard_stats(
     from sqlalchemy import text
 
     # 캐시 키 테넌트 분리 — 운영자/임성희 등이 같은 캐시 공유하면 격리 깨짐
-    cache_key = f"products:dashboard-stats-v6:{tenant_id or 'global'}"
+    cache_key = f"products:dashboard-stats-v7:{tenant_id or 'global'}"
     # 부분 실패 시 빈 결과로 덮지 않도록, 마지막 성공값을 따로 길게 백업
     stale_key = f"{cache_key}:stale"
     cached = await cache.get(cache_key)
@@ -1682,15 +1682,15 @@ async def product_dashboard_stats(
             """).bindparams(tid=tenant_id)
             kream_rows = (await s.execute(kream_stmt)).all()
 
+            # 포이즌 — 타마켓과 동일하게 DB 실시간 집계. 등록입찰 기록 =
+            # resell_matches.poison.product_id (상품관리 UI 등록표시와 같은 기준).
             poison_stmt = text("""
                 SELECT source_site,
                        COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
-                       SUM((SELECT COUNT(*)
-                            FROM jsonb_object_keys(resell_matches->'poison'->'sizes') k
-                       )) AS cnt
+                       COUNT(*) AS cnt
                 FROM samba_collected_product
-                WHERE resell_matches->'poison' ? 'sizes'
-                  AND jsonb_typeof(resell_matches->'poison'->'sizes') = 'object'
+                WHERE resell_matches->'poison'->>'product_id' IS NOT NULL
+                  AND resell_matches->'poison'->>'product_id' != ''
                   AND (:tid IS NULL OR tenant_id = :tid)
                 GROUP BY 1, 2
                 ORDER BY cnt DESC
@@ -1795,7 +1795,7 @@ async def product_dashboard_stats(
             )
             acct_totals[r.aid] += r.cnt
 
-        # 크림/포이즌 리셀 입찰 합류 — 단위=입찰갯수 (registered_accounts 미기록 마켓)
+        # 크림/포이즌 리셀 입찰 합류 — registered_accounts 미기록 마켓이라 별도 집계
         resell_units: dict[str, str] = {}
         kream_rows, poison_rows = resell_rows
         if kream_rows or poison_rows:

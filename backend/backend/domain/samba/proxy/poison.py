@@ -39,6 +39,8 @@ class PoisonClient:
     PATH_RECOMMEND_PRICE = "/dop/api/v1/pop/api/v1/recommend-bid/price"
     # 주문 목록 조회 (Order List — generic_list, create_time 범위 최대 7일)
     PATH_ORDER_LIST = "/dop/api/v1/pop/api/v2/order/generic_list"
+    # 내 입찰(listing) 목록 조회 (Query Listing List — offset 페이징)
+    PATH_QUERY_LISTING = "/dop/api/v1/pop/api/v1/retrieve-bid/general-type-bidding-list"
 
     # POIZON sizeType 허용값
     _ALLOWED_SIZE_TYPES = {"EU", "US", "UK", "CN", "JP"}
@@ -286,6 +288,41 @@ class PoisonClient:
                 or f"POIZON 입찰 취소 실패(code={data.get('code')})"
             ),
             "data": data,
+        }
+
+    async def query_listing_page(
+        self,
+        *,
+        bidding_type: int = 20,
+        trade_status: int | None = 2,
+        offset_id: int = 0,
+        page_size: int = 100,
+        region: str | None = None,
+    ) -> dict[str, Any]:
+        """내 입찰(listing) 목록 1페이지 조회 (Query Listing List).
+
+        tradeStatus: 0=거래중 / 1=취소 / 2=등록성공(활성) / 3=품절.
+        실계정 검증(2026-08-01): 활성 입찰은 tradeStatus=2 로 조회된다(0은 빈 목록).
+        페이징: exclusiveStartOffsetId 0 시작 → 응답 lastOffsetId 를 다음 호출에 전달.
+        Returns: {"list": [...], "lastOffsetId": int} (실패 시 빈 값)
+        """
+        biz: dict[str, Any] = {
+            "language": self.language,
+            "timeZone": self.time_zone,
+            "biddingType": int(bidding_type),
+            "region": region or self.region,
+            "exclusiveStartOffsetId": int(offset_id),
+            "pageSize": int(page_size),
+        }
+        if trade_status is not None:
+            biz["tradeStatus"] = int(trade_status)
+        data = await self._post(self.PATH_QUERY_LISTING, biz)
+        if data.get("code") != 200:
+            return {"list": [], "lastOffsetId": 0, "error": data}
+        d = data.get("data") or {}
+        return {
+            "list": d.get("list") or [],
+            "lastOffsetId": int(d.get("lastOffsetId") or 0),
         }
 
     async def recommend_price(
