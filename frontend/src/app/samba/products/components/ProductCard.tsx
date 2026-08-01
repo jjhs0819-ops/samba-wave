@@ -36,7 +36,8 @@ export const MARKETS = [
   { id: 'hmall', name: 'HMALL', url: 'https://partner.hmall.com', searchUrl: 'https://www.hmall.com/search?searchTerm=' },
   // 리셀/패션
   { id: 'kream', name: 'KREAM', url: 'https://kream.co.kr', searchUrl: 'https://kream.co.kr/search?keyword=' },
-  { id: 'poison', name: '포이즌', url: 'https://www.poizon.com', searchUrl: 'https://www.poizon.com/search?keyword=' },
+  // POIZON 은 kr 서브도메인만 동작 — www.poizon.com 은 검색 경로도 홈으로 리다이렉트된다(실측 2026-08-01)
+  { id: 'poison', name: '포이즌', url: 'https://kr.poizon.com', searchUrl: 'https://kr.poizon.com/search?keyword=' },
   // 해외 마켓
   { id: 'qoo10', name: 'Qoo10', url: 'https://qsm.qoo10.com', searchUrl: 'https://www.qoo10.com/s?keyword=' },
   { id: 'rakuten', name: '라쿠텐', url: 'https://merchant.rakuten.co.jp', searchUrl: 'https://search.rakuten.co.jp/search/mall/' },
@@ -701,7 +702,16 @@ const ProductCard = React.memo(function ProductCard({
     const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string; name_ko?: string; anomaly_ok?: boolean; anomaly_flagged?: boolean; anomaly_reason?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
       { key: 'kream', name: 'KREAM', url: (id) => `https://kream.co.kr/products/${id}` },
-      { key: 'poison', name: 'POIZON', url: (id) => `https://www.poizon.com/product/${id}` },
+      // POIZON 은 직링크가 불가능해 품번 검색으로 보낸다.
+      // 공개 상품 URL 은 `kr.poizon.com/product/{slug}-{공개id}` 인데, resell_matches 의
+      // poison.product_id 는 품번(예: 022357-03)이라 공개id 와 체계가 다르다.
+      // 실측(2026-08-01): www.poizon.com/product/{품번} 은 홈으로 리다이렉트(죽은 링크),
+      // kr.poizon.com/search?keyword={품번} 은 해당 상품이 정상 검색됨. www 는 검색도 홈으로 튄다.
+      {
+        key: 'poison',
+        name: 'POIZON',
+        url: (id) => `https://kr.poizon.com/search?keyword=${encodeURIComponent(id)}`,
+      },
       { key: 'stockx', name: 'StockX' },
     ]
     // 크림(리셀) 전용 정책 — 원가는 스니덩크 엔화라 환율 적용 필수. 일반 마켓 calcPrice(환율 없음)로

@@ -134,6 +134,11 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
       gsshop: `https://www.gsshop.com/prd/prd.gs?prdid=${productNo}`,
       kream: `https://kream.co.kr/products/${productNo}`,
       ebay: `https://www.ebay.com/itm/${productNo}`,
+      // POIZON 은 여기에 넣지 않는다 — 아래 searchMap 으로 보낸다.
+      // 공개 상품 URL 은 `kr.poizon.com/product/{slug}-{공개id}` 형식인데(slug 는 무관),
+      // 주문의 product_id 는 셀러 API 의 spu_id 라 공개id 와 다른 체계다.
+      // 실측(2026-08-01): spu_id 8926673 / 57004733 로 만든 URL 은 전부 홈으로 리다이렉트.
+      // 깨진 직링크 대신 POIZON 내 상품명 검색으로 보낸다.
     }
 
     if (productNo) {
@@ -175,6 +180,11 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
       coupang: `https://www.coupang.com/np/search?q=`,
       '11st': `https://search.11st.co.kr/Search.tmall?kwd=`,
       ssg: `https://www.ssg.com/search.ssg?query=`,
+      // 판매마켓 안에서 찾도록 — 마지막 폴백(네이버쇼핑)으로 새지 않게 한다.
+      // POIZON 은 반드시 kr 서브도메인 — www.poizon.com 은 검색 경로도 홈으로 리다이렉트된다
+      // (실측 2026-08-01: www=홈, kr=검색결과 정상).
+      poison: `https://kr.poizon.com/search?keyword=`,
+      kream: `https://kream.co.kr/search?keyword=`,
     }
     const searchBase = searchMap[marketType]
     if (searchBase) {
