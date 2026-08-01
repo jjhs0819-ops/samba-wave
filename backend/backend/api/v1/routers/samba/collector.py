@@ -1682,15 +1682,20 @@ async def product_dashboard_stats(
             """).bindparams(tid=tenant_id)
             kream_rows = (await s.execute(kream_stmt)).all()
 
-            # 포이즌 — 타마켓과 동일하게 DB 실시간 집계. 등록입찰 기록 =
-            # resell_matches.poison.product_id (상품관리 UI 등록표시와 같은 기준).
+            # 포이즌 — 타마켓과 동일하게 DB 실시간 집계. 입찰은 사이즈(옵션) 단위라
+            # 매칭상품(resell_matches.poison.product_id)의 재고>0 옵션 수로 센다
+            # (플러그인 규칙: 재고 0 옵션은 입찰 취소 — 살아있는 입찰 정의와 일치).
             poison_stmt = text("""
                 SELECT source_site,
                        COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand_name,
-                       COUNT(*) AS cnt
+                       SUM((SELECT COUNT(*)
+                            FROM jsonb_array_elements(options::jsonb) o
+                            WHERE COALESCE(NULLIF(o->>'stock', '')::int, 0) > 0
+                       )) AS cnt
                 FROM samba_collected_product
                 WHERE resell_matches->'poison'->>'product_id' IS NOT NULL
                   AND resell_matches->'poison'->>'product_id' != ''
+                  AND options IS NOT NULL
                   AND (:tid IS NULL OR tenant_id = :tid)
                 GROUP BY 1, 2
                 ORDER BY cnt DESC

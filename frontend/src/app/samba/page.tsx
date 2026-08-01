@@ -111,6 +111,9 @@ export default function SambaDashboard() {
       .sort((x, y) => y.registered - x.registered)
   }, [byAccount])
 
+  // 판매비중 분모 = 전 마켓 판매합(30일) — 마켓/계정 행 비중의 합이 100%가 되게
+  const totalSoldAll = useMemo(() => byMarket.reduce((acc, m) => acc + m.sold_products, 0), [byMarket])
+
   const now = new Date()
   const year = now.getFullYear()
   const month = now.getMonth()
@@ -449,10 +452,10 @@ export default function SambaDashboard() {
                         {MARKET_DISPLAY[m.market_name] ?? m.market_name}
                       </td>
                       {(() => {
-                        const ratio = m.registered > 0 ? m.sold_products / m.registered * 100 : 0
+                        const ratio = totalSoldAll > 0 ? m.sold_products / totalSoldAll * 100 : 0
                         return (
-                          <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: ratio >= 3 ? c.success : ratio >= 1 ? c.warn : c.danger }}>
-                            {m.registered > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                          <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: c.text }}>
+                            {totalSoldAll > 0 ? `${ratio.toFixed(1)}%` : '-'}
                           </td>
                         )
                       })()}
@@ -473,10 +476,10 @@ export default function SambaDashboard() {
                               {a.account_label || a.account_id}
                             </td>
                             {(() => {
-                              const ratio = a.registered > 0 ? (a.sold_products ?? 0) / a.registered * 100 : 0
+                              const ratio = totalSoldAll > 0 ? (a.sold_products ?? 0) / totalSoldAll * 100 : 0
                               return (
-                                <td style={{ padding: '0.4rem 0', textAlign: 'right', fontSize: '0.8125rem', color: ratio >= 3 ? c.success : ratio >= 1 ? c.warn : c.danger }}>
-                                  {a.registered > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                                <td style={{ padding: '0.4rem 0', textAlign: 'right', fontSize: '0.8125rem', color: c.textSub }}>
+                                  {totalSoldAll > 0 ? `${ratio.toFixed(1)}%` : '-'}
                                 </td>
                               )
                             })()}
@@ -519,16 +522,15 @@ export default function SambaDashboard() {
                 )
               })}
               {byMarket.length > 0 && (() => {
-                // 합계는 상품 단위만 합산 — 입찰 단위(크림/포이즌)는 단위가 달라 제외
+                // 등록 합계는 상품 단위만 — 입찰 단위(크림/포이즌)는 단위가 달라 제외.
+                // 판매비중 합계는 전 마켓 포함 = 100%
                 const prodMarkets = byMarket.filter(m => !m.count_unit)
                 const totalReg = prodMarkets.reduce((a, m) => a + m.registered, 0)
-                const totalSold = prodMarkets.reduce((a, m) => a + m.sold_products, 0)
-                const ratio = totalReg > 0 ? totalSold / totalReg * 100 : 0
                 return (
                   <tr style={{ borderTop: `1px solid ${c.border}` }}>
                     <td style={{ padding: '0.5rem 0', color: c.text, fontWeight: 600 }}>합계</td>
-                    <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: ratio >= 3 ? c.success : ratio >= 1 ? c.warn : c.danger }}>
-                      {totalReg > 0 ? `${ratio.toFixed(1)}%` : '-'}
+                    <td style={{ padding: '0.5rem 0', textAlign: 'right', fontWeight: 600, color: c.text }}>
+                      {totalSoldAll > 0 ? '100.0%' : '-'}
                     </td>
                     <td style={{ padding: '0.5rem 0', textAlign: 'right', color: c.text, fontWeight: 600 }}>{fmtNum(totalReg)}</td>
                   </tr>
