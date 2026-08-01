@@ -41,6 +41,48 @@ _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
+
+# ── 크림 루프 워치독 [2026-08-01] — 크림 API 호출이 타임아웃 없이 행(hung)나면 컨테이너는
+# 살아있는데 루프만 죽어 오토튠이 조용히 멈춘다(반복 재발). 별도 OS 스레드가 하트비트를 감시,
+# stall 시 프로세스 강제종료 → Docker restart:unless-stopped 재기동 → 루프 재개(offset DB저장이라 이어감).
+_kream_heartbeat = 0.0  # 마지막 사이클 진행 시각. 0=아직 시작 안 함(감시 보류)
+_KREAM_STALL_SEC = int(
+    os.environ.get("KREAM_WATCHDOG_STALL_SEC") or 900
+)  # 무진행 15분=행
+
+
+def touch_kream_heartbeat() -> None:
+    """사이클 진행 신호 — cycle 시작·각 단계서 호출. 이벤트루프 살아있음 증명."""
+    global _kream_heartbeat
+    import time as _t
+
+    _kream_heartbeat = _t.time()
+
+
+def start_kream_watchdog() -> None:
+    """별도 데몬 스레드 워치독 — 이벤트루프가 블로킹돼도 동작(async 감시론 못 잡음).
+    하트비트가 _KREAM_STALL_SEC 초 넘게 안 갱신되면 행으로 보고 프로세스 종료."""
+    import threading
+    import time as _t
+
+    def _run() -> None:
+        while True:
+            _t.sleep(60)
+            hb = _kream_heartbeat
+            if hb <= 0:
+                continue  # 아직 첫 사이클 전
+            age = _t.time() - hb
+            if age > _KREAM_STALL_SEC:
+                logger.error(
+                    "[크림워치독] 사이클 %d초 무진행(행 판단) — 프로세스 강제종료 → 자동 재기동",
+                    int(age),
+                )
+                os._exit(1)
+
+    threading.Thread(target=_run, daemon=True, name="kream-watchdog").start()
+    logger.info("[크림워치독] 시작 — stall 상한 %d초", _KREAM_STALL_SEC)
+
+
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
 # 웹훅 URL은 비밀이라 local.env(KREAM_SLACK_WEBHOOK)로만 주입(리포지토리 비커밋).
 _SLACK_WEBHOOK = os.environ.get("KREAM_SLACK_WEBHOOK", "")
@@ -3116,6 +3158,7 @@ async def run_kream_unified_once() -> dict:
             return r
 
     _emitted = 0
+    touch_kream_heartbeat()  # 카드 전수처리 진입 신호(워치독)
     async with httpx.AsyncClient(timeout=20) as scli:
         results = await asyncio.gather(
             *[_process(p, scli) for p in products], return_exceptions=True
@@ -3287,6 +3330,7 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(_SET_GUARD, _g_price_guard)  # 급락 가드 직전가 유지
 
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
+    touch_kream_heartbeat()  # 신발 갱신 진입 신호(워치독)
     shoe = await _process_shoe_asks(
         asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr, sized_kids
     )
@@ -3343,6 +3387,7 @@ async def run_kream_unified_once() -> dict:
 
     # ── [B-2] 신발 신규 자동등록 — verified 확정 신발/의류/시계 미등록분(사이즈 mm↔cm 매칭).
     # 카드 리스톡과 동일 가드 + 원가상한 + 정책스킵. 사이클당 상한. _EXEC_SHOE 게이트.
+    touch_kream_heartbeat()  # 신발 신규등록 진입 신호(워치독)
     shoe_rs = await _process_shoe_restock(
         asks, kid_to_snkr, cooldown, rate, tariff_threshold, h
     )
@@ -3414,6 +3459,7 @@ async def run_kream_unified_once() -> dict:
         await _save_setting_map(_SET_MISS, _g_miss_counts)
 
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
+    touch_kream_heartbeat()  # 만료회수 진입 신호(워치독)
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
     if expired.get("total"):
         logger.info(

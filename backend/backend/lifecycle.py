@@ -1056,7 +1056,15 @@ async def _kream_shadow_loop() -> None:
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
     _unified = os.environ.get("KREAM_UNIFIED") == "1"
+    # 루프 행 감시 워치독 시작 — API 호출 행 시 자동 재기동(offset DB저장이라 이어감)
+    from backend.domain.samba.warroom.kream_shadow import (
+        start_kream_watchdog,
+        touch_kream_heartbeat,
+    )
+
+    start_kream_watchdog()
     while True:
+        touch_kream_heartbeat()  # 매 사이클 시작 신호(행 감시 하트비트)
         try:
             if _unified:
                 # [Step 3] 스니덩크 전수순회 통합(갱신+리스톡+삭제)
