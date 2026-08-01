@@ -42,9 +42,7 @@ def is_canceled(order: dict[str, Any]) -> bool:
         return False
 
 
-def is_buyer_cancelable(
-    order: dict[str, Any], window_min: int | None = None
-) -> bool:
+def is_buyer_cancelable(order: dict[str, Any], window_min: int | None = None) -> bool:
     """주문이 아직 구매자 취소가능 창(결제 후 1시간) 안인지 판정.
 
     - order_status 1000(결제대기): 결제 전 → 항상 취소가능으로 본다.
