@@ -2114,7 +2114,10 @@ async def _process_shoe_restock(
     """신발/의류/시계 신규 자동등록 — verified 확정 + 재고O + 해당 사이즈 미등록만.
     카드 리스톡 동일 가드(2연속miss·재게시2h·실패6h·거래·이행대기) + 원가상한 + 정책(2등불가/
     국내못이김) 스킵. 사이즈 옵션명 크림(mm)↔DB(cm) 변환 매칭. _EXEC_SHOE=1 일 때만 실제 POST.
-    사이클당 _SHOE_RESTOCK_MAX 상한(사이즈별 다건이라 폭주 방지)."""
+    사이클당 _SHOE_RESTOCK_MAX 상한(사이즈별 다건이라 폭주 방지).
+    _EXEC_SHOE_RESTOCK=0 이면 크림 API조회 자체 생략(완전 차단) — 루프 안정화용."""
+    if not _EXEC_SHOE_RESTOCK:
+        return {"cand": 0, "post": 0, "fail": 0, "off": 1}
     c = {
         "cand": 0,
         "post": 0,
@@ -2309,7 +2312,9 @@ async def _process_box_restock(
     로컬 봇(_kream_restock_register 박스 경로)이 07-22 정지하며 끊긴 경로를 백엔드로 이식.
     카드/신발 리스톡과 동일 가드(2연속miss·재게시·실패쿨·거래이력·이행대기) + 원가상한 +
     정책스킵(2등불가/국내못이김). 원가는 스니덩크 /v1/apparels 1박스 실시세.
-    _EXEC_BOX_RESTOCK=1 일 때만 실제 POST. 사이클당 _BOX_RESTOCK_MAX 상한."""
+    _EXEC_BOX_RESTOCK=1 일 때만 동작(off면 스니덩크 API조회 자체 생략 — 루프 안정화용)."""
+    if not _EXEC_BOX_RESTOCK:
+        return {"cand": 0, "post": 0, "fail": 0, "off": 1}
     c = {
         "cand": 0,
         "post": 0,
