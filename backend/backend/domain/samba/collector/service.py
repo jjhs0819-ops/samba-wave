@@ -411,8 +411,24 @@ class SambaCollectorService:
             or data.get("applied_policy_id")
         ):
             return
-        # 태그/SEO/정책: SearchFilter 전체에서 참조 (같은 검색그룹이면 공유)
-        filter_refs = await self.product_repo.list_by_filter(fid, limit=1)
+        # ★2026-08-02 — 태그/SEO 는 **같은 카테고리** 상품에서만 상속한다.
+        # 같은 검색그룹이라도 카테고리가 다르면 품목·성별이 어긋난 키워드를 물려받고
+        # (2026-07-18 감사 8,821건 불일치), 카테고리 leaf 명을 그대로 쓴 SEO 가
+        # 상속되면 상품명 조합까지 오염된다(2026-08-02 48건, "숏 팬츠 바지 숏 숏…").
+        # 같은 카테고리 참조가 없으면 상속하지 않는다 — 크론
+        # auto_tag_seo_mapping 이 (site,category) 기반 정상값으로 채워준다.
+        _ref_cat = (data.get("category") or "").strip()
+        filter_refs: list = []
+        if _ref_cat:
+            filter_refs = await self.product_repo.filter_by_async(
+                search_filter_id=fid,
+                category=_ref_cat,
+                limit=1,
+                order_by="created_at",
+                order_by_desc=True,
+            )
+        # 정책은 품목과 무관하므로 기존대로 그룹 전체에서 참조
+        policy_refs = await self.product_repo.list_by_filter(fid, limit=1)
         # market_prices: group_key 단위로 참조 (동일 SKU 패밀리에서만 의미 있음)
         group_refs: list = []
         group_key = (data.get("group_key") or "").strip()
@@ -433,9 +449,9 @@ class SambaCollectorService:
             # SEO 키워드 복사
             if ref.seo_keywords:
                 data["seo_keywords"] = list(ref.seo_keywords)
-            # 정책 복사
-            if ref.applied_policy_id:
-                data["applied_policy_id"] = ref.applied_policy_id
+        # 정책 복사 — 카테고리 무관(그룹 단위 속성)
+        if policy_refs and policy_refs[0].applied_policy_id:
+            data["applied_policy_id"] = policy_refs[0].applied_policy_id
         # 기존 상품에서 정책 못 가져왔으면 SearchFilter 자체에서 fallback(이슈#277)
         # — 같은 필터 첫 수집(기존 상품 0건)이면 filter_refs=[]라 위 블록 skip되어
         #   applied_policy_id=NULL 저장 → 이후 수집도 NULL ref 받아 도미노 전파
