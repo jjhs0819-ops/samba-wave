@@ -3036,8 +3036,15 @@ class SambaShipmentService:
             # 신규등록 실패 계정만 B칸(market_product_nos)/A칸(registered_accounts)에서
             # 제거 — 다른 계정 키는 건드리지 않는 계정별 atomic 삭제.
             if removable_failed:
+                # ★별도 세션에서 실행한다. 여기서 예외가 나면 메인 세션이 오염돼
+                # 이후 ORM 접근이 전부 MissingGreenlet 으로 죽는다(2026-08-01 실측:
+                # 파일럿 30건 중 26건이 이 연쇄로 실패). 마커 정리는 부수작업이므로
+                # 실패해도 전송 본류에 영향을 주면 안 된다.
                 try:
                     from sqlalchemy import text as _rf_sa_text  # noqa: F811
+                    from backend.db.orm import (  # noqa: F811
+                        get_write_session as _rf_session,
+                    )
 
                     _rf_keys: list[str] = []
                     for _rf_aid in removable_failed:
@@ -3047,35 +3054,36 @@ class SambaShipmentService:
                             f"{_rf_aid}_master",
                             f"{_rf_aid}_site",
                         ]
-                    await self.session.execute(
-                        _rf_sa_text(
-                            "UPDATE samba_collected_product SET"
-                            "  market_product_nos = ("
-                            "    (CASE WHEN jsonb_typeof(market_product_nos) = 'object'"
-                            "          THEN market_product_nos ELSE '{}'::jsonb END)"
-                            "    - CAST(:nos_keys AS text[])"
-                            "  ),"
-                            "  registered_accounts = ("
-                            "    COALESCE(registered_accounts, '[]'::jsonb)"
-                            "    - CAST(:reg_keys AS text[])"
-                            "  )"
-                            " WHERE id = CAST(:pid AS text)"
-                        ),
-                        {
-                            "nos_keys": _rf_keys,
-                            "reg_keys": list(removable_failed),
-                            "pid": product_id,
-                        },
-                    )
-                    await self.session.commit()
+                    async with _rf_session() as _rf_s:
+                        await _rf_s.execute(
+                            _rf_sa_text(
+                                # ★jsonb 스칼라 가드는 두 컬럼 모두에 필요하다.
+                                # COALESCE 는 SQL NULL 만 막고 **JSON null 스칼라는
+                                # 통과**시켜 `jsonb - text[]` 가
+                                # "cannot delete from scalar" 로 터진다
+                                # (미등록 상품은 registered_accounts 가 JSON null).
+                                "UPDATE samba_collected_product SET"
+                                "  market_product_nos = ("
+                                "    (CASE WHEN jsonb_typeof(market_product_nos) = 'object'"
+                                "          THEN market_product_nos ELSE '{}'::jsonb END)"
+                                "    - CAST(:nos_keys AS text[])"
+                                "  ),"
+                                "  registered_accounts = ("
+                                "    (CASE WHEN jsonb_typeof(registered_accounts) = 'array'"
+                                "          THEN registered_accounts ELSE '[]'::jsonb END)"
+                                "    - CAST(:reg_keys AS text[])"
+                                "  )"
+                                " WHERE id = CAST(:pid AS text)"
+                            ),
+                            {
+                                "nos_keys": _rf_keys,
+                                "reg_keys": list(removable_failed),
+                                "pid": product_id,
+                            },
+                        )
+                        await _rf_s.commit()
                 except Exception as _rf_e:
-                    logger.warning(
-                        f"[전송] 신규등록 실패 계정 정리 실패: {_rf_e}"
-                    )
-                    try:
-                        await self.session.rollback()
-                    except Exception:
-                        pass
+                    logger.warning(f"[전송] 신규등록 실패 계정 정리 실패: {_rf_e}")
 
         # 전 옵션 품절 + 마켓에 남은 등록 없음 → 수집상품 자체 DB 삭제.
         # 첫등록 전송잡에서 전옵션 품절 상품은 등록을 안 하므로(위 1595 블록에서
@@ -3143,7 +3151,23 @@ class SambaShipmentService:
 
         # SEO 검색키워드: seo_keywords 배열을 공백 연결
         seo_kws = product.get("seo_keywords") or []
-        seo_text = " ".join(seo_kws[:2]) if seo_kws else ""
+        # ★단어 단위 중복 제거 — SEO 키워드가 카테고리 leaf명을 그대로 쓰면
+        # ("바지 > 숏 팬츠" → ["여성 숏 팬츠","바지 숏 팬츠","스포츠 숏 팬츠"])
+        # 앞 2개만 이어붙여도 같은 단어가 반복돼 마켓 상품명이 오염된다
+        # (2026-08-01 실측: "여성 숏 팬츠 바지 숏 - 숏 숏 - 숏 숏 …" 47건 노출).
+        # 키워드 자체를 고치는 것과 별개로, 조합 단계에서 한 번 더 막는다.
+        # 슬래시는 카테고리 leaf 구분자라 단어 경계로 취급해야 중복이 잡힌다
+        # ("숏 패딩/숏 헤비 아우터" → 숏·패딩·숏·헤비·아우터).
+        _seo_raw = " ".join(seo_kws[:2]).replace("/", " ")
+        _seo_seen: set[str] = set()
+        _seo_words: list[str] = []
+        for _w in _seo_raw.split():
+            _key = _w.strip().lower()
+            if not _key or _key in _seo_seen:
+                continue
+            _seo_seen.add(_key)
+            _seo_words.append(_w)
+        seo_text = " ".join(_seo_words)
 
         tag_map = {
             "{상품명}": product.get("name", ""),
