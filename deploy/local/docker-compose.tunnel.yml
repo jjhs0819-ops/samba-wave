@@ -209,6 +209,10 @@ services:
                                    # 상한초과2 제외 = 등록후보 140건. 거래≥1 게이트 박스 전용 강화
       KREAM_BOX_RESTOCK_MAX: "30"  # 박스 신규등록 사이클당 상한(첫등록 폭주 방지)
       # netns 공유 → api(8080)/worker(8081)/reconciler(8082)와 분리
+      # [2026-08-02] 신발 ask 폭증(892→17,959)으로 사이클 정지 → 신규등록 일시중단, 조회 동시성↑.
+      # 갱신 안정화 확인 후 KREAM_NONCARD_PRIORITY_MAX 를 200~500 으로 재개.
+      KREAM_NONCARD_PRIORITY_MAX: "0"
+      KREAM_SHOE_FETCH_CONCURRENCY: "30"
       KREAM_BIND_PORT: "8083"
       # 크림 루프는 반드시 돌아야 하므로 BG 비활성 금지 (0 고정)
       DISABLE_BACKGROUND_WORKERS: "0"

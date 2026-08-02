@@ -411,7 +411,7 @@ async def snkrdunk_kream_compare(
         AND resell_matches->'kream'->>'product_id' IS NOT NULL
         AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
         AND EXISTS (
-            SELECT 1 FROM jsonb_array_elements(options::jsonb) opt
+            SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) opt
             WHERE opt->>'name' ILIKE '%PSA 10%'
             AND (opt->>'stock')::int > 0
         )
@@ -432,7 +432,7 @@ async def snkrdunk_kream_compare(
         AND resell_matches->'kream'->>'product_id' IS NOT NULL
         AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
         AND EXISTS (
-            SELECT 1 FROM jsonb_array_elements(options::jsonb) opt
+            SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) opt
             WHERE opt->>'name' ILIKE '%PSA 10%'
             AND (opt->>'stock')::int > 0
         )
@@ -779,63 +779,63 @@ async def snkrdunk_compare_all_public(
             COALESCE(resell_matches->'kream_candidates', '[]'::jsonb)::text AS kream_candidates,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
                 LIMIT 1
             ), 0) AS psa10_stock,
             COALESCE((
                 SELECT NULLIF(o->>'price', '')::numeric::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
                 LIMIT 1
             ), 0) AS psa10_price,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), 0) AS psa9_stock,
             COALESCE((
                 SELECT NULLIF(o->>'price', '')::numeric::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), 0) AS psa9_price,
             -- 옵션별 고정입찰가(원가무관) 설정 — 검수페이지 표시/체크 복원용
             COALESCE((
                 SELECT (o->>'fixedEnabled')::boolean
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
                 LIMIT 1
             ), false) AS psa10_fixed_enabled,
             COALESCE((
                 SELECT NULLIF(o->>'fixedPrice', '')::numeric::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
                 LIMIT 1
             ), 0) AS psa10_fixed_price,
             COALESCE((
                 SELECT (o->>'fixedEnabled')::boolean
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), false) AS psa9_fixed_enabled,
             COALESCE((
                 SELECT NULLIF(o->>'fixedPrice', '')::numeric::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), 0) AS psa9_fixed_price,
             -- 고정가 보유재고 수량(고정가=보유재고, 판매 시 재입찰 관리용)
             COALESCE((
                 SELECT NULLIF(o->>'fixedStock', '')::numeric::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA10'
                 LIMIT 1
             ), 0) AS psa10_fixed_stock,
             COALESCE((
                 SELECT NULLIF(o->>'fixedStock', '')::numeric::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE REPLACE(o->>'name', ' ', '') = 'PSA9'
                 LIMIT 1
             ), 0) AS psa9_fixed_stock,
@@ -851,11 +851,11 @@ async def snkrdunk_compare_all_public(
             -- /all 이 29초로 느려져 페이지 로드마다 DB 부하(2026-07-09 성능 회귀 수정).
             CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
                 SELECT SUM(NULLIF(o->>'stock', '')::int)
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
             ), 0) ELSE 0 END AS total_stock,
             CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
                 SELECT MIN(NULLIF(o->>'price', '')::numeric)::int
-                FROM jsonb_array_elements(options::jsonb) o
+                FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE NULLIF(o->>'price', '')::numeric > 0
             ), 0) ELSE 0 END AS min_opt_price
         FROM samba_collected_product
@@ -1163,7 +1163,7 @@ async def snkrdunk_update_fixed_price_public(
                 CASE WHEN o->>'name' = :opt_name
                      THEN o || jsonb_build_object('fixedEnabled', :enabled, 'fixedPrice', :price, 'fixedStock', :stock)
                      ELSE o END)
-            FROM jsonb_array_elements(options::jsonb) o
+            FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
         ), updated_at = NOW()
         WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)

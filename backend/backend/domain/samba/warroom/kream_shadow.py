@@ -40,7 +40,8 @@ _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 # 신발 신규 자동등록 실행 게이트 — 갱신/삭제와 별도. 섀도 후보 검증 후 KREAM_EXEC_SHOE_RESTOCK=1.
 _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 비카드(신발/의류) 우선처리 상한 — 매 사이클 리스톡 슬라이스 외 추가 포함 수. DB옵션만 보므로 가볍다.
-_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 3000)
+_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 800)
+_shoe_fetch_offset = 0  # 신발 실시간시세 조회 로테이션 위치(사이클당 일부만)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
@@ -974,7 +975,9 @@ async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
     npages = (total + _PER_PAGE - 1) // _PER_PAGE
     if npages <= 1 or not out:
         return out
-    sem = asyncio.Semaphore(8)
+    # [2026-08-02] live 입찰 5,600건+ 로 늘어 동시성 8로는 사이클 완주 불가(슬랙 정지).
+    # 스니덩크 동시요청 안전 실증(단일 0.2s, 동시10 0.2s) → 상향. 환경변수로 조절.
+    sem = asyncio.Semaphore(int(os.environ.get("KREAM_CARD_CONCURRENCY") or 24))
 
     async def _one(p: int) -> dict:
         async with sem:
@@ -2002,7 +2005,11 @@ async def _process_shoe_asks(
     async with httpx.AsyncClient(timeout=25) as cli:
         # 상품별 실시간 사이즈시세 1회 조회(입찰이 여러 사이즈여도 페이지는 1번만) — DB 폴백
         live_map: dict = {}
-        _sem = asyncio.Semaphore(6)
+        # [2026-08-02] 신발 입찰이 892건+로 늘며 동시성 6으로는 사이클이 4시간+ 걸려 정지.
+        # 스니덩크 동시요청 안전 실증(단일 0.2s) → 동시성 상향. 환경변수로 조절 가능.
+        _sem = asyncio.Semaphore(
+            int(os.environ.get("KREAM_SHOE_FETCH_CONCURRENCY") or 20)
+        )
 
         async def _one_style(kid: str):
             style = kid_to_snkr.get(kid)
@@ -2020,8 +2027,22 @@ async def _process_shoe_asks(
             for a in shoe_asks
             if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
         }
-        await asyncio.gather(*[_one_style(k) for k in _mm_kids])
+        # [2026-08-02] 신발 상품 3,000개+ 를 매 사이클 전량 조회하면 사이클이 수시간으로 폭발해
+        # 완주(=슬랙)를 못 한다. 카드 리스톡처럼 **로테이션**으로 사이클당 일부만 실시간 조회.
+        # 조회 안 된 상품은 이번 사이클 갱신 스킵(다음 회차에 조회) — 가격 방치는 없음.
+        global _shoe_fetch_offset
+        _mm_list = sorted(_mm_kids)
+        _fetch_cap = int(os.environ.get("KREAM_SHOE_FETCH_MAX") or 600)
+        if len(_mm_list) > _fetch_cap:
+            _st = _shoe_fetch_offset % len(_mm_list)
+            _mm_round = (_mm_list[_st:] + _mm_list[:_st])[:_fetch_cap]
+            _shoe_fetch_offset = (_st + _fetch_cap) % len(_mm_list)
+        else:
+            _mm_round = _mm_list
+            _shoe_fetch_offset = 0
+        await asyncio.gather(*[_one_style(k) for k in _mm_round])
         c["live_ok"] = len(live_map)
+        c["fetch_round"] = f"{len(_mm_round):,}/{len(_mm_list):,}"
 
         for a in shoe_asks:
             kid = str(a.get("product_id") or "")
