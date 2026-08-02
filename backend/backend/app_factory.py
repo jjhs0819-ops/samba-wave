@@ -56,7 +56,6 @@ from backend.api.v1.routers.samba.proxy import (
 )
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
 from backend.api.v1.routers.samba.shipment import router as samba_shipment_router
-from backend.api.v1.routers.samba.sns_posting import router as samba_sns_posting_router
 from backend.api.v1.routers.samba.sourcing_account import (
     extension_router as samba_sourcing_account_extension_router,
 )
@@ -257,9 +256,6 @@ def create_application() -> FastAPI:
     )
     app.include_router(
         samba_wholesale_router, prefix="/api/v1/samba", dependencies=samba_auth
-    )
-    app.include_router(
-        samba_sns_posting_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     # extension_router를 먼저 등록 — `@router.get("/{account_id}")` 같은 catch-all보다
     # specific 라우트(GET /login-credential)가 우선 매칭되도록 함.
