@@ -3131,21 +3131,39 @@ async def update_order(
 # sourcing_order_number = SNKRDUNK 취引ID (③에서 채움).
 # ─────────────────────────────────────────────────────────────────────────
 _SNKR_COOKIE_KEY = "snkrdunk_session_cookie"
+# 세션 TTL(일) — 실측 2026-08-01: 6/29 발급분이 7/30 만료(≈30일), API·HTML 접속으로
+# 자동연장 안 됨(Set-Cookie 미발급). 재인증은 일본 휴대폰 SMS 필요 → 만료 전 갱신 필수.
+_SNKR_COOKIE_TTL_DAYS = 30
 
 
 class SnkrCookieBody(BaseModel):
     cookie: str
 
 
-async def _get_snkr_session_cookie(session: AsyncSession) -> str:
-    """저장된 SNKRDUNK 세션쿠키 조회 (samba_settings)."""
+def _tenant_setting_key(base_key: str, tenant_id: Optional[str]) -> str:
+    """테넌트별 설정키. samba_settings.key 가 PK 하나뿐(테넌트 격리 없는 글로벌 테이블)이라
+    문자열 suffix 로 우회 격리 — 스키마 변경(다른 글로벌 설정 다수가 의존) 없이 이 두 자격
+    증명(스니덩크 쿠키·허브넷 크레덴셜)만 테넌트별로 분리. [2026-08-01]"""
+    return f"{base_key}:{tenant_id}" if tenant_id else base_key
+
+
+async def _get_setting_value(session: AsyncSession, key: str):
     from backend.domain.samba.forbidden.model import SambaSettings
 
-    r = await session.execute(
-        select(SambaSettings).where(SambaSettings.key == _SNKR_COOKIE_KEY)
-    )
+    r = await session.execute(select(SambaSettings).where(SambaSettings.key == key))
     row = r.scalars().first()
-    val = row.value if row else None
+    return row.value if row else None
+
+
+async def _get_snkr_session_cookie(
+    session: AsyncSession, tenant_id: Optional[str] = None
+) -> str:
+    """저장된 SNKRDUNK 세션쿠키 조회 — 테넌트 전용값 우선, 없으면 기존 글로벌값(백업) 폴백."""
+    val = await _get_setting_value(
+        session, _tenant_setting_key(_SNKR_COOKIE_KEY, tenant_id)
+    )
+    if val is None and tenant_id:
+        val = await _get_setting_value(session, _SNKR_COOKIE_KEY)  # 백업(기존 계정)
     if isinstance(val, dict):
         return str(val.get("cookie") or "").strip()
     return str(val).strip() if isinstance(val, str) else ""
@@ -3188,6 +3206,44 @@ async def _apply_snkr_overseas_tracking(
     }
 
 
+@router.get("/snkrdunk/session-cookie/status")
+async def get_snkrdunk_session_cookie_status(
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """스니덩크 세션쿠키 상태 — 발급시각·만료예정·유효성. 설정화면 표시용.
+
+    재인증에 일본 휴대폰 SMS 인증이 필요해 사실상 1회성이다(지인 부탁으로 발급).
+    TTL 30일 고정이고 API·HTML 접속으로 자동연장되지 않음(Set-Cookie 미발급 실측,
+    2026-08-01) → 만료 전에 반드시 갱신해야 접근이 끊기지 않는다.
+    """
+    import base64
+    from datetime import UTC, datetime as _dt, timedelta as _td
+
+    cookie = await _get_snkr_session_cookie(session, tenant_id)
+    if not cookie:
+        return {"exists": False, "valid": False, "error": "세션쿠키 없음"}
+    issued_at = None
+    try:
+        first = cookie.split("|")[0]
+        raw = base64.urlsafe_b64decode(first + "=" * ((4 - len(first) % 4) % 4))
+        issued_at = _dt.fromtimestamp(int(raw.split(b"|")[0].decode()), UTC)
+    except Exception:
+        pass
+    expires_at = issued_at + _td(days=_SNKR_COOKIE_TTL_DAYS) if issued_at else None
+    days_left = (
+        (expires_at - _dt.now(UTC)).total_seconds() / 86400 if expires_at else None
+    )
+    return {
+        "exists": True,
+        "valid": (days_left is None) or days_left > 0,
+        "issued_at": issued_at.isoformat() if issued_at else None,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "days_left": round(days_left, 1) if days_left is not None else None,
+        "ttl_days": _SNKR_COOKIE_TTL_DAYS,
+    }
+
+
 @router.post("/snkrdunk/session-cookie")
 async def save_snkrdunk_session_cookie(
     body: SnkrCookieBody,
@@ -3209,9 +3265,12 @@ async def save_snkrdunk_session_cookie(
 
     now = _dt.now(UTC)
     tid = current_tenant_id.get()
+    key = _tenant_setting_key(
+        _SNKR_COOKIE_KEY, tid
+    )  # 테넌트 전용키 — 기존 글로벌키(백업) 보존
     value = {"cookie": cookie, "updated_at": now.isoformat()}
     ins = pg_insert(SambaSettings).values(
-        key=_SNKR_COOKIE_KEY, value=value, updated_at=now, tenant_id=tid
+        key=key, value=value, updated_at=now, tenant_id=tid
     )
     stmt = ins.on_conflict_do_update(
         index_elements=["key"],
@@ -3232,12 +3291,13 @@ async def save_snkrdunk_session_cookie(
 async def fetch_snkrdunk_tracking(
     order_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """주문 1건 해외송장(사무국→구매자 발송) 조회 + 저장."""
     order = await session.get(SambaOrder, order_id)
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
-    cookie = await _get_snkr_session_cookie(session)
+    cookie = await _get_snkr_session_cookie(session, tenant_id)
     if not cookie:
         return {
             "success": False,
@@ -3250,32 +3310,32 @@ async def fetch_snkrdunk_tracking(
 async def sync_snkrdunk_overseas_tracking(
     limit: int = 200,
     session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     """미수집 KREAM 주문 일괄 해외송장 조회 (소싱주문번호 有 & 해외송장 空)."""
     from sqlalchemy import func as _func, or_ as _or
 
-    cookie = await _get_snkr_session_cookie(session)
+    cookie = await _get_snkr_session_cookie(session, tenant_id)
     if not cookie:
         return {
             "success": False,
             "error": "SNKRDUNK 세션쿠키 없음 — 확장앱으로 SNKRDUNK 로그인 필요",
         }
-    stmt = (
-        select(SambaOrder)
-        .where(
-            SambaOrder.sourcing_order_number.is_not(None),
-            SambaOrder.sourcing_order_number != "",
-            (SambaOrder.overseas_tracking_number.is_(None))
-            | (SambaOrder.overseas_tracking_number == ""),
-            _or(
-                _func.upper(_func.coalesce(SambaOrder.source_site, "")) == "KREAM",
-                _func.upper(_func.coalesce(SambaOrder.sales_channel_alias, "")).like(
-                    "%KREAM%"
-                ),
+    conds = [
+        SambaOrder.sourcing_order_number.is_not(None),
+        SambaOrder.sourcing_order_number != "",
+        (SambaOrder.overseas_tracking_number.is_(None))
+        | (SambaOrder.overseas_tracking_number == ""),
+        _or(
+            _func.upper(_func.coalesce(SambaOrder.source_site, "")) == "KREAM",
+            _func.upper(_func.coalesce(SambaOrder.sales_channel_alias, "")).like(
+                "%KREAM%"
             ),
-        )
-        .limit(max(1, min(int(limit or 200), 500)))
-    )
+        ),
+    ]
+    if tenant_id:
+        conds.append(SambaOrder.tenant_id == tenant_id)
+    stmt = select(SambaOrder).where(*conds).limit(max(1, min(int(limit or 200), 500)))
     rows = (await session.execute(stmt)).scalars().all()
     checked = 0
     shipped = 0
@@ -3296,30 +3356,58 @@ async def sync_snkrdunk_overseas_tracking(
 # bulk_tracking_update 로 일괄 기입. 크레덴셜은 samba_settings.hubnet_credentials.
 # ─────────────────────────────────────────────────────────────────────────
 _HUBNET_BASE = "https://kpartner.ehub24.net"
+_HUBNET_CREDS_KEY = "hubnet_credentials"
 
 
-async def _push_hubnet_tracking(session: AsyncSession) -> dict:
+async def _get_hubnet_credentials(
+    session: AsyncSession, tenant_id: Optional[str] = None
+) -> Optional[dict]:
+    """허브넷 로그인정보 — 소싱처 계정(site_name='HUBNET') 우선, 없으면 기존
+    samba_settings.hubnet_credentials(백업) 폴백. 계정관리 UI·테넌트 격리·비번 마스킹을
+    그대로 재사용하려고 소싱처 계정 테이블을 정본으로 삼는다. [2026-08-01]"""
+    from backend.domain.samba.sourcing_account.model import SambaSourcingAccount
+
+    conds = [
+        SambaSourcingAccount.site_name == "HUBNET",
+        SambaSourcingAccount.is_active.is_(True),
+    ]
+    if tenant_id:
+        conds.append(SambaSourcingAccount.tenant_id == tenant_id)
+    acc = (
+        (await session.execute(select(SambaSourcingAccount).where(*conds).limit(1)))
+        .scalars()
+        .first()
+    )
+    if acc and acc.username and acc.password:
+        return {"email": acc.username, "password": acc.password}
+    # 폴백(백업) — 기존 글로벌 설정값
+    val = await _get_setting_value(session, _HUBNET_CREDS_KEY)
+    return val if isinstance(val, dict) else None
+
+
+async def _push_hubnet_tracking(
+    session: AsyncSession, tenant_id: Optional[str] = None
+) -> dict:
     """해외송장 보유 크림주문 → 허브넷 택배번호 일괄 기입. 실패해도 예외 안 던짐."""
     import json  # noqa: F811 — 로컬 import (모듈 최상위에 없음)
 
     import httpx as _httpx
 
-    from backend.domain.samba.forbidden.model import SambaSettings
-
-    r = await session.execute(
-        select(SambaSettings).where(SambaSettings.key == "hubnet_credentials")
-    )
-    row = r.scalars().first()
-    creds = row.value if row and isinstance(row.value, dict) else None
+    creds = await _get_hubnet_credentials(session, tenant_id)
     if not creds or not creds.get("email"):
         return {"updated": 0, "error": "hubnet_credentials 없음"}
 
+    conds = [
+        SambaOrder.order_number.like("A-LI%"),
+        SambaOrder.overseas_tracking_number.is_not(None),
+        SambaOrder.overseas_tracking_number != "",
+    ]
+    if tenant_id:
+        conds.append(SambaOrder.tenant_id == tenant_id)
     orders = (
         await session.execute(
             select(SambaOrder.order_number, SambaOrder.overseas_tracking_number).where(
-                SambaOrder.order_number.like("A-LI%"),
-                SambaOrder.overseas_tracking_number.is_not(None),
-                SambaOrder.overseas_tracking_number != "",
+                *conds
             )
         )
     ).all()

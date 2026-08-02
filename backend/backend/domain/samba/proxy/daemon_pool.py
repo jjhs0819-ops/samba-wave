@@ -37,6 +37,7 @@ def _pick_owner_with_prefix(site: str, daemon_only: bool) -> str | None:
         from backend.api.v1.routers.samba.collector_autotune import (
             _pc_allowed_sites,
             _pc_last_seen,
+            _site_block_backoff_until,
         )
 
         now = time.time()
@@ -56,6 +57,10 @@ def _pick_owner_with_prefix(site: str, daemon_only: bool) -> str | None:
             # 확장앱은 인터넷 OFF 빠르게 탐지 위해 60s 유지.
             ttl = 180.0 if daemon_only else 60.0
             if now - last > ttl:
+                continue
+            # PC별 차단 백오프 중인 device 는 풀에서 제외 — 잡이 건강한 PC로만
+            # 라우팅돼 사이트 전체가 안 멈춘다 (2026-08-02 SSG PC별 격리)
+            if _site_block_backoff_until.get(f"{_site_u}|{dev}", 0.0) > now:
                 continue
             pool.append(dev)
         pool.sort()

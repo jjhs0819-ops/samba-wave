@@ -139,6 +139,13 @@ class SSGPlugin(SourcingPlugin):
             # 타임아웃 150s: 확장앱 슬롯 2개 × 아이템당 ~45s = 3배치 = 135s + 여유
             _ext_result = await asyncio.wait_for(_future, timeout=150)
 
+            # 이 잡을 실제 처리한 PC — 차단신호를 사이트 전체가 아닌 이 PC에만 귀속
+            _proc_dev = (
+                str(_ext_result.get("_ownerDeviceId") or "")
+                if isinstance(_ext_result, dict)
+                else ""
+            )
+
             # 임직원/사업자 회원 전용 상품 — 확장앱이 staffOnly:true 명시 신호 전송
             # (success:false 케이스이지만 일반 고객 구매 불가이므로 sold_out으로 자동 정리)
             if isinstance(_ext_result, dict) and _ext_result.get("staffOnly"):
@@ -152,6 +159,7 @@ class SSGPlugin(SourcingPlugin):
                     new_options=[],
                     changed=True,
                     stock_changed=True,
+                    device_id=_proc_dev,
                 )
 
             if isinstance(_ext_result, dict) and _ext_result.get("success"):
@@ -230,6 +238,7 @@ class SSGPlugin(SourcingPlugin):
                         new_options=[],
                         changed=True,
                         stock_changed=True,
+                        device_id=_proc_dev,
                     )
                 if _html:
                     detail = (
@@ -448,6 +457,7 @@ class SSGPlugin(SourcingPlugin):
                     # _resolve_job_owner) — "데몬" 표현은 실제 라우팅과 안 맞아 혼선만
                     # 유발한다(2026-08-01 확인: 실패건 owner가 전부 확장앱 device_id였음).
                     or f"SSG 상세 조회 실패 (확장앱 미응답 또는 파싱 실패): {site_product_id}",
+                    device_id=_proc_dev,
                 )
 
             new_sale_price = detail.get("salePrice", 0)
@@ -539,6 +549,7 @@ class SSGPlugin(SourcingPlugin):
                 new_options=new_options,
                 changed=changed,
                 stock_changed=_stock_changes > 0,
+                device_id=_proc_dev,
             )
 
         except asyncio.TimeoutError:

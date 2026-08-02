@@ -1239,7 +1239,7 @@ async def _order_auto_sync_loop() -> None:
 
             # 2-c) KREAM 공식 API 주문 자동수집 [2026-07-21] — 생성전용(없는 주문만 INSERT).
             #      order_sync 잡(타 마켓) 종료 후 실행 → 60분 '주문 자동실행' 사이클에 통합.
-            #      (송장수집·허브넷입력은 웨일/허브넷탭 필요 → 아직 호스트 스크립트 담당)
+            #      (송장수집·허브넷입력은 아래 2-c-2 에서 백엔드가 직접 수행 [2026-08-01])
             try:
                 from backend.domain.samba.order.kream_api_sync import (
                     sync_kream_orders_from_api,
@@ -1256,6 +1256,79 @@ async def _order_auto_sync_loop() -> None:
                     )
             except Exception as _kr_e:
                 _log.warning(f"[주문 auto sync] KREAM 주문수집 실패: {_kr_e}")
+
+            # 2-c-2) 스니덩크 해외송장 수집 + 허브넷 택배번호 기입 [2026-08-01 백엔드 이식].
+            #        기존엔 호스트 스크립트(_kream_order_watcher)만 담당해 PC/웨일이 꺼지면
+            #        중단됐다(2026-07-30 쿠키만료 2일 방치 사고). 백엔드 사이클에 통합해
+            #        호스트 의존 제거 — 호스트 스크립트는 백업 경로로 유지(중복 실행돼도
+            #        '송장 있는 행만 기입'이라 안전).
+            try:
+                from backend.api.v1.routers.samba.order import (
+                    _push_hubnet_tracking,
+                    sync_snkrdunk_overseas_tracking,
+                )
+
+                async with get_write_session() as _snkr_ws:
+                    _st = await sync_snkrdunk_overseas_tracking(
+                        limit=200, session=_snkr_ws, tenant_id=None
+                    )
+                    if _st.get("success"):
+                        _log.info(
+                            f"[주문 auto sync] 스니덩크 해외송장: 조회 {_st.get('checked', 0)} / "
+                            f"수집 {_st.get('shipped', 0)}"
+                        )
+                    else:
+                        _log.warning(
+                            f"[주문 auto sync] 스니덩크 해외송장 실패: {_st.get('error')}"
+                        )
+                    _hb = await _push_hubnet_tracking(_snkr_ws, None)
+                    _log.info(
+                        f"[주문 auto sync] 허브넷 기입: {_hb.get('updated', 0)}건"
+                        + (f" (오류: {_hb.get('error')})" if _hb.get("error") else "")
+                    )
+            except Exception as _snkr_e:
+                _log.warning(f"[주문 auto sync] 스니덩크송장·허브넷 실패: {_snkr_e}")
+
+            # 2-c-3) 크림주문 ↔ 수집상품 재연결 [2026-08-02 호스트워처서 이식].
+            #        주문 생성 시점엔 매칭이 없었다가 나중에 매칭된 건은 collected_product_id 가
+            #        비어 원가·소싱처 추적이 끊긴다. 같은 크림 product_id 를 가진 SNKRDUNK 행
+            #        (PSA 재고 많은 순)으로 채운다. 호스트워처(_kream_order_watcher)의
+            #        relink_cp 와 동일 로직 — 루프 대신 단일 UPDATE.
+            try:
+                async with get_write_session() as _rl_ws:
+                    _rl = await _rl_ws.execute(
+                        _sa_text("""
+                        UPDATE samba_order o
+                        SET collected_product_id = sub.cp_id, updated_at = NOW()
+                        FROM (
+                            SELECT o2.id AS oid, (
+                                SELECT c.id FROM samba_collected_product c
+                                WHERE c.source_site = 'SNKRDUNK'
+                                  AND c.resell_matches->'kream'->>'product_id' = o2.product_id
+                                ORDER BY (
+                                    SELECT COALESCE(SUM(NULLIF(op->>'stock', '')::int), 0)
+                                    FROM jsonb_array_elements(
+                                        COALESCE(c.options::jsonb, '[]'::jsonb)) op
+                                    WHERE (op->>'name') ILIKE '%PSA%'
+                                ) DESC
+                                LIMIT 1
+                            ) AS cp_id
+                            FROM samba_order o2
+                            WHERE o2.order_number LIKE 'A-LI%'
+                              AND (o2.collected_product_id IS NULL
+                                   OR o2.collected_product_id NOT LIKE 'cp_%')
+                              AND COALESCE(o2.product_id, '') <> ''
+                        ) sub
+                        WHERE o.id = sub.oid AND sub.cp_id IS NOT NULL
+                        """)
+                    )
+                    await _rl_ws.commit()
+                    if _rl.rowcount:
+                        _log.info(
+                            f"[주문 auto sync] 크림 매칭 재연결: {_rl.rowcount}건"
+                        )
+            except Exception as _rl_e:
+                _log.warning(f"[주문 auto sync] 크림 매칭 재연결 실패: {_rl_e}")
 
             # 2-b) 역마진(가격X)/재고없음(재고X) 자동 판정 + 상품갱신 + 메모 기록.
             #      자동주문수집 본 경로(이 루프)에서 sync 끝난 직후 실행.

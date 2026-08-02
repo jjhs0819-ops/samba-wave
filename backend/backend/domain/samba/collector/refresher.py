@@ -164,6 +164,9 @@ SITE_PRODUCT_TIMEOUT: dict[str, int] = {
     # 근본 해결: 확장앱 동시처리 캡 늘리기(아래 _siteSemaphores).
     "LOTTEON": 150,
     "LOTTEON_SELLERSHOP": 150,  # LOTTEON 동일(DOM위임 60s 흡수)
+    # (2026-08-02: 30s로 단축했다가 정상 처리 중인 다른 PC까지 "탭 로드 타임아웃"
+    # 오탐으로 끊기는 회귀 발생 — 90s도 과거 실측에서 타임아웃 다발 확인된 값이라
+    # 원복. 감지속도는 타임아웃 단축이 아니라 연속실패 즉시카운팅으로 이미 해결됨.)
     "SSG": 150,
     "ABCmart": 150,
     "GrandStage": 150,
@@ -748,6 +751,9 @@ class RefreshResult:
     price_uncertain: bool = False
     # 소싱처에서 상품 자체가 삭제되어 품절 처리된 경우 True (품절 이벤트 reason 구분용)
     deleted_from_source: bool = False
+    # 이 결과를 실제 처리한 PC(확장앱 device_id) — 차단신호를 사이트 전체가 아닌
+    # 요청 보낸 PC 단위로 격리하기 위한 attribution (2026-08-02 SSG PC별 백오프)
+    device_id: str = ""
 
     def __post_init__(self):
         # 원가 오염 안전캡 (#625): 확장앱 SSG 상세 스크랩이 화면 가격 뒤에 붙은 별개
@@ -1847,12 +1853,39 @@ async def refresh_products_bulk(
         results = []
 
         async def _limited(p: Any) -> RefreshResult:
-            async with sem:
-                # 취소 요청 시 즉시 중단 (자기 source만 체크)
-                if _cancel_flags.get(source, False):
-                    return RefreshResult(
-                        product_id=getattr(p, "id", "unknown"), error="cancelled"
+            # 취소 요청 시 즉시 중단 — sem 대기열 진입 전에 반환 (자기 source만 체크)
+            if _cancel_flags.get(source, False):
+                return RefreshResult(
+                    product_id=getattr(p, "id", "unknown"), error="cancelled"
+                )
+            # 차단 백오프 중이면 세마포어 슬롯을 기다리지 않고 즉시 skip.
+            # (2026-08-01: _on_result 즉시감지가 백오프를 걸어도 이미 sem 대기 중이던
+            # 나머지 아이템들이 계속 튀어나가 배치 끝까지 차단 상태로 두드리는 것 방지).
+            # manual(상품관리 개별 상세보강)도 포함 — 2026-08-02: 오토튠은 백오프로
+            # 멈췄는데 manual enrich(ownerDeviceId="" 브로드캐스트)가 같은 사이트를
+            # 계속 두드려 차단이 안 풀리던 사고. 사이트가 이미 차단으로 확인된 이상
+            # 호출 주체와 무관하게 막는 게 맞다.
+            # [2026-08-02][핵심] 이 체크는 반드시 `async with sem` "이전"에 와야 함 —
+            # sem 안쪽에 있으면 이미 진행 중이던 1~2건이 풀타임아웃+재시도(최대 300초+)로
+            # 슬롯을 오래 쥐고 있는 동안 나머지 수만 건이 전부 슬롯 대기줄에 갇혀
+            # 즉시skip도 못 하고 배치 전체가 정지함. concurrency=2인 SSG에서
+            # 621초/건까지 떨어진 실사고 원인 — sem 획득 전 체크로 이동해 해결.
+            if source in ("autotune", "manual"):
+                try:
+                    import time as _time  # noqa: F811
+
+                    from backend.api.v1.routers.samba.collector_autotune import (
+                        _site_block_backoff_until as _sbbu,
                     )
+
+                    if _time.time() < _sbbu.get(site, 0.0):
+                        return RefreshResult(
+                            product_id=getattr(p, "id", "unknown"),
+                            error="cancelled",
+                        )
+                except Exception:
+                    pass
+            async with sem:
                 _counter["i"] += 1
                 _idx = _counter["i"]
                 # 사이클 전체 카운터 참조 준비 — 증가는 처리 완료 후로 이동
@@ -1940,6 +1973,63 @@ async def refresh_products_bulk(
                         idx=_log_idx,
                         total=_log_total,
                     )
+                # 즉시 차단 감지 — on_result 콜백은 위 `if on_result and (not r.error
+                # or ...)` 조건 때문에 에러 결과에서는 호출되지 않아 실패 케이스를 못
+                # 본다(2026-08-01 재발견: collector_autotune.py._on_result 에 넣었던
+                # 카운팅이 실패에서 단 한 번도 안 불려 죽은 코드였음). 배치 완주(SSG
+                # 40건, 최대 10~20분) 시까지 기다리던 기존 배치단위 체크의 구멍도
+                # 같이 보강 — 아이템 완료 즉시(성공/실패 무관하게 매번) 연속 차단신호를
+                # 센다. 성공 1건마다 리셋. manual(상품관리 상세보강)도 집계 — 오토튠 꺼진
+                # 상태에서도 manual 트래픽만으로 사이트가 차단되는 경우 감지해야 함.
+                if source in ("autotune", "manual"):
+                    try:
+                        import time as _time2  # noqa: F811
+
+                        from backend.api.v1.routers.samba.collector_autotune import (
+                            AUTOTUNE_BLOCK_BACKOFF_SEC as _abbs,
+                            AUTOTUNE_BLOCK_BACKOFF_THRESHOLD as _abbt,
+                            _persist_block_backoff_to_db as _pbbtd,
+                            _site_block_backoff_until as _sbbu2,
+                            _site_consecutive_block_signals as _scbs,
+                        )
+
+                        # "빈 응답"은 차단신호에서 제외 (2026-08-02 오탐 확정) —
+                        # 확장앱 주석 실측: 팝업 4개 동시 로딩이 25초 넘기면
+                        # resultItemObj 없이 빈 응답 전송(40건 중 39건이 이 케이스).
+                        # 즉 빈 응답 = 대부분 로딩 지연이지 봇차단이 아님. 진짜 차단은
+                        # 확장앱 reCAPTCHA 프리체크가 blocked:true 로 보내는
+                        # "SSG 차단됨 (reCAPTCHA)" 뿐 — "차단" 문자열만 신뢰.
+                        _r_is_block = "차단" in (r.error or "")
+                        # [2026-08-02] PC별 격리 — SSG 는 확장앱이 각 PC IP로 직접
+                        # 요청하므로 차단은 그 PC에만 걸림. 결과에 처리 PC(device_id)
+                        # attribution 이 있으면 "SITE|device" 키로 그 PC만 백오프,
+                        # 없으면(브로드캐스트 잡 등) 기존 사이트 전체 키 유지.
+                        # 백오프 걸린 PC는 daemon_pool owner 선택에서 제외돼
+                        # 잡이 건강한 PC로만 라우팅됨 = 사이트 전체는 계속 돈다.
+                        _blk_dev = getattr(r, "device_id", "") or ""
+                        _bkey = f"{site.upper()}|{_blk_dev}" if _blk_dev else site
+                        if _r_is_block:
+                            _bc = _scbs.get(_bkey, 0) + 1
+                            _scbs[_bkey] = _bc
+                            if _bc >= _abbt:
+                                _sbbu2[_bkey] = _time2.time() + _abbs
+                                _scbs[_bkey] = 0
+                                logger.warning(
+                                    "[오토튠][%s] 연속 차단신호 %d건(즉시감지) — %d분 백오프 시작",
+                                    _bkey,
+                                    _bc,
+                                    _abbs // 60,
+                                )
+                                # DB 영속화 — 재기동해도 백오프 유지 (2026-08-02 사고:
+                                # 배포 재기동으로 메모리 백오프가 날아가 재기동 직후
+                                # 곧바로 재차 두드림). 트리거 지점은 동기라 백그라운드 태스크로.
+                                asyncio.create_task(
+                                    _pbbtd(), name="persist-block-backoff"
+                                )
+                        elif not r.error:
+                            _scbs[_bkey] = 0
+                    except Exception:
+                        pass
                 # 콜백 호출 (리프레시 직후 즉시 전송 등).
                 # MUSINSA_AUTH_MISSING(무신사 쿠키 손실)은 에러지만 콜백에 전달해야
                 # 오토튠이 사이클 중단 + 경고를 띄울 수 있다. 콜백은 이 에러를
@@ -1954,6 +2044,12 @@ async def refresh_products_bulk(
                         )
                 # 소싱처별 적응형 인터벌 (기본값은 소싱처별 base_interval, 최소 0.1초)
                 interval = max(0.1, _site_intervals.get(site, base_interval))
+                # SSG 지터 — 고정 간격 반복은 WAF가 보는 전형적 봇 시그니처.
+                # 사람 브라우징처럼 요청 간격을 랜덤화해 차단 자체를 예방(2026-08-02).
+                if site == "SSG":
+                    import random as _random  # noqa: F811
+
+                    interval += _random.uniform(0.5, 3.0)
                 await asyncio.sleep(interval)
                 return r
 

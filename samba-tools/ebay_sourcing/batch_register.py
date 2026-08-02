@@ -323,6 +323,23 @@ async def main():
                             img_bytes,
                             f"https://media.bunjang.co.kr/product/{bpid}_1.jpg",
                         )
+                        # [2026-08-02] 번장 추가사진(2..N)도 전부 업로드 — 뒷면/디테일 노출.
+                        # cand['img'] = 번장 imageCount(batch_search 수집값).
+                        _all_imgs = [img_url]
+                        for _ii in range(2, int(cand.get("img") or 1) + 1):
+                            try:
+                                _r2 = await c.get(
+                                    f"https://media.bunjang.co.kr/product/{bpid}_{_ii}_w856.jpg"
+                                )
+                                if _r2.status_code == 200 and _r2.content:
+                                    _all_imgs.append(
+                                        await svc._save_image(
+                                            _r2.content,
+                                            f"https://media.bunjang.co.kr/product/{bpid}_{_ii}.jpg",
+                                        )
+                                    )
+                            except Exception:
+                                pass
                         p = SambaCollectedProduct(
                             source_site="BUNJANG",
                             name=cand["name"],
@@ -334,7 +351,7 @@ async def main():
                             sale_status="in_stock",
                             source_url=f"https://m.bunjang.co.kr/products/{bpid}",
                             site_product_id=bpid,
-                            images=[img_url],
+                            images=_all_imgs,
                             applied_policy_id=POLICY,
                             tenant_id=TENANT,
                             registered_accounts=[],

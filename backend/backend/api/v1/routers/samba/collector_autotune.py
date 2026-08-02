@@ -339,6 +339,78 @@ AUTOTUNE_BLOCK_BACKOFF_THRESHOLD = int(
 )
 AUTOTUNE_BLOCK_BACKOFF_SEC = int(os.getenv("AUTOTUNE_BLOCK_BACKOFF_SEC", "7200"))
 _site_block_backoff_until: dict[str, float] = {}  # {소싱처: 해제 시각(time.time())}
+# 배치 완료 시점에만 검사하던 기존 로직의 구멍 (2026-08-01) — SSG batch=40건을
+# concurrency=2~3로 돌리면 전부 실패해도 배치 완주까지 10~20분 걸려 그동안 차단
+# 상태로 계속 두드림(실측: 719초짜리 사이클 하나가 배치 완주 전 강제종료돼 이
+# 배치완료-only 체크가 단 한 번도 발동 못 함). 아이템 완료 즉시(_on_result) 연속
+# 실패를 세어 배치 완주를 기다리지 않고 반응하도록 보강 — 성공 1건마다 리셋.
+_site_consecutive_block_signals: dict[str, int] = {}  # {소싱처: 연속 차단신호 카운트}
+
+
+def _all_ext_pcs_blocked_until(site: str) -> float:
+    """site 담당 살아있는 확장앱 PC가 전부 PC별("SITE|device") 차단 백오프면
+    가장 이른 해제 시각을 반환, 하나라도 살아있으면 0.
+
+    PC별 백오프(2026-08-02)는 owner 라우팅에서 그 PC만 빼는 격리라 사이트
+    사이클은 계속 돌지만, 전 PC가 다 백오프면 아이템이 전부 "owner 없음"으로
+    즉시 실패해 수만 건 에러 로그만 쏟아진다 — 그 경우만 사이클 자체를 쉰다.
+    """
+    now = time.time()
+    site_u = (site or "").upper()
+    alive: list[str] = []
+    for dev, sites in _pc_allowed_sites.items():
+        if dev.startswith("samba-daemon-"):
+            continue
+        if site_u not in {s.upper() for s in sites}:
+            continue
+        if now - _pc_last_seen.get(dev, 0) > 60.0:
+            continue
+        alive.append(dev)
+    if not alive:
+        return 0.0
+    untils = [_site_block_backoff_until.get(f"{site_u}|{d}", 0.0) for d in alive]
+    if all(u > now for u in untils):
+        return min(untils)
+    return 0.0
+
+
+async def _persist_block_backoff_to_db() -> None:
+    """차단 백오프 상태를 DB에 영속화 — 배포/재기동으로 메모리 초기화되면 보호가
+    사라져 재기동 직후 재차 두드리는 사고(2026-08-02) 방지. 만료된 항목은 정리."""
+    try:
+        from backend.db.orm import get_write_session
+        from backend.api.v1.routers.samba.proxy import _set_setting
+
+        _now = time.time()
+        _live = {k: v for k, v in _site_block_backoff_until.items() if v > _now}
+        async with get_write_session() as session:
+            await _set_setting(session, "autotune_block_backoff", _live)
+            await session.commit()
+    except Exception as e:
+        logging.getLogger("autotune").warning("[오토튠] 백오프 DB 저장 실패: %s", e)
+
+
+async def load_block_backoff_from_db() -> None:
+    """서버 시작 시 DB에서 차단 백오프 상태를 복원 — 만료 안 된 항목만 반영."""
+    try:
+        from backend.db.orm import get_read_session
+        from backend.api.v1.routers.samba.proxy import _get_setting
+
+        async with get_read_session() as session:
+            saved = await _get_setting(session, "autotune_block_backoff")
+        if saved and isinstance(saved, dict):
+            _now = time.time()
+            for site, until in saved.items():
+                if isinstance(until, (int, float)) and until > _now:
+                    _site_block_backoff_until[site] = float(until)
+                    logging.getLogger("autotune").warning(
+                        "[오토튠][%s] 재기동 — 차단 백오프 복원 (%s초 남음)",
+                        site,
+                        f"{int(until - _now):,}",
+                    )
+    except Exception:
+        pass  # 로드 실패 시 백오프 없이 시작(보수적으로는 위험하나 최초 기동 시 정상)
+
 
 # SSG 재수집 최소 간격 — N시간 내 갱신된 상품은 배치 SELECT 제외.
 # 하루 요청량을 카탈로그 1바퀴로 캡해 고정 IP(확장앱 실브라우저) 차단 리스크 완화.
@@ -1443,6 +1515,19 @@ async def _site_autotune_loop(device_id: str, site: str):
                     await asyncio.sleep(60)
                     continue
 
+                # PC별 백오프 전멸 확인 — 담당 확장앱 PC 전부가 "SITE|device" 백오프면
+                # 잡을 보낼 곳이 없어 전 아이템 즉시실패 → 사이클 자체를 쉰다.
+                # (일부 PC만 백오프면 owner 라우팅이 알아서 건강한 PC로 보내므로 계속 진행)
+                _bo_all = _all_ext_pcs_blocked_until(site)
+                if _bo_all:
+                    log.info(
+                        "[오토튠][%s] 전 PC 차단 백오프 중 — %s초 후 재개",
+                        site,
+                        f"{int(_bo_all - time.time()):,}",
+                    )
+                    await asyncio.sleep(60)
+                    continue
+
                 # 무신사 자동로그인 쿠키 손실 — 사이클 스킵(빈 쿠키로 헛도는 갱신 +
                 # 상품마다 읽기세션 폭주 방지). 재확인 인터벌(5분) 경과 시 1회 프로브
                 # 사이클을 허용해 재로그인(쿠키 복구)을 자동 감지한다.
@@ -2029,6 +2114,13 @@ async def _site_autotune_loop(device_id: str, site: str):
                                     or is_emergency_stopped()
                                 ):
                                     return
+
+                                # (즉시 차단 감지는 refresher.py._limited 로 이동 — 2026-08-01
+                                # 재확인: 이 콜백(on_result)은 refresher.py:1965
+                                # `if on_result and (not r.error or ...)` 조건 때문에
+                                # 에러 결과에서는 애초에 호출되지 않는다. 여기 있던 카운팅은
+                                # 실패 케이스에서 단 한 번도 실행될 수 없는 죽은 코드였다
+                                # (원인 재발견: 40건 배치 8건 연속 실패에도 로그 0건).
 
                                 site = product.source_site or "UNKNOWN"
                                 _prod_name = (product.name or "")[:40]
@@ -5025,6 +5117,7 @@ async def auto_start_if_enabled():
 
         await load_site_intervals_from_db()
         await load_site_autotune_concurrency_from_db()
+        await load_block_backoff_from_db()
 
         from backend.db.orm import get_read_session
         from backend.api.v1.routers.samba.proxy import _get_setting

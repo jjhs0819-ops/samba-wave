@@ -40,9 +40,9 @@ _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 # 신발 신규 자동등록 실행 게이트 — 갱신/삭제와 별도. 섀도 후보 검증 후 KREAM_EXEC_SHOE_RESTOCK=1.
 _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 비카드(신발/의류) 우선처리 상한 — 매 사이클 리스톡 슬라이스 외 추가 포함 수. DB옵션만 보므로 가볍다.
-_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 800)
+_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 2500)
 _live_offset = 0  # 갱신 로테이션 위치(라이브 입찰 분할처리)
-_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 400)
+_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 2500)
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
 _shoe_fetch_offset = 0  # 신발 실시간시세 조회 로테이션 위치(사이클당 일부만)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
@@ -2100,6 +2100,9 @@ async def _process_shoe_asks(
     _sur = POLICY["non_card_margin_rate"]  # 신발 = 비카드 추가마진
     kid_to_snkr = kid_to_snkr or {}
     async with httpx.AsyncClient(timeout=25) as cli:
+        # 실행 큐 — 판단 루프는 여기 담기만 하고, 실제 API 호출은 루프 끝나고 병렬 처리
+        _pend_del: list = []
+        _pend_upd: list = []
         # 상품별 실시간 사이즈시세 1회 조회(입찰이 여러 사이즈여도 페이지는 1번만) — DB 폴백
         live_map: dict = {}
         # [2026-08-02] 신발 입찰이 892건+로 늘며 동시성 6으로는 사이클이 4시간+ 걸려 정지.
@@ -2131,7 +2134,9 @@ async def _process_shoe_asks(
         _mm_list = sorted(_mm_kids)
         # [2026-08-02] 600 → 1,500. 신발 3,000상품을 5사이클에 나눠 돌아 가격열위 삭제까지
         # 느렸다(상한 2,000인데 실제 735건). 스니덩크 0.2s 라 1,500도 여유.
-        _fetch_cap = int(os.environ.get("KREAM_SHOE_FETCH_MAX") or 1500)
+        # [2026-08-02] 1,500 → 4,000. 비1순위 15,874 정리에 11사이클 걸리던 것 4사이클로.
+        # 스니덩크 0.2s·동시성 20 이라 4,000도 ~1분. 사이클 79초 여유 안에서 처리.
+        _fetch_cap = int(os.environ.get("KREAM_SHOE_FETCH_MAX") or 2500)
         if len(_mm_list) > _fetch_cap:
             _st = _shoe_fetch_offset % len(_mm_list)
             _mm_round = (_mm_list[_st:] + _mm_list[:_st])[:_fetch_cap]
@@ -2171,12 +2176,8 @@ async def _process_shoe_asks(
             price = _guard_jpy(kid, opt, price)
             if stock <= 0 or price <= 0:
                 c["delete"] += 1
-                if _EXEC_SHOE:
-                    if a.get("id") and await _exec_delete_ask(cli, h, a.get("id")):
-                        c["del"] += 1
-                    else:
-                        c["fail"] += 1
-                    await asyncio.sleep(0.1)
+                if _EXEC_SHOE and a.get("id"):
+                    _pend_del.append(a.get("id"))
                 continue
             c["stock"] += 1
             cur = int(a.get("price") or 0)
@@ -2204,24 +2205,37 @@ async def _process_shoe_asks(
                 else:
                     c["delete"] += 1
                     if _EXEC_SHOE and a.get("id"):
-                        if await _exec_delete_ask(cli, h, a.get("id")):
-                            c["del"] += 1
-                        else:
-                            c["fail"] += 1
-                        await asyncio.sleep(0.1)
+                        _pend_del.append(a.get("id"))
             elif adjusting and target != cur:
                 c["renew"] += 1
                 if _EXEC_SHOE and a.get("id"):
-                    res, _r = await _execute_update(
-                        cli, h, a.get("id"), target, cur, is_nc, kid, opt
-                    )
-                    if res == "ok":
-                        c["patch"] += 1
-                    elif res == "reverted":
-                        c["revert"] += 1
-                    else:
-                        c["fail"] += 1
-                    await asyncio.sleep(0.1)
+                    _pend_upd.append((a.get("id"), target, cur, is_nc, kid, opt))
+
+        # [2026-08-02] 판단 루프에서 즉시 실행하면 건당 ~0.8초(순차+sleep) — 수백 건이면
+        # 신발 단계만 수백 초. 판단은 그대로 두고 실행만 모아서 동시 8로 처리.
+        _ssem = asyncio.Semaphore(int(os.environ.get("KREAM_EXEC_CONCURRENCY") or 8))
+
+        async def _sh_del(_aid):
+            async with _ssem:
+                if await _exec_delete_ask(cli, h, _aid):
+                    c["del"] += 1
+                else:
+                    c["fail"] += 1
+
+        async def _sh_upd(_aid, _tg, _cur, _nc, _kid, _opt):
+            async with _ssem:
+                _res, _r = await _execute_update(
+                    cli, h, _aid, _tg, _cur, _nc, _kid, _opt
+                )
+                if _res == "ok":
+                    c["patch"] += 1
+                elif _res == "reverted":
+                    c["revert"] += 1
+                else:
+                    c["fail"] += 1
+
+        await asyncio.gather(*[_sh_del(x) for x in _pend_del])
+        await asyncio.gather(*[_sh_upd(*x) for x in _pend_upd])
     return c
 
 
@@ -3010,7 +3024,7 @@ async def run_kream_unified_once() -> dict:
     # [2026-08-02] 라이브 입찰이 21,400건(신발 18,500)으로 폭증해 매 사이클 전량 갱신이
     # 불가능해졌다(사이클 미완주 = 슬랙 정지). 갱신도 로테이션 — 사이클당 KREAM_LIVE_BATCH
     # 개씩 나눠 처리하고 다음 회차에 이어서. 가격 추종은 몇 사이클 늦어지지만 완주는 보장.
-    _live_batch = int(os.environ.get("KREAM_LIVE_BATCH") or 4000)
+    _live_batch = int(os.environ.get("KREAM_LIVE_BATCH") or 2500)
     global _live_offset
     _live_total = len(live_products)
     if _live_total > _live_batch:
@@ -3547,37 +3561,48 @@ async def run_kream_unified_once() -> dict:
     if _EXECUTE:
         async with httpx.AsyncClient(timeout=25) as ecli:
             logger.info("[크림통합] STAGE 실행-삭제 %d건 시작", len(pend_delete))
-            for _i, (kid, nm) in enumerate(pend_delete):
-                ask = ask_index.get((kid, nm))
-                if ask and await _exec_delete_ask(ecli, h, ask.get("id")):
-                    exec_del += 1
-                else:
-                    exec_fail += 1
-                if (_i + 1) % 5 == 0:
-                    await _flush_logs_to_db()
-                await asyncio.sleep(0.1)
+            # [2026-08-02] 순차+0.1s sleep 이라 건당 ~0.8s → 병렬 8(rate limit 여유).
+            # 삭제 65건이 48초 걸리던 것 ~8초로. 사이클 완주 시간의 주 병목이었다.
+            _dsem = asyncio.Semaphore(
+                int(os.environ.get("KREAM_EXEC_CONCURRENCY") or 8)
+            )
+
+            async def _do_del(_kid, _nm):
+                nonlocal exec_del, exec_fail
+                async with _dsem:
+                    _ask = ask_index.get((_kid, _nm))
+                    if _ask and await _exec_delete_ask(ecli, h, _ask.get("id")):
+                        exec_del += 1
+                    else:
+                        exec_fail += 1
+
+            await asyncio.gather(*[_do_del(k2, n2) for k2, n2 in pend_delete])
             await _flush_logs_to_db()
             logger.info(
                 "[크림통합] STAGE 실행-갱신 %d건 시작 (%.0f초경과)",
                 len(pend_renew),
                 _stage_t.time() - _t_stage,
             )
-            for _i, (kid, nm, target, cur, is_nc) in enumerate(pend_renew):
-                ask = ask_index.get((kid, nm))
-                if not ask:
-                    continue
-                res2, _rank = await _execute_update(
-                    ecli, h, ask.get("id"), target, cur, is_nc, kid, nm
-                )
-                if res2 == "ok":
-                    exec_patch += 1
-                elif res2 == "reverted":
-                    exec_revert += 1
-                else:
-                    exec_fail += 1
-                if (_i + 1) % 5 == 0:
-                    await _flush_logs_to_db()
-                await asyncio.sleep(0.1)
+
+            async def _do_renew(_kid, _nm, _tg, _cur, _nc):
+                nonlocal exec_patch, exec_revert, exec_fail
+                async with _dsem:
+                    _ask = ask_index.get((_kid, _nm))
+                    if not _ask:
+                        return
+                    _res, _r2 = await _execute_update(
+                        ecli, h, _ask.get("id"), _tg, _cur, _nc, _kid, _nm
+                    )
+                    if _res == "ok":
+                        exec_patch += 1
+                    elif _res == "reverted":
+                        exec_revert += 1
+                    else:
+                        exec_fail += 1
+
+            await asyncio.gather(
+                *[_do_renew(a1, a2, a3, a4, a5) for a1, a2, a3, a4, a5 in pend_renew]
+            )
             await _flush_logs_to_db()
             # [2026-08-02] 등록이 755건씩 몰리면 순차 POST(0.1s sleep+재시도)로 수십분 걸려
             # 사이클을 못 끝낸다(슬랙 정지). 사이클당 상한으로 나눠 등록 — 나머지는 다음 회차.
@@ -3594,22 +3619,31 @@ async def run_kream_unified_once() -> dict:
                 len(pend_restock),
                 _stage_t.time() - _t_stage,
             )
-            for _i, (kid, nm, target, pname) in enumerate(pend_restock):
-                ok2, reason = await _exec_create_ask(ecli, h, kid, target, nm)
-                if (not ok2) and ("announcement" in reason or "고시" in reason):
-                    ok2, reason = await _exec_create_ask(ecli, h, kid, target, nm)
-                if ok2:
-                    exec_post += 1
-                    # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
-                    registered_lines.append(f"{str(pname)[:20]} {nm} {target:,}원")
-                    _g_recent_posts[f"{kid}|{nm}"] = _now
-                    _g_miss_counts.pop(f"{kid}|{nm}", None)
-                else:
-                    exec_fail += 1
-                    _g_failed_posts[f"{kid}|{nm}"] = _now
-                if (_i + 1) % 5 == 0:
-                    await _flush_logs_to_db()
-                await asyncio.sleep(0.1)
+            # 등록도 병렬(동시 4) — 순차일 때 150건 170초. 고시등록이 CDP 토큰을 쓰므로
+            # 삭제/갱신(8)보다 낮게 잡아 파트너 세션 부담을 줄인다.
+            _psem = asyncio.Semaphore(
+                int(os.environ.get("KREAM_POST_CONCURRENCY") or 4)
+            )
+
+            async def _do_post(_kid, _nm, _tg, _pn):
+                nonlocal exec_post, exec_fail
+                async with _psem:
+                    _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
+                    if (not _ok) and ("announcement" in _rs or "고시" in _rs):
+                        _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
+                    if _ok:
+                        exec_post += 1
+                        # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
+                        registered_lines.append(f"{str(_pn)[:20]} {_nm} {_tg:,}원")
+                        _g_recent_posts[f"{_kid}|{_nm}"] = _now
+                        _g_miss_counts.pop(f"{_kid}|{_nm}", None)
+                    else:
+                        exec_fail += 1
+                        _g_failed_posts[f"{_kid}|{_nm}"] = _now
+
+            await asyncio.gather(
+                *[_do_post(b1, b2, b3, b4) for b1, b2, b3, b4 in pend_restock]
+            )
             await _flush_logs_to_db()
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
         await _save_setting_map(_SET_FAILED, _g_failed_posts)

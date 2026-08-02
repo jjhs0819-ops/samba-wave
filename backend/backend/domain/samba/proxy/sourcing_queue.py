@@ -311,6 +311,11 @@ class SourcingQueue:
     # 결과 대기: {requestId: asyncio.Future}
     resolvers: dict[str, asyncio.Future[Any]] = {}
 
+    # requestId → 잡을 배정받은 PC(device_id). 결과 resolve 시 data에
+    # _ownerDeviceId 로 병합해 호출자(플러그인)가 "어느 PC가 처리했는지" 알 수
+    # 있게 한다 — 차단신호를 사이트 전체가 아닌 해당 PC에만 귀속(2026-08-02).
+    job_owners: dict[str, str] = {}
+
     @classmethod
     def _ensure_accepting_jobs(cls) -> None:
         if is_shutting_down():
@@ -433,6 +438,27 @@ class SourcingQueue:
             )
             raise RuntimeError(f"{site} 데몬 미등록 — 잡 발행 불가")
 
+        # SSG 상세 — 전 PC가 "차단 백오프"로 격리된 경우만 즉시 실패. 이때
+        # ownerDeviceId="" 브로드캐스트로 내보내면 격리한 PC까지 잡을 집어가
+        # 차단이 안 풀리기 때문(2026-08-02). 단순 폴링 TTL 깜빡임(60초)으로
+        # owner 해석이 잠깐 비는 경우는 기존처럼 브로드캐스트 유지 — 즉시실패로
+        # 바꾸면 멀쩡한 배치에서 산발 실패가 생긴다(배포 직후 실측 회귀).
+        # (수동 enrich 는 owner_device_id="" 명시 전달이라 이 가드에 안 걸림)
+        if owner_device_id is None and (site or "").upper() == "SSG":
+            try:
+                from backend.api.v1.routers.samba.collector_autotune import (
+                    _all_ext_pcs_blocked_until,
+                )
+
+                if _all_ext_pcs_blocked_until("SSG") > 0:
+                    raise RuntimeError(
+                        f"SSG 상세 처리 가능한 확장앱 PC 없음(전 PC 차단 백오프): {product_id}"
+                    )
+            except RuntimeError:
+                raise
+            except Exception:
+                pass
+
         job: dict[str, Any] = {
             "requestId": request_id,
             "site": site,
@@ -446,6 +472,11 @@ class SourcingQueue:
         if extra:
             job.update(extra)
         cls.resolvers[request_id] = future
+        # 처리 PC attribution — resolve_job 이 결과 data 에 _ownerDeviceId 로 병합.
+        # 타임아웃으로 resolve 안 되는 항목이 누적될 수 있어 상한에서 통째 비움.
+        if len(cls.job_owners) > 5000:
+            cls.job_owners.clear()
+        cls.job_owners[request_id] = owner_device_id or ""
         asyncio.create_task(_db_insert_job(job, "detail", priority=priority))
         _owner_tag = f" owner={owner_device_id}" if owner_device_id else ""
         _prio_tag = " [우선]" if priority else ""
@@ -1044,6 +1075,11 @@ class SourcingQueue:
         call_soon_threadsafe로 안전하게 resolve한다.
         """
         future = cls.resolvers.pop(request_id, None)
+        # 처리 PC attribution 병합 — 호출자가 결과에서 처리 device_id 를 읽어
+        # 차단신호를 해당 PC에만 귀속시킬 수 있게 한다(2026-08-02 PC별 백오프).
+        _job_owner = cls.job_owners.pop(request_id, "")
+        if _job_owner and isinstance(data, dict):
+            data.setdefault("_ownerDeviceId", _job_owner)
         if future and not future.done():
             try:
                 loop = future.get_loop()
