@@ -78,7 +78,7 @@ except ImportError:
 # ====================================================================
 # 데몬 버전 — build.ps1 가 갱신. 자동 업데이트 비교 기준.
 # ====================================================================
-DAEMON_VERSION = "1.4.54"
+DAEMON_VERSION = "1.4.55"
 
 # urllib 기본 User-Agent("Python-urllib/3.x")를 Cloudflare 가 봇으로 인식해 403 차단
 # (2026-07-13, GCP→Cloudflare Tunnel 전환 이후 신규 발생). self-update 관련 모든
@@ -236,7 +236,9 @@ def _register_task_scheduler(exe_path: Path) -> None:
         )
         tmp.unlink(missing_ok=True)
         if result.returncode == 0:
-            logger_print(f"작업 스케줄러 등록 완료 ({_TASK_NAME}) — 크래시 시 1분 자동 재시작")
+            logger_print(
+                f"작업 스케줄러 등록 완료 ({_TASK_NAME}) — 크래시 시 1분 자동 재시작"
+            )
         else:
             logger_print(f"작업 스케줄러 등록 실패(무시): {result.stderr.strip()}")
     except Exception as exc:
@@ -328,7 +330,10 @@ def _perform_self_update(api_key: str = "") -> bool:
                 _dl_req = urllib.request.Request(
                     _dl_url, headers={"User-Agent": _DAEMON_HTTP_USER_AGENT}
                 )
-                with urllib.request.urlopen(_dl_req, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
+                with (
+                    urllib.request.urlopen(_dl_req, timeout=300, context=_ctx) as resp,
+                    open(new_path, "wb") as f,
+                ):
                     while True:
                         chunk = resp.read(1 << 16)
                         if not chunk:
@@ -347,7 +352,10 @@ def _perform_self_update(api_key: str = "") -> bool:
             _dl_req = urllib.request.Request(
                 _dl_url, headers={"User-Agent": _DAEMON_HTTP_USER_AGENT}
             )
-            with urllib.request.urlopen(_dl_req, timeout=300, context=_ctx) as resp, open(new_path, "wb") as f:
+            with (
+                urllib.request.urlopen(_dl_req, timeout=300, context=_ctx) as resp,
+                open(new_path, "wb") as f,
+            ):
                 while True:
                     chunk = resp.read(1 << 16)
                     if not chunk:
@@ -1533,6 +1541,61 @@ async def ensure_logged_in_for_site(
         )
         return False
     return await auto_login_site(page, handler, cred)
+
+
+async def sync_abcmart_cookie_to_backend(
+    page: Page,
+    client: httpx.AsyncClient,
+    backend_url: str,
+    device_id: str,
+    api_key: str,
+) -> bool:
+    """데몬의 살아있는 a-rt.com 로그인 쿠키를 백엔드로 전송.
+
+    [2026-08-02 근본fix] ABCmart 가격 갱신은 백엔드가 ARTSourcingClient 로 직접
+    API 를 때리는데(데몬 큐 미경유), 그 로그인 쿠키는 확장앱 content script 가
+    a-rt.com 페이지를 방문할 때만 sync 됐다. 사용자가 a-rt.com 을 안 열면 갱신이
+    끊기고, 비로그인 감지 시 전 계정이 expired 마킹돼 익명 가격(=최대혜택가 아님)만
+    수집된다(실측: 4계정 전부 07:51 동시 만료 → 비로그인가 수집).
+
+    데몬은 ABCmart 로그인 세션을 상시 유지(매 기동 "세션 살아있음" 확인)하므로,
+    그 쿠키를 확장앱과 동일한 엔드포인트로 올려주면 사용자 브라우징과 무관하게
+    로그인 가격이 유지된다. CAPTCHA 로 막힌 헤드리스 자동로그인을 우회하는 경로.
+    """
+    try:
+        cookies = await page.context.cookies("https://www.a-rt.com")
+    except Exception as exc:
+        logger.warning("ABCmart 쿠키 추출 실패(무시): %s", str(exc)[:80])
+        return False
+    cookie_str = "; ".join(
+        f"{c.get('name')}={c.get('value')}" for c in cookies if c.get("name")
+    )
+    if not cookie_str:
+        logger.warning("ABCmart 쿠키 비어있음 — sync 스킵")
+        return False
+    try:
+        r = await client.post(
+            f"{backend_url}/api/v1/samba/sourcing-accounts/sync-membership",
+            json={
+                "site_name": "ABCmart",
+                "membership_rate": 0,
+                "membership_grade": "",
+                "cookie": cookie_str,
+                "expired": False,
+            },
+            headers={"X-Device-Id": device_id, "X-Api-Key": api_key},
+            timeout=15.0,
+        )
+    except Exception as exc:
+        logger.warning("ABCmart 쿠키 sync 네트워크 오류(무시): %s", str(exc)[:80])
+        return False
+    if r.status_code >= 400:
+        logger.warning(
+            "ABCmart 쿠키 sync 실패 HTTP %s — %s", r.status_code, r.text[:120]
+        )
+        return False
+    logger.info("ABCmart 로그인 쿠키 백엔드 sync 완료 (%d개 쿠키)", len(cookies))
+    return True
 
 
 async def ensure_logged_in(
@@ -3088,6 +3151,14 @@ async def run_daemon(args: argparse.Namespace) -> int:
                 login_sites
             )  # 로그인 성공 사이트 기록(실패는 위에서 제외됨)
 
+            # ABCmart 로그인 쿠키를 백엔드로 sync — 백엔드 가격갱신(ARTSourcingClient
+            # 직접 API)이 로그인 상태로 최대혜택가를 받게 한다. 확장앱 a-rt.com 방문에
+            # 의존하던 구조의 공백을 데몬 상시 세션으로 메움(2026-08-02).
+            if "ABCmart" in _logged_in:
+                await sync_abcmart_cookie_to_backend(
+                    page, http_client, backend_url, args.device_id, api_key
+                )
+
             async def _ensure_login_for_new_sites(sites: list[str]) -> None:
                 # 런타임에 새로 배정된 requires_login 사이트 로그인(이미 한 건 스킵).
                 for _s in _compute_login_sites(sites):
@@ -3356,6 +3427,26 @@ async def run_daemon(args: argparse.Namespace) -> int:
                         raise
                     except Exception as exc:
                         logger.debug("heartbeat 실패(무시): %s", str(exc)[:80])
+
+            async def _abcmart_cookie_sync_loop() -> None:
+                """ABCmart 로그인 쿠키 30분 주기 재sync — 쿠키 만료로 백엔드가 익명
+                가격(비로그인가)으로 떨어지는 것 방지. 데몬 세션이 살아있는 한 유지된다."""
+                while not state.should_die():
+                    await asyncio.sleep(30 * 60)
+                    if "ABCmart" not in _logged_in:
+                        continue
+                    try:
+                        await sync_abcmart_cookie_to_backend(
+                            page, http_client, backend_url, args.device_id, api_key
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        logger.warning(
+                            "ABCmart 쿠키 주기 sync 실패(무시): %s", str(exc)[:80]
+                        )
+
+            asyncio.create_task(_abcmart_cookie_sync_loop())
 
             _hb_task_holder: list[asyncio.Task] = []
 

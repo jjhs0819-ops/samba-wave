@@ -1504,17 +1504,11 @@ async def _site_autotune_loop(device_id: str, site: str):
                     await asyncio.sleep(30)
                     continue
 
-                # 차단 백오프 확인 — 차단 신호 임계 초과로 정지된 사이트는 해제 시각까지 대기
-                _bo_until = _site_block_backoff_until.get(site, 0.0)
-                if time.time() < _bo_until:
-                    log.info(
-                        "[오토튠][%s] 차단 백오프 중 — %s초 후 재개",
-                        site,
-                        f"{int(_bo_until - time.time()):,}",
-                    )
-                    await asyncio.sleep(60)
-                    continue
-
+                # [2026-08-02] 사이트 전역("SSG") 백오프 체크 제거.
+                # 차단은 IP(=PC) 단위인데 사이트 키 하나로 막으면 멀쩡한 PC까지 전부
+                # 정지한다(실측: 1대만 reCAPTCHA 걸렸는데 3대 전부 20분 정지).
+                # 격리는 아래 PC별("SITE|device") 백오프 + owner 라우팅이 담당하고,
+                # 전 PC가 죽은 경우만 사이클을 쉰다.
                 # PC별 백오프 전멸 확인 — 담당 확장앱 PC 전부가 "SITE|device" 백오프면
                 # 잡을 보낼 곳이 없어 전 아이템 즉시실패 → 사이클 자체를 쉰다.
                 # (일부 PC만 백오프면 owner 라우팅이 알아서 건강한 PC로 보내므로 계속 진행)
@@ -3969,13 +3963,12 @@ async def _site_autotune_loop(device_id: str, site: str):
                         # 차단 자동 백오프 트리거 — 이 배치의 차단 신호가 임계 이상이면
                         # 해당 소싱처 사이클을 백오프 시간 동안 정지 (IP 평판 회복 대기).
                         # SSG 봇차단 페이지는 확장앱에서 "빈 응답"으로 회신되므로 함께 집계.
+                        # "빈 응답"은 차단신호 제외(2026-08-02) — 확장앱 실측상 팝업
+                        # 동시로딩 지연이 대부분이라 정상 배치를 백오프에 빠뜨린다.
                         _block_signals = _blocked_count
-                        if site == "SSG":
-                            _block_signals += sum(
-                                1 for r in results if r.error and "빈 응답" in r.error
-                            )
                         if _block_signals >= AUTOTUNE_BLOCK_BACKOFF_THRESHOLD:
-                            _site_block_backoff_until[site] = (
+                            # PC별 키로 저장 — 사이트 전역으로 막으면 멀쩡한 PC까지 정지.
+                            _site_block_backoff_until[f"{site.upper()}|{device_id}"] = (
                                 time.time() + AUTOTUNE_BLOCK_BACKOFF_SEC
                             )
                             _bo_min = AUTOTUNE_BLOCK_BACKOFF_SEC // 60

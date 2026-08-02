@@ -503,8 +503,14 @@ async def _sync_abcmart_cookie_to_settings(
             row.value = json.dumps(cookies)
         else:
             session.add(SambaSettings(key="abcmart_cookies", value=json.dumps(cookies)))
+        # [2026-08-02 근본fix] 명시적 commit 필수 — get_write_session_dependency 는
+        # 자동 commit 을 하지 않고 종료 시 열린 트랜잭션을 rollback 한다. commit 이
+        # 없어 이 설정행이 매번 유실됐고(실측: 행 자체가 DB에 없음), 그 결과
+        # prepare_abcmart_cache() 가 "쿠키 캐시 로딩: 0개" → 익명(비로그인) 가격으로
+        # ABCmart cost 를 수집했다. 아래 로그가 성공처럼 찍혀 여태 안 드러난 silent fail.
+        await session.commit()
         logger.info(
-            f"[ABCmart쿠키동기화] SambaSettings.abcmart_cookies 업데이트: {len(cookies)}개"
+            f"[ABCmart쿠키동기화] SambaSettings.abcmart_cookies 저장 완료: {len(cookies)}개"
         )
     except Exception as e:
         logger.warning(f"[ABCmart쿠키동기화] SambaSettings 업데이트 실패 (무시): {e}")

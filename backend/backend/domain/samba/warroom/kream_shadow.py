@@ -3279,6 +3279,8 @@ async def run_kream_unified_once() -> dict:
             # 재고0·확인시각을 항상 되쓴다(소싱품절 카드 updated_at 이 07-22 동결되던 버그).
             # cost 는 write-back 에서 0 이면 기존값 보존(마지막 원가 유실 방지).
             r["db_update"] = (snkr_id, _new_opts, _new_cost)
+            # 크림 옵션(최저가) 조회 캐시 — 상품당 1회. 리스톡 신규등록에서 1등 판정에 쓴다.
+            _card_opts_cache: list | None = None
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
@@ -3414,6 +3416,49 @@ async def run_kream_unified_once() -> dict:
                         )
                         * 1000
                     )
+                    # [2026-08-02] 신규등록에 1등 판정이 없어 "원가+마진"으로 무조건 등록하고
+                    # 다음 사이클 갱신에서 '1등불가삭제'로 지우는 왕복이 반복됐다(입찰 폭증 원인).
+                    # 비카드와 동일하게 크림 최저가를 보고 1등 가능할 때만 등록한다.
+                    _tgt = max(nc, mp)
+                    try:
+                        if _card_opts_cache is None:
+                            _cr = await _rq(
+                                "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
+                            )
+                            _card_opts_cache = (_cr.json() or {}).get("options") or []
+                        _want = str(nm).replace(" ", "")
+                        _copt = next(
+                            (
+                                _o
+                                for _o in _card_opts_cache
+                                if str(_o.get("name") or "").replace(" ", "") == _want
+                            ),
+                            None,
+                        )
+                    except Exception:
+                        _copt = None
+                    if _copt is not None:
+                        # 카드는 해외배송 옵션 제외가 원칙이라 일반가를 우선 본다.
+                        _mkt = int(_copt.get("lowest_normal_price") or 0) or int(
+                            _copt.get("lowest_overseas_price") or 0
+                        )
+                        if _mkt > 0:
+                            if mp > _mkt:
+                                r["rows"].append(
+                                    (
+                                        "skip",
+                                        "리스톡보류(1등불가)",
+                                        kid,
+                                        nm,
+                                        0,
+                                        0,
+                                        False,
+                                        prod["name"],
+                                        False,
+                                    )
+                                )
+                                continue
+                            _tgt = max(mp, min(nc, _mkt - 1000))
                     r["rows"].append(
                         (
                             "restock",
@@ -3421,7 +3466,7 @@ async def run_kream_unified_once() -> dict:
                             kid,
                             nm,
                             0,
-                            max(nc, mp),
+                            _tgt,
                             True,
                             prod["name"],
                             False,
@@ -3908,10 +3953,16 @@ async def run_kream_unified_once() -> dict:
     _msg = (
         f"[크림 입찰갱신]\n"
         f"환율 {rate:.4f} JPY→KRW\n\n"
-        f"입찰 {len(asks):,}건 | 매핑 {_mapped:,}/{len(_ask_kids):,}건\n"
+        # 시작 시점 입찰수만 찍으면 "2,000 지웠는데 왜 그대로냐"로 읽힌다 —
+        # 삭제 결과는 다음 사이클 조회에야 반영되므로 반영후 잔여를 같이 표기.
+        f"입찰 {len(asks):,}건(시작) → {max(0, len(asks) - _del_all + exec_post):,}건(반영후)"
+        f" | 매핑 {_mapped:,}/{len(_ask_kids):,}건\n"
         f"삭제 {_del_all:,}건(실행) | 조정 {_upd_all:,}건"
         + (f" | ❌실행실패 {_fail_all:,}건(등록포함)" if _fail_all else "")
-        + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,} (그룹 {_gt:,})\n"
+        # 비1순위도 시작 시점 집계 — 이번 사이클 가격열위 삭제분을 뺀 값을 같이 보여준다
+        + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,}"
+        + (f" → {max(0, _n1 - _del_all):,}(삭제반영후)" if _del_all else "")
+        + f" (그룹 {_gt:,})\n"
         f"  카드 1순위 {_r1c:,}/{_gtc:,} · 박스 {_r1b:,}/{_gtb:,} · 카드팩 {_r1p:,}/{_gtp:,}\n"
         f"  신발 1순위 {_r1s:,}/{_gts:,} · 의류/잡화 {_r1a:,}/{_gta:,}\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
