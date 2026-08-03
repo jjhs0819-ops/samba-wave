@@ -37,6 +37,13 @@ def test_all_soldout_options_raises():
         _transform_for_lottehome(_product(opts), "cat1", {})
 
 
+def test_update_path_not_blocked():
+    # 기등록 상품 갱신(existing_no 有 → block_single=False)은 옵션 0건이어도 통과 —
+    # 기등록 옵션0 상품(약 884건)의 가격·재고 갱신이 막히면 안 됨
+    data = _transform_for_lottehome(_product([]), "cat1", {}, block_single=False)
+    assert "item_list" not in data
+
+
 def test_healthy_options_build_item_list():
     opts = [
         {"name": "M", "stock": 3, "isSoldOut": False},
