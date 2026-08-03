@@ -306,6 +306,8 @@ def _transform_for_lottehome(
     product: dict[str, Any],
     category_id: str,
     creds: dict[str, Any] | None = None,
+    *,
+    block_single: bool = True,
 ) -> dict[str, Any]:
     """수집 상품 → 롯데홈쇼핑 API 형식 변환.
 
@@ -434,12 +436,12 @@ def _transform_for_lottehome(
 
     # 옵션 처리 (단품관리) — 사이즈 순서대로 정렬
     options = product.get("options") or []
+    item_parts: list[str] = []
     if options:
         # 차세대 API: opt_nm에 옵션코드 prefix (코드|이름) — creds.opt_type_code 설정 시 활성화
         _opt_code = str(creds.get("opt_type_code", "") or "").strip()
         _base_opt_nm = product.get("option_group_name") or "옵션"
         opt_group_name = f"{_opt_code}|{_base_opt_nm}" if _opt_code else _base_opt_nm
-        item_parts = []
         max_stock = int(product.get("_max_stock") or 0)
         logger.info(
             f"[롯데홈쇼핑 옵션] options 개수={len(options)}, max_stock={max_stock}"
@@ -538,6 +540,17 @@ def _transform_for_lottehome(
             data["opt_nm"] = opt_group_name
             data["item_list"] = ":".join(item_parts)
             data.pop("inv_qty", None)
+
+    # [2026-08-03] 단일상품 신규등록 차단 — SSG 수집 초기 옵션 파싱 누락분이
+    # 옵션 없이 단일상품으로 등록돼 "사이즈 선택 불가" 문의 폭주(노스페이스 2,224건).
+    # 옵션 0건 또는 전량 품절로 item_list가 비면 신규등록만 보류한다.
+    # 기등록 상품 갱신 경로(existing_no 有)는 block_single=False 로 통과 —
+    # 기등록 옵션0 상품(약 884건)의 가격·재고 갱신이 막히면 안 됨(팀장 리뷰).
+    if block_single and not item_parts:
+        raise ValueError(
+            f"옵션 없음/전량 품절 — 단일상품 등록 방지 보류 "
+            f"(수집 옵션 {len(options)}건): {product.get('name', '')}"
+        )
 
     # 부가이미지 (최대 5장)
     for i, img in enumerate(images[1:6], start=1):
@@ -1060,7 +1073,9 @@ class LotteHomePlugin(MarketPlugin):
         except Exception as e:
             logger.warning(f"[롯데홈쇼핑] 이미지 정규화 단계 오류 — 원본 유지: {e}")
 
-        goods_data = _transform_for_lottehome(product, category_id, auth_creds)
+        goods_data = _transform_for_lottehome(
+            product, category_id, auth_creds, block_single=not existing_no
+        )
 
         # 진단: 전송 직전 img_url 캡처 + AI 이미지 여부 표시 (transformed/ai_ 패턴)
         def _img_tag(url: str | None) -> str:
