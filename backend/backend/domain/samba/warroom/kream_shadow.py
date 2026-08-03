@@ -58,7 +58,17 @@ async def _send_slack(msg: str) -> None:
         return
     try:
         async with httpx.AsyncClient(timeout=10) as cli:
-            await cli.post(_SLACK_WEBHOOK, json={"text": msg})
+            r = await cli.post(_SLACK_WEBHOOK, json={"text": msg})
+        # [2026-08-03] 응답을 버려서 웹훅 만료·payload 거부가 로그 한 줄 없이 사라졌다.
+        # 슬랙은 예외를 던지지 않고 non-200 + 본문(no_service / invalid_payload)으로만
+        # 알려주므로, 코드를 확인하지 않으면 '알림이 조용히 끊긴' 상태를 영영 모른다.
+        if r.status_code != 200:
+            logger.warning(
+                "[크림통합] 슬랙 발송 거부 HTTP %s: %s (본문 %d자)",
+                r.status_code,
+                r.text[:120],
+                len(msg),
+            )
     except Exception as exc:
         logger.warning("[크림통합] 슬랙 발송 실패(무시): %s", exc)
 
