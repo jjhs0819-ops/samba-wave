@@ -2404,6 +2404,16 @@ _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
 # 386건 오탐하고, 반대로 이름에 팩/박스가 없는 실제 밀봉품은 못 잡았다.
 # 스니덩크 밀봉품은 수량옵션(1個 / 10パック)을 갖고 낱장은 PSA 등급옵션만 갖는다 = 확실한 신호.
 _SEALED_OPT_RE = re.compile(r"(個|パック)")
+# 굿즈 — 스니덩크는 플레이매트·슬리브 같은 주변용품도 수량옵션(1個)을 써서 밀봉품 판정에
+# 딸려 들어온다. snkr_type 은 전부 'trading-card' 고 카테고리 필드가 없어 이름이 유일한 단서.
+# [2026-08-03] '피규어 컬렉션 미개봉 랜덤박스' 처럼 진짜 밀봉 상품도 있으므로 넓게 잡지 말 것.
+# [중요] 크림 상품명은 **영문**(예: 'Pokemon TCG Rubber Playmat …'), 스니덩크 DB name 은 한글.
+# 판정 지점마다 언어가 달라 한쪽만 넣으면 조용히 안 걸린다 — 한/영 둘 다 필수.
+_GOODS_NAME_RE = re.compile(
+    r"플레이\s?매트|러버\s?매트|슬리브|덱\s?케이스|바인더"
+    r"|play\s?mat|playmat|rubber\s?mat|sleeve|deck\s?case|binder",
+    re.IGNORECASE,
+)
 
 
 def _has_sealed_option(opts_txt: str | None) -> bool:
@@ -2461,6 +2471,7 @@ async def _process_box_restock(
         "soldout": 0,
         "apifail": 0,
         "capped": 0,
+        "goods": 0,
     }
     # 이미 라이브 입찰 있는 kid — 재등록 방지(밀봉품은 상품당 1옵션만 운용)
     live_kids = {
@@ -2495,6 +2506,11 @@ async def _process_box_restock(
         if not kid or not sid or kid in live_kids:
             continue
         if not _has_sealed_option(opts_txt):
+            continue
+        # 굿즈(플레이매트·슬리브)는 밀봉품이 아니다 — 신규등록 대상에서 제외.
+        # 이미 등록된 굿즈는 갱신 대상(_load_sealed_kids)에는 남겨 시세 방치를 막는다.
+        if _GOODS_NAME_RE.search(name):
+            c["goods"] += 1
             continue
         # 밀봉품은 예외 없이 누적거래≥1 필수 — 로컬 봇 박스 경로와 동일.
         # _trade_ok(needs_trade)는 등급토큰(GX 등)을 낱장 신호로 봐서 "프리미엄 트레이너
@@ -3861,12 +3877,13 @@ async def run_kream_unified_once() -> dict:
     if box_rs.get("cand") or box_rs.get("trade") or box_rs.get("soldout"):
         logger.info(
             "[크림통합] 박스/카드팩 신규등록 후보%d — 등록%d 실패%d / "
-            "스킵[거래0:%d 품절:%d API실패:%d 옵션없음:%d 원가상한:%d 정책:%d "
+            "스킵[거래0:%d 굿즈:%d 품절:%d API실패:%d 옵션없음:%d 원가상한:%d 정책:%d "
             "미검출:%d 재게시:%d 실패쿨:%d 이행대기:%d 상한:%d] (%s)",
             box_rs["cand"],
             box_rs["post"],
             box_rs["fail"],
             box_rs["trade"],
+            box_rs["goods"],
             box_rs["soldout"],
             box_rs["apifail"],
             box_rs["optmiss"],
@@ -4008,9 +4025,12 @@ async def run_kream_unified_once() -> dict:
         if "PSA" in opt.upper():
             return "card"
         nm = str(a.get("product_name_kr") or a.get("product_name") or "")
-        _tcg_sealed = "해외배송" in opt or (
-            opt.strip().upper() == "ONE SIZE" and re.search(r"박스|팩", nm)
-        )
+        # [2026-08-03] 밀봉 판정을 밀봉 kid 집합(스니덩크 수량옵션 1個/パック 기준)으로 교체.
+        # 이름만 보던 기존 방식은 ONE SIZE 로 박힌 밀봉품을 의류 칸으로 흘렸다.
+        # 굿즈(플레이매트·슬리브)는 밀봉품이 아니므로 박스/카드팩 칸에서 빼고 잡화로 보낸다.
+        _tcg_sealed = (
+            "해외배송" in opt or str(a.get("product_id") or "") in _sealed_kids
+        ) and not _GOODS_NAME_RE.search(nm)
         if _tcg_sealed:
             if "박스" in nm:
                 return "box"

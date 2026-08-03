@@ -5739,11 +5739,25 @@ async def autotune_pc_allowed_sites_set(
     try:
         _client_host = request.client.host if request and request.client else "?"
         _ua = (request.headers.get("user-agent", "?") if request else "?")[:80]
+        # 실제 공인 IP — request.client.host 는 Caddy/터널 내부 IP(172.x)라
+        # PC가 어느 회선을 쓰는지 알 수 없다. SSG는 IP당 동시 1개만 허용해
+        # (2026-08-02 실측: IP당 동시 2개에서 차단) 어느 PC가 같은 회선을
+        # 공유하는지 파악해야 SSG 담당 PC를 IP당 1대로 배정할 수 있다.
+        _real_ip = "?"
+        if request:
+            _real_ip = (
+                request.headers.get("cf-connecting-ip")
+                or (request.headers.get("x-forwarded-for", "") or "")
+                .split(",")[0]
+                .strip()
+                or "?"
+            )
         logging.getLogger("autotune").warning(
-            "[pc-allowed-sites][진단] dev=%s sites=%s from=%s ua=%s",
+            "[pc-allowed-sites][진단] dev=%s sites=%s from=%s realip=%s ua=%s",
             dev[:30],
             body.sites,
             _client_host,
+            _real_ip,
             _ua,
         )
     except Exception:
