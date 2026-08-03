@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import re
+import time as _time_mod
 
 import httpx
 from sqlalchemy import text as _text
@@ -83,6 +84,75 @@ _SET_WATCH = "kream_snkr_watch"
 # 대응: 직전 사이클 원가 대비 30%↓ 급락이면 1사이클 보류(직전가로 계산=인하 방지).
 # 다음 사이클에도 낮으면 진짜 하락으로 수용. 상태는 samba_settings 에 유지.
 _SET_GUARD = "kream_price_guard"
+
+# ── 실순위(live_rank) 사전 조회 [2026-08-03] ────────────────────────────────
+# 공식 목록 API(/asks)는 live_rank 를 항상 null 로 준다. 단건(/asks/{id})만 실값을 준다.
+# 그동안 순위를 '조정한 뒤' PATCH 응답으로만 알 수 있어, 이미 밀려 있는 입찰을 발견하지
+# 못했다(표본 40건 중 10건이 2등 이하였다). 조정 전에 순위를 먼저 확인한다.
+# 비용 실측: 건당 100ms, 동시 16 기준 1,000건에 약 6초.
+_g_live_rank: dict = {}  # ask_id -> live_rank(int). 사이클 내에서만 유효
+_RANK_CONCURRENCY = int(os.environ.get("KREAM_RANK_CONCURRENCY") or 16)
+_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 4000)
+_rank_scan_offset = 0
+
+
+async def _fetch_live_ranks(h: dict, ask_ids: list) -> dict:
+    """ask_id 목록의 실순위를 병렬 조회. 실패분은 결과에서 빠진다(=판단에 안 씀)."""
+    out: dict = {}
+    if not ask_ids:
+        return out
+    sem = asyncio.Semaphore(_RANK_CONCURRENCY)
+
+    async def _one(aid):
+        async with sem:
+            try:
+                r = await _rq(
+                    "GET", f"{KREAM_OPENAPI_BASE}/asks/{aid}", headers=h, tries=2
+                )
+                if r.status_code == 200:
+                    v = (r.json() or {}).get("live_rank")
+                    if v is not None:
+                        out[str(aid)] = int(v)
+            except Exception:
+                pass
+
+    await asyncio.gather(*[_one(a) for a in ask_ids])
+    return out
+
+
+async def _load_live_ranks(
+    h: dict, asks: list, priority_ids: list | None = None
+) -> None:
+    """사이클 시작 시 실순위 적재 — 우선분(갱신 대상) 전량 + 나머지는 로테이션."""
+    global _rank_scan_offset, _g_live_rank
+    _g_live_rank = {}
+    ids_all = [str(a.get("id")) for a in asks if a.get("id")]
+    pri = [str(x) for x in (priority_ids or []) if x]
+    pri_set = set(pri)
+    rest = [x for x in ids_all if x not in pri_set]
+    room = max(0, _RANK_SCAN_MAX - len(pri))
+    if rest and room:
+        st = _rank_scan_offset % len(rest)
+        rest = (rest[st:] + rest[:st])[:room]
+        _rank_scan_offset = (st + room) % max(1, len(rest) or 1)
+    else:
+        rest = []
+    target = pri + rest
+    if not target:
+        return
+    _t = _time_mod.time()
+    _g_live_rank = await _fetch_live_ranks(h, target)
+    _r2 = sum(1 for v in _g_live_rank.values() if v >= 2)
+    logger.info(
+        "[크림통합] 실순위 조회 %d건(우선%d+스캔%d) %.0f초 — 2등이하 %d건",
+        len(_g_live_rank),
+        len(pri),
+        len(rest),
+        _time_mod.time() - _t,
+        _r2,
+    )
+
+
 _g_price_guard: dict = {}
 
 
@@ -1646,6 +1716,7 @@ def _decide_price_action(
     is_box: bool = False,
     surcharge_rate: float | None = None,
     fee_kind: str | None = None,
+    live_rank: int | None = None,
 ) -> tuple[str, int, bool, bool]:
     """갱신 결정 — run_kream_shadow_once 결정로직과 동일. 반환 (act, target, adjusting, is_nocomp).
     로컬 _kream_ask_adjust rank1유도+5분기+rank2추종+안전장치 이식.
@@ -1667,6 +1738,11 @@ def _decide_price_action(
     _cands = [x for x in (low_over, low_norm) if x and x > 0]
     market_low = min(_cands) if _cands else 0
     rank1 = market_low > 0 and 0 < cur <= market_low
+    # [2026-08-03] 실순위(live_rank)를 받았으면 그게 진실이다. 공식 lowest_* 는 내가 최저일 때
+    # '내 가격'만 되비춰 경쟁자 유무를 알 수 없고, 그 탓에 1등으로 오판해 무경쟁 마진까지
+    # 올렸다가 밀리는 왕복이 반복됐다(884440: 71,000→76,000→복귀를 매 사이클).
+    if live_rank is not None:
+        rank1 = int(live_rank) == 1
     _dcap = domestic_cap(low_norm, tariff_threshold)
     # 국내입찰가 비교 — 국내가 더 싸서 최소마진(min_price) 지키며 못 이기면(국내상한 초과)
     # 입찰 무의미(체결 안 되거나 손해) → 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
@@ -2301,6 +2377,7 @@ async def _process_shoe_asks(
                 is_box=True,
                 surcharge_rate=_sur,
                 fee_kind="item",  # 신발·의류·시계 = 2,750 + 6.16%
+                live_rank=_g_live_rank.get(str(a.get("id"))),
             )
             if act in ("국내못이김삭제", "1등불가삭제"):
                 # 가격열위 삭제(국내못이김/1등불가) — 사이클당 상한(200) 적용, 점진 삭제.
@@ -2823,6 +2900,7 @@ async def _process_box_asks(
                     tariff,
                     is_box=True,
                     fee_kind="overseas",  # 박스·카드팩 갱신
+                    live_rank=_g_live_rank.get(str(a.get("id"))),
                 )
                 if act in ("국내못이김삭제", "1등불가삭제"):
                     return ("pricedel", a, 0, False)  # 가격열위 삭제(상한 적용)
@@ -3144,6 +3222,13 @@ async def run_kream_unified_once() -> dict:
         except Exception:
             pass
     cooldown = await _load_cooldown()
+    # [2026-08-03] 조정 전에 실순위부터 확인한다 — 공식 목록은 live_rank 를 안 주고,
+    # lowest_* 는 내가 최저일 때 내 가격만 되비춰 '이미 밀린 입찰'을 못 찾았다.
+    # 실측: 표본 40건 중 10건이 2등 이하. 로테이션으로 전량을 순차 커버한다.
+    try:
+        await _load_live_ranks(h, asks)
+    except Exception as _e:
+        logger.warning("[크림통합] 실순위 조회 실패(기존 로직 진행): %s", str(_e)[:80])
     rate = await _jpy_krw_rate()
     tariff_threshold = int(150 * await _usd_krw_rate())
 
@@ -3543,6 +3628,7 @@ async def run_kream_unified_once() -> dict:
                         prod["fixed"].get(nm, 0),
                         rate,
                         tariff_threshold,
+                        live_rank=_g_live_rank.get(str(ask.get("id"))) if ask else None,
                     )
                     # 가격열위(국내 못이김/1등불가) 삭제, 아니면 갱신
                     r["rows"].append(
