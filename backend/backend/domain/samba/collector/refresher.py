@@ -1878,7 +1878,15 @@ async def refresh_products_bulk(
                         _site_block_backoff_until as _sbbu,
                     )
 
-                    if _time.time() < _sbbu.get(site, 0.0):
+                    # [2026-08-02] 사이트 전역 키만 보면 안 된다 — 백오프는 PC별
+                    # ("SITE|device") 로 기록되고, 전역 키는 더 이상 쓰지 않는다.
+                    # 여기서는 "이 사이트 담당 PC가 전부 백오프"인 경우만 스킵한다
+                    # (일부만 백오프면 owner 라우팅이 건강한 PC로 보내므로 진행).
+                    from backend.api.v1.routers.samba.collector_autotune import (
+                        _all_ext_pcs_blocked_until as _aepbu,
+                    )
+
+                    if _time.time() < max(_sbbu.get(site, 0.0), _aepbu(site)):
                         return RefreshResult(
                             product_id=getattr(p, "id", "unknown"),
                             error="cancelled",
@@ -1999,16 +2007,20 @@ async def refresh_products_bulk(
                         # 즉 빈 응답 = 대부분 로딩 지연이지 봇차단이 아님. 진짜 차단은
                         # 확장앱 reCAPTCHA 프리체크가 blocked:true 로 보내는
                         # "SSG 차단됨 (reCAPTCHA)" 뿐 — "차단" 문자열만 신뢰.
-                        _r_is_block = "차단" in (r.error or "")
+                        _r_is_block = bool("차단" in (r.error or ""))
                         # [2026-08-02] PC별 격리 — SSG 는 확장앱이 각 PC IP로 직접
                         # 요청하므로 차단은 그 PC에만 걸림. 결과에 처리 PC(device_id)
                         # attribution 이 있으면 "SITE|device" 키로 그 PC만 백오프,
                         # 없으면(브로드캐스트 잡 등) 기존 사이트 전체 키 유지.
                         # 백오프 걸린 PC는 daemon_pool owner 선택에서 제외돼
                         # 잡이 건강한 PC로만 라우팅됨 = 사이트 전체는 계속 돈다.
+                        # device_id 가 없으면(브로드캐스트 등) 사이트 전역 키로 폴백하면
+                        # 안 된다 — 전역 키 하나가 멀쩡한 PC까지 전부 정지시킨다(실측:
+                        # 전역 "SSG" 키가 되살아나 3대 동시 정지). attribution 없으면
+                        # 어느 PC 문제인지 특정 불가 → 백오프 자체를 걸지 않는다.
                         _blk_dev = getattr(r, "device_id", "") or ""
-                        _bkey = f"{site.upper()}|{_blk_dev}" if _blk_dev else site
-                        if _r_is_block:
+                        _bkey = f"{site.upper()}|{_blk_dev}" if _blk_dev else ""
+                        if _r_is_block and _bkey:
                             _bc = _scbs.get(_bkey, 0) + 1
                             _scbs[_bkey] = _bc
                             if _bc >= _abbt:
@@ -2026,7 +2038,7 @@ async def refresh_products_bulk(
                                 asyncio.create_task(
                                     _pbbtd(), name="persist-block-backoff"
                                 )
-                        elif not r.error:
+                        elif not r.error and _bkey:
                             _scbs[_bkey] = 0
                     except Exception:
                         pass

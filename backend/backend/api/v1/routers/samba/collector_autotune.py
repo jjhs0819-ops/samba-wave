@@ -1700,6 +1700,14 @@ async def _site_autotune_loop(device_id: str, site: str):
                         # 다른 PC의 다음 SELECT부터 이 배치가 후순위로 밀려 겹치지 않는다.
                         # _on_result/에러 후처리가 실제 완료 시각으로 다시 덮어쓰므로
                         # 최종값에는 영향 없음 — race window만 제거한다.
+                        # [2026-08-02] 실패/취소 건은 배치 후 원래 시각으로 되돌린다.
+                        # 클레임만 찍고 복구가 없으면, 차단 백오프로 전량 취소된 배치도
+                        # "갱신됨"으로 남아 실제 갱신 없이 카탈로그를 소진한다(실측:
+                        # SSG 대상 18,882건 → 112건, 오토튠이 "대상 상품 없음"으로 정지).
+                        _claim_prev: dict[str, Any] = {
+                            p.id: getattr(p, "last_refreshed_at", None)
+                            for p in products
+                        }
                         try:
                             await session.execute(
                                 sa_update(_CP)
@@ -1707,6 +1715,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                 .values(last_refreshed_at=now)
                             )
                         except Exception as _claim_e:
+                            _claim_prev = {}
                             log.warning(
                                 "[오토튠][%s] 배치 클레임 스탬프 실패(무시): %s",
                                 site,
@@ -3850,6 +3859,38 @@ async def _site_autotune_loop(device_id: str, site: str):
                             time.time() - _bulk_start_ts,
                             time.time() - _cycle_started_ts,
                         )
+
+                        # 클레임 스탬프 복구 — 실제 갱신 안 된 건(에러/취소)은 원래
+                        # last_refreshed_at 로 되돌려 다음 사이클에 다시 잡히게 한다.
+                        # 복구가 없으면 백오프로 전량 취소된 배치가 갱신된 것처럼 남아
+                        # 대상 상품이 고갈되고 오토튠이 "대상 상품 없음"으로 멈춘다.
+                        if _claim_prev:
+                            _failed_ids = [r.product_id for r in results if r.error]
+                            _restore: dict[Any, list[str]] = {}
+                            for _fid in _failed_ids:
+                                if _fid in _claim_prev:
+                                    _restore.setdefault(_claim_prev[_fid], []).append(
+                                        _fid
+                                    )
+                            for _prev_ts, _ids in _restore.items():
+                                try:
+                                    await session.execute(
+                                        sa_update(_CP)
+                                        .where(_CP.id.in_(_ids))
+                                        .values(last_refreshed_at=_prev_ts)
+                                    )
+                                except Exception as _rc_e:
+                                    log.warning(
+                                        "[오토튠][%s] 클레임 복구 실패(무시): %s",
+                                        site,
+                                        _rc_e,
+                                    )
+                            if _failed_ids:
+                                log.info(
+                                    "[오토튠][%s] 미갱신 %s건 클레임 복구 — 다음 사이클 재시도",
+                                    site,
+                                    f"{len(_failed_ids):,}",
+                                )
 
                         # 에러 결과 후처리 (콜백에서 처리 안 된 에러 건)
                         for r in results:
