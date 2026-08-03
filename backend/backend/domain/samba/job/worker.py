@@ -523,13 +523,24 @@ class JobWorker:
             pass
         # 배포/재시작으로 stuck된 running 잡 자동 복구 — 2h+ zombie는 failed, 나머지는 pending
         await self._recover_stuck_jobs(force=True)
+        # 유지보수 루프 주기 — 시간 기반 (2026-08-04):
+        # 종전 폴 횟수 기반(%2, %6)은 "폴=5초" 가정인데, 잡을 집으면 sleep 없이
+        # 즉시 다음 폴을 도는 구조라 대기열 적체 시 루프가 초당 수십 회 회전 →
+        # stuck 복구·슬롯 재배분(무거운 DB 집계 3쿼리)이 초당 수십 회 실행되며
+        # DB 를 태우고 로그를 범람시켰다 (10분에 재배분 로그 1만줄 실측).
+        _last_stuck_ts = 0.0
+        _last_rebalance_ts = 0.0
         while self._running:
             try:
-                # 주기적 stuck 잡 복구 (배포/DB 끊김 후 running 상태로 남은 잡)
                 self._poll_count += 1
-                if self._poll_count % self.STUCK_CHECK_INTERVAL == 0:
+                _mono = _time.monotonic()
+                # 주기적 stuck 잡 복구 (배포/DB 끊김 후 running 상태로 남은 잡) — 10초
+                if _mono - _last_stuck_ts >= self.STUCK_CHECK_INTERVAL * self.POLL_INTERVAL:
+                    _last_stuck_ts = _mono
                     await self._recover_stuck_jobs()
-                if self._poll_count % self._SLOT_REBALANCE_EVERY == 0:
+                # 슬롯 재배분 — 30초
+                if _mono - _last_rebalance_ts >= self._SLOT_REBALANCE_EVERY * self.POLL_INTERVAL:
+                    _last_rebalance_ts = _mono
                     await self._rebalance_autotune_slots()
                 executed = await self._poll_once()
                 if not executed:

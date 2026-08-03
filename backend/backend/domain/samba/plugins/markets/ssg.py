@@ -458,7 +458,8 @@ class SSGPlugin(MarketPlugin):
         # 의도치 않은 6005 재등록 없음. 신규등록(existing_no 없음)은 상세조회 대상 아님.
         if existing_no and not main_category_id:
             try:
-                _detail = await client.get_item_detail(existing_no)
+                # 6005 카테고리는 우리가 바꾸지 않는 한 불변 → 캐시 조회 (2026-08-04)
+                _detail = await client.get_item_detail_cached(existing_no)
                 _kept = client.extract_main_disp_ctg(_detail, "6005")
                 if _kept:
                     main_category_id = _kept
