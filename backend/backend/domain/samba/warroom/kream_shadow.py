@@ -14,6 +14,7 @@ Phase 4: 검증 후 실제 실행 전환.
 """
 
 import asyncio
+import itertools
 import json
 import logging
 import math
@@ -1152,17 +1153,43 @@ async def _usd_krw_rate() -> float:
 # → SNKR_PROXY 가 설정돼 있으면 **snkrdunk.com 요청만** 프록시로 우회한다.
 # httpx mounts 는 호스트 매칭이라 크림(partner-openapi)은 그대로 직결로 나간다.
 # (httpx 0.28 에서 proxies 인자는 제거됨 — mounts + AsyncHTTPTransport(proxy=) 사용)
-_SNKR_PROXY = os.environ.get("SNKR_PROXY", "").strip()
+_SNKR_PROXIES = [
+    p.strip() for p in os.environ.get("SNKR_PROXY", "").split(",") if p.strip()
+]
+# 라운드로빈 인덱스는 **모듈 전역** — AsyncClient 는 단계마다 새로 만들어지므로
+# transport 인스턴스에 두면 매번 0번 프록시로 쏠린다.
+_snkr_rr = itertools.count()
+
+
+class _RoundRobinProxyTransport(httpx.AsyncBaseTransport):
+    """요청마다 프록시를 번갈아 쓰는 transport.
+
+    [2026-08-03] 프록시 1개만 물렸더니 신발 시세조회(6,753건)가 6~7분 → 16분+ 로
+    늘어 사이클이 완주하지 못했다. 단건 응답은 0.29초로 멀쩡했으니 지연이 아니라
+    **동시성 병목**이다(KREAM_SHOE_FETCH_CONCURRENCY=30 이 프록시 1개에 몰림).
+    사이클이 느려지면 로테이션 주기가 늘어 입찰 갱신이 밀리고 비1순위가 증가한다
+    — 갱신을 살리려던 프록시가 갱신을 죽이는 역설이라 반드시 분산해야 한다.
+    """
+
+    def __init__(self, proxies: list[str]):
+        self._ts = [httpx.AsyncHTTPTransport(proxy=p) for p in proxies]
+
+    async def handle_async_request(self, request):
+        return await self._ts[next(_snkr_rr) % len(self._ts)].handle_async_request(
+            request
+        )
+
+    async def aclose(self):
+        for t in self._ts:
+            await t.aclose()
 
 
 def _mounts():
     """스니덩크 전용 프록시 마운트. 미설정이면 None(기존 직결 동작)."""
-    if not _SNKR_PROXY:
+    if not _SNKR_PROXIES:
         return None
-    return {
-        "all://snkrdunk.com": httpx.AsyncHTTPTransport(proxy=_SNKR_PROXY),
-        "all://*.snkrdunk.com": httpx.AsyncHTTPTransport(proxy=_SNKR_PROXY),
-    }
+    tr = _RoundRobinProxyTransport(_SNKR_PROXIES)
+    return {"all://snkrdunk.com": tr, "all://*.snkrdunk.com": tr}
 
 
 _SNKR_USED_URL = "https://snkrdunk.com/v1/apparels/{id}/used"
