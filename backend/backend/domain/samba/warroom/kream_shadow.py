@@ -2730,7 +2730,9 @@ async def _process_box_restock(
             if box["stock"] == 0 or box["price"] <= 0:
                 c["soldout"] += 1
                 continue
-            jpy = _guard_jpy(kid, "해외배송", int(box["price"]))
+            # [2026-08-03] 급락 가드도 실제 옵션 키로 — 고정 문자열이면 옵션별 직전가가
+            # 한 칸에 뒤섞여 가드가 엉뚱한 값을 비교한다.
+            jpy = _guard_jpy(kid, opt or "해외배송", int(box["price"]))
             if jpy > POLICY["max_cost_jpy"]:
                 c["overcost"] += 1
                 continue
@@ -2965,7 +2967,10 @@ async def _process_box_asks(
                         int(a.get("price") or 0),
                         is_nc,
                         str(a.get("product_id")),
-                        "해외배송",
+                        # [2026-08-03] 실제 옵션을 넘긴다. "해외배송" 을 고정으로 넘기던 탓에
+                        # 쿨다운 기록키(884440|해외배송)와 판정키(884440|ONE SIZE)가 어긋나
+                        # 쿨다운이 영원히 안 걸렸고, 마진 하한(_floor_map) 조회도 빗나갔다.
+                        str(a.get("option") or "해외배송"),
                     )
                     if res == "ok":
                         c["patch"] += 1
