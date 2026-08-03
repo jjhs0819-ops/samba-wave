@@ -210,12 +210,25 @@ async def _reconcile_one_account(acc: dict[str, Any]) -> dict[str, Any]:
             await _log_monitor_event(account_id, label, len(ghosts), len(lotteon_sale))
 
             if AUTO_END:
-                ok, fail = await _auto_end(client, ghosts)
-                summary["auto_end_success"] = ok
-                summary["auto_end_failed"] = fail
-                logger.warning(
-                    f"[ghost_reconciler] {label} AUTO_END 완료 success={ok} failed={fail}"
-                )
+                # 조회 부실 가드 — _fetch_lotteon_sale 은 응답이 list 가 아니면 그냥
+                # break 해서 부분 목록으로도 정상 종료된다. 그 상태로 diff 하면 아직
+                # 조회되지 않은 정상 상품이 전부 유령으로 잡혀 대량 END 되므로,
+                # 마켓 조회수가 DB 매핑수의 절반 미만이면 END 를 건너뛴다.
+                # (수동 cleanup-orphans 의 stale 정리와 동일한 방어 패턴)
+                if len(lotteon_sale) < len(db_known) // 2:
+                    summary["auto_end_skipped"] = "market_list_underfetch"
+                    logger.warning(
+                        f"[ghost_reconciler] {label} 마켓 조회 부실 의심 "
+                        f"(조회 {len(lotteon_sale)} < 매핑 {len(db_known)}/2) "
+                        f"— AUTO_END 스킵"
+                    )
+                else:
+                    ok, fail = await _auto_end(client, ghosts)
+                    summary["auto_end_success"] = ok
+                    summary["auto_end_failed"] = fail
+                    logger.warning(
+                        f"[ghost_reconciler] {label} AUTO_END 완료 success={ok} failed={fail}"
+                    )
         else:
             logger.info(
                 f"[ghost_reconciler] OK {label} 유령없음 "

@@ -10311,6 +10311,14 @@ async def sync_orders_from_markets(
                         "original_link"
                     ):
                         order_data["source_url"] = _matched["original_link"]
+                    # 원가 보강 (#365) — 롯데ON/스마트스토어 파서는 cost=0 하드코딩이라
+                    # 발주 전까지 원가가 비어 정산/역마진 판정에서 누락됐다.
+                    # GS샵과 동일 규약: cp 단가를 그대로 넣는다(수량 미곱). 실제 원가는
+                    # 발주 성공 시 PATCH /orders/{id} 가 덮어쓴다.
+                    if not order_data.get("cost"):
+                        _m_cost = _matched.get("cost") or 0
+                        if _m_cost:
+                            order_data["cost"] = _m_cost
                 elif _pid and _ch_id and not order_data.get("collected_product_id"):
                     # 매칭 실패 → 삼바에서 등록했다가 삭제된 상품 케이스.
                     # 같은 (channel_id, product_id) 과거 주문에서 이미지/소싱처 백필
@@ -10340,6 +10348,19 @@ async def sync_orders_from_markets(
                     except Exception as _ge:
                         logger.warning(
                             "[주문동기화] 삭제상품 백필 실패(무시): %s", str(_ge)[:80]
+                        )
+                    # 백필로도 소싱처를 못 채운 경우 = 마켓에만 살아있는 상품(유령)의
+                    # 주문. 원가/소싱처가 없어 자동발주가 불가능해 그대로 두면 취소로
+                    # 끝난다. 종전엔 로그가 없어 조용히 누적됐다(롯데ON 실사고:
+                    # 우경일 유령 674개 방치 → 60일간 미링크 주문 26건 전량 취소).
+                    if not order_data.get("source_site"):
+                        logger.warning(
+                            "[주문동기화] 미매칭 주문 — 마켓상품번호가 삼바 DB에 없음"
+                            "(유령상품 의심) market=%s channel=%s product_id=%s name=%s",
+                            order_data.get("source") or "",
+                            order_data.get("channel_name") or _ch_id,
+                            _pid,
+                            str(order_data.get("product_name") or "")[:40],
                         )
                 # sourcing_account_id 보충 — source_site 확정됐고 계정이 비어있으면 (#299)
                 # LOTTEON 등 source_site 매칭 성공 후 sourcing_account_id="etc"/NULL 잔존 방지
@@ -11715,6 +11736,68 @@ async def sync_orders_from_markets(
                     )
     except Exception as _pa_bf_err:
         logger.warning(f"[주문동기화] PlayAuto/롯데홈 백필 실패(무시): {_pa_bf_err}")
+
+    # 롯데ON/스마트스토어 미매칭 주문 재시도 백필.
+    # 위 PlayAuto/롯데홈 루프는 source 가 하드코딩돼 있어 롯데ON/스마트스토어는
+    # 재시도 자체가 없었다 — 인입 시 한 번 실패하면 영구 잔존.
+    # 단, 저 루프의 상품명 style_code 토큰 매칭은 색상/사이즈가 다른 형제상품에
+    # 오매칭될 수 있어 여기서는 (계정ID:마켓상품번호) 정확 키만 쓴다.
+    # 구제 대상: 전송 직후 마커가 아직 안 붙은 상태에서 주문이 먼저 들어온 케이스.
+    # (마켓에만 있는 유령상품 주문은 여기서도 매칭되지 않는 것이 정상)
+    try:
+        from sqlalchemy import text as _lo_bf_text
+
+        # _mpn_by_account 는 마켓 계정이 있을 때만 정의되는 지역변수 — 계정 0건 등으로
+        # 캐시 로드 자체가 건너뛰어졌으면 백필도 조용히 스킵한다(NameError 방지).
+        _lo_mpn: dict = locals().get("_mpn_by_account") or {}
+        _lo_null = (
+            []
+            if not _lo_mpn
+            else (
+                await session.execute(
+                    _lo_bf_text(
+                        "SELECT id, channel_id, product_id FROM samba_order "
+                        "WHERE source IN ('lotteon', 'smartstore') "
+                        "AND collected_product_id IS NULL "
+                        "AND COALESCE(product_id, '') <> '' "
+                        "AND created_at >= now() - interval '30 days' "
+                        "LIMIT 500"
+                    )
+                )
+            ).fetchall()
+        )
+        _lo_linked = 0
+        for _loid, _loch, _lopid in _lo_null:
+            _lo_hit = _lo_mpn.get(f"{_loch}:{_lopid}")
+            if not _lo_hit or _lo_hit.get("ambiguous"):
+                continue
+            await session.execute(
+                _lo_bf_text(
+                    "UPDATE samba_order SET "
+                    "  collected_product_id = :cpid, "
+                    "  source_site = CASE WHEN COALESCE(source_site, '') = '' "
+                    "                     THEN :ssite ELSE source_site END, "
+                    "  source_url = CASE WHEN COALESCE(source_url, '') = '' "
+                    "                    THEN :surl ELSE source_url END, "
+                    "  cost = CASE WHEN COALESCE(cost, 0) = 0 THEN :cost ELSE cost END "
+                    "WHERE id = :oid AND collected_product_id IS NULL"
+                ),
+                {
+                    "cpid": _lo_hit["collected_product_id"],
+                    "ssite": _lo_hit.get("source_site") or "",
+                    "surl": _lo_hit.get("original_link") or "",
+                    "cost": float(_lo_hit.get("cost") or 0),
+                    "oid": _loid,
+                },
+            )
+            _lo_linked += 1
+        if _lo_linked:
+            await session.commit()
+            logger.info(
+                f"[주문동기화] 롯데ON/스마트스토어 미매칭 자동 백필 {_lo_linked}건 완료"
+            )
+    except Exception as _lo_bf_err:
+        logger.warning(f"[주문동기화] 롯데ON/스마트스토어 백필 실패(무시): {_lo_bf_err}")
 
     if total_synced > 0:
         from backend.utils.kakao_notify import send_kakao_message
