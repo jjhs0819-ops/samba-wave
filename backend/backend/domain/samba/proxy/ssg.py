@@ -53,6 +53,37 @@ _BRAND_MAP_TTL = 600  # 10분
 _client_pool: dict[str, tuple[httpx.AsyncClient, float]] = {}
 _CLIENT_STALE_TTL = 1800  # 30분 미사용 시 정리
 
+# updateItem 사전조회(sales-status·item_detail) 캐시 — itemId 기준, TTL 6시간 (2026-08-04)
+# 가격수정 1건당 조회 GET 이 2~3회 붙어 SSG 전송 처리량을 1/3로 깎던 것을,
+# 옵션 구성이 바뀌지 않는 한 재사용해 updateItem POST 1콜 수준으로 줄인다.
+# 신선도 안전장치: updateItem 실패·신규옵션 감지·판매상태 변경·삭제 시 해당 키 즉시
+# 무효화 → 다음 시도는 재조회. 옵션 구성 변경은 어차피 재등록(itemId 교체) 경로.
+# 값: {"status": resp|None, "detail": resp|None, "ts": time.time()}
+_item_lookup_cache: dict[str, dict[str, Any]] = {}
+_ITEM_LOOKUP_TTL = 6 * 3600
+_ITEM_LOOKUP_MAX = 30000
+
+
+def _item_lookup_get(item_id: str, kind: str) -> Any | None:
+    ent = _item_lookup_cache.get(item_id)
+    if not ent or time.time() - ent.get("ts", 0) > _ITEM_LOOKUP_TTL:
+        return None
+    return ent.get(kind)
+
+
+def _item_lookup_put(item_id: str, kind: str, resp: Any) -> None:
+    if len(_item_lookup_cache) >= _ITEM_LOOKUP_MAX:
+        # 가장 오래된 키부터 정리 (dict 삽입순 보존 이용)
+        for _k in list(_item_lookup_cache.keys())[: _ITEM_LOOKUP_MAX // 10]:
+            _item_lookup_cache.pop(_k, None)
+    ent = _item_lookup_cache.setdefault(item_id, {"ts": time.time()})
+    ent[kind] = resp
+    ent["ts"] = time.time()
+
+
+def invalidate_item_lookup(item_id: str) -> None:
+    _item_lookup_cache.pop(item_id, None)
+
 
 async def _cleanup_stale_clients() -> None:
     """30분 이상 미사용 클라이언트를 닫고 풀에서 제거."""
@@ -294,7 +325,7 @@ class SSGClient:
         # 바뀌어 SSG 옵션 일부가 유실될 수 있으므로 집합은 별도로 둔다.
         ssg_all_uids: list[str] = []
         try:
-            status_resp = await self.get_item_sales_status(item_id)
+            status_resp = await self.get_item_sales_status_cached(item_id)
             option_invs = (
                 status_resp.get("result", {})
                 .get("salesStatus", {})
@@ -325,7 +356,7 @@ class SSGClient:
             return "".join(str(_s).split()).lower()
 
         try:
-            _detail = await self.get_item_detail(item_id)
+            _detail = await self.get_item_detail_cached(item_id)
             _ssg_name_to_uid: dict[str, str] = {}
 
             def _collect(o: Any) -> None:
@@ -376,6 +407,9 @@ class SSGClient:
                         f"[SSG] 신규 옵션 {len(_new_opts)}개 감지(SSG에 없음) → "
                         f"updateItem 불가, 삭제 후 재등록 필요: {sorted(_new_opts)[:5]}"
                     )
+                    # 캐시된 옵션정보가 낡아 오탐일 수 있으므로 무효화 —
+                    # 재등록 경로가 아니어도 다음 시도는 재조회로 재판정.
+                    invalidate_item_lookup(item_id)
                     return {
                         "success": False,
                         "_needs_reregister": True,
@@ -557,6 +591,12 @@ class SSGClient:
                 "POST", "/item/0.4/updateItem.ssg", xml_body
             )
 
+        # 최종 실패 시 사전조회 캐시 무효화 — 낡은 옵션매핑이 원인일 수 있으므로
+        # 다음 시도는 sales-status/detail 재조회로 정확 매핑 (실패 자체는 그대로 반환).
+        _final_code = str((result.get("result") or {}).get("resultCode", ""))
+        if _final_code not in ("00", "0", ""):
+            invalidate_item_lookup(item_id)
+
         return {"success": True, "data": result}
 
     async def delete_product(self, item_id: str) -> dict[str, Any]:
@@ -687,6 +727,27 @@ class SSGClient:
         """
         return await self._call_api("GET", f"/item/0.1/online/{item_id}/sales-status")
 
+    async def get_item_sales_status_cached(self, item_id: str) -> dict[str, Any]:
+        """sales-status 조회 (6h 캐시) — updateItem 사전조회 전용.
+
+        재고/판매상태의 실시간성이 필요한 품절판정·감사 경로에서는 쓰지 말 것.
+        """
+        cached = _item_lookup_get(item_id, "status")
+        if cached is not None:
+            return cached
+        resp = await self.get_item_sales_status(item_id)
+        _item_lookup_put(item_id, "status", resp)
+        return resp
+
+    async def get_item_detail_cached(self, item_id: str) -> dict[str, Any]:
+        """item_detail 조회 (6h 캐시) — updateItem 사전조회(옵션명·6005 보존) 전용."""
+        cached = _item_lookup_get(item_id, "detail")
+        if cached is not None:
+            return cached
+        resp = await self.get_item_detail(item_id)
+        _item_lookup_put(item_id, "detail", resp)
+        return resp
+
     async def update_item_sales_status(
         self,
         item_id: str,
@@ -698,6 +759,8 @@ class SSGClient:
         sellStatCd: 20=판매중, 80=일시판매중지, 90=영구판매중지
         """
         body = {"online_updateSalesStatus": {"salesStatus": sales_status}}
+        # 판매상태가 바뀌므로 updateItem 사전조회 캐시 무효화
+        invalidate_item_lookup(item_id)
         return await self._call_api(
             "POST", f"/item/0.1/online/{item_id}/sales-status", body=body
         )
