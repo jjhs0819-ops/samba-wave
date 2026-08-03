@@ -432,6 +432,21 @@ class JobWorker:
         self._acc_market_type_cache: dict[str, str] = {}
         # 슬롯 재계산 인터벌: STUCK_CHECK_INTERVAL(2) × N = 30초 → 6회 poll
         self._SLOT_REBALANCE_EVERY = 6
+        # ── claim 헛스캔 차단 캐시 (2026-08-03 DB CPU 포화 대책) ──
+        # pending autotune 잡의 계정 집합 (rebalance 30초 주기로 갱신).
+        # 대기열 계정이 전부 슬롯 상한 초과(exclude)면 claim 쿼리 자체를 생략 —
+        # 단일 계정 대량 적체 시 폴마다 pending 전량을 훑고 빈손으로 끝나던
+        # 낭비(워커 8개 × 폴 0.5~1.3s → Postgres CPU 포화) 제거.
+        # None = 아직 미집계(부팅 직후) → 차단 없이 기존대로 claim.
+        # 신선도 가드: rebalance 실패로 캐시가 90초 이상 낡으면 차단 해제
+        # (낡은 빈 캐시가 claim 을 영구 차단하는 사고 방지).
+        self._autotune_pending_accs: set[str] | None = None
+        self._autotune_pending_accs_ts: float = 0.0
+        # 일반 claim 대상 pending job_type 집합 캐시 (15초). 일반 claim은
+        # 우선순위 CASE+계정충돌 서브쿼리가 비싸므로, 매칭 가능한 pending 이
+        # 아예 없으면 호출을 생략한다.
+        self._pending_types_cache: set[str] = set()
+        self._pending_types_ts: float = 0.0
         # playauto fastpath 처리 중 배치 수 (빠른 완료로 active에서 제거돼 재배분 시 0으로 보이는 문제 보정)
         self._playauto_batch_active: int = 0
         # 검색 결과 캐시: {(site, keyword): (items_list, timestamp)}
@@ -603,6 +618,9 @@ class JobWorker:
                 pending_by_acc: dict[str, int] = {
                     r["acc"]: r["cnt"] for r in _pending_rows if r["acc"]
                 }
+                # claim 헛스캔 차단용 — 30초마다 여기서 갱신
+                self._autotune_pending_accs = set(pending_by_acc.keys())
+                self._autotune_pending_accs_ts = _time.monotonic()
 
                 if not pending_by_acc:
                     self._autotune_slot_limits = {}
@@ -790,6 +808,25 @@ class JobWorker:
         except Exception as e:
             logger.error(f"[잡워커] 배포 종료 잡 복구 실패: {e}")
 
+    async def _get_pending_job_types(self, session) -> set[str]:
+        """pending 잡의 job_type 집합 (15초 캐시).
+
+        DISTINCT는 status 인덱스 스캔이라 저렴하지만 폴마다 돌릴 필요는 없다.
+        일반 claim(우선순위 CASE + 계정충돌 서브쿼리)이 매칭할 pending 이
+        없으면 호출 자체를 생략하기 위한 사전 판정용.
+        """
+        _now = _time.monotonic()
+        if _now - self._pending_types_ts < 15:
+            return self._pending_types_cache
+        from sqlalchemy import text as _sa_text
+
+        rows = await session.execute(
+            _sa_text("SELECT DISTINCT job_type FROM samba_jobs WHERE status = 'pending'")
+        )
+        self._pending_types_cache = {r[0] for r in rows if r[0]}
+        self._pending_types_ts = _now
+        return self._pending_types_cache
+
     async def _poll_once(self) -> bool:
         """전송 잡 병렬 실행 — 빈 슬롯만큼 배치 픽업.
 
@@ -912,6 +949,20 @@ class JobWorker:
                 # F1(#462): general-first + 래치. 느린 일반 claim 을 poll 당 1회로 제한하고
                 # 나머지 iteration 은 부분 인덱스 기반 고속 autotune claim 으로 슬롯을 채운다.
                 job = None
+                # C(2026-08-03): 일반 claim 사전 판정 — 매칭 가능한 pending job_type 이
+                # 없으면 비싼 일반 claim 을 생략 (pending 이 autotune 뿐인 평상시가 대부분).
+                if not _general_exhausted:
+                    _pend_types = await self._get_pending_job_types(session)
+                    _gen_excl = (
+                        _excl_types | {"autotune_transmit"}
+                        if _can_claim_autotune
+                        else _excl_types
+                    )
+                    _gen_types = _pend_types - _gen_excl
+                    if self._only_types is not None:
+                        _gen_types &= set(self._only_types)
+                    if not _gen_types:
+                        _general_exhausted = True
                 if not _general_exhausted:
                     if _can_claim_autotune:
                         # autotune 은 별도 고속 claim 으로 처리 → 일반 claim 에서 제외
@@ -974,15 +1025,31 @@ class JobWorker:
                                 if _cur < _mt_min and _mt_to_accs.get(_mt):
                                     _underflow_accs.update(_mt_to_accs[_mt])
 
+                    # A(2026-08-03): 헛스캔 차단 — 대기열 계정 집합(30초 캐시) 기준으로
+                    # 가져갈 수 있는 잡이 없으면 claim 쿼리를 아예 부르지 않는다.
+                    # 단일 계정 대량 적체 + 그 계정 슬롯 상한 초과 상태에서 폴마다
+                    # pending 전량(수천 행)을 훑고 빈손으로 끝나던 낭비 제거.
+                    # 캐시가 30초 낡을 수 있어 신규 계정 잡은 최대 30초 늦게 픽업될
+                    # 수 있으나(비동기 전송이라 무해), 부팅 직후(None)엔 차단하지 않음.
+                    _pend_accs = self._autotune_pending_accs
+                    if (
+                        _pend_accs is not None
+                        and _time.monotonic() - self._autotune_pending_accs_ts > 90
+                    ):
+                        _pend_accs = None  # 캐시 낡음 → 차단 해제 (기존 동작)
                     # 하한 미달 판매처 우선 claim
-                    if _underflow_accs:
+                    if _underflow_accs and (
+                        _pend_accs is None or (_underflow_accs & _pend_accs)
+                    ):
                         _prio_excl = _slot_excl - _underflow_accs
                         job = await repo.claim_autotune_pending_job(
                             exclude_autotune_accounts=_prio_excl or None,
                             only_accounts=_underflow_accs,
                         )
                     # 일반 claim (상한 초과 계정만 제외)
-                    if job is None:
+                    if job is None and (
+                        _pend_accs is None or bool(_pend_accs - _slot_excl)
+                    ):
                         job = await repo.claim_autotune_pending_job(
                             exclude_autotune_accounts=_slot_excl or None,
                         )
