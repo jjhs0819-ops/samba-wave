@@ -57,7 +57,7 @@ async def _send_slack(msg: str) -> None:
     if not _SLACK_WEBHOOK.startswith("https://hooks.slack.com/"):
         return
     try:
-        async with httpx.AsyncClient(timeout=10) as cli:
+        async with httpx.AsyncClient(mounts=_mounts(), timeout=10) as cli:
             r = await cli.post(_SLACK_WEBHOOK, json={"text": msg})
         # [2026-08-03] 응답을 버려서 웹훅 만료·payload 거부가 로그 한 줄 없이 사라졌다.
         # 슬랙은 예외를 던지지 않고 non-200 + 본문(no_service / invalid_payload)으로만
@@ -237,7 +237,7 @@ async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
         msg += "※ 30건 초과 — 오탐 가능성으로 자동삭제 보류(수동 확인 필요)\n"
     elif _EXECUTE:
         ok = fail = 0
-        async with httpx.AsyncClient(timeout=25) as cli:
+        async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
             for a in orphans:
                 if a.get("id") and await _exec_delete_ask(cli, h, a.get("id")):
                     ok += 1
@@ -873,13 +873,59 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                 if r3.status_code in (200, 201):
                     return "ok", (r3.json() or {}).get("live_rank")
         if is_nocomp and rank is not None and rank != 1:
+            # [2026-08-03] 원래 가격으로 그냥 되돌리면 다음 사이클에 똑같이 올렸다 밀리는
+            # 왕복이 무한 반복된다(884440: 71,000→76,000→복귀를 매 사이클).
+            # 인상된 지금이 경쟁가를 알 수 있는 유일한 순간이다 — 내가 최저일 때 lowest_*
+            # 는 내 가격만 되비추지만, 내가 위로 올라간 상태에서는 '남의 가격'이 드러난다.
+            # 그 값 바로 아래로 잡아 1등을 되찾는다(마진 하한 _floor 는 절대 안 깬다).
+            _back = int(cur)
+            try:
+                _pr = await _rq(
+                    "GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h
+                )
+                _want = str(opt).replace(" ", "")
+                _po = next(
+                    (
+                        _o
+                        for _o in ((_pr.json() or {}).get("options") or [])
+                        if str(_o.get("name") or "").replace(" ", "") == _want
+                    ),
+                    None,
+                )
+                if _po:
+                    _rival = int(_po.get("lowest_normal_price") or 0) or int(
+                        _po.get("lowest_overseas_price") or 0
+                    )
+                    # 내 인상가보다 낮게 잡히는 값 = 경쟁자 실가격
+                    if 0 < _rival < int(target):
+                        _cand = _rival - 1000
+                        if _cand > 0 and (_floor <= 0 or _cand >= _floor):
+                            _back = _cand
+            except Exception as _e:
+                logger.info(
+                    "[크림통합] 경쟁가 재조회 실패(원복 진행) %s %s: %s",
+                    pid,
+                    opt,
+                    str(_e)[:60],
+                )
             await _rq(
                 "PATCH",
                 f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
                 headers=h,
-                json={"price": int(cur)},
+                json={"price": _back},
             )
             await record_nocomp_cooldown(pid, opt)
+            if _back != int(cur):
+                logger.info(
+                    "[크림통합] 경쟁가 추종 %s %s: %s→%s (인상 %s 밀림, rank=%s)",
+                    pid,
+                    opt,
+                    f"{int(cur):,}",
+                    f"{_back:,}",
+                    f"{int(target):,}",
+                    rank,
+                )
+                return "ok", rank
             return "reverted", rank
         return "ok", rank
     except Exception as exc:
@@ -1005,7 +1051,9 @@ async def _rq(method: str, url: str, *, headers=None, params=None, json=None, tr
 
     async def _do():
         async with httpx.AsyncClient(
-            timeout=10, limits=httpx.Limits(max_keepalive_connections=0)
+            mounts=_mounts(),
+            timeout=10,
+            limits=httpx.Limits(max_keepalive_connections=0),
         ) as c:
             return await c.request(
                 method, url, headers=headers, params=params, json=json
@@ -1071,7 +1119,9 @@ _rate_cache: dict[str, float] = {}
 async def _frankfurter_rate(frm: str, to: str, fallback: float) -> float:
     pair = f"{frm}/{to}"
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as cli:
+        async with httpx.AsyncClient(
+            mounts=_mounts(), timeout=10, follow_redirects=True
+        ) as cli:
             r = await cli.get(
                 f"https://api.frankfurter.app/latest?from={frm}&to={to}",
                 headers={"User-Agent": "Mozilla/5.0"},
@@ -1097,7 +1147,24 @@ async def _usd_krw_rate() -> float:
 
 
 # ── 스니덩크 실시간 원가·재고 [Step 3a] — 로컬 _kream_restock_register.fetch_psa 충실 포팅.
-# 백엔드 터널IP서 직접 접근 검증됨(200 + 정상 JSON). 프록시·CDP 불필요.
+# [2026-08-03] "터널IP 직접 접근 OK, 프록시 불필요"였으나 **차단됐다**. 터널IP·집IP 모두
+# 403 이 되면서 카드 처리가 0건이 되고 시세 추종이 통째로 멈췄다(snkr실패 1,632/사이클).
+# → SNKR_PROXY 가 설정돼 있으면 **snkrdunk.com 요청만** 프록시로 우회한다.
+# httpx mounts 는 호스트 매칭이라 크림(partner-openapi)은 그대로 직결로 나간다.
+# (httpx 0.28 에서 proxies 인자는 제거됨 — mounts + AsyncHTTPTransport(proxy=) 사용)
+_SNKR_PROXY = os.environ.get("SNKR_PROXY", "").strip()
+
+
+def _mounts():
+    """스니덩크 전용 프록시 마운트. 미설정이면 None(기존 직결 동작)."""
+    if not _SNKR_PROXY:
+        return None
+    return {
+        "all://snkrdunk.com": httpx.AsyncHTTPTransport(proxy=_SNKR_PROXY),
+        "all://*.snkrdunk.com": httpx.AsyncHTTPTransport(proxy=_SNKR_PROXY),
+    }
+
+
 _SNKR_USED_URL = "https://snkrdunk.com/v1/apparels/{id}/used"
 _SNKR_HEADERS = {
     "User-Agent": (
@@ -1455,7 +1522,7 @@ async def run_kream_shadow_once() -> dict:
     if _EXECUTE and pending_exec:
         import asyncio as _asyncio
 
-        async with httpx.AsyncClient(timeout=25) as cli:
+        async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
             for ask_id, target, is_nocomp, cur, pid, opt in pending_exec:
                 res, _rank = await _execute_update(
                     cli, h, ask_id, target, cur, is_nocomp, pid, opt
@@ -2109,7 +2176,7 @@ async def _process_shoe_asks(
         return c
     _sur = POLICY["non_card_margin_rate"]  # 신발 = 비카드 추가마진
     kid_to_snkr = kid_to_snkr or {}
-    async with httpx.AsyncClient(timeout=25) as cli:
+    async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
         # 실행 큐 — 판단 루프는 여기 담기만 하고, 실제 API 호출은 루프 끝나고 병렬 처리
         _pend_del: list = []
         _pend_upd: list = []
@@ -2307,7 +2374,7 @@ async def _process_shoe_restock(
         ).all()
     posted = 0
     _now = _now_ts()
-    async with httpx.AsyncClient(timeout=25) as cli:
+    async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
         for kid, name, opts_txt in rows:
             kid = str(kid or "")
             try:
@@ -2533,7 +2600,7 @@ async def _process_box_restock(
     posted = 0
     _now = _now_ts()
     _sem = asyncio.Semaphore(6)
-    async with httpx.AsyncClient(timeout=25) as cli:
+    async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
         # 스니덩크 박스시세·크림 옵션명 조회는 상품마다 독립 → 동시 6으로 선조회.
         # 순차로 돌리면 후보 수 × API 2회 왕복이 그대로 사이클 시간에 얹힌다.
         # 가드 판정/등록(POST)은 상태 공유(miss·쿨다운·상한)라 아래에서 순차 처리.
@@ -2681,7 +2748,7 @@ async def _process_box_asks(
     if not box_asks:
         return c
     sem = asyncio.Semaphore(6)
-    async with httpx.AsyncClient(timeout=20) as scli:
+    async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
 
         async def _one(a):
             async with sem:
@@ -2897,7 +2964,7 @@ async def _process_expired_asks(
     _sur_shoe = POLICY["non_card_margin_rate"]
     maxc = POLICY["max_cost_jpy"]
     processed = 0
-    async with httpx.AsyncClient(timeout=25) as cli:
+    async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
         for (kid, opt), a in cand:
             if processed >= _EXPIRED_MAX:
                 break
@@ -3062,7 +3129,7 @@ async def run_kream_unified_once() -> dict:
         _dup.setdefault(_k, []).append(a)
     _dedup_del = 0
     if _EXECUTE:
-        async with httpx.AsyncClient(timeout=25) as _dcli:
+        async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as _dcli:
             for _k, _grp in _dup.items():
                 if len(_grp) < 2:
                     continue
@@ -3592,7 +3659,7 @@ async def run_kream_unified_once() -> dict:
 
     _t_stage = _stage_t.time()
     logger.info("[크림통합] STAGE 카드처리 시작 (대상 %d)", len(products))
-    async with httpx.AsyncClient(timeout=20) as scli:
+    async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
         results = await asyncio.gather(
             *[_process(p, scli) for p in products], return_exceptions=True
         )
@@ -3714,7 +3781,7 @@ async def run_kream_unified_once() -> dict:
         _stage_t.time() - _t_stage,
     )
     if _EXECUTE:
-        async with httpx.AsyncClient(timeout=25) as ecli:
+        async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as ecli:
             logger.info("[크림통합] STAGE 실행-삭제 %d건 시작", len(pend_delete))
             # [2026-08-02] 순차+0.1s sleep 이라 건당 ~0.8s → 병렬 8(rate limit 여유).
             # 삭제 65건이 48초 걸리던 것 ~8초로. 사이클 완주 시간의 주 병목이었다.

@@ -77,32 +77,25 @@ const sourceSiteFromUrl = (url?: string | null): string => {
 const hasOrderNo = (o: SambaOrder): boolean =>
   !!(o.sourcing_order_number && o.sourcing_order_number.trim())
 
-// 발송/미발송/취소 판정 — 백엔드 기준(order/model.py)과 일치
-// 발송키워드(shipping_status 한글 원본) + 취소/반품/교환 제외 상태
-const SHIPPED_KEYWORDS = ['배송중', '배송완료', '구매확정', '국내배송중', '송장전송완료']
-const EXCLUDED_STATUSES = [
+// 발송/미발송/취소 판정 — 백엔드 기준(order.py EXCLUDED_ORDER_STATUSES)과 완전히 일치
+// status 컬럼만 기준 — shipping_status/tracking_number는 일절 관여 금지(PC와 동일 규칙)
+// 크림 등 배송중(delivering) 주문은 status='pending' 유지 + tracking_number 선반영되므로
+// tracking_number/shipping_status로 판정하면 미발송 목록에서 누락됨 (2026-08-03 PC/모바일 불일치 사고)
+const CANCEL_RETURN_EXCHANGE_STATUSES = [
   'cancel_requested', 'cancelling', 'cancelled',
   'return_requested', 'returning', 'returned', 'return_completed',
   'exchange_requested', 'exchanging', 'exchanged', 'exchange_pending', 'exchange_done',
   'ship_failed', 'undeliverable',
 ]
+const SHIPPED_STATUSES = ['shipping', 'delivered', 'confirmed']
 
 // 취소/반품/교환 등 집계 제외 상태
-const isCancelled = (o: SambaOrder): boolean => {
-  const st = (o.status || '').toLowerCase()
-  if (EXCLUDED_STATUSES.includes(st)) return true
-  const ss = o.shipping_status || ''
-  return /취소|반품|교환/.test(ss)
-}
+const isCancelled = (o: SambaOrder): boolean =>
+  CANCEL_RETURN_EXCHANGE_STATUSES.includes((o.status || '').toLowerCase())
 
-// 발송됨: 송장 있음 또는 배송키워드 + 취소류 아님
-const isShipped = (o: SambaOrder): boolean => {
-  if (isCancelled(o)) return false
-  const hasTrk = !!(o.tracking_number && o.tracking_number.trim())
-  const ss = o.shipping_status || ''
-  const kw = SHIPPED_KEYWORDS.some((k) => ss.includes(k))
-  return hasTrk || kw
-}
+// 발송됨: status 컬럼이 발송/배송완료/구매확정
+const isShipped = (o: SambaOrder): boolean =>
+  SHIPPED_STATUSES.includes((o.status || '').toLowerCase())
 
 // 미발송: 취소류도 발송도 아님 (아직 배송 전)
 const isUnshipped = (o: SambaOrder): boolean => !isCancelled(o) && !isShipped(o)
