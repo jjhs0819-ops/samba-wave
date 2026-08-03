@@ -6836,12 +6836,16 @@ async def sync_orders_from_markets(
                 if _po_cancel_nos:
                     from sqlalchemy import text as _po_text
 
+                    # channel_id 로 좁히지 않는다 — 같은 주문이 다른 계정으로
+                    # 들어와 있으면 "삼바에 없는 취소건"으로 오판해 기존 주문의
+                    # 취소 상태 갱신이 누락된다(발송 사고 방향). POIZON order_no 는
+                    # 전역 유일(poison/source-links 도 동일 전제)이므로 안전.
                     _po_rows = await session.execute(
                         _po_text(
                             "SELECT order_number FROM samba_order "
-                            "WHERE order_number = ANY(:nums) AND channel_id = :cid"
+                            "WHERE order_number = ANY(:nums)"
                         ),
-                        {"nums": _po_cancel_nos, "cid": account["id"]},
+                        {"nums": _po_cancel_nos},
                     )
                     _po_known_cancels = {r[0] for r in _po_rows}
                 _po_held = 0
