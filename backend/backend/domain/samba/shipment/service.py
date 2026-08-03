@@ -3337,7 +3337,19 @@ class SambaShipmentService:
         # 슬래시는 카테고리 leaf 구분자라 단어 경계로 취급해야 중복이 잡힌다
         # ("숏 패딩/숏 헤비 아우터" → 숏·패딩·숏·헤비·아우터).
         _seo_raw = " ".join(seo_kws[:2]).replace("/", " ")
+        # ★2026-08-04 — 상품명·브랜드·모델명에 이미 있는 단어도 제외.
+        # SEO 내부 dedup만으로는 "{검색키워드} {상품명}" 조합에서 상품명 단어가
+        # 그대로 반복됐다("남성 반소매 티셔츠 + ... 남성 반팔티" 전수조사 42,948건).
         _seo_seen: set[str] = set()
+        for _src in (
+            product.get("name", ""),
+            product.get("brand", ""),
+            product.get("style_code", ""),
+        ):
+            for _w in re.split(r"[\s/\-_()\[\]]+", str(_src or "")):
+                _w = _w.strip().lower()
+                if _w:
+                    _seo_seen.add(_w)
         _seo_words: list[str] = []
         for _w in _seo_raw.split():
             _key = _w.strip().lower()

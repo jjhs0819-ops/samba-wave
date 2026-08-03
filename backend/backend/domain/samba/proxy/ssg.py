@@ -1690,7 +1690,10 @@ class SSGClient:
         #      단어·내부마커(__ai_tagged__ 등)는 제외하고, 아래 90byte 컷 안에서 추가.
         _seo_src = product.get("seo_keywords") or product.get("tags") or []
         if isinstance(_seo_src, list) and _seo_src:
-            _name_low = cleaned_name.lower()
+            # ★2026-08-04 — 단어 단위 dedup 으로 강화. 기존 구절 substring 검사는
+            # 어순이 다르면 놓쳐서("여성 숏 팬츠" vs "스포츠 숏 팬츠") 같은 단어가
+            # 상품명에 재유입됐다(전수조사 8만건 중복의 3층 원인 중 하나).
+            _name_words = {w for w in cleaned_name.lower().split() if w}
             _seo_add: list[str] = []
             for _kw in _seo_src:
                 _kw = str(_kw).strip()
@@ -1698,9 +1701,12 @@ class SSGClient:
                     continue
                 _kw = _re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", _kw).strip()
                 _kw = _re.sub(r"\s{2,}", " ", _kw)
-                if not _kw or _kw.lower() in _name_low or _kw.lower() in " ".join(_seo_add).lower():
+                _kw_words = [w for w in _kw.split() if w.lower() not in _name_words]
+                if not _kw_words:
                     continue
-                _seo_add.append(_kw)
+                for _w in _kw_words:
+                    _name_words.add(_w.lower())
+                _seo_add.append(" ".join(_kw_words))
             if _seo_add:
                 cleaned_name = (cleaned_name + " " + " ".join(_seo_add)).strip()
                 cleaned_name = _re.sub(r"\s{2,}", " ", cleaned_name)
