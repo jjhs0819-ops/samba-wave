@@ -2399,25 +2399,43 @@ async def _process_shoe_restock(
 _BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or 30)
 # 박스 신규 자동등록 실행 게이트 — 갱신/삭제(_EXEC_BOX)와 별도. 후보 검증 후 1.
 _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
-# 밀봉품(박스/카드팩) 판정 — 로컬 _kream_restock_register 의 box_rows 편입 조건 동일.
-_SEALED_NAME_RE = re.compile(r"박스|카드 ?팩|팩 \(")
+# 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
+# 기존 이름 정규식(박스|카드 ?팩|팩 \()은 '베이스 팩'·'프로모 카드팩' 같은 낱장 카드를
+# 386건 오탐하고, 반대로 이름에 팩/박스가 없는 실제 밀봉품은 못 잡았다.
+# 스니덩크 밀봉품은 수량옵션(1個 / 10パック)을 갖고 낱장은 PSA 등급옵션만 갖는다 = 확실한 신호.
+_SEALED_OPT_RE = re.compile(r"(個|パック)")
 
 
-async def _resolve_box_option(cli: httpx.AsyncClient, h: dict, kid: str) -> str:
-    """크림 실제 옵션명 확정 — '해외배송' 정확일치 → '해외배송…' 변형 → 옵션 1개뿐이면 그것
-    (밀봉품은 단일옵션 'ONE SIZE'로 박힌 상품이 있다). 없으면 빈 문자열."""
+def _has_sealed_option(opts_txt: str | None) -> bool:
+    """DB options JSON 문자열에 밀봉 수량옵션(1個/10パック)이 있으면 밀봉품(박스·카드팩)."""
+    try:
+        for o in json.loads(opts_txt or "[]"):
+            if isinstance(o, dict) and _SEALED_OPT_RE.search(str(o.get("name") or "")):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+async def _resolve_box_option(cli: httpx.AsyncClient, h: dict, kid: str) -> dict:
+    """크림 실제 옵션 확정 — '해외배송' 정확일치 → '해외배송…' 변형 → 옵션 1개뿐이면 그것
+    (밀봉품은 단일옵션 'ONE SIZE'로 박힌 상품이 있다). 없으면 빈 dict.
+
+    [2026-08-03] 옵션명만 반환하던 것을 옵션 **dict 전체**로 변경 — 같은 응답에 들어 있는
+    lowest_overseas_price/lowest_normal_price 를 버리고 시장가 0(무경쟁)으로 등록하고 있었다.
+    신발이 08-02 에 같은 이유로 '등록 즉시 2등' 입찰 7,950건을 쌓은 것과 동일한 구멍."""
     try:
         r = await cli.get(f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h)
         opts = (r.json() or {}).get("options") or [] if r.status_code == 200 else []
     except Exception:
-        return ""
-    names = [str(o.get("name") or "") for o in opts]
-    if "해외배송" in names:
-        return "해외배송"
-    for n in names:
-        if n.startswith("해외배송"):
-            return n
-    return names[0] if len(names) == 1 else ""
+        return {}
+    for o in opts:
+        if str(o.get("name") or "") == "해외배송":
+            return o
+    for o in opts:
+        if str(o.get("name") or "").startswith("해외배송"):
+            return o
+    return opts[0] if len(opts) == 1 else {}
 
 
 async def _process_box_restock(
@@ -2457,33 +2475,58 @@ async def _process_box_restock(
             await s.execute(
                 _text(
                     "SELECT resell_matches->'kream'->>'product_id' AS kid, name, "
-                    "split_part(site_product_id, '#', 1) AS sid "
+                    "split_part(site_product_id, '#', 1) AS sid, options::text AS opts "
                     "FROM samba_collected_product "
                     "WHERE source_site='SNKRDUNK' "
                     "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
                     "AND COALESCE(extra_data->>'snkr_type','') "
                     "  NOT IN ('sneaker','apparel','watch') "
-                    "AND (name LIKE '%박스%' OR name LIKE '%카드 팩%' OR name LIKE '%팩 (%')"
+                    # 옵션명 프리필터(정밀 판정은 _has_sealed_option). 이름 LIKE 폐기 이유는
+                    # _SEALED_OPT_RE 주석 참조 — 낱장 386건 오탐 + 실밀봉품 누락.
+                    "AND options::text ~ '(個|パック)'"
                 )
             )
         ).all()
+    # 후보 축소 — 라이브 입찰·거래이력 게이트를 API 호출 **전에** 적용해 헛조회를 없앤다.
+    cands: list[tuple[str, str, str]] = []
+    for kid, name, sid, opts_txt in rows:
+        kid, name, sid = str(kid or ""), str(name or ""), str(sid or "")
+        if not kid or not sid or kid in live_kids:
+            continue
+        if not _has_sealed_option(opts_txt):
+            continue
+        # 밀봉품은 예외 없이 누적거래≥1 필수 — 로컬 봇 박스 경로와 동일.
+        # _trade_ok(needs_trade)는 등급토큰(GX 등)을 낱장 신호로 봐서 "프리미엄 트레이너
+        # 박스 태그 팀 GX" 같은 박스를 거래0인데 통과시킨다(거래0 박스=체결 후 소싱불가).
+        if _g_trade_counts.get(kid, 0) < 1:
+            c["trade"] += 1
+            continue
+        cands.append((kid, name, sid))
+
     posted = 0
     _now = _now_ts()
+    _sem = asyncio.Semaphore(6)
     async with httpx.AsyncClient(timeout=25) as cli:
-        for kid, name, sid in rows:
-            kid, name, sid = str(kid or ""), str(name or ""), str(sid or "")
-            if not kid or not sid or kid in live_kids:
+        # 스니덩크 박스시세·크림 옵션명 조회는 상품마다 독립 → 동시 6으로 선조회.
+        # 순차로 돌리면 후보 수 × API 2회 왕복이 그대로 사이클 시간에 얹힌다.
+        # 가드 판정/등록(POST)은 상태 공유(miss·쿨다운·상한)라 아래에서 순차 처리.
+        async def _probe(kid: str, name: str, sid: str) -> tuple:
+            async with _sem:
+                box = await _fetch_snkr_box(cli, sid)
+                if box["stock"] <= 0 or box["price"] <= 0:
+                    return (kid, name, box, {})
+                return (kid, name, box, await _resolve_box_option(cli, h, kid))
+
+        probed = await asyncio.gather(
+            *[_probe(k, n, s2) for k, n, s2 in cands], return_exceptions=True
+        )
+        for _p in probed:
+            if isinstance(_p, BaseException):
+                c["apifail"] += 1
                 continue
-            if not _SEALED_NAME_RE.search(name):
-                continue
-            # 밀봉품은 예외 없이 누적거래≥1 필수 — 로컬 봇 박스 경로와 동일.
-            # _trade_ok(needs_trade)는 등급토큰(GX 등)을 낱장 신호로 봐서 "프리미엄 트레이너
-            # 박스 태그 팀 GX" 같은 박스를 거래0인데 통과시킨다(거래0 박스=체결 후 소싱불가).
-            if _g_trade_counts.get(kid, 0) < 1:
-                c["trade"] += 1
-                continue
-            box = await _fetch_snkr_box(cli, sid)
+            kid, _name, box, _popt = _p
+            opt = str(_popt.get("name") or "") if _popt else ""
             if box["stock"] < 0:
                 c["apifail"] += 1  # 스니덩크 API 실패 — 다음 사이클 재시도
                 continue
@@ -2494,7 +2537,6 @@ async def _process_box_restock(
             if jpy > POLICY["max_cost_jpy"]:
                 c["overcost"] += 1
                 continue
-            opt = await _resolve_box_option(cli, h, kid)
             if not opt:
                 c["optmiss"] += 1
                 continue
@@ -2512,21 +2554,15 @@ async def _process_box_restock(
             if (kid, opt.replace(" ", "")) in _g_unfulfilled:
                 c["hold"] += 1
                 continue
-            _mkt = next(
-                (
-                    a
-                    for a in asks
-                    if str(a.get("product_id") or "") == kid
-                    and str(a.get("option") or "") == opt
-                ),
-                {},
-            )
+            # 시장 최저가 = 크림 상품 옵션 응답(_resolve_box_option 이 이미 받아온 것).
+            # 신규등록이라 asks 에는 내 입찰이 없어(항상 빈 dict) 시장가 0=무경쟁으로 계산되던
+            # 것을 실시세로 교체 — 1등 불가면 아래 '삭제' 판정으로 등록 자체를 막는다.
             act, target, _adj, _nc = _decide_price_action(
                 0,
                 opt,
                 jpy,
-                int(_mkt.get("lowest_overseas_price") or 0),
-                int(_mkt.get("lowest_normal_price") or 0),
+                int(_popt.get("lowest_overseas_price") or 0),
+                int(_popt.get("lowest_normal_price") or 0),
                 (kid, opt) in cooldown,
                 0,
                 rate,
@@ -2559,12 +2595,52 @@ async def _process_box_restock(
     return c
 
 
+async def _load_sealed_kids() -> set[str]:
+    """밀봉품(박스·카드팩) 크림 상품ID 집합 — 판정은 스니덩크 수량옵션(1個/10パック)."""
+    try:
+        async with get_read_session() as s:
+            rows = (
+                await s.execute(
+                    _text(
+                        "SELECT resell_matches->'kream'->>'product_id' AS kid "
+                        "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
+                        "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+                        "AND COALESCE(extra_data->>'snkr_type','') "
+                        "  NOT IN ('sneaker','apparel','watch') "
+                        "AND options::text ~ '(個|パック)'"
+                    )
+                )
+            ).all()
+        return {str(r[0]) for r in rows if r[0]}
+    except Exception as exc:
+        logger.warning("[크림통합] 밀봉품 kid 로드 실패(무시): %s", exc)
+        return set()
+
+
 async def _process_box_asks(
-    asks: list, kid_to_snkr: dict, cooldown, rate: float, tariff: int, h: dict
+    asks: list,
+    kid_to_snkr: dict,
+    cooldown,
+    rate: float,
+    tariff: int,
+    h: dict,
+    sealed_kids: set[str] | None = None,
 ) -> dict:
     """박스(해외배송) ask 갱신/삭제 — snkr 박스시세(/v1/apparels) 실시간. 리스톡 미포함.
     _EXEC_BOX=1 일 때만 실제 PATCH/DELETE. API실패(-1)는 삭제금지(보류)."""
-    box_asks = [a for a in asks if "해외배송" in str(a.get("option") or "")]
+    # [2026-08-03] 크림이 단일옵션 'ONE SIZE'로 박아둔 밀봉품이 갱신 사각지대였다
+    # (옵션명이 '해외배송'이 아니라 이 필터에 안 걸리고, 카드/신발 pass 대상도 아님).
+    # 밀봉 kid 집합으로 한정해 편입 — ONE SIZE 의류/시계를 끌어오지 않는다.
+    _sealed = sealed_kids or set()
+    box_asks = [
+        a
+        for a in asks
+        if "해외배송" in str(a.get("option") or "")
+        or (
+            str(a.get("option") or "").strip().upper() == "ONE SIZE"
+            and str(a.get("product_id") or "") in _sealed
+        )
+    ]
     c = {
         "total": len(box_asks),
         "renew": 0,
@@ -3107,6 +3183,14 @@ async def run_kream_unified_once() -> dict:
             # [Step 3 완성] 카드(PSA) 경로만 처리 — 신발(KREAM옵션 mm '270' ↔ DB 'cm')·
             # 박스(KREAM '해외배송' ↔ DB '1個')는 옵션명 매핑이 달라 오작동(false 리스톡) 위험 →
             # 로컬 봇에 위임. 카드 판정: DB 옵션에 PSA 존재. 비카드는 snkr fetch 없이 즉시 skip.
+            # [2026-08-03] 밀봉품(박스·카드팩)은 이 통합 루프에서 제외 — 전용 경로
+            # (_process_box_asks 갱신 / _process_box_restock 신규등록)가 옵션명 변환
+            # (1個·10パック → 크림 '해외배송')과 박스 실시세를 담당한다.
+            # 밀봉품 249건에 값 0인 PSA 9/PSA 10 옵션이 박혀 있어(카드 write-back 잔재)
+            # has_psa_opt 가 True 로 잡히며 카드 분기로 샜고, 매 사이클 PSA 0/0 을 되써
+            # 오염을 재생산하면서 정작 밀봉 옵션은 아무도 등록하지 않았다.
+            if any(_SEALED_OPT_RE.search(str(n)) for n in prod["db_opts"]):
+                return r
             has_psa_opt = any("PSA" in str(n).upper() for n in prod["db_opts"])
             if not has_psa_opt:
                 # 비카드(신발/의류/시계/박스) — 같은 사이클·같은 로테이션 안에서 리스톡만 판정.
@@ -3730,8 +3814,9 @@ async def run_kream_unified_once() -> dict:
 
     # ── [A] 박스(해외배송) 갱신/삭제 — 전역 ask 대상(배치 무관). _EXEC_BOX 게이트.
     logger.info("[크림통합] STAGE 박스갱신 시작 %.0f초경과", _stage_t.time() - _t_stage)
+    _sealed_kids = await _load_sealed_kids()
     box = await _process_box_asks(
-        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h
+        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h, _sealed_kids
     )
     logger.info(
         "[크림통합] 박스(해외배송) %d — 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
@@ -3759,7 +3844,41 @@ async def run_kream_unified_once() -> dict:
     # 갱신 사이클이 같이 느려져 20분 주기가 깨졌다. 이제 _process(리스톡 로테이션) 안에서
     # 카테고리 구분 없이 회차마다 이어서 처리한다.
     shoe_rs = {"cand": 0, "post": 0, "fail": 0}
-    box_rs = {"cand": 0, "post": 0, "fail": 0}
+    # [B-3 복구·2026-08-03] 박스/카드팩 신규등록 — 2026-08-01 에 "통합 리스톡이 대신 처리한다"며
+    # 호출을 지웠으나, 통합 루프는 밀봉 옵션(1個/10パック)을 크림 옵션(해외배송)으로 변환하지
+    # 못해 실제로는 아무도 등록하지 않았다(입찰 박스 4건·카드팩 0건에서 정체).
+    # 옵션명 변환·박스 실시세·거래이력 게이트를 갖춘 전용 경로를 다시 호출한다.
+    # 신발/의류 신규등록은 통합 루프가 옵션포맷 그대로 처리하므로 그대로 둔다.
+    box_rs = await _process_box_restock(asks, cooldown, rate, tariff_threshold, h)
+    if box_rs.get("cand") or box_rs.get("trade") or box_rs.get("soldout"):
+        logger.info(
+            "[크림통합] 박스/카드팩 신규등록 후보%d — 등록%d 실패%d / "
+            "스킵[거래0:%d 품절:%d API실패:%d 옵션없음:%d 원가상한:%d 정책:%d "
+            "미검출:%d 재게시:%d 실패쿨:%d 이행대기:%d 상한:%d] (%s)",
+            box_rs["cand"],
+            box_rs["post"],
+            box_rs["fail"],
+            box_rs["trade"],
+            box_rs["soldout"],
+            box_rs["apifail"],
+            box_rs["optmiss"],
+            box_rs["overcost"],
+            box_rs["policy"],
+            box_rs["miss"],
+            box_rs["recent"],
+            box_rs["failed"],
+            box_rs["hold"],
+            box_rs["capped"],
+            "실행ON" if _EXEC_BOX_RESTOCK else "섀도",
+        )
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[박스/카드팩] 신규등록 후보 {box_rs['cand']:,} — 등록 {box_rs['post']:,}"
+            f"{_fail_tag(box_rs['fail'])} / 거래0 {box_rs['trade']:,}"
+            f" 품절 {box_rs['soldout']:,} 옵션없음 {box_rs['optmiss']:,}"
+            f" ({'실행ON' if _EXEC_BOX_RESTOCK else '섀도'})",
+        )
 
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
     logger.info("[크림통합] STAGE 만료회수 시작 %.0f초경과", _stage_t.time() - _t_stage)

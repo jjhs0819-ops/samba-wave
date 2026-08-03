@@ -509,6 +509,25 @@ async def _snkrdunk_remove_match_impl(
         ON CONFLICT (snkr_id, kream_pid) DO NOTHING
     """).bindparams(sid=snkr_id)
     )  # type: ignore[arg-type]
+    # [2026-08-03] 후보 테이블(kream_snkr_match_candidates)도 거부 등록한다.
+    # 위 INSERT 는 resell_matches.kream 이 있을 때만 동작해, 매칭이 이미 비고 '후보'만 남은
+    # 상태(검수화면은 후보도 매칭처럼 보여준다)에서 해제하면 거부목록에 아무것도 안 들어갔다.
+    # → 다음 배치가 같은 쌍을 다시 붙이는 도돌이. 실사례: snkr 423585 ↔ kream 656674.
+    await session.exec(
+        text("""
+        INSERT INTO kream_snkr_rejected (snkr_id, kream_pid, reason)
+        SELECT snkr_id, kream_pid, '검수 매칭해제(후보)'
+        FROM kream_snkr_match_candidates
+        WHERE snkr_id = :sid AND COALESCE(kream_pid, '') <> ''
+        ON CONFLICT (snkr_id, kream_pid) DO NOTHING
+    """).bindparams(sid=snkr_id)
+    )  # type: ignore[arg-type]
+    # 후보 행 자체도 삭제 — 남겨두면 검수화면이 계속 끌어다 보여준다.
+    await session.exec(
+        text("DELETE FROM kream_snkr_match_candidates WHERE snkr_id = :sid").bindparams(
+            sid=snkr_id
+        )
+    )  # type: ignore[arg-type]
     # 후보(kream_candidates)를 남기면 재로드 시 후보 1개 자동선택으로 매칭이 되살아나는
     # 도돌이 발생 [2026-07-20 라이츄·샤워즈 사고] — 해제 시 함께 삭제
     sql = text("""
