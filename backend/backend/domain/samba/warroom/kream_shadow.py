@@ -3850,6 +3850,14 @@ async def run_kream_unified_once() -> dict:
     # 옵션명 변환·박스 실시세·거래이력 게이트를 갖춘 전용 경로를 다시 호출한다.
     # 신발/의류 신규등록은 통합 루프가 옵션포맷 그대로 처리하므로 그대로 둔다.
     box_rs = await _process_box_restock(asks, cooldown, rate, tariff_threshold, h)
+    # 박스 경로가 올린 2연속 대기(miss)·재게시/실패 쿨다운은 위 저장 시점(카드 리스톡 직후)
+    # **뒤에** 생긴다. 여기서 다시 저장하지 않으면 다음 사이클 _load_restock_guards 가
+    # 옛 값을 되살려 miss 가 영원히 1 에 머물고 등록이 한 건도 안 나간다.
+    # (2026-08-03 실측: 미검출 161 → 163 반복, 등록 0)
+    await _save_setting_map(_SET_MISS, _g_miss_counts)
+    if box_rs.get("post") or box_rs.get("fail"):
+        await _save_setting_map(_SET_RECENT, _g_recent_posts)
+        await _save_setting_map(_SET_FAILED, _g_failed_posts)
     if box_rs.get("cand") or box_rs.get("trade") or box_rs.get("soldout"):
         logger.info(
             "[크림통합] 박스/카드팩 신규등록 후보%d — 등록%d 실패%d / "
