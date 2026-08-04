@@ -404,11 +404,16 @@ async def enrich_product(
         }
 
         # 품절 판정: 모든 옵션 stock=0이면 sold_out
+        # [2026-08-04] 옵션이 비었다고 품절로 단정하지 않는다. 확장앱 조회 실패·파싱
+        # 실패로도 빈 배열이 오는데, 그걸 "상품 전체 품절"로 찍으면 재고가 멀쩡한 주문에
+        # 재고X 가 붙어 처리가 막힌다(실측: 671487 랄토스 PSA10, options=[] 인데 sold_out).
+        # 바로 위 updates["options"] 도 빈 값이면 기존 옵션을 보존하므로 판정만 어긋나 있었다.
+        # 아래 두 번째 경로(opts_fetched)와 동일한 원칙 — #500 에서 이미 확립됐다.
         _kream_opts = opts if opts else []
         if _kream_opts and all(o.get("stock", 0) <= 0 for o in _kream_opts):
             updates["sale_status"] = "sold_out"
         elif not _kream_opts:
-            updates["sale_status"] = "sold_out"
+            pass  # 조회 실패와 실제 품절을 구분할 수 없음 → 기존 상태 유지
         else:
             updates["sale_status"] = "in_stock"
 

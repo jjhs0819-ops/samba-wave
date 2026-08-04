@@ -1834,13 +1834,14 @@ async def _load_matched_products() -> list[dict]:
                     "(resell_matches->'kream'->>'ambiguous')='true' AS ambiguous, "
                     "options::text AS opts, name, "
                     "(resell_matches->'kream'->>'verified')='true' AS verified, "
-                    "COALESCE(extra_data->>'currency','JPY') AS currency "
+                    "COALESCE(extra_data->>'currency','JPY') AS currency, "
+                    "COALESCE(extra_data->>'snkr_type','') AS snkr_type "
                     "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                 )
             )
         ).all()
-    for snkr_id, kid, ambiguous, opts_txt, name, verified, currency in rows:
+    for snkr_id, kid, ambiguous, opts_txt, name, verified, currency, snkr_type in rows:
         db_opts: dict = {}
         fixed: dict = {}
         if opts_txt:
@@ -1867,6 +1868,7 @@ async def _load_matched_products() -> list[dict]:
                 # [2026-08-01] 옵션가 통화 — 스니덩크 글로벌은 KRW/USD 로 저장된다.
                 # 코드가 전부 JPY 로 가정해 원화값을 엔화로 곱해 9배 부풀린 입찰 사고 발생.
                 "currency": str(currency or "JPY").upper(),
+                "snkr_type": str(snkr_type or ""),
                 "db_opts": db_opts,
                 "fixed": fixed,
             }
@@ -1916,6 +1918,15 @@ _g_unfulfilled: set[tuple[str, str]] = set()
 # 을 기다리지 않고 판매 즉시 재입찰 차단. 소싱완료(sourcing_order_number)되면 해제, 6h 만료.
 _SET_SNAPSHOT = "kream_ask_snapshot"
 _SET_HOLD = "kream_relist_hold"
+# [2026-08-03] 우리가 **삭제한** 입찰 기록 — 판매와 구분하기 위해 필요.
+# _detect_and_hold_sold 는 "직전 스냅샷에 있었는데 지금 없음"을 전부 판매로 보는데,
+# 가격열위 삭제(사이클당 300건대)도 똑같이 사라지므로 팔린 것으로 오인된다.
+# 그러면 6시간 재등록 금지가 걸리고, 해제 조건(sourcing_order_number 있는 주문)은
+# 삭제분에 존재하지 않아 만료까지 절대 안 풀린다.
+# 결과: 삭제할수록 재등록이 막혀 입찰 총량이 계속 줄어든다(21,178 → 20,891, 순감 287).
+_SET_DELETED = "kream_deleted_asks"
+_DELETED_TTL = 7200  # 2h — 다음 사이클 sold 판정에만 쓰면 되므로 짧게
+_g_deleted: dict = {}
 _HOLD_TTL = 21600  # 6h
 
 
@@ -1934,6 +1945,17 @@ async def _detect_and_hold_sold(asks: list) -> None:
             if a.get("product_id")
         }
         sold = prev_keys - cur_keys
+        # 우리가 지운 입찰은 판매가 아니다 — 빼지 않으면 재등록이 6시간 막힌다.
+        _g_deleted.update(
+            {
+                k: float(v)
+                for k, v in (await _load_setting_map(_SET_DELETED)).items()
+                if now - float(v) < _DELETED_TTL
+            }
+        )
+        _mine = {k for k, v in _g_deleted.items() if now - float(v) < _DELETED_TTL}
+        if _mine:
+            sold -= _mine
         hold = {
             k: float(v)
             for k, v in (await _load_setting_map(_SET_HOLD)).items()
@@ -1969,6 +1991,10 @@ async def _detect_and_hold_sold(asks: list) -> None:
                 _g_unfulfilled.add((_kid, _opt))
         await _save_setting_map(_SET_HOLD, hold)
         await _save_setting_map(_SET_SNAPSHOT, {k: now for k in cur_keys})
+        await _save_setting_map(
+            _SET_DELETED,
+            {k: v for k, v in _g_deleted.items() if now - float(v) < _DELETED_TTL},
+        )
         if sold:
             _emit_autotune_log(
                 "KREAM", "", f"[즉시판매] 사라진 입찰 {len(sold):,}건 → 재입찰 보류"
@@ -2186,12 +2212,18 @@ async def _exec_create_ask(
         return False, str(exc)[:120]
 
 
-async def _exec_delete_ask(cli: httpx.AsyncClient, h: dict, ask_id) -> bool:
+async def _exec_delete_ask(
+    cli: httpx.AsyncClient, h: dict, ask_id, kid=None, opt=None
+) -> bool:
+    """삭제 실행. kid/opt 를 주면 '우리가 지운 것'으로 기록해 판매 오인을 막는다."""
     try:
         r = await _rq("DELETE", f"{KREAM_OPENAPI_BASE}/asks/{ask_id}", headers=h)
-        return r.status_code in (200, 204)
+        ok = r.status_code in (200, 204)
     except Exception:
         return False
+    if ok and kid:
+        _g_deleted[f"{kid}|{str(opt or '').replace(' ', '')}"] = _now_ts()
+    return ok
 
 
 _SHOE_OPT_RE = re.compile(r"\d{3}(\.\d)?$")
@@ -2357,7 +2389,7 @@ async def _process_shoe_asks(
             if stock <= 0 or price <= 0:
                 c["delete"] += 1
                 if _EXEC_SHOE and a.get("id"):
-                    _pend_del.append(a.get("id"))
+                    _pend_del.append((a.get("id"), kid, opt))
                 continue
             c["stock"] += 1
             cur = int(a.get("price") or 0)
@@ -2386,7 +2418,7 @@ async def _process_shoe_asks(
                 else:
                     c["delete"] += 1
                     if _EXEC_SHOE and a.get("id"):
-                        _pend_del.append(a.get("id"))
+                        _pend_del.append((a.get("id"), kid, opt))
             elif adjusting and target != cur:
                 c["renew"] += 1
                 if _EXEC_SHOE and a.get("id"):
@@ -2396,9 +2428,9 @@ async def _process_shoe_asks(
         # 신발 단계만 수백 초. 판단은 그대로 두고 실행만 모아서 동시 8로 처리.
         _ssem = asyncio.Semaphore(int(os.environ.get("KREAM_EXEC_CONCURRENCY") or 8))
 
-        async def _sh_del(_aid):
+        async def _sh_del(_aid, _kid=None, _opt=None):
             async with _ssem:
-                if await _exec_delete_ask(cli, h, _aid):
+                if await _exec_delete_ask(cli, h, _aid, _kid, _opt):
                     c["del"] += 1
                 else:
                     c["fail"] += 1
@@ -2415,7 +2447,7 @@ async def _process_shoe_asks(
                 else:
                     c["fail"] += 1
 
-        await asyncio.gather(*[_sh_del(x) for x in _pend_del])
+        await asyncio.gather(*[_sh_del(*x) for x in _pend_del])
         await asyncio.gather(*[_sh_upd(*x) for x in _pend_upd])
     return c
 
@@ -2935,7 +2967,9 @@ async def _process_box_asks(
             elif kind == "delete":
                 c["delete"] += 1
                 if _EXEC_BOX:
-                    if await _exec_delete_ask(scli, h, a.get("id")):
+                    if await _exec_delete_ask(
+                        scli, h, a.get("id"), a.get("product_id"), a.get("option")
+                    ):
                         c["del"] += 1
                     else:
                         c["fail"] += 1
@@ -2947,7 +2981,9 @@ async def _process_box_asks(
                 else:
                     c["delete"] += 1
                     if _EXEC_BOX:
-                        if await _exec_delete_ask(scli, h, a.get("id")):
+                        if await _exec_delete_ask(
+                            scli, h, a.get("id"), a.get("product_id"), a.get("option")
+                        ):
                             c["del"] += 1
                         else:
                             c["fail"] += 1
@@ -3401,7 +3437,16 @@ async def run_kream_unified_once() -> dict:
             # 오염을 재생산하면서 정작 밀봉 옵션은 아무도 등록하지 않았다.
             if any(_SEALED_OPT_RE.search(str(n)) for n in prod["db_opts"]):
                 return r
-            has_psa_opt = any("PSA" in str(n).upper() for n in prod["db_opts"])
+            # [2026-08-04] 옵션이 비면 카드로 인식하지 못해 카드 분기(=PSA 시세 조회 후
+            # options write-back)에 못 들어가고, 못 들어가니 옵션이 영영 안 채워진다.
+            # 그 상태로 주문이 들어오면 "상품 전체 품절"로 찍혀 재고X 가 붙는다
+            # (실측: 옵션 빈 카드 2,521건, snkr_type 도 없어 판정 근거가 아예 없었다).
+            # 비카드(신발/의류/시계)로 명시된 것만 제외하고, 나머지 빈 옵션은 카드로 본다.
+            # 카드는 옵션이 없어도 /v1/apparels/{id}/used 로 PSA 시세를 받아올 수 있다.
+            has_psa_opt = any("PSA" in str(n).upper() for n in prod["db_opts"]) or (
+                not prod["db_opts"]
+                and prod.get("snkr_type") not in ("sneaker", "apparel", "watch")
+            )
             if not has_psa_opt:
                 # 비카드(신발/의류/시계/박스) — 같은 사이클·같은 로테이션 안에서 리스톡만 판정.
                 # [2026-08-01] 별도 전량조회 경로(_process_shoe_restock 등)로 빼면 갱신 사이클이
@@ -3911,7 +3956,9 @@ async def run_kream_unified_once() -> dict:
                 nonlocal exec_del, exec_fail
                 async with _dsem:
                     _ask = ask_index.get((_kid, _nm))
-                    if _ask and await _exec_delete_ask(ecli, h, _ask.get("id")):
+                    if _ask and await _exec_delete_ask(
+                        ecli, h, _ask.get("id"), _kid, _nm
+                    ):
                         exec_del += 1
                     else:
                         exec_fail += 1
@@ -4273,7 +4320,9 @@ async def run_kream_unified_once() -> dict:
         f"[일치상품 리스톡·미등록 점검]\n"
         f"{_cat1_line}"
         f"무재고 스캔 {_scan_done:,}/{rest_total:,} ({_scan_pct:,}%)"
-        f" · 1,500개/사이클 로테이션\n"
+        # [2026-08-04] 1,500 하드코딩이라 KREAM_UNIFIED_BATCH 를 3,000 으로 올려도
+        # 슬랙엔 계속 1,500 으로 찍혀 "적용 안 됐다"로 읽혔다. 실제 값을 표기한다.
+        f" · {batch:,}개/사이클 로테이션\n"
         f"이번 사이클 리스톡 발견 {_rs_found:,}건"
         f" (등록 {int(rs['ok']):,} · 보류 {_rs_hold:,})\n"
         f"재고 {_stock_total:,}건 (카드 {card_instock:,}·신발 {_shoe_stock:,}"
