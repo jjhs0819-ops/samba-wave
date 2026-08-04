@@ -2031,6 +2031,9 @@ _SET_MISS = "kream_miss_counts"
 # 리스톡 로테이션 offset 영속화 — 재배포/재시작에도 순회 위치 유지(안 하면 매 재시작 0 리셋 →
 # 앞부분만 반복, 뒤쪽 카드 영영 미평가 → 품절 재고갱신·리스톡 누락). [2026-07-25]
 _SET_OFFSET = "kream_unified_offset"
+_SET_LIVE_OFFSET = (
+    "kream_live_offset"  # 갱신 로테이션 위치 — 재시작해도 이어가게 영속화
+)
 # 입찰제한(최근 거래가 확인 필요) 반복 실패 쿨다운 — 공식 API 에 거래이력/허용밴드가 없어
 # 재시도해도 계속 거절된다. 일정 시간 조정 대상서 제외해 헛호출·실패로그를 끊는다.
 _SET_LIMIT = "kream_bid_limit_cooldown"
@@ -3823,6 +3826,16 @@ async def run_kream_unified_once() -> dict:
     # 개씩 나눠 처리하고 다음 회차에 이어서. 가격 추종은 몇 사이클 늦어지지만 완주는 보장.
     _live_batch = int(os.environ.get("KREAM_LIVE_BATCH") or 2500)
     global _live_offset
+    # [2026-08-04] 갱신 offset 영속화 — 리스톡 offset 은 DB 에 저장하는데 이쪽만 메모리라
+    # 배포/재시작마다 0 으로 리셋됐다. 그 탓에 매번 같은 앞부분 2,500 건만 갱신되고
+    # 뒤쪽 1만 8천여 건은 손이 안 갔다(라이브 21,000건 / 배치 2,500).
+    if _live_offset == 0:
+        try:
+            _live_offset = int(
+                (await _load_setting_map(_SET_LIVE_OFFSET)).get("v", 0) or 0
+            )
+        except Exception:
+            _live_offset = 0
     _live_total = len(live_products)
     if _live_total > _live_batch:
         _lst = _live_offset % _live_total
@@ -3830,6 +3843,7 @@ async def run_kream_unified_once() -> dict:
         _live_offset = (_lst + _live_batch) % _live_total
     else:
         _live_offset = 0
+    await _save_setting_map(_SET_LIVE_OFFSET, {"v": int(_live_offset)})
     rest_products = [p for p in products if p["kid"] not in _live_kids]
     # [2026-08-04] 재고 있는 것 먼저 — 탐색 풀 57,172 중 재고 보유는 20,054(35%)뿐이라
     # 3,000 슬라이스를 뽑아도 등록 가능한 건 ~1,050 밖에 안 됐다(나머지는 재고 0 이라
