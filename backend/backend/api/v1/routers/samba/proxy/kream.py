@@ -279,6 +279,100 @@ async def kream_my_bids(
     return await client.get_my_asks()
 
 
+# ═══════════════════════════════════════════════
+# KREAM 파트너 OpenAPI 패스스루
+# ═══════════════════════════════════════════════
+#
+# 크림 OpenAPI(partner-openapi.kream.co.kr)는 IP 화이트리스트가 걸려 있어
+# 사무실/개인 PC 에서는 TLS 까지만 붙고 요청은 무응답으로 끊긴다. 운영 서버 IP 는
+# 등록돼 있으므로, 로컬 도구(보관신청 매크로 등)가 운영을 경유해 호출하도록 뚫는다.
+#
+# 무제한 프록시가 되지 않게 (메서드, 경로) 를 화이트리스트로 제한한다.
+_OPENAPI_ALLOW: dict[str, tuple[str, ...]] = {
+    "GET": ("/auth/me", "/products", "/products/search", "/products/{id}", "/asks"),
+    "POST": ("/asks",),
+    "PATCH": ("/asks/{id}",),
+    "DELETE": ("/asks/{id}",),
+}
+
+
+def _openapi_path_allowed(method: str, path: str) -> bool:
+    """'/asks/123' 처럼 id 가 붙은 경로를 패턴과 대조한다."""
+    allowed = _OPENAPI_ALLOW.get(method.upper())
+    if not allowed:
+        return False
+    for pattern in allowed:
+        if pattern == path:
+            return True
+        if pattern.endswith("/{id}"):
+            prefix = pattern[: -len("/{id}")]
+            tail = path[len(prefix) + 1 :] if path.startswith(prefix + "/") else ""
+            if tail and tail.isdigit():
+                return True
+    return False
+
+
+class KreamOpenApiProxyRequest(BaseModel):
+    method: str = "GET"
+    path: str = "/auth/me"
+    params: Optional[dict[str, Any]] = None
+    body: Optional[dict[str, Any]] = None
+    account_id: Optional[str] = None
+
+
+@router.post("/kream/openapi-proxy")
+async def kream_openapi_proxy(
+    body: KreamOpenApiProxyRequest = Body(...),
+    session: AsyncSession = Depends(get_read_session_dependency),
+) -> dict[str, Any]:
+    """KREAM 파트너 OpenAPI 를 운영 서버 IP 로 대신 호출해 결과를 그대로 돌려준다.
+
+    인증정보는 요청으로 받지 않고 **서버에 저장된 것만** 쓴다(키가 네트워크를
+    왕복하지 않게). samba_market_account 의 kream 계정에서 읽는다.
+    """
+    from sqlalchemy import text as _text
+
+    from backend.domain.samba.proxy.kream import KreamPartnerClient
+
+    method = (body.method or "GET").upper()
+    path = body.path or ""
+    if not path.startswith("/"):
+        path = "/" + path
+    if not _openapi_path_allowed(method, path):
+        raise HTTPException(status_code=403, detail=f"허용되지 않은 경로: {method} {path}")
+
+    sql = (
+        "SELECT api_key, api_secret, additional_fields FROM samba_market_account "
+        "WHERE market_type = 'kream' AND is_active = true"
+    )
+    params: dict[str, Any] = {}
+    if body.account_id:
+        sql += " AND id = :aid"
+        params["aid"] = body.account_id
+    sql += " ORDER BY is_default DESC LIMIT 1"
+    row = (await session.exec(_text(sql), params=params)).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="KREAM 계정이 등록되어 있지 않습니다.")
+
+    af = row[2] if isinstance(row[2], dict) else {}
+    api_service = str(af.get("apiService") or "")
+    api_key = str(af.get("apiKey") or row[0] or "")
+    api_secret = str(af.get("apiSecret") or row[1] or "")
+    if not (api_service and api_key and api_secret):
+        raise HTTPException(status_code=400, detail="KREAM API 인증정보가 불완전합니다.")
+
+    client = KreamPartnerClient(api_service, api_key, api_secret)
+    kwargs: dict[str, Any] = {}
+    if body.params:
+        kwargs["params"] = {k: v for k, v in body.params.items() if v not in (None, "")}
+    if body.body is not None:
+        kwargs["json"] = body.body
+
+    status, payload = await client.request(method, path, **kwargs)
+    logger.info("[kream-proxy] %s %s -> %s", method, path, status)
+    return {"status": status, "body": payload}
+
+
 # 입찰 중인 크림 상품번호 제외 목록
 _BID_EXCLUDE_IDS = {
     "647550",
