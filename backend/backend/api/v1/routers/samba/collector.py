@@ -2465,7 +2465,17 @@ async def block_and_delete_products(
 
     # 블랙리스트 저장
     if row:
-        row.value = blacklist
+        # ★2026-08-04 수정 — SambaSettings.value 는 순수 Column(JSON)(MutableList 아님)이라
+        # **동일 객체 재할당을 변경으로 감지하지 못한다**. 위에서 `blacklist = row.value` 로
+        # 같은 객체 참조를 받아 append 한 뒤 되할당했기 때문에 dirty 로 잡히지 않아
+        # commit 이 조용히 무시됐다 → 행이 처음 생성될 때 말고는 차단이 **한 번도 저장된 적 없음**.
+        # (실증: collection_blacklist.updated_at 이 2026-08-01 에 멈춰 있고, 그 뒤 차단한
+        #  상품들이 목록에 없었다. 마켓 삭제는 되는데 차단만 안 걸려 다음 수집 때 재유입.)
+        # 새 리스트로 재할당 + flag_modified 로 명시 표시해 UPDATE 가 반드시 나가게 한다.
+        from sqlalchemy.orm.attributes import flag_modified
+
+        row.value = list(blacklist)
+        flag_modified(row, "value")
         session.add(row)
     else:
         from backend.domain.samba.forbidden.model import SambaSettings
