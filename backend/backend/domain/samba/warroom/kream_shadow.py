@@ -2199,14 +2199,39 @@ _keep_impossible: set = set()
 # samba_settings.kream_partner_token 에 넣어둔 값을 읽는다.
 _ANN_BASE = "https://partner-api.kream.co.kr/api/v1/products"
 _ANN_TOKEN_KEY = "kream_partner_token"
-# 해외 판매자는 원산지·HS코드 필수(누락 시 PUT 400). 전 상품 일본 소싱 → 원산지=일본(id 4).
-# HS: 카드 등 기타=9504.40 오락용카드(82) / 신발=6404.11 스포츠신발(6).
+_ANN_AS_TEL_KEY = (
+    "kream_ann_as_tel"  # 사업자 연락처(AS 책임자) — 없으면 등록 자체를 안 한다
+)
+# 해외 판매자는 원산지·HS코드 필수(누락 시 PUT 400). 원산지=일본(id 4) — 일본 소싱 발송분.
 _ANN_COUNTRY_JP = 4
-_ANN_HS_BY_CATEGORY = {"기타 재화": 82, "구두/신발": 6}
+# [2026-08-04] 품목별 HS 정확화 [최우선·관세].
+# 종전엔 카드용 9504.40(오락용 카드)을 신발 아닌 전 품목에 박아 **티셔츠를 오락용 카드로
+# 신고**하고 있었다(허위신고). 품목별로 반드시 분리한다. id 출처: GET /api/v1/hs-codes 실조회.
+_ANN_HS = {
+    "shoe": 6,  # 6404.11 스포츠용 신발류
+    "top": 11,  # 6109.90 티셔츠·싱글릿(그 밖의 방직용 섬유)
+    "knit": 32,  # 6110.30 스웨터·풀오버·후드류(인조섬유)
+    "bottom": 18,  # 6203.43 남성용 바지(합성섬유)
+    "bag": 87,  # 4202.92 가방(플라스틱 시트·방직용 섬유 외피)
+    "headwear": 80,  # 6505.00-9019 모자(그 밖의 섬유)
+    "watch": 69,  # 9102.11-9010 손목시계(배터리 구동식)
+    "card": 82,  # 9504.40 오락용 카드
+}
+# 품목 → 고시 카테고리(파트너 마스터 스키마 실제 명칭)
+_ANN_CATEGORY = {
+    "shoe": "구두/신발",
+    "top": "의류",
+    "knit": "의류",
+    "bottom": "의류",
+    "bag": "가방",
+    "headwear": "패션잡화(모자/벨트/액세서리)",
+    "watch": "시계류",
+    "card": "기타 재화",
+}
 _ann_schema_cache: dict = {}
 _ann_token_cache: list = [0.0, ""]  # [조회시각, 토큰]
 _ann_done: set = set()  # 이 프로세스에서 등록 성공한 kid — 중복 PUT 회피
-_ann_stat: dict = {"try": 0, "ok": 0, "no_token": 0, "fail": 0}
+_ann_stat: dict = {"try": 0, "ok": 0, "no_token": 0, "no_tel": 0, "fail": 0}
 
 
 async def _partner_token() -> str:
@@ -2239,10 +2264,148 @@ async def _partner_token() -> str:
     return tok
 
 
+async def _ann_as_tel() -> str:
+    """사업자 연락처(AS 책임자·소비자상담) — samba_settings 'kream_ann_as_tel'.
+    법정 필수 항목이라 지어낼 수 없다. 값이 없으면 고시등록을 건너뛴다."""
+    import json as _json  # noqa: F811
+
+    try:
+        from sqlmodel import select
+
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        async with get_read_session() as s:
+            val = (
+                await s.execute(
+                    select(SambaSettings.value).where(
+                        SambaSettings.key == _ANN_AS_TEL_KEY
+                    )
+                )
+            ).scalar_one_or_none()
+        if isinstance(val, str):
+            try:
+                val = _json.loads(val)
+            except Exception:
+                return val.strip()
+        if isinstance(val, dict):
+            return str(val.get("v") or "").strip()
+        return str(val or "").strip()
+    except Exception:
+        return ""
+
+
+def _ann_kind(snkr_type: str, name: str) -> str:
+    """품목 판별 — HS/고시 카테고리의 근거. snkr_type(DB) 우선, 없으면 이름 키워드.
+    카드는 마지막 폴백이 아니라 명시 판정으로만 준다(오분류가 곧 관세 허위신고)."""
+    t = (snkr_type or "").lower()
+    n = (name or "").lower()
+    if t == "sneaker":
+        return "shoe"
+    if t == "watch":
+        return "watch"
+    if t == "trading-card":
+        return "card"
+    for kw in ("backpack", "tote", "duffle", "pouch", "waist bag", " bag"):
+        if kw in n:
+            return "bag"
+    for kw in ("cap", "hat", "beanie", "bucket", "belt", "socks", "scarf", "glove"):
+        if kw in n:
+            return "headwear"
+    for kw in ("pants", "shorts", "trouser", "denim", "jeans", "skirt", "slacks"):
+        if kw in n:
+            return "bottom"
+    for kw in (
+        "hoodie",
+        "sweat",
+        "knit",
+        "cardigan",
+        "jacket",
+        "coat",
+        "pullover",
+        "fleece",
+    ):
+        if kw in n:
+            return "knit"
+    if t == "apparel":
+        return "top"
+    for kw in ("tee", "t-shirt", "shirt", "jersey"):
+        if kw in n:
+            return "top"
+    for kw in ("card", "pack", "box", "booster", "deck", "psa"):
+        if kw in n:
+            return "card"
+    return "card"
+
+
+def _ann_value(
+    key: str, kind: str, name_en: str, style: str, brand: str, tel: str
+) -> str:
+    """고시 필드 실값 — 지어내지 않는 범위에서 최대한 실제 값.
+    [2026-08-04] 종전엔 전 필드를 "제품 내 택 참고"로 채워 품명·모델명·제조자까지
+    비워 두고 있었다(허위·부실 기재). 확정 규칙:
+      품명=영문명 / 모델명=스타일코드 / 제조자·수입자=브랜드 /
+      발길이=150~300mm / 굽높이=1cm / AS 전화=사업자 연락처.
+    소재·색상·제조국처럼 우리가 실제로 모르는 값은 지어내지 않고 실물 확인 문구로 둔다."""
+    k = key.replace(" ", "")
+    if "품명" in k or "품목" in k or k.startswith("도서명"):
+        return name_en or style or "상품 상세 참고"
+    if "모델명" in k:
+        return style or (name_en or "상품 상세 참고")
+    if "제조자" in k or "수입자" in k or "제조업" in k:
+        return brand or "상품 라벨 참고"
+    if "전화번호" in k or "연락처" in k:
+        return tel
+    if "발길이" in k:
+        return "150~300mm"
+    if "굽높이" in k:
+        return "1cm"
+    if "종류" in k:
+        return {"bag": "가방", "headwear": "패션잡화"}.get(kind, "상품 상세 참고")
+    if "품질보증기준" in k:
+        return "관련 법령 및 소비자분쟁해결기준에 따름"
+    if "인증" in k or "허가" in k:
+        return "해당사항 없음"
+    if "보증서" in k:
+        return "미제공"
+    if "색상" in k:
+        return "상품 이미지 참고"
+    if "제조국" in k or "원산지" in k or "제조년월" in k or "제조연월" in k:
+        return "상품 라벨 참고"
+    if "세탁" in k or "취급" in k or "주의" in k or "착용" in k:
+        return "상품 라벨 참고"
+    return "상품 상세 참고"
+
+
+async def _ann_product_row(kid: str) -> dict:
+    """고시 기재용 상품정보 — 영문명/스타일코드/브랜드/타입."""
+    try:
+        from sqlalchemy import text as _sql_text
+
+        async with get_read_session() as s:
+            r = (
+                (
+                    await s.execute(
+                        _sql_text(
+                            "SELECT name, name_en, style_code, brand, "
+                            "extra_data->>'snkr_type' AS t FROM samba_collected_product "
+                            "WHERE source_site='SNKRDUNK' "
+                            "AND resell_matches->'kream'->>'product_id' = :k LIMIT 1"
+                        ),
+                        {"k": str(kid)},
+                    )
+                )
+                .mappings()
+                .first()
+            )
+        return dict(r) if r else {}
+    except Exception:
+        return {}
+
+
 async def _register_announcement(kid: str) -> bool:
-    """고시정보 등록 — 마스터 스키마(/announcement_info)의 카테고리별 속성키를 그대로 쓰고
-    전 필드를 "제품 내 택 참고"로 채운다. 견본상품 복사 방식은 견본이 초기화되면 전면
-    붕괴하므로 쓰지 않는다(2026-07-21 확정). 카테고리는 release.category 로 신발만 구분."""
+    """고시정보 등록 — 마스터 스키마(/announcement_info)의 카테고리별 필드키에
+    품목별 실값을 채워 PUT. 사업자 연락처(samba_settings kream_ann_as_tel)가 없으면
+    법정 필수항목을 채울 수 없으므로 **등록하지 않는다**(허위 기재 방지)."""
     if str(kid) in _ann_done:
         return True
     _ann_stat["try"] += 1
@@ -2250,8 +2413,12 @@ async def _register_announcement(kid: str) -> bool:
     if not tok:
         _ann_stat["no_token"] += 1
         return False
+    tel = await _ann_as_tel()
+    if not tel:
+        _ann_stat["no_tel"] += 1
+        return False
     hdrs = {
-        "Authorization": tok,
+        "Authorization": f"Bearer {tok}",
         "User-Agent": "Mozilla/5.0",
         "Referer": "https://partner.kream.co.kr/",
         "Accept": "application/json",
@@ -2267,23 +2434,38 @@ async def _register_announcement(kid: str) -> bool:
                     return False
                 for e in r.json() or []:
                     _ann_schema_cache[e["category_name"]] = e["attribute_set"]
-            cat = "기타 재화"
-            try:  # 조회 실패해도 기타 재화로 진행
+            row = await _ann_product_row(kid)
+            name_en = str(row.get("name_en") or "").strip()
+            style = str(row.get("style_code") or "").strip()
+            brand = str(row.get("brand") or "").strip()
+            kind = _ann_kind(
+                str(row.get("t") or ""), name_en or str(row.get("name") or "")
+            )
+            # 크림 영문명/스타일코드가 DB 보다 정확 — 있으면 그쪽을 쓴다.
+            try:
                 g = await c.get(f"{_ANN_BASE}/announcement_infos/{kid}", headers=hdrs)
                 rel = ((g.json() or {}).get("product") or {}).get("release") or {}
-                if str(rel.get("category") or "") == "sneakers":
-                    cat = "구두/신발"
+                name_en = str(rel.get("name") or name_en).strip()
+                style = str(rel.get("style_code") or style).strip()
+                brand = str(rel.get("brand") or brand).strip()
             except Exception:
                 pass
+            cat = _ANN_CATEGORY.get(kind, "기타 재화")
             keys = _ann_schema_cache.get(cat) or _ann_schema_cache.get("기타 재화")
             if not keys:
                 _ann_stat["fail"] += 1
                 return False
             body = {
                 "category_name": cat,
-                "attribute_set": [{"key": k, "value": "제품 내 택 참고"} for k in keys],
+                "attribute_set": [
+                    {
+                        "key": k,
+                        "value": _ann_value(k, kind, name_en, style, brand, tel),
+                    }
+                    for k in keys
+                ],
                 "country_of_origin_id": _ANN_COUNTRY_JP,
-                "hs_code_id": _ANN_HS_BY_CATEGORY.get(cat, 82),
+                "hs_code_id": _ANN_HS.get(kind, _ANN_HS["card"]),
             }
             p = await c.put(
                 f"{_ANN_BASE}/announcement_infos/{kid}", json=body, headers=hdrs
