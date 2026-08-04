@@ -2229,6 +2229,77 @@ _ANN_CATEGORY = {
     "watch": "시계류",
     "card": "기타 재화",
 }
+# 마스터 스키마 폴백 [2026-08-04] — 크림 /announcement_info 가 500 을 뱉는 장애가 잦다
+# (같은 시각 /hs-codes 는 200 — 고시 엔드포인트만 죽는다). 장애 중에도 등록은 되므로
+# 2026-08-04 실조회로 확정한 6개 카테고리 필드키를 폴백으로 둔다.
+_ANN_SCHEMA_FALLBACK = {
+    "구두/신발": [
+        "소재",
+        "색상",
+        "발길이",
+        "굽높이",
+        "제조자/수입자",
+        "제조국",
+        "취급시 주의사항",
+        "제조년월",
+        "품질보증기준",
+        "AS 책임자와 전화번호",
+    ],
+    "의류": [
+        "소재",
+        "색상",
+        "치수",
+        "제조자/수입자",
+        "제조국",
+        "세탁방법 및 취급시 주의사항",
+        "제조년월",
+        "품질보증기준",
+        "AS 책임자와 전화번호",
+    ],
+    "가방": [
+        "종류",
+        "소재",
+        "색상",
+        "크기",
+        "제조자/수입자",
+        "제조국",
+        "취급시 주의사항",
+        "품질보증기준",
+        "AS 책임자와 전화번호",
+    ],
+    "패션잡화(모자/벨트/액세서리)": [
+        "종류",
+        "소재",
+        "치수",
+        "제조자/수입자",
+        "제조국",
+        "취급시 주의사항",
+        "품질보증기준",
+        "AS 책임자와 전화번호",
+    ],
+    "시계류": [
+        "소재",
+        "순도",
+        "밴드재질",
+        "중량",
+        "제조자/수입자",
+        "제조국",
+        "치수",
+        "착용 시 주의사항",
+        "주요사양",
+        "보증서 제공여부",
+        "품질보증기준",
+        "AS 책임자와 전화번호",
+    ],
+    "기타 재화": [
+        "품명",
+        "모델명",
+        "법에 의한 인증·허가 등을 받았음을 확인할 수 있는 경우 그에 대한 사항",
+        "제조자/수입자",
+        "제조국 또는 원산지",
+        "A/S 책임자 또는 소비자상담 관련 전화번호",
+    ],
+}
 _ann_schema_cache: dict = {}
 _ann_token_cache: list = [0.0, ""]  # [조회시각, 토큰]
 _ann_done: set = set()  # 이 프로세스에서 등록 성공한 kid — 중복 PUT 회피
@@ -2427,13 +2498,25 @@ async def _register_announcement(kid: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=20.0) as c:
             if not _ann_schema_cache:
-                r = await c.get(f"{_ANN_BASE}/announcement_info", headers=hdrs)
-                if r.status_code != 200:
-                    _ann_stat["fail"] += 1
-                    logger.info("[크림통합] 고시 스키마 조회 %s", r.status_code)
-                    return False
-                for e in r.json() or []:
-                    _ann_schema_cache[e["category_name"]] = e["attribute_set"]
+                try:
+                    r = await c.get(f"{_ANN_BASE}/announcement_info", headers=hdrs)
+                    if r.status_code == 200:
+                        for e in r.json() or []:
+                            _ann_schema_cache[e["category_name"]] = e["attribute_set"]
+                    else:
+                        logger.info(
+                            "[크림통합] 고시 스키마 %s — 폴백 표 사용", r.status_code
+                        )
+                except Exception:
+                    logger.info("[크림통합] 고시 스키마 조회 실패 — 폴백 표 사용")
+                if not _ann_schema_cache:
+                    # 폴백은 캐시에 넣지 않는다 — 다음 사이클에 API 가 살아나면
+                    # 조회값(41개 전 카테고리)을 다시 쓰게 둔다.
+                    schema_now = dict(_ANN_SCHEMA_FALLBACK)
+                else:
+                    schema_now = _ann_schema_cache
+            else:
+                schema_now = _ann_schema_cache
             row = await _ann_product_row(kid)
             name_en = str(row.get("name_en") or "").strip()
             style = str(row.get("style_code") or "").strip()
@@ -2451,7 +2534,7 @@ async def _register_announcement(kid: str) -> bool:
             except Exception:
                 pass
             cat = _ANN_CATEGORY.get(kind, "기타 재화")
-            keys = _ann_schema_cache.get(cat) or _ann_schema_cache.get("기타 재화")
+            keys = schema_now.get(cat) or schema_now.get("기타 재화")
             if not keys:
                 _ann_stat["fail"] += 1
                 return False
