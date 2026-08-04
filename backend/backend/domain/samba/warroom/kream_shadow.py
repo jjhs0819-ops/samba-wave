@@ -2199,9 +2199,9 @@ _keep_impossible: set = set()
 # samba_settings.kream_partner_token 에 넣어둔 값을 읽는다.
 _ANN_BASE = "https://partner-api.kream.co.kr/api/v1/products"
 _ANN_TOKEN_KEY = "kream_partner_token"
-_ANN_AS_TEL_KEY = (
-    "kream_ann_as_tel"  # 사업자 연락처(AS 책임자) — 없으면 등록 자체를 안 한다
-)
+# 사업자 연락처(고시 "A/S 책임자 또는 소비자상담 관련 전화번호", 법정 필수)는
+# 마켓 계정 관리 화면의 크림 계정 contact_tel 에서 읽는다. 비어 있으면 등록하지 않는다.
+_ann_tel_cache: list = [0.0, ""]  # [조회시각, 번호]
 # 해외 판매자는 원산지·HS코드 필수(누락 시 PUT 400). 원산지=일본(id 4) — 일본 소싱 발송분.
 _ANN_COUNTRY_JP = 4
 # [2026-08-04] 품목별 HS 정확화 [최우선·관세].
@@ -2265,33 +2265,32 @@ async def _partner_token() -> str:
 
 
 async def _ann_as_tel() -> str:
-    """사업자 연락처(AS 책임자·소비자상담) — samba_settings 'kream_ann_as_tel'.
-    법정 필수 항목이라 지어낼 수 없다. 값이 없으면 고시등록을 건너뛴다."""
-    import json as _json  # noqa: F811
+    """고시 기재용 사업자 연락처 — 크림 마켓 계정(samba_market_account)의 contact_tel.
+    법정 필수 항목이라 지어낼 수 없다. 비어 있으면 호출부가 고시등록을 건너뛴다.
+    10분 캐시 — 계정 설정은 자주 안 바뀐다."""
+    import time as _t  # noqa: F811
 
+    if _ann_tel_cache[1] and _t.time() - float(_ann_tel_cache[0]) < 600:
+        return str(_ann_tel_cache[1])
+    tel = ""
     try:
-        from sqlmodel import select
-
-        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlalchemy import text as _sql_text
 
         async with get_read_session() as s:
-            val = (
+            r = (
                 await s.execute(
-                    select(SambaSettings.value).where(
-                        SambaSettings.key == _ANN_AS_TEL_KEY
+                    _sql_text(
+                        "SELECT contact_tel FROM samba_market_account "
+                        "WHERE market_type='kream' AND COALESCE(contact_tel,'')<>'' "
+                        "ORDER BY is_default DESC, is_active DESC LIMIT 1"
                     )
                 )
-            ).scalar_one_or_none()
-        if isinstance(val, str):
-            try:
-                val = _json.loads(val)
-            except Exception:
-                return val.strip()
-        if isinstance(val, dict):
-            return str(val.get("v") or "").strip()
-        return str(val or "").strip()
-    except Exception:
-        return ""
+            ).first()
+        tel = str(r[0]).strip() if r and r[0] else ""
+    except Exception as e:
+        logger.info("[크림통합] 고시 연락처 조회 실패: %s", str(e)[:80])
+    _ann_tel_cache[0], _ann_tel_cache[1] = _t.time(), tel
+    return tel
 
 
 def _ann_kind(snkr_type: str, name: str) -> str:
@@ -2404,8 +2403,7 @@ async def _ann_product_row(kid: str) -> dict:
 
 async def _register_announcement(kid: str) -> bool:
     """고시정보 등록 — 마스터 스키마(/announcement_info)의 카테고리별 필드키에
-    품목별 실값을 채워 PUT. 사업자 연락처(samba_settings kream_ann_as_tel)가 없으면
-    법정 필수항목을 채울 수 없으므로 **등록하지 않는다**(허위 기재 방지)."""
+    품목별 실값을 채워 PUT. 사업자 연락처는 법정 필수항목이라 상수로 고정한다."""
     if str(kid) in _ann_done:
         return True
     _ann_stat["try"] += 1

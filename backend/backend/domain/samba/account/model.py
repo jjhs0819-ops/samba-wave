@@ -42,6 +42,11 @@ class SambaMarketAccount(SQLModel, table=True):
     business_name: Optional[str] = Field(
         default=None, sa_column=Column(Text, nullable=True)
     )
+    # 사업자 연락처 — 상품 고시정보의 "A/S 책임자 또는 소비자상담 관련 전화번호"(법정 필수).
+    # 크림 고시등록이 이 값을 쓴다. 비어 있으면 고시등록을 건너뛴다(허위·부실 기재 방지).
+    contact_tel: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # API 인증 (암호화 필요시 별도 처리)
     api_key: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))

@@ -20,6 +20,7 @@ class AccountCreate(BaseModel):
     market_type: str
     seller_id: Optional[str] = None
     business_name: Optional[str] = None
+    contact_tel: Optional[str] = None  # 고시정보 A/S 책임자 전화번호(법정 필수)
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
     additional_fields: Optional[Any] = None
@@ -30,6 +31,7 @@ class AccountUpdate(BaseModel):
     account_label: Optional[str] = None
     seller_id: Optional[str] = None
     business_name: Optional[str] = None
+    contact_tel: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
     additional_fields: Optional[Any] = None
