@@ -2505,6 +2505,39 @@ async def _fetch_snkr_shoe_sizes(cli: httpx.AsyncClient, style: str) -> dict | N
     return out
 
 
+async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
+    """삭제·갱신 실행 공용기 [2026-08-04].
+
+    카테고리마다 실행 방식이 달랐다 — 신발은 모아서 동시 8, 박스는 판단 루프에서
+    건당 즉시 실행(+0.1초 sleep)이라 같은 일에 수십 배 시간이 들었다. 하나로 쓴다.
+    dels: [(ask_id, kid, opt)] / upds: [(ask_id, target, cur, is_nc, kid, opt)]
+    카운터 키는 호출부와 동일: del / patch / revert / fail
+    """
+    sem = asyncio.Semaphore(int(os.environ.get("KREAM_EXEC_CONCURRENCY") or 8))
+
+    async def _one_del(_aid, _kid=None, _opt=None):
+        async with sem:
+            if await _exec_delete_ask(cli, h, _aid, _kid, _opt):
+                c["del"] = c.get("del", 0) + 1
+            else:
+                c["fail"] = c.get("fail", 0) + 1
+
+    async def _one_upd(_aid, _tg, _cur, _nc, _kid, _opt):
+        async with sem:
+            _res, _r = await _execute_update(cli, h, _aid, _tg, _cur, _nc, _kid, _opt)
+            if _res == "ok":
+                c["patch"] = c.get("patch", 0) + 1
+            elif _res == "reverted":
+                c["revert"] = c.get("revert", 0) + 1
+            else:
+                c["fail"] = c.get("fail", 0) + 1
+
+    if dels:
+        await asyncio.gather(*[_one_del(*x) for x in dels])
+    if upds:
+        await asyncio.gather(*[_one_upd(*x) for x in upds])
+
+
 async def _process_shoe_asks(
     asks: list,
     kid_to_opts: dict,
@@ -2657,7 +2690,6 @@ async def _process_shoe_asks(
                 low_keep=int(a.get("lowest_100_price") or 0),
             )
             if act in ("국내못이김삭제", "1등불가삭제"):
-                # 가격열위 삭제(국내못이김/1등불가) — 사이클당 상한(200) 적용, 점진 삭제.
                 if not _price_del_take():
                     c["price_del_skip"] = c.get("price_del_skip", 0) + 1
                 else:
@@ -2674,31 +2706,7 @@ async def _process_shoe_asks(
                 if _EXEC_SHOE and a.get("id"):
                     _pend_upd.append((a.get("id"), target, cur, is_nc, kid, opt))
 
-        # [2026-08-02] 판단 루프에서 즉시 실행하면 건당 ~0.8초(순차+sleep) — 수백 건이면
-        # 신발 단계만 수백 초. 판단은 그대로 두고 실행만 모아서 동시 8로 처리.
-        _ssem = asyncio.Semaphore(int(os.environ.get("KREAM_EXEC_CONCURRENCY") or 8))
-
-        async def _sh_del(_aid, _kid=None, _opt=None):
-            async with _ssem:
-                if await _exec_delete_ask(cli, h, _aid, _kid, _opt):
-                    c["del"] += 1
-                else:
-                    c["fail"] += 1
-
-        async def _sh_upd(_aid, _tg, _cur, _nc, _kid, _opt):
-            async with _ssem:
-                _res, _r = await _execute_update(
-                    cli, h, _aid, _tg, _cur, _nc, _kid, _opt
-                )
-                if _res == "ok":
-                    c["patch"] += 1
-                elif _res == "reverted":
-                    c["revert"] += 1
-                else:
-                    c["fail"] += 1
-
-        await asyncio.gather(*[_sh_del(*x) for x in _pend_del])
-        await asyncio.gather(*[_sh_upd(*x) for x in _pend_upd])
+        await _exec_pending(cli, h, _pend_del, _pend_upd, c)
     return c
 
 
@@ -3230,6 +3238,10 @@ async def _process_box_asks(
             *[_one(a) for a in box_asks], return_exceptions=True
         )
         _bsamp: list = []
+        # [2026-08-04] 신발과 동일하게 모아서 한 번에 실행(_exec_pending). 종전엔 판단
+        # 루프에서 건당 즉시 실행 + 0.1초 sleep 이라 같은 일에 수십 배 시간이 들었다.
+        _bx_del: list = []
+        _bx_upd: list = []
         for row in rows:
             if isinstance(row, Exception) or not isinstance(row, tuple):
                 c["hold"] += 1
@@ -3246,27 +3258,16 @@ async def _process_box_asks(
             elif kind == "delete":
                 c["delete"] += 1
                 if _EXEC_BOX:
-                    if await _exec_delete_ask(
-                        scli, h, a.get("id"), a.get("product_id"), a.get("option")
-                    ):
-                        c["del"] += 1
-                    else:
-                        c["fail"] += 1
-                    await asyncio.sleep(0.1)
+                    _bx_del.append((a.get("id"), a.get("product_id"), a.get("option")))
             elif kind == "pricedel":
-                # 가격열위 삭제(국내못이김/1등불가) — 사이클당 상한(200) 적용, 점진 삭제.
                 if not _price_del_take():
                     c["price_del_skip"] = c.get("price_del_skip", 0) + 1
                 else:
                     c["delete"] += 1
                     if _EXEC_BOX:
-                        if await _exec_delete_ask(
-                            scli, h, a.get("id"), a.get("product_id"), a.get("option")
-                        ):
-                            c["del"] += 1
-                        else:
-                            c["fail"] += 1
-                        await asyncio.sleep(0.1)
+                        _bx_del.append(
+                            (a.get("id"), a.get("product_id"), a.get("option"))
+                        )
             elif kind == "renew":
                 c["renew"] += 1
                 if len(_bsamp) < 8:
@@ -3274,34 +3275,25 @@ async def _process_box_asks(
                         f"{a.get('product_id')} ¥{_bjpy:,} {int(a.get('price') or 0):,}→{target:,}[{_bact}]"
                     )
                 if _EXEC_BOX:
-                    res, _r = await _execute_update(
-                        scli,
-                        h,
-                        a.get("id"),
-                        target,
-                        int(a.get("price") or 0),
-                        is_nc,
-                        str(a.get("product_id")),
-                        # [2026-08-03] 실제 옵션을 넘긴다. "해외배송" 을 고정으로 넘기던 탓에
-                        # 쿨다운 기록키(884440|해외배송)와 판정키(884440|ONE SIZE)가 어긋나
-                        # 쿨다운이 영원히 안 걸렸고, 마진 하한(_floor_map) 조회도 빗나갔다.
-                        str(a.get("option") or "해외배송"),
+                    # [2026-08-03] 실제 옵션을 넘긴다. "해외배송" 고정으로 넘기던 탓에
+                    # 쿨다운 기록키(884440|해외배송)와 판정키(884440|ONE SIZE)가 어긋나
+                    # 쿨다운이 영원히 안 걸렸고, 마진 하한(_floor_map) 조회도 빗나갔다.
+                    _bx_upd.append(
+                        (
+                            a.get("id"),
+                            target,
+                            int(a.get("price") or 0),
+                            is_nc,
+                            str(a.get("product_id")),
+                            str(a.get("option") or "해외배송"),
+                        )
                     )
-                    if res == "ok":
-                        c["patch"] += 1
-                    elif res == "reverted":
-                        c["revert"] += 1
-                    else:
-                        c["fail"] += 1
-                    await asyncio.sleep(0.1)
+        await _exec_pending(scli, h, _bx_del, _bx_upd, c)
     if _bsamp:
         logger.info("[크림통합] 박스 변동샘플: %s", _bsamp)
     return c
 
 
-# 국내못이김/1등불가 가격열위 삭제 사이클당 상한 — 첫 사이클 수백건 일괄삭제 쇼크 방지,
-# 200/사이클 점진 삭제(슬랙 감시). 무재고·게이트 삭제는 상한 무관(전량 삭제). [2026-07-26]
-# [2026-08-02] 가격열위(1등불가) 적체가 14,000건 넘어 200/사이클로는 영영 못 지운다 → 2,000.
 _PRICE_DEL_CAP = 10**9  # [2026-08-04] 상한 제거 — 조건이 참이면 전량 즉시 삭제
 _price_del_left = 0  # 사이클 시작 시 _PRICE_DEL_CAP 로 리셋
 
@@ -4261,8 +4253,6 @@ async def run_kream_unified_once() -> dict:
                 *[_do_renew(a1, a2, a3, a4, a5) for a1, a2, a3, a4, a5 in pend_renew]
             )
             await _flush_logs_to_db()
-            # [2026-08-02] 등록이 755건씩 몰리면 순차 POST(0.1s sleep+재시도)로 수십분 걸려
-            # 사이클을 못 끝낸다(슬랙 정지). 사이클당 상한으로 나눠 등록 — 나머지는 다음 회차.
             logger.info(
                 "[크림통합] STAGE 실행-등록 %d건 시작 (%.0f초경과)",
                 len(pend_restock),
