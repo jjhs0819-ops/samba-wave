@@ -2708,7 +2708,16 @@ async def _process_shoe_asks(
             opt = str(a.get("option") or "").strip()
             # 실시간 우선: 조회 성공한 상품은 그 값이 진실(매물 없으면 재고0=삭제 후보)
             if kid in live_map:
-                od = live_map[kid].get(opt) or {"price": 0, "stock": 0}
+                # [2026-08-04] 크림 키즈·여성 사이즈는 '240(US 5.5)'·'230(4Y)' 처럼 접미가
+                # 붙는다. 스니덩크 시세는 '240' 키라 그대로 조회하면 전부 빗나가
+                # 재고·원가를 0 으로 보고 갱신이 통째로 스킵됐다(2,153건 방치).
+                _lm = live_map[kid]
+                od = _lm.get(opt)
+                if od is None:
+                    _base = re.match(r"^(\d{3}(?:\.\d)?)", opt)
+                    if _base:
+                        od = _lm.get(_base.group(1))
+                od = od or {"price": 0, "stock": 0}
             else:
                 # [2026-08-01 통화사고] DB 폴백 금지 — 신발 DB 원가에 원화(KRW)로 저장된 오염분이
                 # 2만개 있어 엔화로 오인하면 9배 부풀린 조정이 나간다. 실시간(JP native, 엔화)
@@ -3729,6 +3738,18 @@ async def run_kream_unified_once() -> dict:
     else:
         _live_offset = 0
     rest_products = [p for p in products if p["kid"] not in _live_kids]
+    # [2026-08-04] 재고 있는 것 먼저 — 탐색 풀 57,172 중 재고 보유는 20,054(35%)뿐이라
+    # 3,000 슬라이스를 뽑아도 등록 가능한 건 ~1,050 밖에 안 됐다(나머지는 재고 0 이라
+    # 처리해도 버려진다). 재고 매칭이 1.5만→3만으로 2배가 됐는데 입찰이 안 따라온 원인.
+    # 로테이션 자체는 그대로라 재고 0 도 결국 훑는다 — 새로 재고가 생긴 건을 놓치지 않는다.
+    rest_products.sort(
+        key=lambda p: 0
+        if any(
+            int((d or {}).get("stock") or 0) > 0
+            for d in (p.get("db_opts") or {}).values()
+        )
+        else 1
+    )
     batch = int(os.environ.get("KREAM_UNIFIED_BATCH") or 10000)
     # 재시작 직후(in-memory 0)면 DB서 이전 offset 복원 → 로테이션 이어감(재배포 리셋 방지)
     if _unified_offset == 0:
