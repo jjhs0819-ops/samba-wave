@@ -3631,10 +3631,29 @@ async def run_kream_unified_once() -> dict:
         )
         else 1
     )
-    # [2026-08-04] 리스톡 탐색 로테이션 제거 — 미입찰 상품 전량을 매 사이클 훑는다.
-    # 3,000/사이클이면 57,284건 한 바퀴에 19사이클(6시간+)이라 신규 브랜드가
-    # 사실상 등록되지 않았다(아디다스 재고 4,484 → 입찰 44).
-    rest_slice = rest_products
+    # [2026-08-05] 갱신/리스톡 사이클 분리 — 리스톡만 슬라이스로 되돌린다.
+    # 전량(55,437) 처리로 바꿨더니 사이클이 7시간 20분이 됐고, 그동안 가격 갱신이
+    # 통째로 멈춰 2등으로 밀린 입찰을 못 잡았다(실측: 22:53 시작 → 06:14 다음 회차).
+    # 갱신 대상(12,108)은 계속 전량, 리스톡만 나눠 돌면 사이클이 ~2.4시간으로 떨어진다.
+    #   갱신 주기 7.3h → 2.4h (가격 추종)
+    #   리스톡 한 바퀴 ~13h (신규 발굴은 원래 며칠 단위라 영향 작음)
+    # 바로 위 재고 우선 정렬이 여기서 값을 한다 — 슬라이스가 등록 가능한 건으로 채워진다.
+    _restock_scan = int(os.environ.get("KREAM_RESTOCK_SCAN") or 10000)
+    if _unified_offset == 0:
+        try:
+            _unified_offset = int(
+                (await _load_setting_map(_SET_OFFSET)).get("v", 0) or 0
+            )
+        except Exception:
+            _unified_offset = 0
+    if _restock_scan > 0 and len(rest_products) > _restock_scan:
+        _rst = _unified_offset % len(rest_products)
+        rest_slice = (rest_products[_rst:] + rest_products[:_rst])[:_restock_scan]
+        _unified_offset = (_rst + _restock_scan) % len(rest_products)
+    else:
+        rest_slice = rest_products
+        _unified_offset = 0
+    await _save_setting_map(_SET_OFFSET, {"v": int(_unified_offset)})
     # [2026-08-01] verified 비카드(신발/의류/시계)는 매 사이클 우선 포함 — 통화교정 후 등록
     # 대기분 4천여개가 1,500/사이클 로테이션으로는 32바퀴(수시간) 걸려 신규입찰이 안 돌았다.
     # 비카드는 snkr fetch 없이 DB 옵션만 보므로 사이클 부담이 작다(카드처럼 API 조회 안 함).
@@ -4585,7 +4604,8 @@ async def run_kream_unified_once() -> dict:
     _restock_sec = (
         f"[일치상품 리스톡·미등록 점검]\n"
         f"{_cat1_line}"
-        f"무재고 스캔 {rest_total:,}건 전량(로테이션 없음)\n"
+        f"무재고 스캔 {min(_unified_offset, rest_total):,}/{rest_total:,}"
+        f" (이번 {len(rest_slice):,}건 · 재고보유 우선)\n"
         f"이번 사이클 리스톡 발견 {_rs_found:,}건"
         f" (등록 {int(rs['ok']):,} · 보류 {_rs_hold:,})\n"
         f"재고 {_stock_total:,}건 (카드 {card_instock:,}·신발 {_shoe_stock:,}"
