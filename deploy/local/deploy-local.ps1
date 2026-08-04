@@ -32,8 +32,12 @@ if ($LASTEXITCODE -ne 0) { throw "빌드 실패" }
 # 그대로 남아 주문 이행 실패로 이어진다.
 # → 사이클이 돌고 있으면 끝날 때까지 기다렸다 배포한다. 어느 세션이 실행하든 적용된다.
 #   건너뛰려면: $env:SKIP_KREAM_WAIT = '1'
+# [2026-08-04 2차] 대기 600초·로그 12분은 사이클보다 짧아 가드가 무력했다.
+# 실측 한 바퀴: 실순위 272초 + 카드처리 747초 + 실행 = 20분 이상.
+# → 10분 만에 포기하고 배포해 매번 사이클을 죽였고(완주 0회), 완주해야 나가는
+#   슬랙 요약이 3시간 넘게 안 나갔다. 대기 30분 / 로그 40분으로 늘린다.
 function Wait-KreamCycle {
-  param([int]$MaxSec = 600)
+  param([int]$MaxSec = 1800)
   if ($env:SKIP_KREAM_WAIT -eq '1') {
     Write-Host "크림 사이클 대기 건너뜀(SKIP_KREAM_WAIT=1)" -ForegroundColor Yellow
     return
@@ -44,7 +48,10 @@ function Wait-KreamCycle {
   $waited = $false
   while (((Get-Date) - $t0).TotalSeconds -lt $MaxSec) {
     # 최근 로그에 사이클 시작만 있고 종료(실행ON 요약)가 없으면 진행 중으로 본다
-    $log = docker logs --since 12m local-samba-kream-1 2>&1 | Select-String -Pattern "STAGE 카드처리 시작|실행ON —"
+    # 크림통합 로그 전체를 보고 "마지막 줄이 완료 요약(실행ON)인가"로 판정한다.
+    # 종전엔 "STAGE 카드처리 시작" 만 패턴에 넣어, 그 앞 실순위 조회(272초) 구간은
+    # 감지 자체가 안 됐다.
+    $log = docker logs --since 40m local-samba-kream-1 2>&1 | Select-String -Pattern "\[크림통합\]"
     if (-not $log) { break }
     $last = ($log | Select-Object -Last 1).ToString()
     if ($last -match "실행ON") { break }   # 마지막이 요약 = 사이클 끝남
