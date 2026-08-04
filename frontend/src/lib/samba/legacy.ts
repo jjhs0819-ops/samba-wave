@@ -1159,7 +1159,6 @@ export interface SambaMarketAccount {
   account_label: string;
   seller_id?: string;
   business_name?: string;
-  contact_tel?: string;
   is_active: boolean;
   is_default?: boolean;
   additional_fields?: Record<string, unknown>;

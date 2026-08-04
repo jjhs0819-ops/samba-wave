@@ -392,6 +392,7 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiService', label: 'API Service', type: 'text', placeholder: '예: direct (직연동) / hubnet (허브넷)' },
     { name: 'apiKey', label: 'API Key', type: 'text', placeholder: '크림 발급 API 키' },
     { name: 'apiSecret', label: 'API Secret', type: 'password', placeholder: '크림 발급 시크릿' },
+    { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '사업자 연락처 — 상품 고시정보 필수' },
   ]},
   { key: 'poison', label: '포이즌', authField: 'apiKey', guideUrl: 'https://open.poizon.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },

@@ -2200,7 +2200,8 @@ _keep_impossible: set = set()
 _ANN_BASE = "https://partner-api.kream.co.kr/api/v1/products"
 _ANN_TOKEN_KEY = "kream_partner_token"
 # 사업자 연락처(고시 "A/S 책임자 또는 소비자상담 관련 전화번호", 법정 필수)는
-# 마켓 계정 관리 화면의 크림 계정 contact_tel 에서 읽는다. 비어 있으면 등록하지 않는다.
+# 설정 > KREAM 의 'A/S 전화번호'(계정 additional_fields.asPhone)에서 읽는다.
+# 비어 있으면 등록하지 않는다 — 법정 필수항목이라 지어낼 수 없다.
 _ann_tel_cache: list = [0.0, ""]  # [조회시각, 번호]
 # 해외 판매자는 원산지·HS코드 필수(누락 시 PUT 400). 원산지=일본(id 4) — 일본 소싱 발송분.
 _ANN_COUNTRY_JP = 4
@@ -2265,7 +2266,7 @@ async def _partner_token() -> str:
 
 
 async def _ann_as_tel() -> str:
-    """고시 기재용 사업자 연락처 — 크림 마켓 계정(samba_market_account)의 contact_tel.
+    """고시 기재용 사업자 연락처 — 설정 > KREAM 의 A/S 전화번호(asPhone).
     법정 필수 항목이라 지어낼 수 없다. 비어 있으면 호출부가 고시등록을 건너뛴다.
     10분 캐시 — 계정 설정은 자주 안 바뀐다."""
     import time as _t  # noqa: F811
@@ -2280,8 +2281,9 @@ async def _ann_as_tel() -> str:
             r = (
                 await s.execute(
                     _sql_text(
-                        "SELECT contact_tel FROM samba_market_account "
-                        "WHERE market_type='kream' AND COALESCE(contact_tel,'')<>'' "
+                        "SELECT additional_fields->>'asPhone' AS tel "
+                        "FROM samba_market_account WHERE market_type='kream' "
+                        "AND COALESCE(additional_fields->>'asPhone','')<>'' "
                         "ORDER BY is_default DESC, is_active DESC LIMIT 1"
                     )
                 )
@@ -2543,6 +2545,43 @@ def _cm_to_mm(s: str) -> str | None:
     return str(int(v)) if v == int(v) else str(v)
 
 
+async def _fetch_snkr_apparel_sizes(cli: httpx.AsyncClient, sid: str) -> dict | None:
+    """의류·잡화 사이즈별 실시간 최저가 — {옵션명: {price, stock}}. 실패 시 None.
+
+    [2026-08-04] 신발은 mm 옵션(230·275)이라 _SHOE_OPT_RE 로 잡혀 실시간 조회를 받았지만,
+    의류는 사이즈가 S/M/L 이라 그 정규식에 안 걸려 _mm_kids 에서 빠졌다. 시세를 못 받으면
+    코드가 그 상품을 통째로 스킵해 **의류 비1순위 1,073건이 매 사이클 판단조차 안 됐다**.
+    의류는 /v1/apparels/{id}/sizes 가 사이즈별 신품최저가·재고수를 준다(실측).
+    """
+    try:
+        r = await cli.get(
+            f"https://snkrdunk.com/v1/apparels/{sid}/sizes",
+            headers={
+                "User-Agent": _SNKR_HEADERS["User-Agent"],
+                "Accept-Language": "ja",
+            },
+            follow_redirects=True,
+        )
+        if r.status_code != 200:
+            return None
+        rows = (r.json() or {}).get("sizePrices") or []
+    except Exception:
+        return None
+    out: dict = {}
+    for it in rows:
+        nm = str(((it or {}).get("size") or {}).get("localizedName") or "").strip()
+        if not nm:
+            continue
+        price = int(it.get("minNewListingPrice") or 0)
+        stock = int(it.get("listingItemCount") or 0)
+        out[nm] = {"price": price, "stock": stock}
+        # 신발형 표기(26.5cm)도 함께 넣어 크림 mm 옵션과 맞는다
+        mm = _cm_to_mm(nm)
+        if mm:
+            out[mm] = {"price": price, "stock": stock}
+    return out or None
+
+
 async def _fetch_snkr_shoe_sizes(cli: httpx.AsyncClient, style: str) -> dict | None:
     """신발 사이즈별 실시간 최저가(신품) — {mm: {price, stock}}. 실패 시 None(=DB 폴백)."""
     try:
@@ -2630,17 +2669,19 @@ async def _process_shoe_asks(
             if not style:
                 return
             async with _sem:
-                live = await _fetch_snkr_shoe_sizes(cli, style)
+                # [2026-08-04] 카테고리 무관 처리 — 스니덩크 id 가 숫자면 의류·잡화라
+                # /v1/apparels/{id}/sizes, 스타일코드면 신발이라 상품 HTML 을 쓴다.
+                if str(style).isdigit():
+                    live = await _fetch_snkr_apparel_sizes(cli, str(style))
+                else:
+                    live = await _fetch_snkr_shoe_sizes(cli, style)
             if live is not None:
                 live_map[kid] = live
 
-        # 실시간 사이즈시세 조회는 신발(mm) kid 만 — 의류/시계는 shoe-size API 없음(오파싱 방지).
-        # 의류/시계 kid 는 live_map 미포함 → DB 옵션(kid_to_opts) 폴백으로 원가 사용.
-        _mm_kids = {
-            str(a.get("product_id") or "")
-            for a in shoe_asks
-            if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
-        }
+        # [2026-08-04] 브랜드·카테고리 가리지 않고 전량 대상. 종전엔 mm 옵션(230·275)만
+        # 뽑아 의류(S/M/L)가 통째로 빠졌고, 시세를 못 받은 상품은 갱신 스킵이라
+        # 의류 비1순위 1,073건이 매 사이클 판단조차 안 된 채 남아 있었다.
+        _mm_kids = {str(a.get("product_id") or "") for a in shoe_asks}
         # [2026-08-02] 신발 상품 3,000개+ 를 매 사이클 전량 조회하면 사이클이 수시간으로 폭발해
         # 완주(=슬랙)를 못 한다. 카드 리스톡처럼 **로테이션**으로 사이클당 일부만 실시간 조회.
         # 조회 안 된 상품은 이번 사이클 갱신 스킵(다음 회차에 조회) — 가격 방치는 없음.

@@ -12,7 +12,7 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ market_type: "coupang", seller_id: "", business_name: "", contact_tel: "" });
+  const [form, setForm] = useState({ market_type: "coupang", seller_id: "", business_name: "" });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -26,7 +26,7 @@ export default function AccountsPage() {
     try {
       await accountApi.create(form);
       setShowForm(false);
-      setForm({ market_type: "coupang", seller_id: "", business_name: "", contact_tel: "" });
+      setForm({ market_type: "coupang", seller_id: "", business_name: "" });
       load();
     } catch (e) { showAlert(e instanceof Error ? e.message : '계정 저장 실패', 'error') }
   };
@@ -35,18 +35,6 @@ export default function AccountsPage() {
     try { await accountApi.toggle(id); load(); }
     catch (e) { showAlert(e instanceof Error ? e.message : '상태 변경 실패', 'error') }
   };
-  // 사업자 연락처 인라인 편집 — 고시정보(A/S 책임자 전화번호)에 쓰이는 법정 필수값이라
-  // 계정 생성 후에도 바로 채울 수 있어야 한다.
-  const [editTel, setEditTel] = useState<{ id: string; value: string } | null>(null)
-  const handleSaveTel = async () => {
-    if (!editTel) return
-    try {
-      await accountApi.update(editTel.id, { contact_tel: editTel.value.trim() })
-      setEditTel(null)
-      load()
-    } catch (e) { showAlert(e instanceof Error ? e.message : '연락처 저장 실패', 'error') }
-  }
-
   const handleDelete = async (id: string) => {
     if (!await showConfirm('삭제하시겠습니까?')) return
     try { await accountApi.delete(id); load(); }
@@ -62,7 +50,7 @@ export default function AccountsPage() {
 
       {showForm && (
         <div className="rounded-lg p-4 space-y-3" style={{ background: c.surface, border: `1px solid ${c.border}` }}>
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="text-xs mb-1 block" style={{ color: c.textSub }}>마켓</label>
               <select value={form.market_type} onChange={(e) => setForm({ ...form, market_type: e.target.value })}
@@ -74,7 +62,6 @@ export default function AccountsPage() {
             </div>
             <FI label="판매자 ID" value={form.seller_id} onChange={(v) => setForm({ ...form, seller_id: v })} />
             <FI label="사업자명" value={form.business_name} onChange={(v) => setForm({ ...form, business_name: v })} />
-            <FI label="사업자 연락처" value={form.contact_tel} onChange={(v) => setForm({ ...form, contact_tel: v })} />
           </div>
           <div className="flex gap-2 justify-end">
             <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm" style={{ ...btn('ghost') }}>취소</button>
@@ -91,7 +78,6 @@ export default function AccountsPage() {
                 <th className="text-left px-4 py-2.5">마켓</th>
                 <th className="text-left px-4 py-2.5">계정</th>
                 <th className="text-left px-4 py-2.5">사업자명</th>
-                <th className="text-left px-4 py-2.5">사업자 연락처</th>
                 <th className="text-left px-4 py-2.5">상태</th>
                 <th className="text-right px-4 py-2.5">작업</th>
               </tr>
@@ -102,24 +88,6 @@ export default function AccountsPage() {
                   <td className="px-4 py-2.5" style={{ color: c.text }}>{a.market_name || a.market_type}</td>
                   <td className="px-4 py-2.5">{a.account_label}</td>
                   <td className="px-4 py-2.5" style={{ color: c.textMuted }}>{a.business_name || "-"}</td>
-                  <td className="px-4 py-2.5" style={{ color: c.textMuted }}>
-                    {editTel?.id === a.id ? (
-                      <span className="flex items-center gap-1.5">
-                        <input autoFocus type="text" value={editTel.value}
-                          onChange={(e) => setEditTel({ id: a.id, value: e.target.value })}
-                          onKeyDown={(e) => { if (e.key === 'Enter') handleSaveTel(); if (e.key === 'Escape') setEditTel(null) }}
-                          className="px-2 py-1 rounded text-xs w-36 focus:outline-none"
-                          style={{ background: c.inputBg, border: `1px solid ${c.border}`, color: c.text }} />
-                        <button onClick={handleSaveTel} className="text-xs hover:underline" style={{ color: c.success }}>저장</button>
-                        <button onClick={() => setEditTel(null)} className="text-xs hover:underline" style={{ color: c.textMuted }}>취소</button>
-                      </span>
-                    ) : (
-                      <button onClick={() => setEditTel({ id: a.id, value: a.contact_tel || '' })}
-                        className="hover:underline" style={{ color: a.contact_tel ? c.textMuted : c.danger }}>
-                        {a.contact_tel || '미입력'}
-                      </button>
-                    )}
-                  </td>
                   <td className="px-4 py-2.5">
                     <button onClick={() => handleToggle(a.id)} className="px-2 py-0.5 rounded text-xs font-medium"
                       style={{ background: a.is_active ? 'rgba(56,154,56,0.15)' : 'rgba(216,68,68,0.15)', color: a.is_active ? c.success : c.danger }}>
@@ -132,7 +100,7 @@ export default function AccountsPage() {
                 </tr>
               ))}
               {accounts.length === 0 && (
-                <tr><td colSpan={6} className="px-4 py-8 text-center" style={{ color: c.textMuted }}>등록된 계정이 없습니다</td></tr>
+                <tr><td colSpan={5} className="px-4 py-8 text-center" style={{ color: c.textMuted }}>등록된 계정이 없습니다</td></tr>
               )}
             </tbody>
           </table>
