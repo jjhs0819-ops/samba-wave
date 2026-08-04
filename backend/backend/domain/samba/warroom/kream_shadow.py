@@ -2577,7 +2577,7 @@ async def _process_shoe_asks(
         # 느렸다(상한 2,000인데 실제 735건). 스니덩크 0.2s 라 1,500도 여유.
         # [2026-08-02] 1,500 → 4,000. 비1순위 15,874 정리에 11사이클 걸리던 것 4사이클로.
         # 스니덩크 0.2s·동시성 20 이라 4,000도 ~1분. 사이클 79초 여유 안에서 처리.
-        _fetch_cap = int(os.environ.get("KREAM_SHOE_FETCH_MAX") or 2500)
+        _fetch_cap = int(os.environ.get("KREAM_SHOE_FETCH_MAX") or _CYCLE_SCAN)
         if len(_mm_list) > _fetch_cap:
             _st = _shoe_fetch_offset % len(_mm_list)
             _mm_round = (_mm_list[_st:] + _mm_list[:_st])[:_fetch_cap]
@@ -2700,7 +2700,16 @@ async def _process_shoe_asks(
 
 
 # 신발 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지(사이즈별 다건). verified 확정 신발만.
-_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or 50)
+# [2026-08-04] 신규등록 상한 통합 — 카테고리별(신발50/박스30)로 따로 두다 보니
+# 미등록이 19,804건인데 신발이 사이클당 50건씩만 붙었다. 등록 실행 단계에서
+# KREAM_POST_MAX 로 한 번 더 자르므로 카테고리 상한은 중복 제한이다.
+# 카테고리 구분 없이 POST_MAX 하나로 본다(환경변수로 여전히 개별 조정 가능).
+_POST_MAX = int(os.environ.get("KREAM_POST_MAX") or 1200)
+# [2026-08-04] 사이클 스캔 상한 일원화 — 카드(LIVE_BATCH 2,500)·신발(SHOE_FETCH_MAX 7,000)이
+# 서로 다른 값으로 따로 돌아 어느 쪽이 병목인지 알 수 없었다. 하나로 묶어 조정한다.
+# 개별 환경변수를 주면 그쪽이 우선(급할 때 카테고리별 미세조정 여지는 남긴다).
+_CYCLE_SCAN = int(os.environ.get("KREAM_CYCLE_SCAN") or 5000)
+_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or _POST_MAX)
 
 
 def _cm_to_mm_variants(name: str) -> set[str]:
@@ -2857,7 +2866,7 @@ async def _process_shoe_restock(
 
 
 # 박스/카드팩 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지.
-_BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or 30)
+_BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or _POST_MAX)
 # 박스 신규 자동등록 실행 게이트 — 갱신/삭제(_EXEC_BOX)와 별도. 후보 검증 후 1.
 _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
@@ -3631,7 +3640,7 @@ async def run_kream_unified_once() -> dict:
     # [2026-08-02] 라이브 입찰이 21,400건(신발 18,500)으로 폭증해 매 사이클 전량 갱신이
     # 불가능해졌다(사이클 미완주 = 슬랙 정지). 갱신도 로테이션 — 사이클당 KREAM_LIVE_BATCH
     # 개씩 나눠 처리하고 다음 회차에 이어서. 가격 추종은 몇 사이클 늦어지지만 완주는 보장.
-    _live_batch = int(os.environ.get("KREAM_LIVE_BATCH") or 2500)
+    _live_batch = int(os.environ.get("KREAM_LIVE_BATCH") or _CYCLE_SCAN)
     global _live_offset
     # [2026-08-04] 갱신 offset 영속화 — 리스톡 offset 은 DB 에 저장하는데 이쪽만 메모리라
     # 배포/재시작마다 0 으로 리셋됐다. 그 탓에 매번 같은 앞부분 2,500 건만 갱신되고
@@ -4303,7 +4312,7 @@ async def run_kream_unified_once() -> dict:
             await _flush_logs_to_db()
             # [2026-08-02] 등록이 755건씩 몰리면 순차 POST(0.1s sleep+재시도)로 수십분 걸려
             # 사이클을 못 끝낸다(슬랙 정지). 사이클당 상한으로 나눠 등록 — 나머지는 다음 회차.
-            _post_cap = int(os.environ.get("KREAM_POST_MAX") or 150)
+            _post_cap = _POST_MAX
             if len(pend_restock) > _post_cap:
                 logger.info(
                     "[크림통합] 등록 %d건 중 %d건만 이번 사이클(나머지 다음 회차)",
