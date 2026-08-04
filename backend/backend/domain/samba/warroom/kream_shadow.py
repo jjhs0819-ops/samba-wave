@@ -2843,6 +2843,9 @@ async def _process_shoe_asks(
             price = _guard_jpy(kid, opt, price)
             if stock <= 0 or price <= 0:
                 c["delete"] += 1
+                # [2026-08-04 계측] 삭제 사유 분리 — 신발 삭제가 사이클당 435건이나 되는데
+                # c["delete"] 한 곳에 합산돼 재고소진인지 가격열위인지 구분이 안 됐다.
+                c["del_nostock"] = c.get("del_nostock", 0) + 1
                 if _EXEC_SHOE and a.get("id"):
                     _pend_del.append((a.get("id"), kid, opt))
                 continue
@@ -2872,6 +2875,11 @@ async def _process_shoe_asks(
                     c["price_del_skip"] = c.get("price_del_skip", 0) + 1
                 else:
                     c["delete"] += 1
+                    c["del_price"] = c.get("del_price", 0) + 1
+                    if act == "1등불가삭제":
+                        c["del_rank1"] = c.get("del_rank1", 0) + 1
+                    else:
+                        c["del_domestic"] = c.get("del_domestic", 0) + 1
                     if _EXEC_SHOE and a.get("id"):
                         _pend_del.append((a.get("id"), kid, opt))
             elif adjusting and target != cur:
@@ -4560,12 +4568,17 @@ async def run_kream_unified_once() -> dict:
         asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr, sized_kids
     )
     logger.info(
-        "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
+        "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d[재고0:%d 1등불가:%d 국내못이김:%d 가격열위보류:%d] "
+        "보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
         shoe["total"],
         shoe.get("live_ok", 0),
         shoe["stock"],
         shoe["renew"],
         shoe["delete"],
+        shoe.get("del_nostock", 0),
+        shoe.get("del_rank1", 0),
+        shoe.get("del_domestic", 0),
+        shoe.get("price_del_skip", 0),
         shoe["hold"],
         shoe["nocost"],
         shoe["patch"],
