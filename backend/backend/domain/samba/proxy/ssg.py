@@ -876,7 +876,18 @@ class SSGClient:
                 else:
                     items_list = []
             elif isinstance(items_raw, list):
-                items_list = items_raw
+                # [2026-08-04] 실응답은 items 가 [{"item": [...]}] 래퍼 리스트 —
+                # 리스트를 그대로 세면 항상 1건이 되어 유령 대조가 무력화된다.
+                items_list = []
+                for _w in items_raw:
+                    if isinstance(_w, dict) and "item" in _w:
+                        _iv = _w.get("item")
+                        if isinstance(_iv, dict):
+                            items_list.append(_iv)
+                        elif isinstance(_iv, list):
+                            items_list.extend(_iv)
+                    elif isinstance(_w, dict):
+                        items_list.append(_w)
             else:
                 items_list = []
             count = len(items_list)
@@ -916,7 +927,17 @@ class SSGClient:
                     else (iv if isinstance(iv, list) else [])
                 )
             elif isinstance(items_raw, list):
-                items_list = items_raw
+                # [2026-08-04] items 가 [{"item": [...]}] 래퍼 리스트인 실응답 대응
+                items_list = []
+                for _w in items_raw:
+                    if isinstance(_w, dict) and "item" in _w:
+                        _iv2 = _w.get("item")
+                        if isinstance(_iv2, dict):
+                            items_list.append(_iv2)
+                        elif isinstance(_iv2, list):
+                            items_list.extend(_iv2)
+                    elif isinstance(_w, dict):
+                        items_list.append(_w)
             else:
                 items_list = []
             for it in items_list:
