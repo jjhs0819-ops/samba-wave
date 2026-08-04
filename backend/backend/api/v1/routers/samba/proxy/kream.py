@@ -339,7 +339,9 @@ async def kream_openapi_proxy(
     if not path.startswith("/"):
         path = "/" + path
     if not _openapi_path_allowed(method, path):
-        raise HTTPException(status_code=403, detail=f"허용되지 않은 경로: {method} {path}")
+        raise HTTPException(
+            status_code=403, detail=f"허용되지 않은 경로: {method} {path}"
+        )
 
     sql = (
         "SELECT api_key, api_secret, additional_fields FROM samba_market_account "
@@ -352,14 +354,18 @@ async def kream_openapi_proxy(
     sql += " ORDER BY is_default DESC LIMIT 1"
     row = (await session.exec(_text(sql), params=params)).first()
     if not row:
-        raise HTTPException(status_code=404, detail="KREAM 계정이 등록되어 있지 않습니다.")
+        raise HTTPException(
+            status_code=404, detail="KREAM 계정이 등록되어 있지 않습니다."
+        )
 
     af = row[2] if isinstance(row[2], dict) else {}
     api_service = str(af.get("apiService") or "")
     api_key = str(af.get("apiKey") or row[0] or "")
     api_secret = str(af.get("apiSecret") or row[1] or "")
     if not (api_service and api_key and api_secret):
-        raise HTTPException(status_code=400, detail="KREAM API 인증정보가 불완전합니다.")
+        raise HTTPException(
+            status_code=400, detail="KREAM API 인증정보가 불완전합니다."
+        )
 
     client = KreamPartnerClient(api_service, api_key, api_secret)
     kwargs: dict[str, Any] = {}

@@ -12,10 +12,17 @@ import os
 
 # settings import 가 DB env 를 요구 — 더미 주입 (기존 테스트 패턴)
 for _k, _v in {
-    "WRITE_DB_USER": "u", "WRITE_DB_PASSWORD": "p", "WRITE_DB_HOST": "localhost",
-    "WRITE_DB_PORT": "5432", "WRITE_DB_NAME": "d",
-    "READ_DB_USER": "u", "READ_DB_PASSWORD": "p", "READ_DB_HOST": "localhost",
-    "READ_DB_PORT": "5432", "READ_DB_NAME": "d", "JWT_SECRET_KEY": "x",
+    "WRITE_DB_USER": "u",
+    "WRITE_DB_PASSWORD": "p",
+    "WRITE_DB_HOST": "localhost",
+    "WRITE_DB_PORT": "5432",
+    "WRITE_DB_NAME": "d",
+    "READ_DB_USER": "u",
+    "READ_DB_PASSWORD": "p",
+    "READ_DB_HOST": "localhost",
+    "READ_DB_PORT": "5432",
+    "READ_DB_NAME": "d",
+    "JWT_SECRET_KEY": "x",
 }.items():
     os.environ.setdefault(_k, _v)
 
@@ -23,8 +30,15 @@ from backend.domain.samba.proxy.ssg import SSGClient  # noqa: E402
 
 
 def _fake_resp(n, page_size=100):
-    items = [{"itemId": f"I{i}", "splVenItemId": f"cp_{i}", "sellStatCd": "20",
-              "itemNm": f"상품{i}"} for i in range(n)]
+    items = [
+        {
+            "itemId": f"I{i}",
+            "splVenItemId": f"cp_{i}",
+            "sellStatCd": "20",
+            "itemNm": f"상품{i}",
+        }
+        for i in range(n)
+    ]
     return {"result": {"resultCode": "SUCCESS", "items": [{"item": items}]}}
 
 

@@ -25,6 +25,39 @@ try {
 docker compose --env-file local.env -f docker-compose.local.yml build samba-api
 if ($LASTEXITCODE -ne 0) { throw "빌드 실패" }
 
+# ── 크림 사이클 대기 가드 [2026-08-04] ───────────────────────────────────────
+# 크림 오토튠은 6분짜리 사이클(실순위 확인 → 갱신 → 삭제 → 등록)을 돈다. 컨테이너를
+# 교체하면 돌던 사이클이 통째로 죽어 그 회차 작업이 전부 헛것이 된다.
+# 실측(2026-08-04): 여러 세션이 배포를 반복해 45분간 완주 0회 — 재고 빠진 입찰이
+# 그대로 남아 주문 이행 실패로 이어진다.
+# → 사이클이 돌고 있으면 끝날 때까지 기다렸다 배포한다. 어느 세션이 실행하든 적용된다.
+#   건너뛰려면: $env:SKIP_KREAM_WAIT = '1'
+function Wait-KreamCycle {
+  param([int]$MaxSec = 600)
+  if ($env:SKIP_KREAM_WAIT -eq '1') {
+    Write-Host "크림 사이클 대기 건너뜀(SKIP_KREAM_WAIT=1)" -ForegroundColor Yellow
+    return
+  }
+  $running = docker ps --filter name=local-samba-kream-1 --format "{{.Names}}" 2>$null
+  if (-not $running) { return }
+  $t0 = Get-Date
+  $waited = $false
+  while (((Get-Date) - $t0).TotalSeconds -lt $MaxSec) {
+    # 최근 로그에 사이클 시작만 있고 종료(실행ON 요약)가 없으면 진행 중으로 본다
+    $log = docker logs --since 12m local-samba-kream-1 2>&1 | Select-String -Pattern "STAGE 카드처리 시작|실행ON —"
+    if (-not $log) { break }
+    $last = ($log | Select-Object -Last 1).ToString()
+    if ($last -match "실행ON") { break }   # 마지막이 요약 = 사이클 끝남
+    if (-not $waited) {
+      Write-Host "크림 사이클 진행 중 — 완주까지 대기(최대 $([int]($MaxSec/60))분)..." -ForegroundColor Yellow
+      $waited = $true
+    }
+    Start-Sleep -Seconds 20
+  }
+  if ($waited) { Write-Host "크림 사이클 완료 — 배포 진행" -ForegroundColor Green }
+}
+Wait-KreamCycle
+
 Write-Host "[3/4] 컨테이너 교체 (워커 ON)..." -ForegroundColor Cyan
 $env:BG_DISABLE = '0'
 # up -d 출력을 잡아둔다 — 실패 시 원인(포트충돌/이미지없음/엔진오류)이 여기에만 있고,

@@ -2073,12 +2073,16 @@ async def poison_cancel_order(
         if not isinstance(extras, dict):
             extras = {}
         app_key = (
-            extras.get("app_key", "") or extras.get("appKey", "")
-            or getattr(account, "api_key", "") or ""
+            extras.get("app_key", "")
+            or extras.get("appKey", "")
+            or getattr(account, "api_key", "")
+            or ""
         )
         app_secret = (
-            extras.get("app_secret", "") or extras.get("appSecret", "")
-            or getattr(account, "api_secret", "") or ""
+            extras.get("app_secret", "")
+            or extras.get("appSecret", "")
+            or getattr(account, "api_secret", "")
+            or ""
         )
         spu_raw = str(order.product_id or "").strip()
         if app_key and app_secret and spu_raw.isdigit():
@@ -2095,7 +2099,9 @@ async def poison_cancel_order(
                         seller_bidding_no=bno,
                         price=new_price,
                         quantity=1,
-                        global_sku_id=int(b["globalSkuId"]) if b.get("globalSkuId") else None,
+                        global_sku_id=int(b["globalSkuId"])
+                        if b.get("globalSkuId")
+                        else None,
                         old_quantity=1,
                     )
                     if r.get("success"):
@@ -2113,7 +2119,9 @@ async def poison_cancel_order(
                         {"bno": bno, "msg": str(r.get("message") or "")[:120]}
                     )
         elif not spu_raw.isdigit():
-            cancel_errors.append({"bno": "", "msg": "spuId(product_id) 없음 — 입찰취소 생략"})
+            cancel_errors.append(
+                {"bno": "", "msg": "spuId(product_id) 없음 — 입찰취소 생략"}
+            )
 
     if action == "reprice":
         penalty = 0  # 가격 수정 모드 — 주문은 정상 이행, 위약금 없음
@@ -2125,7 +2133,10 @@ async def poison_cancel_order(
 
     logger.info(
         "[포이즌 취소] order=%s penalty=%s 입찰취소=%d 실패=%d",
-        order.order_number, penalty, len(canceled), len(cancel_errors),
+        order.order_number,
+        penalty,
+        len(canceled),
+        len(cancel_errors),
     )
     return {
         "success": True,
@@ -2134,9 +2145,12 @@ async def poison_cancel_order(
         "repriced_bids": repriced,
         "cancel_errors": cancel_errors,
         "penalty_recorded": penalty if penalty > 0 else None,
-        "note": ("주문 자체 취소는 미발송 방치(기한 후 자동 거래실패) 또는 "
-                 "셀러센터 수동(재고부족)" if action == "cancel" else
-                 "가격 수정 완료 — 주문은 정상 발송 진행"),
+        "note": (
+            "주문 자체 취소는 미발송 방치(기한 후 자동 거래실패) 또는 "
+            "셀러센터 수동(재고부족)"
+            if action == "cancel"
+            else "가격 수정 완료 — 주문은 정상 발송 진행"
+        ),
     }
 
 

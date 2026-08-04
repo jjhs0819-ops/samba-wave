@@ -2652,13 +2652,35 @@ async def _resolve_box_option(cli: httpx.AsyncClient, h: dict, kid: str) -> dict
         opts = (r.json() or {}).get("options") or [] if r.status_code == 200 else []
     except Exception:
         return {}
+    sel = None
     for o in opts:
         if str(o.get("name") or "") == "해외배송":
-            return o
-    for o in opts:
-        if str(o.get("name") or "").startswith("해외배송"):
-            return o
-    return opts[0] if len(opts) == 1 else {}
+            sel = o
+            break
+    if sel is None:
+        for o in opts:
+            if str(o.get("name") or "").startswith("해외배송"):
+                sel = o
+                break
+    if sel is None and len(opts) == 1:
+        sel = opts[0]
+    if sel is None:
+        return {}
+    # [2026-08-04] 시장최저는 **전 옵션(판매유형) 통합**으로 봐야 한다.
+    # 선택 옵션 하나만 보면, 내가 유일한 해외배송 입찰일 때 lowest_overseas_price 가
+    # 곧 내 가격이라 "내가 1등"으로 계산된다. 실제 크림 순위는 일반/해외를 합쳐 매기므로
+    # 일반배송이 더 싸면 그대로 밀린다(실측: 913591 해외 127,000=내 값 / 일반 102,000
+    # → 등록 직후 101등). 카드·신발은 live_rank 로 막았지만 박스 신규등록은 ask 가 없어
+    # live_rank 를 못 써서 이 구멍이 남아 있었다.
+    _all = [
+        v
+        for o in opts
+        for v in (o.get("lowest_overseas_price"), o.get("lowest_normal_price"))
+        if v and int(v) > 0
+    ]
+    sel = dict(sel)
+    sel["_market_low_all"] = min(int(v) for v in _all) if _all else 0
+    return sel
 
 
 async def _process_box_restock(
@@ -2788,12 +2810,14 @@ async def _process_box_restock(
             # 시장 최저가 = 크림 상품 옵션 응답(_resolve_box_option 이 이미 받아온 것).
             # 신규등록이라 asks 에는 내 입찰이 없어(항상 빈 dict) 시장가 0=무경쟁으로 계산되던
             # 것을 실시세로 교체 — 1등 불가면 아래 '삭제' 판정으로 등록 자체를 막는다.
+            # 전 옵션 통합 최저가를 시장가로 넘긴다(내 값만 되비추는 함정 차단).
+            _mlow = int(_popt.get("_market_low_all") or 0)
             act, target, _adj, _nc = _decide_price_action(
                 0,
                 opt,
                 jpy,
-                int(_popt.get("lowest_overseas_price") or 0),
-                int(_popt.get("lowest_normal_price") or 0),
+                _mlow or int(_popt.get("lowest_overseas_price") or 0),
+                _mlow or int(_popt.get("lowest_normal_price") or 0),
                 (kid, opt) in cooldown,
                 0,
                 rate,
