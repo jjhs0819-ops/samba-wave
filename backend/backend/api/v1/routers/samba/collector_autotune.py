@@ -918,6 +918,14 @@ _pc_allowed_sites: dict[str, set[str]] = {}
 _pc_last_seen: dict[str, float] = {}
 PC_LAST_SEEN_TTL = 86400.0  # 24시간
 
+# (device_id, SITE) → 그 사이트 잡을 실제로 dequeue 하러 폴링한 마지막 시각.
+# _pc_last_seen 은 pc-allowed-sites POST 등 하트비트로도 갱신돼, 확장앱이 해당
+# 사이트 폴링을 멈춘 PC 도 "살아있음"으로 보인다. 그런 PC 가 owner 로 뽑히면
+# 잡을 아무도 안 가져가 SITE_PRODUCT_TIMEOUT 을 통째로 태우고 실패한다
+# (2026-08-04 실측: SSG 건당 200초+, 진행 0/13,279). owner 선택은 이 값을 쓴다.
+_pc_site_poll_seen: dict[tuple[str, str], float] = {}
+PC_SITE_POLL_TTL = 180.0  # 3분 내 그 사이트로 폴링한 PC 만 owner 후보
+
 # Gunicorn 다중 worker 환경에서 in-memory dict 는 worker 마다 별도.
 # lifecycle background task 가 매 10초 sync_pc_allowed_sites_from_db 호출 → 모든
 # worker 의 _pc_allowed_sites 가 DB 진실 출처와 일치.
@@ -3864,14 +3872,37 @@ async def _site_autotune_loop(device_id: str, site: str):
                         # last_refreshed_at 로 되돌려 다음 사이클에 다시 잡히게 한다.
                         # 복구가 없으면 백오프로 전량 취소된 배치가 갱신된 것처럼 남아
                         # 대상 상품이 고갈되고 오토튠이 "대상 상품 없음"으로 멈춘다.
+                        # [2026-08-04] 실패 유형별로 복구를 나눈다.
+                        # · cancelled(백오프/취소로 아예 시도 안 함) → 원래 시각 복원.
+                        #   시도조차 없었으니 즉시 재선택돼도 낭비가 아니다.
+                        # · 실제 에러(reCAPTCHA·타임아웃 등 시도 후 실패) → 원래 시각으로
+                        #   되돌리면 다른 PC가 곧바로 같은 상품을 다시 집어가 PC 사이를
+                        #   핑퐁하며 제자리걸음한다(실측: 같은 itemId 가 2대에 중복 발행,
+                        #   진행 0/13,279). 재시도 쿨다운을 줘서 큐 앞으로 다시 오지
+                        #   않게 하고, 그 사이 다른 상품이 처리되도록 한다.
+                        _RETRY_COOLDOWN = timedelta(hours=1)
                         if _claim_prev:
                             _failed_ids = [r.product_id for r in results if r.error]
+                            _cd_ts = (
+                                now
+                                - timedelta(hours=SSG_MIN_REFRESH_HOURS)
+                                + _RETRY_COOLDOWN
+                            )
                             _restore: dict[Any, list[str]] = {}
-                            for _fid in _failed_ids:
-                                if _fid in _claim_prev:
-                                    _restore.setdefault(_claim_prev[_fid], []).append(
-                                        _fid
+                            for _r in results:
+                                if not _r.error or _r.product_id not in _claim_prev:
+                                    continue
+                                if _r.error == "cancelled":
+                                    _key = _claim_prev[_r.product_id]
+                                else:
+                                    # 이미 원래 시각이 쿨다운보다 더 오래됐으면 그대로 둔다
+                                    _orig = _claim_prev[_r.product_id]
+                                    _key = (
+                                        _cd_ts
+                                        if (_orig is None or _orig < _cd_ts)
+                                        else _orig
                                     )
+                                _restore.setdefault(_key, []).append(_r.product_id)
                             for _prev_ts, _ids in _restore.items():
                                 try:
                                     await session.execute(

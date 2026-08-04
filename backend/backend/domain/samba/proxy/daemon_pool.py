@@ -62,6 +62,21 @@ def _pick_owner_with_prefix(site: str, daemon_only: bool) -> str | None:
             # 라우팅돼 사이트 전체가 안 멈춘다 (2026-08-02 SSG PC별 격리)
             if _site_block_backoff_until.get(f"{_site_u}|{dev}", 0.0) > now:
                 continue
+            # [2026-08-04] 확장앱은 "그 사이트로 실제 폴링했는지"까지 확인.
+            # _pc_last_seen 은 pc-allowed-sites POST 같은 하트비트로도 갱신돼,
+            # 해당 사이트 폴링을 멈춘 PC 도 살아있는 것처럼 보인다. 그 PC 를
+            # owner 로 뽑으면 잡을 아무도 안 가져가 SITE_PRODUCT_TIMEOUT(SSG 150s)
+            # 을 통째로 태우고 실패한다(실측 건당 200초+, 진행 0/13,279).
+            # 폴링 기록이 아직 없는 초기 상태는 통과시켜 회귀를 만들지 않는다.
+            if not daemon_only:
+                # ruff formatter 가 상단 import 를 제거해 F821 을 유발하므로 로컬 import
+                from backend.api.v1.routers.samba import (  # noqa: F811
+                    collector_autotune as _ca,
+                )
+
+                _ps = _ca._pc_site_poll_seen.get((dev, _site_u))
+                if _ps is not None and now - _ps > _ca.PC_SITE_POLL_TTL:
+                    continue
             pool.append(dev)
         pool.sort()
     except Exception:

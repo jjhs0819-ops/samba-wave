@@ -1,5 +1,6 @@
 """소싱 관련 엔드포인트 (sourcing_queue_router 포함)."""
 
+import time
 import asyncio
 import logging
 from typing import Any
@@ -232,6 +233,21 @@ async def sourcing_collect_queue(request: Request) -> Any:
     _poll_site = (request.headers.get("X-Poll-Site") or "").strip()
     if _poll_site:
         allowed_sites = [_poll_site]
+    # [2026-08-04] 사이트별 "실제 폴링" 시각 기록.
+    # _pc_last_seen 은 pc-allowed-sites POST 같은 하트비트로도 갱신되기 때문에,
+    # 확장앱이 그 사이트 잡을 실제로는 안 가져가는 상태(폴링 정지)여도 살아있는
+    # PC로 보여 owner 로 뽑힌다. 그러면 발행된 잡은 아무도 처리하지 않아
+    # SITE_PRODUCT_TIMEOUT(SSG 150s) 을 그대로 태우고 실패한다 —
+    # concurrency=1 에서 이게 건당 200초+ 로 나타나 사실상 정지(진행 0/13,279).
+    # 잡을 실제로 dequeue 하러 온 폴링만 기록해 owner 선택에 쓴다.
+    try:
+        from backend.api.v1.routers.samba.collector_autotune import _pc_site_poll_seen
+
+        _now_poll = time.time()
+        for _s in allowed_sites or []:
+            _pc_site_poll_seen[(_clean_device_id, _s.upper())] = _now_poll
+    except Exception:
+        pass
     ext_version = request.headers.get("X-Ext-Version", "").strip()
     job = await SourcingQueue.get_next_job(
         device_id=_clean_device_id,

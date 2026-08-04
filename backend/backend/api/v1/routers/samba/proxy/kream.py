@@ -628,6 +628,24 @@ async def _snkrdunk_remove_match_impl(
             sid=snkr_id
         )
     )  # type: ignore[arg-type]
+    # [2026-08-04] 다중후보 쌍 테이블(kream_snkr_ambig_pairs)까지 지운다.
+    # _match.py 가 이 표를 읽어 resell_matches.kream_candidates 에 다시 주입하므로,
+    # 여기를 안 비우면 해제해도 다음 배치에서 후보가 그대로 되살아난다
+    # (실사례: snkr 134324 — 5번 해제해도 새로고침하면 재등장).
+    await session.exec(
+        text("""
+        INSERT INTO kream_snkr_rejected (snkr_id, kream_pid, reason)
+        SELECT snkr_id, kream_pid, '검수 매칭해제(다중후보)'
+        FROM kream_snkr_ambig_pairs
+        WHERE snkr_id = :sid AND COALESCE(kream_pid, '') <> ''
+        ON CONFLICT (snkr_id, kream_pid) DO NOTHING
+    """).bindparams(sid=snkr_id)
+    )  # type: ignore[arg-type]
+    await session.exec(
+        text("DELETE FROM kream_snkr_ambig_pairs WHERE snkr_id = :sid").bindparams(
+            sid=snkr_id
+        )
+    )  # type: ignore[arg-type]
     # 후보(kream_candidates)를 남기면 재로드 시 후보 1개 자동선택으로 매칭이 되살아나는
     # 도돌이 발생 [2026-07-20 라이츄·샤워즈 사고] — 해제 시 함께 삭제
     sql = text("""

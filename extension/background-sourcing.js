@@ -3922,9 +3922,38 @@ async function handleSourcingJob(job) {
           }
         }
       })
-      const _pc = preCheck?.result || {}
+      let _pc = preCheck?.result || {}
+      // [2026-08-04] 차단 오탐 방지 — 탭 로드 직후 1회만 보고 결론내면, SSG 가
+      // 잠깐 안내/전환 페이지를 띄웠다가 실제 상품페이지로 넘어가는 케이스를
+      // "차단"으로 오판한다(사용자 실측: 정상 상품인데 reCAPTCHA 실패 처리).
+      // 차단 문구가 보이면 곧장 실패시키지 말고 3초 간격 2회 재확인 —
+      // 진짜 차단이면 문구가 그대로 남고, 전환 중이었으면 사라진다.
       if (_pc.captcha) {
-        console.log(`[SSG] reCAPTCHA 차단 감지: ${job.productId}`)
+        for (let _rc = 0; _rc < 2 && _pc.captcha; _rc++) {
+          await wait(3000)
+          try {
+            const [_re] = await chrome.scripting.executeScript({
+              target: { tabId }, world: 'MAIN',
+              func: () => {
+                const body = document.body?.innerText || ''
+                const href = location.href || ''
+                return {
+                  captcha: body.includes('연속적인 접근') || body.includes('로봇이 아닙니다') ||
+                           body.includes('비정상적인 접근') || body.includes('자동화된 환경'),
+                  onItem: href.indexOf('itemView.ssg') !== -1,
+                }
+              }
+            })
+            const _r = _re?.result || {}
+            if (!_r.captcha) {
+              console.log(`[SSG] 차단 문구 사라짐 — 오탐으로 판단하고 계속: ${job.productId}`)
+              _pc = { ..._pc, captcha: false }
+            }
+          } catch { /* 탭 전환 중 — 다음 회차 재확인 */ }
+        }
+      }
+      if (_pc.captcha) {
+        console.log(`[SSG] reCAPTCHA 차단 감지(재확인 완료): ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
         // 차단 감지됐는데도 곧바로 다음 잡을 계속 당겨오면 차단 중에 계속 두드리는
         // 꼴이라 더 굳어질 위험 — 감지된 순간 전체 폴링 5분 멈춰서 식힌다.
