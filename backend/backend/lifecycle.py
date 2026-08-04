@@ -1055,22 +1055,16 @@ async def _kream_shadow_loop() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
-    _unified = os.environ.get("KREAM_UNIFIED") == "1"
     while True:
         try:
-            if _unified:
-                # [Step 3] 스니덩크 전수순회 통합(갱신+리스톡+삭제)
-                from backend.domain.samba.warroom.kream_shadow import (
-                    run_kream_unified_once,
-                )
+            # [2026-08-04] 구 ask 단위 섀도(run_kream_shadow_once)는 제거했다.
+            # KREAM_UNIFIED=1 로 1년 가까이 통합 경로만 돌았는데도 같은 판단 로직이
+            # 양쪽에 복제돼 있어, 수정할 때마다 두 곳을 맞춰야 했다(안 맞추면 회귀).
+            from backend.domain.samba.warroom.kream_shadow import (
+                run_kream_unified_once,
+            )
 
-                await run_kream_unified_once()
-            else:
-                from backend.domain.samba.warroom.kream_shadow import (
-                    run_kream_shadow_once,
-                )
-
-                await run_kream_shadow_once()
+            await run_kream_unified_once()
         except _asyncio.CancelledError:
             return
         except Exception as exc:
