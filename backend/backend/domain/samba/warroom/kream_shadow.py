@@ -1537,7 +1537,8 @@ async def run_kream_shadow_once() -> dict:
         low_over = int(a.get("lowest_overseas_price") or 0)
         low_norm = int(a.get("lowest_normal_price") or 0)
         is_ov = bool(low_over)
-        _lk = int(a.get("lowest_100_price") or 0) or int(a.get("lowest_95_price") or 0)
+        # [2026-08-04] 보관 100 등급만 — 95 는 하자품이라 같은 순위표로 보면 안 된다.
+        _lk = int(a.get("lowest_100_price") or 0)
         _c = [x for x in (low_over, low_norm, _lk) if x and x > 0]
         market_low = min(_c) if _c else 0
         rank1 = market_low > 0 and 0 < cur <= market_low  # _derive_rank1_official
@@ -2872,8 +2873,7 @@ async def _process_shoe_asks(
                 surcharge_rate=_sur,
                 fee_kind="item",  # 신발·의류·시계 = 2,750 + 6.16%
                 live_rank=_g_live_rank.get(str(a.get("id"))),
-                low_keep=int(a.get("lowest_100_price") or 0)
-                or int(a.get("lowest_95_price") or 0),
+                low_keep=int(a.get("lowest_100_price") or 0),
             )
             if act in ("국내못이김삭제", "1등불가삭제"):
                 # 가격열위 삭제(국내못이김/1등불가) — 사이클당 상한(200) 적용, 점진 삭제.
@@ -3054,8 +3054,7 @@ async def _process_shoe_restock(
                     is_box=True,
                     surcharge_rate=_sur,
                     fee_kind="item",  # 신발 리스톡
-                    low_keep=int(api_opt.get("lowest_100_price") or 0)
-                    or int(api_opt.get("lowest_95_price") or 0),
+                    low_keep=int(api_opt.get("lowest_100_price") or 0),
                 )
                 if "삭제" in act or target <= 0:
                     c["policy"] += 1  # 1등불가/국내못이김 — 등록 안 함
@@ -3152,7 +3151,6 @@ async def _resolve_box_option(cli: httpx.AsyncClient, h: dict, kid: str) -> dict
             o.get(
                 "lowest_100_price"
             ),  # [2026-08-04] 보관 판매도 같은 순위표에 들어간다
-            o.get("lowest_95_price"),
         )
         if v and int(v) > 0
     ]
@@ -3442,8 +3440,7 @@ async def _process_box_asks(
                     is_box=True,
                     fee_kind="overseas",  # 박스·카드팩 갱신
                     live_rank=_g_live_rank.get(str(a.get("id"))),
-                    low_keep=int(a.get("lowest_100_price") or 0)
-                    or int(a.get("lowest_95_price") or 0),
+                    low_keep=int(a.get("lowest_100_price") or 0),
                 )
                 if act in ("국내못이김삭제", "1등불가삭제"):
                     return ("pricedel", a, 0, False)  # 가격열위 삭제(상한 적용)
@@ -4181,9 +4178,7 @@ async def run_kream_unified_once() -> dict:
                     cur = int(ask.get("price") or 0)
                     low_over = int(ask.get("lowest_overseas_price") or 0)
                     low_norm = int(ask.get("lowest_normal_price") or 0)
-                    low_keep = int(ask.get("lowest_100_price") or 0) or int(
-                        ask.get("lowest_95_price") or 0
-                    )
+                    low_keep = int(ask.get("lowest_100_price") or 0)
                     # 입찰제한 쿨다운 — 크림이 계속 거절하는 건은 재시도 안 함
                     if f"{kid}|{nm}" in _g_limit_cd:
                         r["rows"].append(
