@@ -2563,13 +2563,20 @@ async def _register_announcement(kid: str) -> bool:
                 "country_of_origin_id": _ANN_COUNTRY_JP,
                 "hs_code_id": _ANN_HS.get(kind, _ANN_HS["card"]),
             }
-            p = await c.put(
-                f"{_ANN_BASE}/announcement_infos/{kid}", json=body, headers=hdrs
-            )
-            if p.status_code in (200, 201):
-                _ann_done.add(str(kid))
-                _ann_stat["ok"] += 1
-                return True
+            # [2026-08-04] 크림 고시 PUT 은 간헐적으로 500 을 뱉는다 — 같은 요청을 바로
+            # 다시 보내면 200 이 온다(헤더·본문 문제가 아니라 서버 불안정, 실측 확인).
+            # 재시도 없이 한 방에 포기하다 보니 등록 시도 209건 중 168건이 실패했다.
+            for _try in range(3):
+                p = await c.put(
+                    f"{_ANN_BASE}/announcement_infos/{kid}", json=body, headers=hdrs
+                )
+                if p.status_code in (200, 201):
+                    _ann_done.add(str(kid))
+                    _ann_stat["ok"] += 1
+                    return True
+                if p.status_code not in (500, 502, 503, 504):
+                    break
+                await asyncio.sleep(0.8 * (_try + 1))
             _ann_stat["fail"] += 1
             logger.info(
                 "[크림통합] 고시등록 실패 %s %s %s",
@@ -4528,7 +4535,12 @@ async def run_kream_unified_once() -> dict:
                         _g_miss_counts.pop(f"{_kid}|{_nm}", None)
                     else:
                         exec_fail += 1
-                        _g_failed_posts[f"{_kid}|{_nm}"] = _now
+                        # [2026-08-04] 고시 API 500 같은 **일시 서버 장애**로 실패한 건은
+                        # 6h 쿨다운에 넣지 않는다. 상품 문제가 아니라 크림 쪽 불안정이라
+                        # 다음 사이클에 그냥 되는데, 쿨다운에 갇혀 6시간을 버렸다
+                        # (한 사이클에 168건이 이 경로로 묶였다).
+                        if not ("announcement" in _rs or "고시" in _rs or "500" in _rs):
+                            _g_failed_posts[f"{_kid}|{_nm}"] = _now
 
             await asyncio.gather(
                 *[_do_post(b1, b2, b3, b4) for b1, b2, b3, b4 in pend_restock]
