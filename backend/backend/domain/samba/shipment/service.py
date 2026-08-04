@@ -417,13 +417,35 @@ _LANE_PRIORITY_MAX_YIELD_SEC = float(
 )
 
 
+# 계정 차선 동시성 (2026-08-04) — 기본 1(직렬). 무상태 REST 마켓은 동일 계정
+# 병렬이 안전하므로 마켓별로 넓힐 수 있다. SSG 는 계정이 하나뿐이라 직렬 1건이
+# 전체 처리량 상한(시간당 ~3천)이 되어, 오토튠 SSG 대기열이 2천대에 고착되던
+# 병목 — 2부터 시작해 에러율 보며 단계 상향 (env ACCOUNT_LANE_CONCURRENCY 로
+# "ssg=4,coupang=2" 형식 덮어쓰기 가능).
+_ACCOUNT_LANE_CAP_DEFAULTS: dict[str, int] = {"ssg": 2, "ssg_std": 2}
+
+
+def _account_lane_cap(market_type: str) -> int:
+    caps = dict(_ACCOUNT_LANE_CAP_DEFAULTS)
+    _env = os.environ.get("ACCOUNT_LANE_CONCURRENCY", "")
+    for _pair in _env.split(","):
+        if "=" in _pair:
+            _mt, _, _v = _pair.partition("=")
+            try:
+                caps[_mt.strip()] = max(1, int(_v))
+            except ValueError:
+                pass
+    return caps.get((market_type or "").strip(), 1)
+
+
 class _AccountLane:
-    """계정별 단일 차선(동시 1건) + 우선순위 부분양보 상태."""
+    """계정별 차선(기본 동시 1건, 마켓별 확장 가능) + 우선순위 부분양보 상태."""
 
     __slots__ = ("lock", "hp_waiting", "hp_served")
 
-    def __init__(self) -> None:
-        self.lock = asyncio.Lock()
+    def __init__(self, cap: int = 1) -> None:
+        # BoundedSemaphore(1) == 기존 Lock 과 동일 시맨틱, cap>1 이면 병렬 허용
+        self.lock = asyncio.BoundedSemaphore(max(1, cap))
         self.hp_waiting = 0  # 현재 대기/보유 중인 high(전송) 수
         self.hp_served = 0  # 누적 high 획득 수(양보 floor 계산용)
 
@@ -431,23 +453,23 @@ class _AccountLane:
 _account_lanes: dict[str, _AccountLane] = {}
 
 
-def _get_account_lane(account_id: str) -> _AccountLane:
+def _get_account_lane(account_id: str, market_type: str = "") -> _AccountLane:
     lane = _account_lanes.get(account_id)
     if lane is None:
-        lane = _AccountLane()
+        lane = _AccountLane(cap=_account_lane_cap(market_type))
         _account_lanes[account_id] = lane
     return lane
 
 
 async def _acquire_account_lane(
-    account_id: str, priority: str, timeout: float
+    account_id: str, priority: str, timeout: float, market_type: str = ""
 ) -> _AccountLane:
     """계정 차선을 획득한다. priority='low'는 high 전송이 대기 중이면 부분 양보한다.
 
     반환된 lane 은 반드시 _release_account_lane 으로 해제해야 한다.
     TimeoutError 발생 시 호출자가 처리(기존 세마포어와 동일 시맨틱).
     """
-    lane = _get_account_lane(account_id)
+    lane = _get_account_lane(account_id, market_type)
     is_high = priority == "high"
     is_low = priority == "low"
 
@@ -475,8 +497,13 @@ async def _acquire_account_lane(
 
 
 def _release_account_lane(lane: _AccountLane) -> None:
-    if lane.lock.locked():
+    # BoundedSemaphore: 초과 해제 시 ValueError — 기존 locked() 가드의
+    # 이중해제 방어를 예외 흡수로 대체 (cap>1 에선 locked() 가드가 오히려
+    # 정상 해제를 건너뛰어 permit 누수를 만들기 때문).
+    try:
         lane.lock.release()
+    except ValueError:
+        pass
 
 
 STATUS_LABELS: dict[str, str] = {
@@ -2559,7 +2586,8 @@ class SambaShipmentService:
                 _lane_priority = "low" if res.get("is_update") else "high"
                 try:
                     account_lane = await _acquire_account_lane(
-                        account_id, _lane_priority, timeout=300
+                        account_id, _lane_priority, timeout=300,
+                        market_type=market_type,
                     )
                 except asyncio.TimeoutError:
                     res["error"] = f"계정 사용 중 (300초 타임아웃, {market_type})"
