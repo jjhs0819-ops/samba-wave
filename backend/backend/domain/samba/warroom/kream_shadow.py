@@ -46,21 +46,16 @@ _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 종전엔 카드·신발·박스가 제각각 다른 상한으로 돌았다(갱신 2,500 / 신발조회 7,000 /
 # 신발등록 50 / 박스등록 30 / 만료회수 30 …). 어느 쪽이 병목인지 알 수 없었고,
 # 신발 등록 50 은 미등록 19,804건을 사실상 방치했다. 두 개로 줄인다.
-#   _CYCLE_SCAN — 사이클당 "조회·판정"할 상품 수 (갱신·신발시세·비카드). 사이클 시간과 직결.
-#   _POST_MAX   — 사이클당 "쓰기"(신규등록·만료재등록) 상한. 폭주 방지용.
 # 카테고리별 환경변수를 주면 그쪽이 우선 — 급할 때 미세조정 여지는 남긴다.
-_CYCLE_SCAN = int(os.environ.get("KREAM_CYCLE_SCAN") or 11000)
-_POST_MAX = int(os.environ.get("KREAM_POST_MAX") or 1200)
-_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or _CYCLE_SCAN)
-_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or _CYCLE_SCAN)
-_EXPIRED_MAX = int(os.environ.get("KREAM_EXPIRED_MAX") or _POST_MAX)
-_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or _POST_MAX)
-_BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or _POST_MAX)
-# 리스톡 탐색(미입찰 상품 발굴) 슬라이스 — 조회 부담이 갱신과 같은 성격이라 같은 상한을 쓴다.
-_RESTOCK_SCAN = int(os.environ.get("KREAM_UNIFIED_BATCH") or _CYCLE_SCAN)
-_live_offset = 0  # 갱신 로테이션 위치(라이브 입찰 분할처리)
+# 사이클 상한·로테이션 전면 제거 [2026-08-04].
+# 카드·신발·박스가 제각각 다른 상한(갱신2,500 / 신발조회7,000 / 신발등록50 / 박스등록30 /
+# 만료회수30 / 가격열위삭제2,000)으로 나눠 돌면서, 자기 차례를 기다리는 동안 밀린 입찰이
+# 방치되고 신규 브랜드는 사실상 등록되지 않았다(아디다스 재고 4,484 → 입찰 44).
+# 이제 매 사이클 전량을 조회·판정·실행한다. 사이클은 길어지지만 배포 가드가 완주를 기다린다.
+# 비카드 우선처리는 전량 처리라 의미가 없어졌지만, 호출부 호환을 위해 큰 값으로 남긴다.
+_NONCARD_PRIORITY_MAX = 10**9
+_NONCARD_PROBE_MAX = 10**9
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
-_shoe_fetch_offset = 0  # 신발 실시간시세 조회 로테이션 위치(사이클당 일부만)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
@@ -106,7 +101,10 @@ _SET_GUARD = "kream_price_guard"
 # 비용 실측: 건당 100ms, 동시 16 기준 1,000건에 약 6초.
 _g_live_rank: dict = {}  # ask_id -> live_rank(int). 사이클 내에서만 유효
 _RANK_CONCURRENCY = int(os.environ.get("KREAM_RANK_CONCURRENCY") or 16)
-_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 4000)
+# [2026-08-04] 실순위 단건조회 상한 — 0 이면 조회 자체를 건너뛴다.
+# 1등 여부만 필요하면 목록의 lowest_* 로 정확히 판정된다(내가 최저면 그 값이 내 가격).
+# 단건 조회는 "몇 등인지"를 알려주지만 건당 1회 호출이라 1,500건에 272초가 든다.
+_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 0)
 _rank_scan_offset = 0
 
 
@@ -2585,20 +2583,11 @@ async def _process_shoe_asks(
         # [2026-08-02] 신발 상품 3,000개+ 를 매 사이클 전량 조회하면 사이클이 수시간으로 폭발해
         # 완주(=슬랙)를 못 한다. 카드 리스톡처럼 **로테이션**으로 사이클당 일부만 실시간 조회.
         # 조회 안 된 상품은 이번 사이클 갱신 스킵(다음 회차에 조회) — 가격 방치는 없음.
-        global _shoe_fetch_offset
+        # [2026-08-04] 상한·로테이션 제거 — 매 사이클 전량 조회.
+        # 나눠 돌면 조회 안 된 상품은 그 사이클 판단 자체를 못 해(갱신·삭제 스킵)
+        # 밀린 입찰이 몇 사이클씩 방치됐다.
         _mm_list = sorted(_mm_kids)
-        # [2026-08-02] 600 → 1,500. 신발 3,000상품을 5사이클에 나눠 돌아 가격열위 삭제까지
-        # 느렸다(상한 2,000인데 실제 735건). 스니덩크 0.2s 라 1,500도 여유.
-        # [2026-08-02] 1,500 → 4,000. 비1순위 15,874 정리에 11사이클 걸리던 것 4사이클로.
-        # 스니덩크 0.2s·동시성 20 이라 4,000도 ~1분. 사이클 79초 여유 안에서 처리.
-        _fetch_cap = int(os.environ.get("KREAM_SHOE_FETCH_MAX") or _CYCLE_SCAN)
-        if len(_mm_list) > _fetch_cap:
-            _st = _shoe_fetch_offset % len(_mm_list)
-            _mm_round = (_mm_list[_st:] + _mm_list[:_st])[:_fetch_cap]
-            _shoe_fetch_offset = (_st + _fetch_cap) % len(_mm_list)
-        else:
-            _mm_round = _mm_list
-            _shoe_fetch_offset = 0
+        _mm_round = _mm_list
         await asyncio.gather(*[_one_style(k) for k in _mm_round])
         c["live_ok"] = len(live_map)
         c["fetch_round"] = f"{len(_mm_round):,}/{len(_mm_list):,}"
@@ -2731,7 +2720,7 @@ async def _process_shoe_restock(
     """신발/의류/시계 신규 자동등록 — verified 확정 + 재고O + 해당 사이즈 미등록만.
     카드 리스톡 동일 가드(2연속miss·재게시2h·실패6h·거래·이행대기) + 원가상한 + 정책(1등불가/
     국내못이김) 스킵. 사이즈 옵션명 크림(mm)↔DB(cm) 변환 매칭. _EXEC_SHOE=1 일 때만 실제 POST.
-    사이클당 _SHOE_RESTOCK_MAX 상한(사이즈별 다건이라 폭주 방지)."""
+    상한 없이 후보 전량 등록."""
     c = {
         "cand": 0,
         "post": 0,
@@ -2851,9 +2840,6 @@ async def _process_shoe_restock(
                     c["policy"] += 1  # 1등불가/국내못이김 — 등록 안 함
                     continue
                 c["cand"] += 1
-                if posted >= _SHOE_RESTOCK_MAX:
-                    c["capped"] += 1
-                    continue
                 posted += 1
                 if _EXEC_SHOE_RESTOCK:
                     ok, reason = await _exec_create_ask(
@@ -2956,7 +2942,7 @@ async def _process_box_restock(
     로컬 봇(_kream_restock_register 박스 경로)이 07-22 정지하며 끊긴 경로를 백엔드로 이식.
     카드/신발 리스톡과 동일 가드(2연속miss·재게시·실패쿨·거래이력·이행대기) + 원가상한 +
     정책스킵(1등불가/국내못이김). 원가는 스니덩크 /v1/apparels 1박스 실시세.
-    _EXEC_BOX_RESTOCK=1 일 때만 실제 POST. 사이클당 _BOX_RESTOCK_MAX 상한."""
+    _EXEC_BOX_RESTOCK=1 일 때만 실제 POST. 상한 없이 후보 전량 등록."""
     c = {
         "cand": 0,
         "post": 0,
@@ -3096,9 +3082,6 @@ async def _process_box_restock(
                 c["policy"] += 1  # 1등불가/국내못이김 — 등록해도 체결 안 됨
                 continue
             c["cand"] += 1
-            if posted >= _BOX_RESTOCK_MAX:
-                c["capped"] += 1
-                continue
             posted += 1
             if _EXEC_BOX_RESTOCK:
                 ok, reason = await _exec_create_ask(cli, h, kid, int(target), opt)
@@ -3319,11 +3302,15 @@ async def _process_box_asks(
 # 국내못이김/1등불가 가격열위 삭제 사이클당 상한 — 첫 사이클 수백건 일괄삭제 쇼크 방지,
 # 200/사이클 점진 삭제(슬랙 감시). 무재고·게이트 삭제는 상한 무관(전량 삭제). [2026-07-26]
 # [2026-08-02] 가격열위(1등불가) 적체가 14,000건 넘어 200/사이클로는 영영 못 지운다 → 2,000.
-_PRICE_DEL_CAP = int(os.environ.get("KREAM_PRICE_DEL_CAP") or 2000)
+_PRICE_DEL_CAP = 10**9  # [2026-08-04] 상한 제거 — 조건이 참이면 전량 즉시 삭제
 _price_del_left = 0  # 사이클 시작 시 _PRICE_DEL_CAP 로 리셋
 
 
 def _price_del_take() -> bool:
+    # [2026-08-04] 상한 제거 — 조건이 참이면 전량 즉시 삭제한다.
+    # 사이클당 상한(2,000)으로 야금야금 지우면 적체가 언제 끝나는지 알 수 없다.
+    return True
+    # 이하 미사용(상한 로직 보존 — 되돌릴 때 참고)
     """가격열위 삭제 예산 1건 소진. 남으면 True(삭제 진행), 소진 시 False(이번 사이클 유지)."""
     global _price_del_left
     if _price_del_left <= 0:
@@ -3405,7 +3392,7 @@ async def _process_expired_asks(
     processed = 0
     async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
         for (kid, opt), a in cand:
-            if processed >= _EXPIRED_MAX:
+            if False:  # [2026-08-04] 만료회수 상한 제거 — 전량 재등록
                 break
             mapping = await _lookup_snkr_mapping(kid)
             if not mapping:
@@ -3637,29 +3624,8 @@ async def run_kream_unified_once() -> dict:
     total_products = len(products)
     _live_kids = {k for (k, _o) in ask_index}
     live_products = [p for p in products if p["kid"] in _live_kids]
-    # [2026-08-02] 라이브 입찰이 21,400건(신발 18,500)으로 폭증해 매 사이클 전량 갱신이
-    # 불가능해졌다(사이클 미완주 = 슬랙 정지). 갱신도 로테이션 — 사이클당 KREAM_LIVE_BATCH
-    # 개씩 나눠 처리하고 다음 회차에 이어서. 가격 추종은 몇 사이클 늦어지지만 완주는 보장.
-    _live_batch = int(os.environ.get("KREAM_LIVE_BATCH") or _CYCLE_SCAN)
-    global _live_offset
-    # [2026-08-04] 갱신 offset 영속화 — 리스톡 offset 은 DB 에 저장하는데 이쪽만 메모리라
-    # 배포/재시작마다 0 으로 리셋됐다. 그 탓에 매번 같은 앞부분 2,500 건만 갱신되고
-    # 뒤쪽 1만 8천여 건은 손이 안 갔다(라이브 21,000건 / 배치 2,500).
-    if _live_offset == 0:
-        try:
-            _live_offset = int(
-                (await _load_setting_map(_SET_LIVE_OFFSET)).get("v", 0) or 0
-            )
-        except Exception:
-            _live_offset = 0
-    _live_total = len(live_products)
-    if _live_total > _live_batch:
-        _lst = _live_offset % _live_total
-        live_products = (live_products[_lst:] + live_products[:_lst])[:_live_batch]
-        _live_offset = (_lst + _live_batch) % _live_total
-    else:
-        _live_offset = 0
-    await _save_setting_map(_SET_LIVE_OFFSET, {"v": int(_live_offset)})
+    # [2026-08-04] 갱신 로테이션 제거 — 라이브 입찰 상품 전량을 매 사이클 갱신한다.
+    # 나눠 돌면 순위가 밀린 입찰이 자기 차례(수 사이클)를 기다리는 동안 방치된다.
     rest_products = [p for p in products if p["kid"] not in _live_kids]
     # [2026-08-04] 재고 있는 것 먼저 — 탐색 풀 57,172 중 재고 보유는 20,054(35%)뿐이라
     # 3,000 슬라이스를 뽑아도 등록 가능한 건 ~1,050 밖에 안 됐다(나머지는 재고 0 이라
@@ -3673,25 +3639,10 @@ async def run_kream_unified_once() -> dict:
         )
         else 1
     )
-    batch = _RESTOCK_SCAN
-    # 재시작 직후(in-memory 0)면 DB서 이전 offset 복원 → 로테이션 이어감(재배포 리셋 방지)
-    if _unified_offset == 0:
-        try:
-            _unified_offset = int(
-                (await _load_setting_map(_SET_OFFSET)).get("v", 0) or 0
-            )
-        except Exception:
-            _unified_offset = 0
-    if batch > 0 and len(rest_products) > batch:
-        start = _unified_offset % len(rest_products)
-        rest_slice = (rest_products[start:] + rest_products[:start])[:batch]
-        _unified_offset = (start + batch) % len(rest_products)
-    else:
-        rest_slice = rest_products
-        _unified_offset = 0
-    await _save_setting_map(
-        _SET_OFFSET, {"v": int(_unified_offset)}
-    )  # 다음 재시작 대비 영속화
+    # [2026-08-04] 리스톡 탐색 로테이션 제거 — 미입찰 상품 전량을 매 사이클 훑는다.
+    # 3,000/사이클이면 57,284건 한 바퀴에 19사이클(6시간+)이라 신규 브랜드가
+    # 사실상 등록되지 않았다(아디다스 재고 4,484 → 입찰 44).
+    rest_slice = rest_products
     # [2026-08-01] verified 비카드(신발/의류/시계)는 매 사이클 우선 포함 — 통화교정 후 등록
     # 대기분 4천여개가 1,500/사이클 로테이션으로는 32바퀴(수시간) 걸려 신규입찰이 안 돌았다.
     # 비카드는 snkr fetch 없이 DB 옵션만 보므로 사이클 부담이 작다(카드처럼 API 조회 안 함).
@@ -4312,14 +4263,6 @@ async def run_kream_unified_once() -> dict:
             await _flush_logs_to_db()
             # [2026-08-02] 등록이 755건씩 몰리면 순차 POST(0.1s sleep+재시도)로 수십분 걸려
             # 사이클을 못 끝낸다(슬랙 정지). 사이클당 상한으로 나눠 등록 — 나머지는 다음 회차.
-            _post_cap = _POST_MAX
-            if len(pend_restock) > _post_cap:
-                logger.info(
-                    "[크림통합] 등록 %d건 중 %d건만 이번 사이클(나머지 다음 회차)",
-                    len(pend_restock),
-                    _post_cap,
-                )
-                pend_restock = pend_restock[:_post_cap]
             logger.info(
                 "[크림통합] STAGE 실행-등록 %d건 시작 (%.0f초경과)",
                 len(pend_restock),
@@ -4649,10 +4592,7 @@ async def run_kream_unified_once() -> dict:
     _restock_sec = (
         f"[일치상품 리스톡·미등록 점검]\n"
         f"{_cat1_line}"
-        f"무재고 스캔 {_scan_done:,}/{rest_total:,} ({_scan_pct:,}%)"
-        # [2026-08-04] 1,500 하드코딩이라 KREAM_UNIFIED_BATCH 를 3,000 으로 올려도
-        # 슬랙엔 계속 1,500 으로 찍혀 "적용 안 됐다"로 읽혔다. 실제 값을 표기한다.
-        f" · {batch:,}개/사이클 로테이션\n"
+        f"무재고 스캔 {rest_total:,}건 전량(로테이션 없음)\n"
         f"이번 사이클 리스톡 발견 {_rs_found:,}건"
         f" (등록 {int(rs['ok']):,} · 보류 {_rs_hold:,})\n"
         f"재고 {_stock_total:,}건 (카드 {card_instock:,}·신발 {_shoe_stock:,}"

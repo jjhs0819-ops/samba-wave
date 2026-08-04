@@ -207,10 +207,10 @@ services:
       #   CYCLE_SCAN — 사이클당 조회·판정할 상품 수(갱신·신발시세·비카드·리스톡탐색)
       #   POST_MAX   — 사이클당 쓰기(신규등록·만료재등록) 상한
       # 입찰 상품이 10,265개라 11,000 이면 매 사이클 전량 조회(로테이션 소멸).
-      KREAM_CYCLE_SCAN: "11000"
-      KREAM_RANK_SCAN_MAX: "1500"
+      # [2026-08-04] 사이클 상한·로테이션 전면 제거 — 매 사이클 전량 조회·판정·실행.
+      # CYCLE_SCAN / POST_MAX / RANK_SCAN_MAX / UNIFIED_BATCH / NONCARD_* 전부 삭제.
+      # 실순위 단건조회도 끔(1등 여부는 목록 lowest_* 로 판정, 건당 호출이라 272초 소모).
       KREAM_RANK_CONCURRENCY: "24"
-      KREAM_POST_MAX: "1200"
       KREAM_POST_CONCURRENCY: "6"
       KREAM_EXEC_BOX_RESTOCK: "1"  # [B-3] 박스/카드팩 신규 자동등록 — 실행ON
                                    # [2026-08-03] 08-01 에 호출부가 지워져 실제로는 아무도 등록을
