@@ -2190,6 +2190,121 @@ def _trade_ok(kid: str, name: str) -> bool:
 # 보관 신청 불가 판정된 (kid|opt) — keep 재시도로 불필요한 400 반복 안 하려 캐시.
 _keep_impossible: set = set()
 
+# ── 고시정보 자동등록 [2026-08-04 백엔드 이식] ────────────────────────────────
+# 크림은 고시정보가 없으면 ask 생성을 거부한다(product_announcement_required).
+# 지금까지 백엔드는 그 실패를 잡고 **똑같은 요청을 한 번 더** 보내기만 해서 100% 재실패했다
+# (등록 로직은 로컬 봇 _kream_restock_register.register_announcement 에만 있었고 07-22 정지로 끊김).
+# 공식 OpenAPI 에는 고시 엔드포인트가 없어 파트너(비공식) API 를 쓴다.
+# 토큰: 컨테이너는 웨일 CDP(9223)에 netns 가 달라 못 닿으므로 로컬 _partner_token_sync.py 가
+# samba_settings.kream_partner_token 에 넣어둔 값을 읽는다.
+_ANN_BASE = "https://partner-api.kream.co.kr/api/v1/products"
+_ANN_TOKEN_KEY = "kream_partner_token"
+# 해외 판매자는 원산지·HS코드 필수(누락 시 PUT 400). 전 상품 일본 소싱 → 원산지=일본(id 4).
+# HS: 카드 등 기타=9504.40 오락용카드(82) / 신발=6404.11 스포츠신발(6).
+_ANN_COUNTRY_JP = 4
+_ANN_HS_BY_CATEGORY = {"기타 재화": 82, "구두/신발": 6}
+_ann_schema_cache: dict = {}
+_ann_token_cache: list = [0.0, ""]  # [조회시각, 토큰]
+_ann_done: set = set()  # 이 프로세스에서 등록 성공한 kid — 중복 PUT 회피
+_ann_stat: dict = {"try": 0, "ok": 0, "no_token": 0, "fail": 0}
+
+
+async def _partner_token() -> str:
+    """파트너 세션 토큰(samba_settings). 5분 캐시 — 수명 8h 라 잦은 조회 불필요."""
+    import json as _json  # noqa: F811
+    import time as _t  # noqa: F811
+
+    if _ann_token_cache[1] and _t.time() - float(_ann_token_cache[0]) < 300:
+        return str(_ann_token_cache[1])
+    tok = ""
+    try:
+        from sqlmodel import select
+
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        async with get_read_session() as s:
+            val = (
+                await s.execute(
+                    select(SambaSettings.value).where(
+                        SambaSettings.key == _ANN_TOKEN_KEY
+                    )
+                )
+            ).scalar_one_or_none()
+        if isinstance(val, str):
+            val = _json.loads(val)
+        tok = str((val or {}).get("v") or "")
+    except Exception as e:
+        logger.info("[크림통합] 파트너토큰 조회 실패: %s", str(e)[:80])
+    _ann_token_cache[0], _ann_token_cache[1] = _t.time(), tok
+    return tok
+
+
+async def _register_announcement(kid: str) -> bool:
+    """고시정보 등록 — 마스터 스키마(/announcement_info)의 카테고리별 속성키를 그대로 쓰고
+    전 필드를 "제품 내 택 참고"로 채운다. 견본상품 복사 방식은 견본이 초기화되면 전면
+    붕괴하므로 쓰지 않는다(2026-07-21 확정). 카테고리는 release.category 로 신발만 구분."""
+    if str(kid) in _ann_done:
+        return True
+    _ann_stat["try"] += 1
+    tok = await _partner_token()
+    if not tok:
+        _ann_stat["no_token"] += 1
+        return False
+    hdrs = {
+        "Authorization": tok,
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://partner.kream.co.kr/",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as c:
+            if not _ann_schema_cache:
+                r = await c.get(f"{_ANN_BASE}/announcement_info", headers=hdrs)
+                if r.status_code != 200:
+                    _ann_stat["fail"] += 1
+                    logger.info("[크림통합] 고시 스키마 조회 %s", r.status_code)
+                    return False
+                for e in r.json() or []:
+                    _ann_schema_cache[e["category_name"]] = e["attribute_set"]
+            cat = "기타 재화"
+            try:  # 조회 실패해도 기타 재화로 진행
+                g = await c.get(f"{_ANN_BASE}/announcement_infos/{kid}", headers=hdrs)
+                rel = ((g.json() or {}).get("product") or {}).get("release") or {}
+                if str(rel.get("category") or "") == "sneakers":
+                    cat = "구두/신발"
+            except Exception:
+                pass
+            keys = _ann_schema_cache.get(cat) or _ann_schema_cache.get("기타 재화")
+            if not keys:
+                _ann_stat["fail"] += 1
+                return False
+            body = {
+                "category_name": cat,
+                "attribute_set": [{"key": k, "value": "제품 내 택 참고"} for k in keys],
+                "country_of_origin_id": _ANN_COUNTRY_JP,
+                "hs_code_id": _ANN_HS_BY_CATEGORY.get(cat, 82),
+            }
+            p = await c.put(
+                f"{_ANN_BASE}/announcement_infos/{kid}", json=body, headers=hdrs
+            )
+            if p.status_code in (200, 201):
+                _ann_done.add(str(kid))
+                _ann_stat["ok"] += 1
+                return True
+            _ann_stat["fail"] += 1
+            logger.info(
+                "[크림통합] 고시등록 실패 %s %s %s",
+                kid,
+                p.status_code,
+                (p.text or "")[:120],
+            )
+            return False
+    except Exception as e:
+        _ann_stat["fail"] += 1
+        logger.info("[크림통합] 고시등록 오류 %s: %s", kid, str(e)[:80])
+        return False
+
 
 async def _exec_create_ask(
     cli: httpx.AsyncClient, h: dict, kid: str, price: int, opt: str
@@ -2844,7 +2959,12 @@ async def _process_box_restock(
             if _EXEC_BOX_RESTOCK:
                 ok, reason = await _exec_create_ask(cli, h, kid, int(target), opt)
                 if (not ok) and ("announcement" in reason or "고시" in reason):
-                    ok, reason = await _exec_create_ask(cli, h, kid, int(target), opt)
+                    # 고시 미등록이면 **먼저 등록**하고 재시도. 등록 없이 같은 요청을
+                    # 다시 보내던 종전 코드는 100% 재실패했다.
+                    if await _register_announcement(kid):
+                        ok, reason = await _exec_create_ask(
+                            cli, h, kid, int(target), opt
+                        )
                 if ok:
                     c["post"] += 1
                     _g_recent_posts[_key] = _now
@@ -3235,7 +3355,8 @@ async def _process_expired_asks(
                 continue
             ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
             if (not ok) and ("announcement" in reason or "고시" in reason):
-                ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
+                if await _register_announcement(kid):
+                    ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
             if ok:
                 c["post"] += 1
                 c["lines"].append(f"{pname[:20]} {opt} {target:,}원")
@@ -4048,7 +4169,8 @@ async def run_kream_unified_once() -> dict:
                 async with _psem:
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
-                        _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
+                        if await _register_announcement(_kid):
+                            _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if _ok:
                         exec_post += 1
                         # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
