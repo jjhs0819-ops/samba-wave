@@ -1565,10 +1565,13 @@ async def run_kream_shadow_once() -> dict:
             elif truly_nocomp and cur > no_comp_eff + band:
                 act, target = "과가격하향", no_comp_eff
         else:  # rank2 이하 — 경쟁 추종
-            if is_ov:
-                market_target = (low_over - 1000) if low_over > 0 else 0
+            # [2026-08-04] 통합 최저 기준 (_decide_price_action 과 동일). 구 섀도 경로라
+            # KREAM_UNIFIED=1 이면 안 타지만, 두 곳이 어긋나면 나중에 또 헷갈린다.
+            if market_low > 0:
+                _step = 1000 if (low_over > 0 and market_low == low_over) else 5000
+                market_target = market_low - _step
             else:
-                market_target = (low_norm - 5000) if low_norm > 0 else 0
+                market_target = 0
             if market_target == 0:
                 target = max(no_comp, min_price)
             elif market_target == min_price - 1000:
@@ -1773,10 +1776,17 @@ def _decide_price_action(
         elif truly_nocomp and cur > no_comp_eff + band:
             act, target = "과가격하향", no_comp_eff
     else:
-        if is_ov:
-            market_target = (low_over - 1000) if low_over > 0 else 0
+        # [2026-08-04] 목표가는 **해외·일반 통합 최저(market_low)** 기준이어야 한다.
+        # is_ov(해외 호가 존재)만 보고 해외 최저에서 내리다 보니, 일반이 더 싸면
+        # '해외최저-1000' 으로 넣어도 일반 경쟁자에게 그대로 밀렸다. 크림 순위는
+        # 일반·해외를 합쳐 매기므로 판매자센터에 '일반 입찰 순번 2~5' 가 쌓였다.
+        # rank1 분기는 이미 market_low 기준인데 이 비1등 분기만 빠져 있었다.
+        # 틱은 기존과 동일 — 해외 기준 1,000 / 일반 기준 5,000.
+        if market_low > 0:
+            _step = 1000 if (low_over > 0 and market_low == low_over) else 5000
+            market_target = market_low - _step
         else:
-            market_target = (low_norm - 5000) if low_norm > 0 else 0
+            market_target = 0
         if market_target == 0:
             target = max(no_comp, min_price)
         elif market_target == min_price - 1000:
