@@ -1782,7 +1782,14 @@ def _decide_price_action(
         elif market_target == min_price - 1000:
             target = min_price - 1000
         elif market_target <= min_price:
-            target = min_price
+            # [2026-08-04] 1등 가격(market_target)이 마진 하한보다 낮으면 1등이 불가능하다.
+            # 여기서 min_price 로 올려놓으면 시장최저보다 비싼 값이라 **2등이 확정**되고,
+            # 체결도 안 되면서 계속 유지된다(판매자센터 '일반 입찰 순번 2' 다수).
+            # 위쪽 `min_price > market_low` 삭제 조건은 min_price <= market_low 인 경계를
+            # 못 걸러 이 틈으로 샜다(예: market_low 500,000 / min_price 499,500 /
+            # market_target 499,000 → 삭제도 안 되고 1등도 못 감).
+            # 2등 입찰은 체결되지 않으므로 유지할 이유가 없다 → 삭제로 보낸다.
+            return "1등불가삭제", 0, True, False
         else:
             target = max(market_target, min_price)
         act = "no_rank1추종" if cur != target else "유지"
