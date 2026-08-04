@@ -4083,12 +4083,15 @@ async def run_kream_unified_once() -> dict:
     import time as _stage_t
 
     _t_stage = _stage_t.time()
-    logger.info("[크림통합] STAGE 카드처리 시작 (대상 %d)", len(products))
+    logger.info(
+        "[크림통합] STAGE 조회·판정 시작 (대상 %d — 카드/신발/의류/박스 전량)",
+        len(products),
+    )
     async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
         results = await asyncio.gather(
             *[_process(p, scli) for p in products], return_exceptions=True
         )
-    logger.info("[크림통합] STAGE 카드처리 완료 %.0f초", _stage_t.time() - _t_stage)
+    logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
 
     # [Step 5] 리스톡 가드 상태 로드 + 실행대기 수집(순차 — 가드상태 race 방지)
     await _load_restock_guards()
@@ -4600,14 +4603,32 @@ async def run_kream_unified_once() -> dict:
             f" — 등록 {int(box_rs['post']):,} · 실패 {int(box_rs['fail']):,}"
             f" ({'실행ON' if _EXEC_BOX_RESTOCK else '섀도'})"
         )
+    # [2026-08-05] 실제 반영 재조회 — "반영후"가 산술 계산(시작-삭제+등록)이라
+    # 등록이 200 을 받고도 실제로 안 붙은 분(실측 1,193건)이 통째로 가려졌다.
+    # 예상과 실제를 나란히 찍어 유실을 드러낸다. 6시간 사이클에 조회 2분은 무시 가능.
+    _after_n = None
+    try:
+        _after_n = len(await _fetch_live_asks(h))
+    except Exception as _e:
+        logger.info("[크림통합] 반영후 재조회 실패(무시): %s", str(_e)[:60])
     _restock_sec += "\n━━━━━━━━━━\n"
     _msg = (
         f"[크림 입찰갱신]\n"
         f"환율 {rate:.4f} JPY→KRW\n\n"
         # 시작 시점 입찰수만 찍으면 "2,000 지웠는데 왜 그대로냐"로 읽힌다 —
         # 삭제 결과는 다음 사이클 조회에야 반영되므로 반영후 잔여를 같이 표기.
-        f"입찰 {len(asks):,}건(시작) → {max(0, len(asks) - _del_all + exec_post):,}건(반영후)"
-        f" | 매핑 {_mapped:,}/{len(_ask_kids):,}건\n"
+        f"입찰 {len(asks):,}건(시작) → 예상 {max(0, len(asks) - _del_all + exec_post):,}"
+        + (
+            f" / 실제 {_after_n:,}"
+            + (
+                f" ⚠️유실 {max(0, len(asks) - _del_all + exec_post) - _after_n:,}"
+                if _after_n < max(0, len(asks) - _del_all + exec_post)
+                else ""
+            )
+            if _after_n is not None
+            else ""
+        )
+        + f" | 매핑 {_mapped:,}/{len(_ask_kids):,}건\n"
         f"삭제 {_del_all:,}건(실행) | 조정 {_upd_all:,}건"
         + (f" | ❌실행실패 {_fail_all:,}건(등록포함)" if _fail_all else "")
         # 비1순위도 시작 시점 집계 — 이번 사이클 가격열위 삭제분을 뺀 값을 같이 보여준다
