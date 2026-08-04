@@ -2031,6 +2031,115 @@ async def sync_order_tracking(order_id: str, force: bool = False) -> dict:
     return await enqueue_for_order(order_id, force=force)
 
 
+@router.post("/{order_id}/poison-cancel")
+async def poison_cancel_order(
+    order_id: str,
+    body: dict,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """포이즌 문제주문 후속조치 (2026-08-03 사용자 설계).
+
+    action 두 모드:
+    - "cancel"(기본, 오매칭): 해당 상품(spuId) 활성 입찰 전부 취소(재판매 방지)
+      + 위약금(penalty)을 소싱주문번호·원가 칸에 동일 기록(두 값이 같은 주문만
+      골라 패널티 정산하는 운영 컨벤션). 주문 자체는 포이즌에 셀러 취소 API가
+      없어(문서 Order 섹션 전수 확인) 미발송 방치 시 기한 후 자동 거래실패,
+      또는 셀러센터 수동 취소(재고부족).
+    - "reprice"(가격 문제, 역마진 체결): 상품 매칭은 정상이므로 취소하지 않고
+      활성 입찰 가격을 new_price 로 일괄 수정해 재발만 방지. 주문은 정상 이행.
+    """
+    from backend.domain.samba.account.model import SambaMarketAccount
+    from backend.domain.samba.proxy.poison import PoisonClient
+
+    order = await session.get(SambaOrder, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+    if (order.source or "") != "poison":
+        raise HTTPException(status_code=400, detail="포이즌 주문이 아닙니다")
+
+    action = str(body.get("action") or "cancel").strip().lower()
+    if action not in ("cancel", "reprice"):
+        raise HTTPException(status_code=400, detail="action은 cancel|reprice")
+    penalty = int(body.get("penalty") or 0)
+    new_price = int(body.get("new_price") or 0)
+    if action == "reprice" and new_price <= 0:
+        raise HTTPException(status_code=400, detail="reprice에는 new_price 필요")
+    cancel_bids = bool(body.get("cancel_bids", True))
+
+    canceled, repriced, cancel_errors = [], [], []
+    if cancel_bids or action == "reprice":
+        account = await session.get(SambaMarketAccount, order.channel_id)
+        extras = (account.additional_fields or {}) if account else {}
+        if not isinstance(extras, dict):
+            extras = {}
+        app_key = (
+            extras.get("app_key", "") or extras.get("appKey", "")
+            or getattr(account, "api_key", "") or ""
+        )
+        app_secret = (
+            extras.get("app_secret", "") or extras.get("appSecret", "")
+            or getattr(account, "api_secret", "") or ""
+        )
+        spu_raw = str(order.product_id or "").strip()
+        if app_key and app_secret and spu_raw.isdigit():
+            client = PoisonClient(app_key, app_secret)
+            page = await client.query_listing_page(
+                trade_status=2, spu_id=int(spu_raw), page_size=100
+            )
+            for b in page.get("list") or []:
+                bno = str(b.get("sellerBiddingNo") or "")
+                if not bno:
+                    continue
+                if action == "reprice":
+                    r = await client.update_listing(
+                        seller_bidding_no=bno,
+                        price=new_price,
+                        quantity=1,
+                        global_sku_id=int(b["globalSkuId"]) if b.get("globalSkuId") else None,
+                        old_quantity=1,
+                    )
+                    if r.get("success"):
+                        repriced.append(bno)
+                    else:
+                        cancel_errors.append(
+                            {"bno": bno, "msg": str(r.get("message") or "")[:120]}
+                        )
+                    continue
+                r = await client.cancel_listing(bno)
+                if r.get("success"):
+                    canceled.append(bno)
+                else:
+                    cancel_errors.append(
+                        {"bno": bno, "msg": str(r.get("message") or "")[:120]}
+                    )
+        elif not spu_raw.isdigit():
+            cancel_errors.append({"bno": "", "msg": "spuId(product_id) 없음 — 입찰취소 생략"})
+
+    if action == "reprice":
+        penalty = 0  # 가격 수정 모드 — 주문은 정상 이행, 위약금 없음
+    if penalty > 0:
+        order.sourcing_order_number = str(penalty)
+        order.cost = penalty
+        session.add(order)
+        await session.commit()
+
+    logger.info(
+        "[포이즌 취소] order=%s penalty=%s 입찰취소=%d 실패=%d",
+        order.order_number, penalty, len(canceled), len(cancel_errors),
+    )
+    return {
+        "success": True,
+        "action": action,
+        "canceled_bids": canceled,
+        "repriced_bids": repriced,
+        "cancel_errors": cancel_errors,
+        "penalty_recorded": penalty if penalty > 0 else None,
+        "note": ("주문 자체 취소는 미발송 방치(기한 후 자동 거래실패) 또는 "
+                 "셀러센터 수동(재고부족)" if action == "cancel" else
+                 "가격 수정 완료 — 주문은 정상 발송 진행"),
+    }
+
+
 @router.post("/sync-tracking/bulk")
 async def sync_order_tracking_bulk(
     limit: int = Query(500, ge=1, le=1000),

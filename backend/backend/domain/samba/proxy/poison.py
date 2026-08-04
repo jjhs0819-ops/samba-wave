@@ -348,6 +348,7 @@ class PoisonClient:
         offset_id: int = 0,
         page_size: int = 100,
         region: str | None = None,
+        spu_id: int | None = None,
     ) -> dict[str, Any]:
         """내 입찰(listing) 목록 1페이지 조회 (Query Listing List).
 
@@ -366,6 +367,9 @@ class PoisonClient:
         }
         if trade_status is not None:
             biz["tradeStatus"] = int(trade_status)
+        # spuId 필터 — full 엔드포인트에서만 동작(simple 은 무시함, 2026-08-02 실측)
+        if spu_id is not None:
+            biz["spuId"] = int(spu_id)
         data = await self._post(self.PATH_QUERY_LISTING, biz)
         if data.get("code") != 200:
             return {"list": [], "lastOffsetId": 0, "error": data}
