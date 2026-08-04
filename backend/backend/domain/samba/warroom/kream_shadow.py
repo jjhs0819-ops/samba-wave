@@ -41,10 +41,24 @@ _EXEC_BOX = os.environ.get("KREAM_EXEC_BOX") == "1"
 _EXEC_SHOE = os.environ.get("KREAM_EXEC_SHOE") == "1"
 # 신발 신규 자동등록 실행 게이트 — 갱신/삭제와 별도. 섀도 후보 검증 후 KREAM_EXEC_SHOE_RESTOCK=1.
 _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
-# 비카드(신발/의류) 우선처리 상한 — 매 사이클 리스톡 슬라이스 외 추가 포함 수. DB옵션만 보므로 가볍다.
-_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 2500)
+
+# ── 사이클 상한 [2026-08-04 일원화] ──────────────────────────────────────────
+# 종전엔 카드·신발·박스가 제각각 다른 상한으로 돌았다(갱신 2,500 / 신발조회 7,000 /
+# 신발등록 50 / 박스등록 30 / 만료회수 30 …). 어느 쪽이 병목인지 알 수 없었고,
+# 신발 등록 50 은 미등록 19,804건을 사실상 방치했다. 두 개로 줄인다.
+#   _CYCLE_SCAN — 사이클당 "조회·판정"할 상품 수 (갱신·신발시세·비카드). 사이클 시간과 직결.
+#   _POST_MAX   — 사이클당 "쓰기"(신규등록·만료재등록) 상한. 폭주 방지용.
+# 카테고리별 환경변수를 주면 그쪽이 우선 — 급할 때 미세조정 여지는 남긴다.
+_CYCLE_SCAN = int(os.environ.get("KREAM_CYCLE_SCAN") or 11000)
+_POST_MAX = int(os.environ.get("KREAM_POST_MAX") or 1200)
+_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or _CYCLE_SCAN)
+_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or _CYCLE_SCAN)
+_EXPIRED_MAX = int(os.environ.get("KREAM_EXPIRED_MAX") or _POST_MAX)
+_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or _POST_MAX)
+_BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or _POST_MAX)
+# 리스톡 탐색(미입찰 상품 발굴) 슬라이스 — 조회 부담이 갱신과 같은 성격이라 같은 상한을 쓴다.
+_RESTOCK_SCAN = int(os.environ.get("KREAM_UNIFIED_BATCH") or _CYCLE_SCAN)
 _live_offset = 0  # 갱신 로테이션 위치(라이브 입찰 분할처리)
-_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 2500)
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
 _shoe_fetch_offset = 0  # 신발 실시간시세 조회 로테이션 위치(사이클당 일부만)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
@@ -2700,16 +2714,6 @@ async def _process_shoe_asks(
 
 
 # 신발 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지(사이즈별 다건). verified 확정 신발만.
-# [2026-08-04] 신규등록 상한 통합 — 카테고리별(신발50/박스30)로 따로 두다 보니
-# 미등록이 19,804건인데 신발이 사이클당 50건씩만 붙었다. 등록 실행 단계에서
-# KREAM_POST_MAX 로 한 번 더 자르므로 카테고리 상한은 중복 제한이다.
-# 카테고리 구분 없이 POST_MAX 하나로 본다(환경변수로 여전히 개별 조정 가능).
-_POST_MAX = int(os.environ.get("KREAM_POST_MAX") or 1200)
-# [2026-08-04] 사이클 스캔 상한 일원화 — 카드(LIVE_BATCH 2,500)·신발(SHOE_FETCH_MAX 7,000)이
-# 서로 다른 값으로 따로 돌아 어느 쪽이 병목인지 알 수 없었다. 하나로 묶어 조정한다.
-# 개별 환경변수를 주면 그쪽이 우선(급할 때 카테고리별 미세조정 여지는 남긴다).
-_CYCLE_SCAN = int(os.environ.get("KREAM_CYCLE_SCAN") or 5000)
-_SHOE_RESTOCK_MAX = int(os.environ.get("KREAM_SHOE_RESTOCK_MAX") or _POST_MAX)
 
 
 def _cm_to_mm_variants(name: str) -> set[str]:
@@ -2866,7 +2870,6 @@ async def _process_shoe_restock(
 
 
 # 박스/카드팩 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지.
-_BOX_RESTOCK_MAX = int(os.environ.get("KREAM_BOX_RESTOCK_MAX") or _POST_MAX)
 # 박스 신규 자동등록 실행 게이트 — 갱신/삭제(_EXEC_BOX)와 별도. 후보 검증 후 1.
 _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
@@ -3313,9 +3316,6 @@ async def _process_box_asks(
     return c
 
 
-# 만료 회수(재입찰) 사이클당 상한 — 대량 재게시 폭주 방지.
-_EXPIRED_MAX = int(os.environ.get("KREAM_EXPIRED_MAX") or 30)
-
 # 국내못이김/1등불가 가격열위 삭제 사이클당 상한 — 첫 사이클 수백건 일괄삭제 쇼크 방지,
 # 200/사이클 점진 삭제(슬랙 감시). 무재고·게이트 삭제는 상한 무관(전량 삭제). [2026-07-26]
 # [2026-08-02] 가격열위(1등불가) 적체가 14,000건 넘어 200/사이클로는 영영 못 지운다 → 2,000.
@@ -3673,7 +3673,7 @@ async def run_kream_unified_once() -> dict:
         )
         else 1
     )
-    batch = int(os.environ.get("KREAM_UNIFIED_BATCH") or 10000)
+    batch = _RESTOCK_SCAN
     # 재시작 직후(in-memory 0)면 DB서 이전 offset 복원 → 로테이션 이어감(재배포 리셋 방지)
     if _unified_offset == 0:
         try:
