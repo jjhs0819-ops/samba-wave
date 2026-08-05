@@ -1084,6 +1084,30 @@ async def _kream_log_tailer() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(20)  # 서버 기동 + 테이블 생성(emergency fix) 대기
+
+    # 크림을 안 쓰는 인스턴스(kream_refresh_log 미생성)에서는 루프를 아예 돌리지 않는다.
+    # 테이블이 없으면 tail 이 매번 예외 → 4초마다 경고로그 + 헛 DB커넥션이 하루 21,600회
+    # 쌓인다. 크림 전용 프로세스가 테이블을 만든 인스턴스에서만 브리지가 필요하다.
+    try:
+        from backend.db.orm import get_read_session
+        from sqlalchemy import text as _sa_text
+
+        async with get_read_session() as _s:
+            _exists = (
+                await _s.execute(
+                    _sa_text(
+                        "SELECT 1 FROM information_schema.tables "
+                        "WHERE table_name = 'kream_refresh_log'"
+                    )
+                )
+            ).first()
+        if not _exists:
+            _log.info("[크림로그테일러] kream_refresh_log 없음 — 브리지 비활성(크림 미사용)")
+            return
+    except Exception as exc:
+        _log.warning("[크림로그테일러] 테이블 확인 실패 — 브리지 비활성: %s", exc)
+        return
+
     try:
         from backend.domain.samba.warroom.kream_shadow import kream_log_max_id
 
