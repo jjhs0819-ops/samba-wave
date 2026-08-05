@@ -1575,6 +1575,15 @@ def _decide_price_action(
     # 1등 확보 불가 시 등록 방지 — 최소마진(min_price) 지키며 시장최저(해외/국내) 못 이기면 rank1 불가.
     # 1등 확보 실패 입찰은 체결 안 됨 → 무의미. 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
     if market_low > 0 and min_price > market_low:
+        # [2026-08-05] 무경쟁이면 삭제가 아니라 **인상**이다.
+        # 경쟁자가 없으면 lowest_* 가 내 입찰 그 자체라 market_low == 내 가격이 된다.
+        # 원가가 조금만 올라 min_price 가 그 값을 넘으면 "1등 불가"로 판정되는데,
+        # 경쟁자가 없으니 값을 올려도 여전히 1등이다. 지울 이유가 없다.
+        # (실측 147058|235: 나 혼자 567,000, 해외최저=내 가격 — 원가 상승분만큼 올리면 됨)
+        # cur 이 0 이면 신규 등록이라 해당 없음. market_low < cur 이면 진짜 경쟁자가
+        # 내 아래에 있는 것이므로 기존대로 삭제한다.
+        if cur > 0 and market_low >= cur:
+            return "마진미달인상", min_price, True, False
         return "1등불가삭제", 0, True, False
     no_comp_eff = min(no_comp, _dcap)
     band = max(3000, int(no_comp_eff * 0.03))
