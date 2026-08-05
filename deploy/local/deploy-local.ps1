@@ -143,6 +143,17 @@ for ($i = 0; $i -lt 18; $i++) {
     if ($r.status -eq "healthy") { $ok = $true; break }
     $lastErr = "status=$($r.status)"
   } catch { $lastErr = $_.Exception.Message }
+  # [2026-08-06] 호스트 포트 폴백 — Docker Desktop 포트 프록시가 죽으면
+  # localhost:8080 이 TCP 만 붙고 바로 끊긴다(앱은 멀쩡). 그 탓에 정상 배포가
+  # 매번 exit 1 로 끝나 실패로 오인됐다. 컨테이너 안에서 직접 물어 확인한다.
+  if (-not $ok) {
+    $inner = docker exec local-samba-api-1 curl -s --max-time 5 http://127.0.0.1:8080/api/v1/health 2>$null
+    if ($inner -match '"status"\s*:\s*"healthy"') {
+      $ok = $true
+      Write-Host "   (호스트 포트 미응답 — 컨테이너 내부 확인으로 통과)" -ForegroundColor DarkGray
+      break
+    }
+  }
 }
 if ($ok) {
   Write-Host "배포 완료 - 로컬 healthy" -ForegroundColor Green
