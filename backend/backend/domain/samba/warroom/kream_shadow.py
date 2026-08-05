@@ -71,7 +71,10 @@ async def _send_slack(msg: str) -> None:
     if not _SLACK_WEBHOOK.startswith("https://hooks.slack.com/"):
         return
     try:
-        async with httpx.AsyncClient(mounts=_mounts(), timeout=10) as cli:
+        # [2026-08-05] 프록시(_mounts) 경유 금지 — 그 프록시는 **크림 API 전용**(119.206.x)이라
+        # 슬랙으로 나가면 조용히 삼켜진다. 실측: 컨테이너에서 직접 POST 하면 200 'ok' 인데
+        # 사이클 요약만 안 나갔고, except 로그조차 안 찍혔다(예외가 아니라 무응답).
+        async with httpx.AsyncClient(timeout=15) as cli:
             r = await cli.post(_SLACK_WEBHOOK, json={"text": msg})
         # [2026-08-03] 응답을 버려서 웹훅 만료·payload 거부가 로그 한 줄 없이 사라졌다.
         # 슬랙은 예외를 던지지 않고 non-200 + 본문(no_service / invalid_payload)으로만
@@ -2247,11 +2250,11 @@ def _ann_value(
     소재·색상·제조국처럼 우리가 실제로 모르는 값은 지어내지 않고 실물 확인 문구로 둔다."""
     k = key.replace(" ", "")
     if "품명" in k or "품목" in k or k.startswith("도서명"):
-        return name_en or style or "상품 상세 참고"
+        return name_en or style or "제품 내 택 참고"
     if "모델명" in k:
-        return style or (name_en or "상품 상세 참고")
+        return style or (name_en or "제품 내 택 참고")
     if "제조자" in k or "수입자" in k or "제조업" in k:
-        return brand or "상품 라벨 참고"
+        return brand or "제품 내 택 참고"
     if "전화번호" in k or "연락처" in k:
         return tel
     if "발길이" in k:
@@ -2259,7 +2262,7 @@ def _ann_value(
     if "굽높이" in k:
         return "1cm"
     if "종류" in k:
-        return {"bag": "가방", "headwear": "패션잡화"}.get(kind, "상품 상세 참고")
+        return {"bag": "가방", "headwear": "패션잡화"}.get(kind, "제품 내 택 참고")
     if "품질보증기준" in k:
         return "관련 법령 및 소비자분쟁해결기준에 따름"
     if "인증" in k or "허가" in k:
@@ -2267,12 +2270,12 @@ def _ann_value(
     if "보증서" in k:
         return "미제공"
     if "색상" in k:
-        return "상품 이미지 참고"
+        return "제품 내 택 참고"
     if "제조국" in k or "원산지" in k or "제조년월" in k or "제조연월" in k:
-        return "상품 라벨 참고"
+        return "제품 내 택 참고"
     if "세탁" in k or "취급" in k or "주의" in k or "착용" in k:
-        return "상품 라벨 참고"
-    return "상품 상세 참고"
+        return "제품 내 택 참고"
+    return "제품 내 택 참고"
 
 
 async def _ann_product_row(kid: str) -> dict:
