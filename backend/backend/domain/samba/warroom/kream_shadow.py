@@ -223,6 +223,24 @@ def _drop(reason: str, kid: str = "", opt: str = "", extra: str = "") -> None:
     _trace(kid, opt, f"제외: {reason}{(' ' + extra) if extra else ''}")
 
 
+def _fail_kind(reason: str) -> str:
+    """등록 실패 응답을 사유 묶음으로 분류 — 사이클 요약에서 원인별로 보이게. [2026-08-06]"""
+    r = str(reason or "")
+    if "고시" in r or "announcement" in r:
+        return "고시미등록"
+    if "500" in r:
+        return "크림500"
+    if "천원" in r or "1000" in r:
+        return "천원단위"
+    if "입찰" in r and ("제한" in r or "불가" in r):
+        return "입찰제한"
+    if "옵션" in r or "상품 정보가 변경" in r:
+        return "옵션불일치"
+    if "timeout" in r.lower() or "timed out" in r.lower():
+        return "타임아웃"
+    return (r[:24] or "기타") if r else "기타"
+
+
 def _guard_jpy(kid: str, opt: str, cur_jpy: int) -> int:
     """급락이면 직전가 반환(1사이클 보류), 아니면 현재가 그대로. 반환값이 원가 계산 기준."""
     try:
@@ -4710,6 +4728,12 @@ async def run_kream_unified_once() -> dict:
                         _g_miss_counts.pop(f"{_kid}|{_nm}", None)
                     else:
                         exec_fail += 1
+                        # [2026-08-06] 등록 실패 **사유를 남긴다.** 종전엔 건수만 세고
+                        # 사유는 버렸다. 특히 고시·500 실패는 쿨다운에도 안 들어가
+                        # 어느 저장소에도 흔적이 없었다 — '이유 없이 등록 안 되는 건'의
+                        # 정체가 이것이다(실측: 등록가능 판정 27건 중 23건이 miss_counts
+                        # 에만 남고 failed_posts 엔 없음).
+                        _drop(f"등록실패({_fail_kind(_rs)})", _kid, _nm, _rs[:60])
                         # [2026-08-04] 고시 API 500 같은 **일시 서버 장애**로 실패한 건은
                         # 6h 쿨다운에 넣지 않는다. 상품 문제가 아니라 크림 쪽 불안정이라
                         # 다음 사이클에 그냥 되는데, 쿨다운에 갇혀 6시간을 버렸다
