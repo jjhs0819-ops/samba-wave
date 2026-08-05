@@ -1214,24 +1214,53 @@ class JobWorker:
                             logger.error(f"[잡워커] 배포 중단 pending 복구 실패: {se}")
                     else:
                         # 진행 없음 타임아웃 → pending 복구 (재시작 시 이어서 수집)
+                        # 단, 같은 원인으로 반복 stuck 나면(#706) 무한 재시도 대신 failed 처리
+                        _MAX_NO_PROGRESS_RETRY = 5
                         logger.warning(
                             f"[잡워커] 수집 진행 없음 {_NO_PROGRESS_SEC}초 → pending 복구: {_job_id}"
-                        )
-                        _add_job_log(
-                            _job_id,
-                            f"수집 진행 없음 ({_NO_PROGRESS_SEC // 60}분) — 자동 재시도 예정",
-                            job_type="collect",
                         )
                         try:
                             async with get_write_session() as timeout_session:
                                 from sqlalchemy import text as _text2
 
-                                await timeout_session.execute(
+                                _attempt_result = await timeout_session.execute(
                                     _text2(
-                                        "UPDATE samba_jobs SET status='pending', started_at=NULL WHERE id=:jid AND status='running'"
+                                        "UPDATE samba_jobs SET attempt = COALESCE(attempt, 0) + 1 "
+                                        "WHERE id=:jid AND status='running' RETURNING attempt"
                                     ),
                                     {"jid": _job_id},
                                 )
+                                _new_attempt = _attempt_result.scalar()
+                                if (
+                                    _new_attempt is not None
+                                    and _new_attempt >= _MAX_NO_PROGRESS_RETRY
+                                ):
+                                    await timeout_session.execute(
+                                        _text2(
+                                            "UPDATE samba_jobs SET status='failed', error=:err WHERE id=:jid"
+                                        ),
+                                        {
+                                            "jid": _job_id,
+                                            "err": f"진행없음 타임아웃 {_new_attempt}회 반복 — 자동 실패 처리",
+                                        },
+                                    )
+                                    _add_job_log(
+                                        _job_id,
+                                        f"수집 진행 없음 {_new_attempt}회 반복 — 자동 실패 처리",
+                                        job_type="collect",
+                                    )
+                                else:
+                                    await timeout_session.execute(
+                                        _text2(
+                                            "UPDATE samba_jobs SET status='pending', started_at=NULL WHERE id=:jid AND status='running'"
+                                        ),
+                                        {"jid": _job_id},
+                                    )
+                                    _add_job_log(
+                                        _job_id,
+                                        f"수집 진행 없음 ({_NO_PROGRESS_SEC // 60}분, {_new_attempt or '?'}회째) — 자동 재시도 예정",
+                                        job_type="collect",
+                                    )
                                 await timeout_session.commit()
                         except Exception as te:
                             logger.error(f"[잡워커] 진행없음 pending 복구 실패: {te}")
@@ -1262,6 +1291,10 @@ class JobWorker:
                 if not fresh_job:
                     logger.error(f"[잡워커] 잡 재조회 실패: {_job_id}")
                     return
+                # 이 SELECT로 연 트랜잭션을 즉시 닫음 — 안 닫으면 뒤이은 전송/삭제
+                # 처리(최대 300초+) 내내 idle in transaction으로 커넥션 점유됨(#705).
+                # expire_on_commit=False(db/orm.py) 라 커밋 후에도 fresh_job 속성 접근 안전.
+                await session.commit()
                 logger.info(f"[잡워커] 실행: {_job_id} ({_job_type})")
 
                 try:
@@ -2928,7 +2961,9 @@ class JobWorker:
                         if _site_consecutive_errors[_ik] >= 5:
                             _rate_limited = True
                         if rle.retry_after > 0:
-                            if await _cancellable_sleep(rle.retry_after):
+                            # 소싱처가 비정상적으로 큰 Retry-After를 보내도
+                            # 워커 슬롯을 무기한 점유하지 못하게 상한 적용 (#706)
+                            if await _cancellable_sleep(min(rle.retry_after, 60)):
                                 return None
                         return None
                     except Exception as e:
@@ -3250,7 +3285,9 @@ class JobWorker:
                     if _site_consecutive_errors[_ik] >= 5:
                         _rate_limited = True
                     if rle.retry_after > 0:
-                        if await _cancellable_sleep(rle.retry_after):
+                        # 소싱처가 비정상적으로 큰 Retry-After를 보내도
+                        # 워커 슬롯을 무기한 점유하지 못하게 상한 적용 (#706)
+                        if await _cancellable_sleep(min(rle.retry_after, 60)):
                             return None
                     return None
                 except Exception as e:
@@ -6899,11 +6936,18 @@ class JobWorker:
                     or _lotteon_cat4
                     or item.get("category4", "")
                 )
+            # item/detail의 extra_data 병합 — 공유 헬퍼(_build_product_data)는 보존하는데
+            # 이 인라인 저장 경로만 누락돼 SNKRDUNK snkr_type 등이 조용히 유실되던 버그 (#701)
+            _extra_data = {
+                **(item.get("extra_data") or {}),
+                **(detail.get("extra_data") or {}),
+            }
             product_data = {
                 # 셀러샵 수집분은 board(테트리스) 분리를 위해
                 # source_site 를 LOTTEON_SELLERSHOP 로 저장한다. site(=LOTTEON)는 수집/필터
                 # 로직 전부에서 그대로 쓰이고 저장 시점에만 분기(refresh 는 base-site 정규화).
                 "source_site": ("LOTTEON_SELLERSHOP" if _is_seller_shop else site),
+                "extra_data": (_extra_data or None),
                 "search_filter_id": filter_id,
                 "site_product_id": p_id,
                 "source_url": item.get("source_url", "")
