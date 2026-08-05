@@ -2779,6 +2779,30 @@ def _cm_to_mm_variants(name: str) -> set[str]:
     return out
 
 
+def _match_kream_option(nm: str, opts: list) -> dict | None:
+    """DB 옵션명 → 크림 옵션 객체. 표기 차이를 흡수한다. [2026-08-05]
+
+    리스톡 매칭이 공백만 지운 **정확 일치**라 표기가 조금만 달라도 등록 시도조차
+    못 했다. _cm_to_mm_variants 로 규칙은 이미 만들어 뒀는데 호출부가 0 개였다.
+      · 의류 지역 접두 — DB 'JP S' vs 크림 'S'  (실측 177955, 무경쟁인데 미등록)
+      · cm 표기      — DB '24.5cm' vs 크림 '245'
+      · 크림 접미    — DB '260' vs 크림 '260(US 5.5)'
+    """
+    if not opts:
+        return None
+    want = {v.replace(" ", "").upper() for v in _cm_to_mm_variants(str(nm))}
+    norm = [(str(o.get("name") or "").replace(" ", "").upper(), o) for o in opts]
+    for n, o in norm:
+        if n and n in want:
+            return o
+    # 크림 접미 표기 — '260(US5.5)' 의 괄호 앞부분으로 한 번 더 본다.
+    for n, o in norm:
+        base = n.split("(")[0]
+        if base and base in want:
+            return o
+    return None
+
+
 # [2026-08-05] _process_shoe_restock 제거 — 2026-08-01 에 호출부를 뺀 뒤로 정의만
 # 남아 있던 죽은 코드(154줄). 신발/의류 신규등록은 통합 루프의 kind=='restock' 이
 # 이미 처리한다(실측: 최근 1시간 등록 1,464건 중 sneaker 757개로 주력).
@@ -3987,15 +4011,7 @@ async def run_kream_unified_once() -> dict:
                                 "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
                             )
                             _card_opts_cache = (_cr.json() or {}).get("options") or []
-                        _want = str(nm).replace(" ", "")
-                        _copt = next(
-                            (
-                                _o
-                                for _o in _card_opts_cache
-                                if str(_o.get("name") or "").replace(" ", "") == _want
-                            ),
-                            None,
-                        )
+                        _copt = _match_kream_option(nm, _card_opts_cache)
                     except Exception:
                         _copt = None
                     # [2026-08-05] 옵션 매칭 실패 = "시세를 모름"이지 "경쟁자 없음"이 아니다.
@@ -4252,15 +4268,7 @@ async def run_kream_unified_once() -> dict:
                                 "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
                             )
                             _card_opts_cache = (_cr.json() or {}).get("options") or []
-                        _want = str(nm).replace(" ", "")
-                        _copt = next(
-                            (
-                                _o
-                                for _o in _card_opts_cache
-                                if str(_o.get("name") or "").replace(" ", "") == _want
-                            ),
-                            None,
-                        )
+                        _copt = _match_kream_option(nm, _card_opts_cache)
                     except Exception:
                         _copt = None
                     # [2026-08-05] 옵션 매칭 실패 = "시세를 모름"이지 "경쟁자 없음"이 아니다.
