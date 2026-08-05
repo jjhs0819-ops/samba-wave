@@ -2717,11 +2717,26 @@ async def _process_shoe_asks(
 
 
 def _cm_to_mm_variants(name: str) -> set[str]:
-    """옵션명 매칭 후보 — 원본 정규화 + cm→mm(24.5cm→245). 크림(mm)↔DB(cm) 불일치 흡수."""
-    out = {str(name or "").replace(" ", "").upper()}
-    m = re.match(r"^([\d.]+)\s*cm$", str(name or "").strip(), re.I)
+    """옵션명 매칭 후보 — 원본 정규화 + cm→mm(24.5cm→245) + 의류 사이즈 접두 제거.
+
+    [2026-08-05] 의류가 통째로 매칭 실패하고 있었다. 스니덩크는 'JP S'/'US M' 처럼
+    지역 접두를 붙여 주는데 크림 옵션은 'S'/'M' 이라 그대로는 못 찾는다.
+    실측 177955(adidas Track Jacket): DB 'JP S' vs 크림 'XS/S/M/L/XL/XXL/XXXL' →
+    옵션매칭 실패로 등록 시도조차 안 됨. 크림에 호가가 아예 없어(무경쟁) 넣으면
+    바로 1등인 건이었다. 신발은 '240(US 5.5)'→'240' 폴백이 있는데 의류만 빠져 있었다.
+    """
+    raw = str(name or "").strip()
+    out = {raw.replace(" ", "").upper()}
+    m = re.match(r"^([\d.]+)\s*cm$", raw, re.I)
     if m:
         out.add(str(int(round(float(m.group(1)) * 10))))
+    # 지역 접두(JP/US/EU/UK/KR/FR/IT) 제거 — 'JP S' → 'S', 'US M' → 'M'
+    m2 = re.match(r"^(?:JP|US|EU|UK|KR|FR|IT)\s+(.+)$", raw, re.I)
+    if m2:
+        out.add(m2.group(1).replace(" ", "").upper())
+    # 반대 방향도 — 크림이 'JP S' 이고 DB 가 'S' 인 경우
+    if raw and not re.match(r"^(?:JP|US|EU|UK|KR|FR|IT)\s", raw, re.I):
+        out.add(("JP" + raw).replace(" ", "").upper())
     return out
 
 
