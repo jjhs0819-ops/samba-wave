@@ -1561,40 +1561,32 @@ def _decide_price_action(
     # 보관 입찰이 더 싼 옵션에서 '1등인 줄 알고' 등록했다가 다음 사이클에 밀린 걸
     _cands = [x for x in (low_over, low_norm, low_keep) if x and x > 0]
     market_low = min(_cands) if _cands else 0
-    rank1 = market_low > 0 and 0 < cur <= market_low
-    # [2026-08-05] 무경쟁(시장최저가 곧 내 입찰) 판정 — live_rank 보다 우선한다.
-    # 크림 live_rank 는 일반·해외를 합쳐 매기므로, 해외 판매자가 나 혼자여도 국내
-    # 입찰 때문에 2 가 나온다. 그걸 그대로 믿으면 "밀렸다"고 보고 내 가격을 기준으로
-    # -1,000 씩 계속 깎는다 — 자기 자신과 경쟁하며 가격을 자해한다.
-    #   실측 로그: "경쟁가 추종 652468 PSA 10: 85,000→84,000 (rank=2)" 인데
-    #   해당 옵션 판매입찰은 내 것 1건뿐(판매자센터 순번 1).
-    # market_low == cur 는 "내 가격이 곧 최저" 라는 확실한 신호라 live_rank 로 덮지 않는다.
-    _alone = market_low > 0 and cur > 0 and market_low >= cur
-    # [2026-08-03] 실순위(live_rank)를 받았으면 그게 진실이다. 공식 lowest_* 는 내가 최저일 때
-    # '내 가격'만 되비춰 경쟁자 유무를 알 수 없고, 그 탓에 1등으로 오판해 무경쟁 마진까지
-    # 올렸다가 밀리는 왕복이 반복됐다(884440: 71,000→76,000→복귀를 매 사이클).
-    if live_rank is not None and not _alone:
+    # [2026-08-05] 판정 기준은 상황에 따라 **둘로 갈린다**. 하나로 묶어 쓰다가
+    # 이미 입찰 중인 건을 '내 가격 vs 내 가격'으로 비교해 스스로 밀린 걸로 오판했다.
+    #   ① 신규(cur==0)  — 아직 내 입찰이 없으니 lowest_* 는 순수 경쟁자 값이다.
+    #                     통합 최저가보다 싸게 넣으면 1등. market_low 로 판정한다.
+    #   ② 기존(cur>0)   — lowest_* 에 내 입찰이 섞인다. 내가 최저면 market_low == 내
+    #                     가격이라 비교가 무의미(스스로와 경쟁). 이때는 **내 순위**
+    #                     (live_rank)만 본다.
+    # live_rank 가 없을 때만 cur <= market_low 로 대신 본다(내가 최저면 1등).
+    if cur > 0 and live_rank is not None:
         rank1 = int(live_rank) == 1
-    elif _alone:
-        rank1 = True
+    else:
+        rank1 = market_low > 0 and 0 < cur <= market_low
     _dcap = domestic_cap(low_norm, tariff_threshold)
-    # 국내입찰가 비교 — 국내가 더 싸서 최소마진(min_price) 지키며 못 이기면(국내상한 초과)
-    # 입찰 무의미(체결 안 되거나 손해) → 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
-    if low_norm > 0 and min_price > _dcap:
-        return "국내못이김삭제", 0, True, False
-    # 1등 확보 불가 시 등록 방지 — 최소마진(min_price) 지키며 시장최저(해외/국내) 못 이기면 rank1 불가.
-    # 1등 확보 실패 입찰은 체결 안 됨 → 무의미. 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
-    if market_low > 0 and min_price > market_low:
-        # [2026-08-05] 무경쟁이면 삭제가 아니라 **인상**이다.
-        # 경쟁자가 없으면 lowest_* 가 내 입찰 그 자체라 market_low == 내 가격이 된다.
-        # 원가가 조금만 올라 min_price 가 그 값을 넘으면 "1등 불가"로 판정되는데,
-        # 경쟁자가 없으니 값을 올려도 여전히 1등이다. 지울 이유가 없다.
-        # (실측 147058|235: 나 혼자 567,000, 해외최저=내 가격 — 원가 상승분만큼 올리면 됨)
-        # cur 이 0 이면 신규 등록이라 해당 없음. market_low < cur 이면 진짜 경쟁자가
-        # 내 아래에 있는 것이므로 기존대로 삭제한다.
-        if cur > 0 and market_low >= cur:
-            return "마진미달인상", min_price, True, False
-        return "1등불가삭제", 0, True, False
+    # [2026-08-05] 삭제 게이트는 **1등이 아닐 때만** 본다.
+    # 이미 입찰 중이고 내 순위가 1등이면 lowest_* 는 내 입찰 그 자체다. 그걸 상대로
+    # "못 이긴다"고 판정하는 건 자기 자신과의 비교라 무의미하고, 그 오판으로 돈 되는
+    # 무경쟁 입찰을 계속 지웠다. 1등이면 최저입찰가는 보지 않는다 — 유지·인상만.
+    # (실측 147058|235: 나 혼자 567,000, lowest_overseas 도 567,000 = 내 가격)
+    if not (cur > 0 and rank1):
+        # 국내입찰가 비교 — 국내가 더 싸서 최소마진(min_price) 지키며 못 이기면(국내상한
+        # 초과) 입찰 무의미(체결 안 되거나 손해) → 삭제 신호. [2026-07-26]
+        if low_norm > 0 and min_price > _dcap:
+            return "국내못이김삭제", 0, True, False
+        # 최소마진 지키며 시장최저(해외/국내/보관) 못 이기면 1등 확보 불가 → 등록 무의미.
+        if market_low > 0 and min_price > market_low:
+            return "1등불가삭제", 0, True, False
     no_comp_eff = min(no_comp, _dcap)
     band = max(3000, int(no_comp_eff * 0.03))
     truly_nocomp = (rank1 or market_low >= no_comp_eff) and no_comp_eff > min_price
