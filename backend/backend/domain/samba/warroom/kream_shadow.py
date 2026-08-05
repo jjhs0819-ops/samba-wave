@@ -3559,7 +3559,13 @@ async def run_kream_unified_once() -> dict:
             for _k, _grp in _dup.items():
                 if len(_grp) < 2:
                     continue
-                _grp.sort(key=lambda x: -int(x.get("price") or 0))  # 최고가 유지
+                # [2026-08-05] **최저가를 남긴다.** 종전엔 내림차순 정렬로 최고가를
+                # 남기고 더 싼 입찰(=1등)을 지웠다. 크림은 낮은 가격이 1등이므로
+                # 남은 최고가는 순위에 밀리고, 다음 갱신에서 "2등 이하"로 또 삭제된다.
+                # 이 정리는 대상선정보다 앞에서 돌기 때문에 사이클이 한 바퀴 돌지
+                # 않아도 입찰이 사라진다 — 등록이 5,634건 나가도 총량이 안 늘고,
+                # 한 사이클 안에 2천건이 빠지던 원인.
+                _grp.sort(key=lambda x: int(x.get("price") or 0))  # 최저가(1등) 유지
                 for _a in _grp[1:]:
                     if _a.get("id") and await _exec_delete_ask(_dcli, h, _a.get("id")):
                         _dedup_del += 1
