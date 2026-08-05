@@ -203,6 +203,8 @@ _TRACE_KIDS: set = {
 }
 # 사유별 소멸 집계 — 등록 후보에서 빠진 모든 경로가 여기 누적된다(사이클마다 리셋).
 _g_drop: dict[str, int] = {}
+# 이번 사이클에 **판정까지 못 간** kid — 스캔목록에서 빼서 다음 사이클에 다시 본다.
+_g_unjudged: set = set()
 
 
 def _trace(kid: str, opt: str, msg: str) -> None:
@@ -3654,9 +3656,14 @@ async def run_kream_unified_once() -> dict:
         _scanned = set()
         _fresh = rest_products
     rest_slice = _fresh[:_restock_scan] if _restock_scan > 0 else _fresh
+    # [2026-08-05] 스캔목록 저장을 **판정 뒤로** 옮긴다.
+    # 종전엔 슬라이스에 뽑자마자 전량 '완료'로 찍고 저장했다. 판정까지 갔는지는
+    # 보지 않아서, 조회 상한이나 스니덩크 실패로 한 번도 못 본 상품이 완료로 남고
+    # 한 바퀴(5.6만) 내내 다시 안 뽑혔다. 실측 14334: 재고 1·크림 무경쟁인데 하루 넘게
+    # 미등록 — 상한이 굶기고 스캔목록이 그걸 처리완료로 덮은 결과.
     _scanned.update(p["kid"] for p in rest_slice)
     _unified_offset = len(_scanned)  # 바퀴 진행률(슬랙·로그 표기용)
-    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _scanned})
+    _g_unjudged.clear()
     _instock_n = sum(
         1
         for p in rest_slice
@@ -3752,6 +3759,7 @@ async def run_kream_unified_once() -> dict:
                 global _noncard_probe_used
                 if _NONCARD_PROBE_MAX and _noncard_probe_used >= _NONCARD_PROBE_MAX:
                     _drop("비카드조회상한", kid)
+                    _g_unjudged.add(kid)  # 판정 못 함 — 스캔목록에서 제외
                     return r
                 _noncard_probe_used += 1
                 _kream_opts_cache = None  # 상품당 크림 옵션 1회 조회 캐시
@@ -3872,6 +3880,7 @@ async def run_kream_unified_once() -> dict:
             live = await _fetch_snkr_used(scli, snkr_id) if snkr_id else None
             if live is None:
                 r["snkr_fail"] = 1
+                _g_unjudged.add(kid)  # 스니덩크 조회 실패 — 판정 못 함
                 return r
             r["snkr_ok"] = 1
             r["card"] = 1
@@ -4131,6 +4140,7 @@ async def run_kream_unified_once() -> dict:
             live = await _fetch_snkr_used(scli, snkr_id) if snkr_id else None
             if live is None:
                 r["snkr_fail"] = 1
+                _g_unjudged.add(kid)  # 스니덩크 조회 실패 — 판정 못 함
                 return r
             r["snkr_ok"] = 1
             r["card"] = 1
@@ -4402,6 +4412,14 @@ async def run_kream_unified_once() -> dict:
             *[_process(p, scli) for p in products], return_exceptions=True
         )
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
+    # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
+    if _g_unjudged:
+        _scanned -= _g_unjudged
+        logger.info(
+            "[크림통합] 미판정 %d건 — 스캔목록서 제외(다음 사이클 재시도)",
+            len(_g_unjudged),
+        )
+    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _scanned})
 
     # [Step 5] 리스톡 가드 상태 로드 + 실행대기 수집(순차 — 가드상태 race 방지)
     await _load_restock_guards()
