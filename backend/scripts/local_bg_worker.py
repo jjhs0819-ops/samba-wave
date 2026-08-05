@@ -144,8 +144,16 @@ def _get_rembg_session():
             if _rembg_session is None:
                 from rembg import new_session
 
-                _rembg_session = new_session("u2net")
-                print("[Worker] rembg 세션 초기화 완료 (u2net)")
+                # 배경제거 모델: 기본 birefnet-general (u2net보다 엣지·저대비 상품 품질 우수).
+                # env REMBG_MODEL 로 교체 가능. 다운로드/로드 실패 시 u2net 폴백(워커 중단 방지).
+                model = os.environ.get("REMBG_MODEL", "birefnet-general")
+                try:
+                    _rembg_session = new_session(model)
+                    print(f"[Worker] rembg 세션 초기화 완료 ({model})")
+                except Exception as e:
+                    print(f"[Worker] rembg {model} 로드 실패 → u2net 폴백: {e}")
+                    _rembg_session = new_session("u2net")
+                    print("[Worker] rembg 세션 초기화 완료 (u2net fallback)")
     return _rembg_session
 
 
