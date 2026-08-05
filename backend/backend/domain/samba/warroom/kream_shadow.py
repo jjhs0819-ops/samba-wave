@@ -4225,6 +4225,17 @@ async def run_kream_unified_once() -> dict:
                 # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
                 # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
                 _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
+                if _key in _g_recent_posts:
+                    rs["recent"] += 1
+                elif _key in _g_failed_posts:
+                    rs["failed"] += 1
+                elif not _trade_ok(kid, pname):
+                    rs["trade"] += 1
+                elif (str(kid), nm.replace(" ", "")) in _g_unfulfilled:
+                    rs["hold"] += 1
+                else:
+                    rs["ok"] += 1
+                    pend_restock.append((kid, nm, target, pname))
             if act not in ("유지", "유지(동률)"):
                 if _emitted < 120:
                     _emitted += 1
