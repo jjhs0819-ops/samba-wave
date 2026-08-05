@@ -53,11 +53,10 @@ _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 방치되고 신규 브랜드는 사실상 등록되지 않았다(아디다스 재고 4,484 → 입찰 44).
 # 이제 매 사이클 전량을 조회·판정·실행한다. 사이클은 길어지지만 배포 가드가 완주를 기다린다.
 # 비카드 우선처리는 전량 처리라 의미가 없어졌지만, 호출부 호환을 위해 큰 값으로 남긴다.
-# [2026-08-05] 비카드 우선처리 상한 복구 — 상한 전면제거 때 무제한(10**9)으로 열었더니
-# 리스톡 슬라이스를 1만으로 줄여도 여기서 1.9만이 통째로 다시 들어와 분리가 무력화됐다
-# (실측: 갱신 11,879 + 리스톡 10,000 = 21,879 인데 조회 대상은 41,286).
-# 사이클이 4시간대로 늘어 완주가 드물어지고 슬랙이 5시간 넘게 끊겼다.
-_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 3000)
+# [2026-08-05] 비카드 우선처리 폐기 — 리스톡 슬라이스가 재고 보유 우선으로 정렬되므로
+# 신발·의류도 이미 앞줄에서 뽑힌다. 슬라이스 밖에서 따로 더 넣을 이유가 없어졌고,
+# 무제한으로 열려 있던 탓에 리스톡을 1만으로 줄여도 1.9만이 다시 들어와 분리가
+# 무력화됐다(실측: 갱신 11,879 + 리스톡 10,000 = 21,879 인데 조회 대상 41,286).
 _NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 3000)
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
@@ -3664,19 +3663,7 @@ async def run_kream_unified_once() -> dict:
         rest_slice = rest_products
         _unified_offset = 0
     await _save_setting_map(_SET_OFFSET, {"v": int(_unified_offset)})
-    # [2026-08-01] verified 비카드(신발/의류/시계)는 매 사이클 우선 포함 — 통화교정 후 등록
-    # 대기분 4천여개가 1,500/사이클 로테이션으로는 32바퀴(수시간) 걸려 신규입찰이 안 돌았다.
-    # 비카드는 snkr fetch 없이 DB 옵션만 보므로 사이클 부담이 작다(카드처럼 API 조회 안 함).
-    _pri_kids = {p["kid"] for p in rest_slice}
-    _pri_noncard = [
-        p
-        for p in rest_products
-        if p["kid"] not in _pri_kids
-        and p.get("verified")
-        and str(p.get("currency") or "JPY").upper() == "JPY"
-        and not any("PSA" in str(n).upper() for n in (p.get("db_opts") or {}))
-    ][:_NONCARD_PRIORITY_MAX]
-    products = live_products + rest_slice + _pri_noncard
+    products = live_products + rest_slice
     rest_total = len(rest_products)  # 리스톡 탐색 로테이션 분모(진행률 표시용)
     logger.info(
         "[크림통합] 대상선정 — 갱신(live)%d 전량 + 리스톡탐색 %d/%d (offset %d)",
