@@ -970,6 +970,31 @@ class LotteonClient:
                         continue
                     if tgt.get(k) in (None, "", [], {}):
                         tgt[k] = v
+
+        # odSeq 없는 조기 응답 정리 (#708) — getSROrderList가 간혹
+        # {"odNo": "...", "fvrList": []} 처럼 odSeq 없이 먼저 보내는 항목이 있음.
+        # 키가 (odNo, None)이라 진짜 주문(odNo, "1")과 병합되지 않고 빈 주문으로 새로 생성됨.
+        # 같은 odNo에 odSeq 있는 정상 항목이 있으면 흡수, 없고 내용도 비었으면 버림
+        # (다음 수집 주기에 odSeq 포함해 정식으로 들어옴 — 실측 30분 간격).
+        for _key in [k for k in merged_map if k[1] in (None, "")]:
+            _seqless = merged_map.pop(_key)
+            _siblings = [
+                v for k, v in merged_map.items() if k[0] == _key[0] and k != _key
+            ]
+            if _siblings:
+                for _sib in _siblings:
+                    for k, v in _seqless.items():
+                        if v in (None, "", [], {}):
+                            continue
+                        if _sib.get(k) in (None, "", [], {}):
+                            _sib[k] = v
+            elif any(
+                v not in (None, "", [], {}) for k, v in _seqless.items() if k != "odNo"
+            ):
+                # 형제 없지만 실제 내용이 있는 항목 — 유실 방지 위해 odSeq=1로 복원
+                merged_map[(_key[0], "1")] = _seqless
+            # else: 형제도 없고 내용도 비어있음 — 유령이므로 버림
+
         merged: list[dict] = list(merged_map.values())
 
         logger.info(
