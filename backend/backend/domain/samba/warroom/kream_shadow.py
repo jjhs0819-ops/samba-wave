@@ -53,8 +53,12 @@ _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 방치되고 신규 브랜드는 사실상 등록되지 않았다(아디다스 재고 4,484 → 입찰 44).
 # 이제 매 사이클 전량을 조회·판정·실행한다. 사이클은 길어지지만 배포 가드가 완주를 기다린다.
 # 비카드 우선처리는 전량 처리라 의미가 없어졌지만, 호출부 호환을 위해 큰 값으로 남긴다.
-_NONCARD_PRIORITY_MAX = 10**9
-_NONCARD_PROBE_MAX = 10**9
+# [2026-08-05] 비카드 우선처리 상한 복구 — 상한 전면제거 때 무제한(10**9)으로 열었더니
+# 리스톡 슬라이스를 1만으로 줄여도 여기서 1.9만이 통째로 다시 들어와 분리가 무력화됐다
+# (실측: 갱신 11,879 + 리스톡 10,000 = 21,879 인데 조회 대상은 41,286).
+# 사이클이 4시간대로 늘어 완주가 드물어지고 슬랙이 5시간 넘게 끊겼다.
+_NONCARD_PRIORITY_MAX = int(os.environ.get("KREAM_NONCARD_PRIORITY_MAX") or 3000)
+_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 3000)
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
