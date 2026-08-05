@@ -3623,6 +3623,24 @@ async def run_kream_unified_once() -> dict:
         _prev = ask_index.get(_ik)
         if _prev is None or int(a.get("price") or 0) > int(_prev.get("price") or 0):
             ask_index[_ik] = a
+    # [2026-08-06] 크림 옵션명과 DB 옵션명이 달라 '입찰 있음'을 못 알아보던 것 보정.
+    # 크림 ask 는 키즈·여성 사이즈에 접미가 붙는다('240(US 5.5)', '235(4.5Y)').
+    # DB 는 '240' 이라, 리스톡이 `(kid, DB옵션명) in ask_index` 로 검사하면 이미 걸려
+    # 있는 입찰을 못 찾고 '입찰 없음'으로 보고 같은 옵션에 또 등록을 시도한다.
+    #   실측(2026-08-06 08:20 KST): 라이브 24,377 중 DB 옵션명과 불일치 3,937건,
+    #   그 중 3,807건이 이 '숫자+괄호접미' 형태(82253|240(US 5.5), 407567|235(4.5Y) 등).
+    # 괄호 앞부분을 키로 한 보조 인덱스를 만들어 같이 본다.
+    ask_base_index: dict = {}
+    for (_k, _o), _a in ask_index.items():
+        _b = _o.split("(")[0].strip().replace(" ", "")
+        if _b and _b != _o:
+            ask_base_index.setdefault((_k, _b), _a)
+
+    def _has_live_ask(_kid: str, _opt: str) -> bool:
+        """DB 옵션명으로 라이브 입찰 유무 확인 — 크림 접미 표기까지 흡수."""
+        if (_kid, _opt) in ask_index:
+            return True
+        return (_kid, str(_opt).strip().replace(" ", "")) in ask_base_index
 
     products = await _load_matched_products()
     # 박스 pass용 kid→snkr_id 맵 (배치 슬라이스 전 전체 — 박스 ask는 카탈로그 전역, 로테이션 안 함)
@@ -3830,7 +3848,7 @@ async def run_kream_unified_once() -> dict:
                     if _st <= 0 or _pr <= 0:
                         _drop("재고0또는원가0", kid, _nm, f"st={_st} pr={_pr}")
                         continue
-                    if (kid, _nm) in ask_index:
+                    if _has_live_ask(kid, _nm):
                         _trace(kid, _nm, "이미 입찰 있음 — 리스톡 대상 아님")
                         continue
                     # [2026-08-01 오염가드] DB 원가가 상식범위 밖이면 등록 금지.
