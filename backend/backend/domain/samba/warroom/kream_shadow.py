@@ -1233,11 +1233,10 @@ async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
         return r.json()
 
     d1 = await _page(1)
-    out: list[dict] = list(d1.get("items") or [])
     total = int(d1.get("total") or 0)
     npages = (total + _PER_PAGE - 1) // _PER_PAGE
-    if npages <= 1 or not out:
-        return out
+    if npages <= 1 or not (d1.get("items") or []):
+        return list(d1.get("items") or [])
     # [2026-08-02] live 입찰 5,600건+ 로 늘어 동시성 8로는 사이클 완주 불가(슬랙 정지).
     # 스니덩크 동시요청 안전 실증(단일 0.2s, 동시10 0.2s) → 상향. 환경변수로 조절.
     sem = asyncio.Semaphore(int(os.environ.get("KREAM_CARD_CONCURRENCY") or 24))
@@ -1246,9 +1245,40 @@ async def _fetch_asks_by_status(h: dict, status: str) -> list[dict]:
         async with sem:
             return await _page(p)
 
-    for d in await asyncio.gather(*[_one(p) for p in range(2, npages + 1)]):
-        out.extend(d.get("items") or [])
-    return out
+    # [2026-08-06] 페이징 결과를 **ask id 로 모으고 total 과 대조한다.**
+    # 종전엔 페이지 응답을 그대로 이어붙이고 검증이 없었다. 511 페이지를 넘기는 동안
+    # 등록·삭제로 목록이 밀리면 어떤 항목은 두 페이지에 걸쳐 들어오고, 어떤 항목은
+    # 페이지 경계 밖으로 밀려 아예 안 잡힌다.
+    #   실측(2026-08-06 01:55 KST, live total 24,154):
+    #     수집 행수 24,200 (375행 중복) / 고유 23,825 → **329건 누락**
+    # 누락된 입찰은 갱신 대상에서 통째로 빠지고, 리스톡은 '입찰 없음'으로 오인한다.
+    # 고유 수가 total 에 못 미치면 부족분이 채워질 때까지 다시 훑는다(최대 2회 추가).
+    seen: dict = {}
+
+    def _collect(items) -> None:
+        for _i, a in enumerate(items or []):
+            _aid = str(a.get("id") or "")
+            seen[_aid or f"_noid_{len(seen)}_{_i}"] = a
+
+    _collect(d1.get("items"))
+    for _round in range(3):
+        pages = range(2, npages + 1) if _round == 0 else range(1, npages + 1)
+        for d in await asyncio.gather(*[_one(p) for p in pages]):
+            _collect(d.get("items"))
+        if total <= 0 or len(seen) >= total:
+            break
+        _miss = total - len(seen)
+        if _miss <= max(1, int(total * 0.001)):  # 0.1% 이하 = 조회 중 정상 변동
+            break
+        logger.info(
+            "[크림] %s 입찰 조회 누락 %d건(수집 %d/%d) — 재조회 %d회차",
+            status,
+            _miss,
+            len(seen),
+            total,
+            _round + 1,
+        )
+    return list(seen.values())
 
 
 # [Step 4] 환율 소스 = 로컬 봇(_kream_ask_adjust get_rate_cached)과 동일 frankfurter로 정렬.
