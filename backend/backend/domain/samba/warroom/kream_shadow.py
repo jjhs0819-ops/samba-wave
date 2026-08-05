@@ -1562,11 +1562,21 @@ def _decide_price_action(
     _cands = [x for x in (low_over, low_norm, low_keep) if x and x > 0]
     market_low = min(_cands) if _cands else 0
     rank1 = market_low > 0 and 0 < cur <= market_low
+    # [2026-08-05] 무경쟁(시장최저가 곧 내 입찰) 판정 — live_rank 보다 우선한다.
+    # 크림 live_rank 는 일반·해외를 합쳐 매기므로, 해외 판매자가 나 혼자여도 국내
+    # 입찰 때문에 2 가 나온다. 그걸 그대로 믿으면 "밀렸다"고 보고 내 가격을 기준으로
+    # -1,000 씩 계속 깎는다 — 자기 자신과 경쟁하며 가격을 자해한다.
+    #   실측 로그: "경쟁가 추종 652468 PSA 10: 85,000→84,000 (rank=2)" 인데
+    #   해당 옵션 판매입찰은 내 것 1건뿐(판매자센터 순번 1).
+    # market_low == cur 는 "내 가격이 곧 최저" 라는 확실한 신호라 live_rank 로 덮지 않는다.
+    _alone = market_low > 0 and cur > 0 and market_low >= cur
     # [2026-08-03] 실순위(live_rank)를 받았으면 그게 진실이다. 공식 lowest_* 는 내가 최저일 때
     # '내 가격'만 되비춰 경쟁자 유무를 알 수 없고, 그 탓에 1등으로 오판해 무경쟁 마진까지
     # 올렸다가 밀리는 왕복이 반복됐다(884440: 71,000→76,000→복귀를 매 사이클).
-    if live_rank is not None:
+    if live_rank is not None and not _alone:
         rank1 = int(live_rank) == 1
+    elif _alone:
+        rank1 = True
     _dcap = domestic_cap(low_norm, tariff_threshold)
     # 국내입찰가 비교 — 국내가 더 싸서 최소마진(min_price) 지키며 못 이기면(국내상한 초과)
     # 입찰 무의미(체결 안 되거나 손해) → 삭제 신호. 신규 리스톡도 다음 갱신서 이 경로로 정리. [2026-07-26]
