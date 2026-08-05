@@ -712,6 +712,34 @@ def _parse_lotteon_return(
     }
 
 
+async def _lotteon_find_order_strict(
+    order_repo: Any, od_no: str, od_seq: str | None
+) -> Any:
+    """롯데ON 클레임 매칭 — od_no(+od_seq)로만 조회 (#707).
+
+    shipment_id(=clmNo/배송번호)는 고유하지 않아 한 배송번호를 여러 주문이 공유함
+    (find_by_async가 그중 아무 행이나 반환 → 정상 주문에 취소완료가 잘못 붙는 사고).
+    order.py의 기존 (od_no, od_seq) 전용 매칭(2026-05-19 사례)과 동일 원칙 적용.
+    후보가 여러 개면 잘못 붙이는 것보다 매칭하지 않는 편이 안전하므로 스킵.
+    """
+    if not od_no:
+        return None
+    candidates = await order_repo.filter_by_async(
+        source="lotteon", od_no=od_no, limit=10
+    )
+    if od_seq:
+        _seq_matched = [c for c in candidates if (c.od_seq or "") == od_seq]
+        if _seq_matched:
+            candidates = _seq_matched
+    if len(candidates) > 1:
+        logger.warning(
+            f"[롯데ON] 클레임 매칭 후보 {len(candidates)}건(오매칭 위험) — 스킵: "
+            f"od_no={od_no} od_seq={od_seq}"
+        )
+        return None
+    return candidates[0] if candidates else None
+
+
 # 배송 진행 단계 보호 — 주문동기화(order.py `_lo_shipped_guard`)와 동일 집합.
 _LO_SHIPPED_GUARD = {
     "송장전송완료",
@@ -1157,16 +1185,13 @@ async def sync_returns_from_markets(
                     order_number = claim["order_number"]
                     if not order_number:
                         continue
-                    existing_order = await order_repo.find_by_async(
-                        order_number=order_number
+                    # od_no(+od_seq) 전용 매칭 (#707) — shipment_id(clmNo)는 고유하지
+                    # 않아 다른 주문에 잘못 붙는 사고 원인이었음. order_number 필드에는
+                    # 클레임 API의 odNo(주문번호)가 그대로 들어있어 DB의 order_number
+                    # 컬럼(상품주문번호=odNo_odSeq)과는 형식이 달라 직접 비교하지 않음.
+                    existing_order = await _lotteon_find_order_strict(
+                        order_repo, order_number, claim.get("ord_dtl_sn") or None
                     )
-                    if not existing_order:
-                        # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
-                        sitmNo = claim.get("sitmNo", "")
-                        if sitmNo:
-                            existing_order = await order_repo.find_by_async(
-                                shipment_id=sitmNo
-                            )
                     if not existing_order:
                         logger.warning(
                             f"[롯데ON] 반품 주문 미매칭: {order_number} sitmNo={claim.get('sitmNo', '')}"
@@ -1333,16 +1358,14 @@ async def sync_returns_from_markets(
                         ex_order_number = item.get("odNo", "")
                         if not ex_order_number:
                             continue
-                        existing_order = await order_repo.find_by_async(
-                            order_number=ex_order_number
+                        # od_no(+od_seq) 전용 매칭 (#707) — 반품/취소 경로와 동일 이유로
+                        # shipment_id(sitmNo) fallback 제거.
+                        existing_order = await _lotteon_find_order_strict(
+                            order_repo,
+                            ex_order_number,
+                            str(item.get("odSeq", "") or item.get("procSeq", ""))
+                            or None,
                         )
-                        if not existing_order:
-                            # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
-                            ex_sitmNo = item.get("sitmNo", "")
-                            if ex_sitmNo:
-                                existing_order = await order_repo.find_by_async(
-                                    shipment_id=ex_sitmNo
-                                )
                         if not existing_order:
                             logger.warning(
                                 f"[롯데ON] 교환 주문 미매칭: {ex_order_number} sitmNo={item.get('sitmNo', '')}"
