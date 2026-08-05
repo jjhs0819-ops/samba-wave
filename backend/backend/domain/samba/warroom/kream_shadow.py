@@ -1851,7 +1851,8 @@ _SET_FAILED = "kream_failed_posts"
 _SET_MISS = "kream_miss_counts"
 # 리스톡 로테이션 offset 영속화 — 재배포/재시작에도 순회 위치 유지(안 하면 매 재시작 0 리셋 →
 # 앞부분만 반복, 뒤쪽 카드 영영 미평가 → 품절 재고갱신·리스톡 누락). [2026-07-25]
-_SET_OFFSET = "kream_unified_offset"
+_SET_OFFSET = "kream_unified_offset"  # (구) offset 로테이션 — 미사용
+_SET_SCANNED = "kream_restock_scanned"  # 이번 바퀴에 본 kid 집합
 _SET_LIVE_OFFSET = (
     "kream_live_offset"  # 갱신 로테이션 위치 — 재시작해도 이어가게 영속화
 )
@@ -3540,49 +3541,53 @@ async def run_kream_unified_once() -> dict:
     # 3,000 슬라이스를 뽑아도 등록 가능한 건 ~1,050 밖에 안 됐다(나머지는 재고 0 이라
     # 처리해도 버려진다). 재고 매칭이 1.5만→3만으로 2배가 됐는데 입찰이 안 따라온 원인.
     # 로테이션 자체는 그대로라 재고 0 도 결국 훑는다 — 새로 재고가 생긴 건을 놓치지 않는다.
-    # [2026-08-05] 정렬 대신 **재고 0 제외**. 정렬만 하면 offset 로테이션이 정렬을
-    # 무력화한다 — 재고 보유분(약 2만)을 앞에 세워도 슬라이스는 offset 34,785 부터
-    # 잘라가 재고 없는 뒷구간만 훑었다(실측: 14334 재고1·무경쟁 매물이 하루 넘게 미등록).
-    # 재고 0 은 등록 대상이 아니라 스캔 낭비이고, 재고가 생기면 스니덩크 실시간 조회로
-    # DB 가 갱신돼 다음 사이클에 자동으로 다시 들어온다.
-    _rest_all = len(rest_products)
-    rest_products = [
-        p
-        for p in rest_products
+    # [2026-08-05] offset 로테이션 폐기 → **이번 바퀴에 본 것 배제** 방식.
+    #
+    # offset 은 정렬과 정면으로 충돌했다. 재고 보유분(약 2만)을 앞에 세워도 슬라이스는
+    # 이어받은 위치(34,785)부터 잘라가 재고 없는 뒷구간만 훑었다. 재고 있는 14,785~20,000
+    # 구간은 통째로 건너뛰어, 게이트에 하나도 안 걸린 무경쟁 매물(14334 재고1)이 하루
+    # 넘게 미등록으로 남았다.
+    #
+    # 재고 0 을 아예 빼는 것도 답이 아니다 — DB 재고를 갱신하는 건 이 사이클이 실제로
+    # 조회한 상품뿐(_write_back_db_options)이라, 빼면 조회도 안 돼 한 번 품절된 상품이
+    # 영구 제외된다(재고 복귀를 영영 못 본다).
+    #
+    # 그래서 "이번 바퀴에 이미 본 kid" 를 기억해 배제한다. 재고 우선 정렬이 그대로
+    # 살아나 재고 보유분부터 소진되고, 그 다음 재고 0 이 순회된다. 남은 게 없으면
+    # 리셋해 새 바퀴를 시작한다. 건너뛰는 구간이 원천적으로 없다.
+    _restock_scan = int(os.environ.get("KREAM_RESTOCK_SCAN") or 10000)
+    _scanned: set = set()
+    try:
+        _scanned = set((await _load_setting_map(_SET_SCANNED)).keys())
+    except Exception:
+        _scanned = set()
+    _fresh = [p for p in rest_products if p["kid"] not in _scanned]
+    if not _fresh:  # 한 바퀴 완주 — 리셋하고 처음부터
+        logger.info(
+            "[크림통합] 리스톡 한 바퀴 완주(%d건) — 스캔목록 리셋", len(_scanned)
+        )
+        _scanned = set()
+        _fresh = rest_products
+    rest_slice = _fresh[:_restock_scan] if _restock_scan > 0 else _fresh
+    _scanned.update(p["kid"] for p in rest_slice)
+    _unified_offset = len(_scanned)  # 바퀴 진행률(슬랙·로그 표기용)
+    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _scanned})
+    _instock_n = sum(
+        1
+        for p in rest_slice
         if any(
             int((d or {}).get("stock") or 0) > 0
             for d in (p.get("db_opts") or {}).values()
         )
-    ]
-    logger.info(
-        "[크림통합] 리스톡 풀 — 미입찰 %d 중 재고보유 %d (재고0 %d 제외)",
-        _rest_all,
-        len(rest_products),
-        _rest_all - len(rest_products),
     )
-    # [2026-08-05] 갱신/리스톡 사이클 분리 — 리스톡만 슬라이스로 되돌린다.
-    # 전량(55,437) 처리로 바꿨더니 사이클이 7시간 20분이 됐고, 그동안 가격 갱신이
-    # 통째로 멈춰 2등으로 밀린 입찰을 못 잡았다(실측: 22:53 시작 → 06:14 다음 회차).
-    # 갱신 대상(12,108)은 계속 전량, 리스톡만 나눠 돌면 사이클이 ~2.4시간으로 떨어진다.
-    #   갱신 주기 7.3h → 2.4h (가격 추종)
-    #   리스톡 한 바퀴 ~13h (신규 발굴은 원래 며칠 단위라 영향 작음)
-    # 바로 위 재고 우선 정렬이 여기서 값을 한다 — 슬라이스가 등록 가능한 건으로 채워진다.
-    _restock_scan = int(os.environ.get("KREAM_RESTOCK_SCAN") or 10000)
-    if _unified_offset == 0:
-        try:
-            _unified_offset = int(
-                (await _load_setting_map(_SET_OFFSET)).get("v", 0) or 0
-            )
-        except Exception:
-            _unified_offset = 0
-    if _restock_scan > 0 and len(rest_products) > _restock_scan:
-        _rst = _unified_offset % len(rest_products)
-        rest_slice = (rest_products[_rst:] + rest_products[:_rst])[:_restock_scan]
-        _unified_offset = (_rst + _restock_scan) % len(rest_products)
-    else:
-        rest_slice = rest_products
-        _unified_offset = 0
-    await _save_setting_map(_SET_OFFSET, {"v": int(_unified_offset)})
+    logger.info(
+        "[크림통합] 리스톡 풀 %d — 이번 %d건(재고보유 %d) · 바퀴진행 %d/%d",
+        len(rest_products),
+        len(rest_slice),
+        _instock_n,
+        len(_scanned),
+        len(rest_products),
+    )
     products = live_products + rest_slice
     rest_total = len(rest_products)  # 리스톡 탐색 로테이션 분모(진행률 표시용)
     logger.info(
