@@ -3983,7 +3983,30 @@ async def run_kream_unified_once() -> dict:
                         )
                     except Exception:
                         _copt = None
-                    _co = _copt or {}
+                    # [2026-08-05] 옵션 매칭 실패 = "시세를 모름"이지 "경쟁자 없음"이 아니다.
+                    # 빈 dict 를 넘기면 시세가 전부 0 → market_low=0 → 무경쟁 판정 →
+                    # 시세를 무시하고 원가+마진으로 등록해버린다.
+                    # 실측 147059|250(7Y): 일반가 119,000 이 있는데 202,000 에 등록 →
+                    # 다음 사이클에 1등불가로 삭제되는 왕복. 매칭 실패면 등록을 건너뛴다.
+                    if _copt is None:
+                        _g_optmiss[f"{kid}|{nm}"] = ",".join(
+                            str(_o.get("name") or "") for _o in (_card_opts_cache or [])
+                        )[:200]
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(옵션매칭실패)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
+                    _co = _copt
                     _act, _tgt, _adj, _isnc = _decide_price_action(
                         0,
                         nm,
@@ -4225,7 +4248,30 @@ async def run_kream_unified_once() -> dict:
                         )
                     except Exception:
                         _copt = None
-                    _co = _copt or {}
+                    # [2026-08-05] 옵션 매칭 실패 = "시세를 모름"이지 "경쟁자 없음"이 아니다.
+                    # 빈 dict 를 넘기면 시세가 전부 0 → market_low=0 → 무경쟁 판정 →
+                    # 시세를 무시하고 원가+마진으로 등록해버린다.
+                    # 실측 147059|250(7Y): 일반가 119,000 이 있는데 202,000 에 등록 →
+                    # 다음 사이클에 1등불가로 삭제되는 왕복. 매칭 실패면 등록을 건너뛴다.
+                    if _copt is None:
+                        _g_optmiss[f"{kid}|{nm}"] = ",".join(
+                            str(_o.get("name") or "") for _o in (_card_opts_cache or [])
+                        )[:200]
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(옵션매칭실패)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
+                    _co = _copt
                     _act, _tgt, _adj, _isnc = _decide_price_action(
                         0,
                         nm,
