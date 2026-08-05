@@ -1638,10 +1638,49 @@ async def _site_autotune_loop(device_id: str, site: str):
                     # _on_result 계정 레벨 필터용 (다중 판매처 등록 상품의 per-account 전송 좁히기)
                     _market_filter_active = bool(_market_filter_where)
 
+                    # 저재고 우선 (#704) — 품절 임박(옵션 stock ≤ 임계값) 상품은
+                    # last_refreshed_at 오래된순 대기열을 앞질러 먼저 갱신. WHERE 필터가
+                    # 아닌 ORDER BY라 SSG 재수집 캡 등 기존 WHERE 제약은 그대로 유지됨.
+                    from sqlalchemy import text as _sa_text_ls
+
+                    _LOW_STOCK_THRESHOLD = 2
+                    # 우선 대상이 되기까지의 유예 — 방금 갱신한 저재고 상품이 곧바로
+                    # 다시 새치기하는 것을 막는다.
+                    _LOW_STOCK_GRACE = "2 hours"
+                    # [2026-08-05 긴급fix ①] text(...).desc() 는 존재하지 않는 호출이라
+                    # 'TextClause' object has no attribute 'desc' 로 매 사이클 즉시 예외 →
+                    # 전 사이트 오토튠이 갱신 0건으로 3시간 정지했다.
+                    # ORDER BY 방향은 텍스트 안에 직접 넣는다.
+                    #
+                    # [2026-08-05 긴급fix ②] "저재고 무조건 최상위" 는 기아를 만든다.
+                    # 프로덕션 실측상 저재고(옵션 재고 ≤ 2)가 소수가 아니라 과반이다
+                    # (MUSINSA 64%, LOTTEON 56%, ABCmart 54%, SSG 51%, FashionPlus 51%).
+                    # 배치가 40~200건이라 매 배치가 저재고 그룹 안에서만 채워지고,
+                    # 갱신해도 재고가 여전히 적으면 계속 같은 그룹에 남는다 →
+                    # 나머지 36~49%(무신사 약 1.5만 건)는 순번이 영원히 오지 않는다.
+                    # #206 의 "특정 행이 영원히 cycle 진입 못 함" 방지 취지와도 어긋난다.
+                    # → 저재고라도 "마지막 갱신이 유예시간을 넘긴 것"만 우선순위를 준다.
+                    #   갱신되는 순간 우선 그룹에서 빠지므로 새치기가 반복되지 않고,
+                    #   품절 임박 상품을 먼저 보는 #704 의 목적은 그대로 유지된다.
+                    #   (대시보드 세션과 합의, 2026-08-05)
+                    _low_stock_first = _sa_text_ls(
+                        "("
+                        "  EXISTS ("
+                        "    SELECT 1 FROM json_array_elements(options) AS elem"
+                        f"    WHERE COALESCE((elem->>'stock')::int, 999999) <= {_LOW_STOCK_THRESHOLD}"
+                        "  )"
+                        "  AND ("
+                        "    last_refreshed_at IS NULL"
+                        f"    OR last_refreshed_at < now() - interval '{_LOW_STOCK_GRACE}'"
+                        "  )"
+                        ") DESC"
+                    )
+
                     # 정렬 안정성 보장 (issue #206) — id를 secondary sort로 두지 않으면
                     # last_refreshed_at NULL 행 수천 개 중 매 cycle 동일 200개만 잡혀
                     # 다른 NULL 행이 영원히 cycle 진입 못 하는 사고 발생.
                     _order_clause = (
+                        _low_stock_first,
                         _CP.last_refreshed_at.asc().nullsfirst(),
                         _CP.id.asc(),
                     )
