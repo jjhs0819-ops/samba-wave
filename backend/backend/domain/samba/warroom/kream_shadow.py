@@ -3692,15 +3692,28 @@ async def run_kream_unified_once() -> dict:
     # [2026-08-05] 리스톡 슬라이스 상한 제거(0=전량). 한 바퀴를 여러 사이클에 나눠
     # 돌리면 뒷구간 상품이 언제 등록될지 알 수 없다.
     _restock_scan = int(os.environ.get("KREAM_RESTOCK_SCAN") or 0)
+    # [2026-08-06] 리셋 조건을 "하나도 안 남았을 때" → **"1만 건 미만일 때"** 로 바꾼다.
+    #
+    # 종전 조건(_fresh 가 0)은 사실상 오지 않는다. 매 사이클 신규 매칭이 1~45건씩
+    # 들어와 항상 그만큼 남기 때문이다. 그래서 리셋이 영영 안 걸리고, 한 번 스캔된
+    # 상품은 다시 보지 않는다 — 코드를 고쳐도 그 상품 차례가 오지 않는다.
+    #   실측(2026-08-06 07:55 KST): 리스톡 풀 56,354 / 스캔목록 56,525 / 이번 대상 1건.
+    #   177955(adidas Track Jacket, JP S, 재고 1, 크림 무경쟁)는 옵션 매처를 고치기
+    #   전에 스캔목록에 올라, 매처 배포 뒤에도 차례가 안 와 계속 미등록이었다.
+    # 남은 대상이 한 사이클치(1만)에 못 미치면 새 바퀴를 시작해 전량을 다시 훑는다.
+    _reset_below = int(os.environ.get("KREAM_RESTOCK_RESET_BELOW") or 10000)
     _scanned: set = set()
     try:
         _scanned = set((await _load_setting_map(_SET_SCANNED)).keys())
     except Exception:
         _scanned = set()
     _fresh = [p for p in rest_products if p["kid"] not in _scanned]
-    if not _fresh:  # 한 바퀴 완주 — 리셋하고 처음부터
+    if len(_fresh) < _reset_below:
         logger.info(
-            "[크림통합] 리스톡 한 바퀴 완주(%d건) — 스캔목록 리셋", len(_scanned)
+            "[크림통합] 리스톡 잔여 %d건 < %d — 스캔목록 리셋(전량 %d건 재순회)",
+            len(_fresh),
+            _reset_below,
+            len(rest_products),
         )
         _scanned = set()
         _fresh = rest_products
