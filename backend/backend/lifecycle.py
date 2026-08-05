@@ -1951,6 +1951,11 @@ async def _soldout_cleanup_loop() -> None:
                             upd_sp.registered_accounts = new_regs if new_regs else None
                             if not new_regs:
                                 upd_sp.market_product_nos = None
+                                # 전 계정 삭제 완료 → 정규 삭제 경로(shipment/service.py,
+                                # collector.py)와 동일하게 status도 되돌림 (#702) —
+                                # 안 되돌리면 등록정보는 비었는데 status만 'registered'로
+                                # 남는 부분 유령 상품이 생겨 오토튠 대상 SELECT 등을 오염시킴.
+                                upd_sp.status = "collected"
                             upd_session.add(upd_sp)
                             await upd_session.commit()
 
