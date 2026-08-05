@@ -3961,20 +3961,11 @@ async def run_kream_unified_once() -> dict:
                             )
                         )
                 elif not has_ask and stock > 0 and price > 0:
-                    base = calc_base(price, rate, False, True)
-                    mp = calc_min_price(price, rate, False, True)
-                    nc = (
-                        math.ceil(
-                            base
-                            * (1 + POLICY["no_competition_margin_rate"] / 100)
-                            / 1000
-                        )
-                        * 1000
-                    )
-                    # [2026-08-02] 신규등록에 1등 판정이 없어 "원가+마진"으로 무조건 등록하고
-                    # 다음 사이클 갱신에서 '1등불가삭제'로 지우는 왕복이 반복됐다(입찰 폭증 원인).
-                    # 비카드와 동일하게 크림 최저가를 보고 1등 가능할 때만 등록한다.
-                    _tgt = max(nc, mp)
+                    # [2026-08-05] 리스톡 등록도 **갱신과 같은 _decide_price_action** 을 탄다.
+                    # 종전엔 여기서만 자체 계산(calc_base/calc_min_price + 별도 _mkt 판정)을
+                    # 해서 등록 기준과 삭제 기준이 어긋났다 — 등록은 일반가만 보고 통과시키고,
+                    # 갱신은 일반·해외·보관100 을 다 봐서 1등불가로 지우는 왕복이 났다.
+                    # 카드/신발/박스 구분 없이 한 함수, 한 기준으로 판정한다.
                     try:
                         if _card_opts_cache is None:
                             _cr = await _rq(
@@ -3992,39 +3983,276 @@ async def run_kream_unified_once() -> dict:
                         )
                     except Exception:
                         _copt = None
-                    if _copt is not None:
-                        # [2026-08-05] 시장최저 = 일반·해외·보관100 **전부 중 최저**.
-                        # 종전엔 일반가만 보고(있으면 해외는 or 로 무시, 보관100 은 아예 미고려)
-                        # 등록해 놓고, 갱신 로직은 셋을 다 보므로 다음 사이클에 1등불가로
-                        # 지웠다 — 등록↔삭제 왕복의 발원지. 판정 기준을 갱신과 일치시킨다.
-                        # (95 등급은 하자품이라 제외 — 싼 하자가가 멀쩡한 등록을 막는다)
-                        _cands = [
-                            int(x)
-                            for x in (
-                                _copt.get("lowest_normal_price"),
-                                _copt.get("lowest_overseas_price"),
-                                _copt.get("lowest_100_price"),
+                    _co = _copt or {}
+                    _act, _tgt, _adj, _isnc = _decide_price_action(
+                        0,
+                        nm,
+                        price,
+                        int(_co.get("lowest_overseas_price") or 0),
+                        int(_co.get("lowest_normal_price") or 0),
+                        (kid, nm) in cooldown,
+                        prod["fixed"].get(nm, 0),
+                        rate,
+                        tariff_threshold,
+                        low_keep=int(_co.get("lowest_100_price") or 0),
+                    )
+                    if "삭제" in _act or _tgt <= 0:
+                        r["rows"].append(
+                            (
+                                "skip",
+                                f"리스톡보류({_act})",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
                             )
-                            if x and int(x) > 0
-                        ]
-                        _mkt = min(_cands) if _cands else 0
-                        if _mkt > 0:
-                            if mp > _mkt:
-                                r["rows"].append(
-                                    (
-                                        "skip",
-                                        "리스톡보류(1등불가)",
-                                        kid,
-                                        nm,
-                                        0,
-                                        0,
-                                        False,
-                                        prod["name"],
-                                        False,
-                                    )
-                                )
-                                continue
-                            _tgt = max(mp, min(nc, _mkt - 1000))
+                        )
+                        continue
+                    r["rows"].append(
+                        (
+                            "restock",
+                            "리스톡",
+                            kid,
+                            _nm,
+                            0,
+                            _tgt,
+                            True,
+                            prod["name"],
+                            False,
+                        )
+                    )
+                return r
+            live = await _fetch_snkr_used(scli, snkr_id) if snkr_id else None
+            if live is None:
+                r["snkr_fail"] = 1
+                return r
+            r["snkr_ok"] = 1
+            r["card"] = 1
+            # 매수추천/원가오염 감시용 스냅샷 (PSA10 고점대비 급락 판정)
+            _p10 = live.get("PSA 10") or {}
+            _p9 = live.get("PSA 9") or {}
+            r["psa"] = (
+                kid,
+                snkr_id,
+                int(_p10.get("price") or 0),
+                int(_p10.get("stock") or 0),
+                int(_p9.get("price") or 0),
+                int(_p9.get("stock") or 0),
+            )
+            # 슬랙 '재고 N건(카드…)' 집계 — 매물 있는 카드 상품 수
+            if int(_p10.get("stock") or 0) > 0 or int(_p9.get("stock") or 0) > 0:
+                r["instock"] = 1
+            # ── DB write-back [원가/재고 갱신] — 카드는 마켓 미등록이라 메인 오토튠 범위 밖.
+            # 로컬 전수스캔이 하던 DB options 갱신이 끊겨 db_opts 가 낡았다(검수/리포트/즉시수익
+            # 부정확). kream_shadow 가 매 사이클 실시간 fetch 하므로 그 값을 DB 에 되쓴다.
+            # 비PSA(박스/신발) 옵션은 보존, PSA10/9 만 실시간값으로 갱신.
+            _base_opts = [
+                {
+                    "name": _n,
+                    "price": int(_d.get("price") or 0),
+                    "stock": int(_d.get("stock") or 0),
+                }
+                for _n, _d in (prod.get("db_opts") or {}).items()
+                if not str(_n).upper().startswith("PSA")
+            ]
+            _new_opts = _base_opts + [
+                {
+                    "name": "PSA 10",
+                    "price": int(_p10.get("price") or 0),
+                    "stock": int(_p10.get("stock") or 0),
+                },
+                {
+                    "name": "PSA 9",
+                    "price": int(_p9.get("price") or 0),
+                    "stock": int(_p9.get("stock") or 0),
+                },
+            ]
+            _new_cost = int(_p10.get("price") or 0) or int(_p9.get("price") or 0)
+            # fetch 성공(2311서 None 조기리턴)이므로 소싱품절(cost0)도 실측이다.
+            # 재고0·확인시각을 항상 되쓴다(소싱품절 카드 updated_at 이 07-22 동결되던 버그).
+            # cost 는 write-back 에서 0 이면 기존값 보존(마지막 원가 유실 방지).
+            r["db_update"] = (snkr_id, _new_opts, _new_cost)
+            # 크림 옵션(최저가) 조회 캐시 — 상품당 1회. 리스톡 신규등록에서 1등 판정에 쓴다.
+            _card_opts_cache: list | None = None
+            # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
+            for nm in ("PSA 10", "PSA 9"):
+                d = live.get(nm) or {}
+                price = _guard_jpy(kid, nm, int(d.get("price") or 0))
+                stock = int(d.get("stock") or 0)
+                ask = ask_index.get((kid, nm))
+                has_ask = ask is not None
+                # 입찰 최고 원가 초과 — 갱신·리스톡 모두 제외(로컬 25만엔 원칙).
+                # 체결되면 그 원가로 소싱해야 해 초고가 카드는 애초에 다루지 않는다.
+                if price > POLICY["max_cost_jpy"]:
+                    r["rows"].append(
+                        (
+                            "overcost",
+                            "원가상한초과",
+                            kid,
+                            nm,
+                            0,
+                            0,
+                            False,
+                            prod["name"],
+                            False,
+                        )
+                    )
+                    continue
+                if has_ask and stock > 0 and price > 0:
+                    cur = int(ask.get("price") or 0)
+                    low_over = int(ask.get("lowest_overseas_price") or 0)
+                    low_norm = int(ask.get("lowest_normal_price") or 0)
+                    low_keep = int(ask.get("lowest_100_price") or 0)
+                    # 입찰제한 쿨다운 — 크림이 계속 거절하는 건은 재시도 안 함
+                    if f"{kid}|{nm}" in _g_limit_cd:
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "입찰제한쿨다운",
+                                kid,
+                                nm,
+                                cur,
+                                cur,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
+                    # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
+                    _floor_map[(kid, nm)] = calc_min_price(
+                        price, rate, False, nm.upper().startswith("PSA")
+                    )
+                    act, target, adjusting, is_nc = _decide_price_action(
+                        cur,
+                        nm,
+                        price,
+                        low_over,
+                        low_norm,
+                        (kid, nm) in cooldown,
+                        prod["fixed"].get(nm, 0),
+                        rate,
+                        tariff_threshold,
+                        live_rank=_g_live_rank.get(str(ask.get("id"))) if ask else None,
+                        low_keep=low_keep,
+                    )
+                    # 가격열위(국내 못이김/1등불가) 삭제, 아니면 갱신
+                    r["rows"].append(
+                        (
+                            "delete"
+                            if act in ("국내못이김삭제", "1등불가삭제")
+                            else "renew",
+                            act,
+                            kid,
+                            nm,
+                            cur,
+                            target,
+                            adjusting,
+                            prod["name"],
+                            is_nc,
+                        )
+                    )
+                elif has_ask and stock <= 0 and prod.get("ambiguous"):
+                    # 중복매핑(ambiguous) 가격불일치 — 어느 snkr 이 진짜 매칭인지 불확실.
+                    # 재고0 판단이 무효일 수 있어 삭제 보류(로컬 삭제보류 이식, 오삭제 방지).
+                    _cp = int(ask.get("price") or 0)
+                    r["rows"].append(
+                        (
+                            "skip",
+                            "삭제보류(중복매핑)",
+                            kid,
+                            nm,
+                            _cp,
+                            _cp,
+                            False,
+                            prod["name"],
+                            False,
+                        )
+                    )
+                elif has_ask and stock <= 0:
+                    # 재고0 HTML 이중검증 — used API 순간 0 에 정상입찰 오삭제 방지.
+                    _hl = await _html_haslisting(scli, snkr_id, nm)
+                    if _hl is not False:
+                        # True(HTML상 재고있음) 또는 None(확인불가) → 삭제 보류
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "삭제보류(HTML재고확인)",
+                                kid,
+                                nm,
+                                int(ask.get("price") or 0),
+                                int(ask.get("price") or 0),
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                    else:
+                        r["rows"].append(
+                            (
+                                "delete",
+                                "삭제(무재고·HTML확인)",
+                                kid,
+                                nm,
+                                int(ask.get("price") or 0),
+                                0,
+                                True,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                elif not has_ask and stock > 0 and price > 0:
+                    # [2026-08-05] 리스톡 등록도 갱신과 같은 _decide_price_action 을 탄다.
+                    # 카드/신발/박스 구분 없이 한 함수, 한 기준. 자체 계산은 등록 기준과
+                    # 삭제 기준을 어긋나게 해 등록↔삭제 왕복을 만들었다.
+                    try:
+                        if _card_opts_cache is None:
+                            _cr = await _rq(
+                                "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
+                            )
+                            _card_opts_cache = (_cr.json() or {}).get("options") or []
+                        _want = str(nm).replace(" ", "")
+                        _copt = next(
+                            (
+                                _o
+                                for _o in _card_opts_cache
+                                if str(_o.get("name") or "").replace(" ", "") == _want
+                            ),
+                            None,
+                        )
+                    except Exception:
+                        _copt = None
+                    _co = _copt or {}
+                    _act, _tgt, _adj, _isnc = _decide_price_action(
+                        0,
+                        nm,
+                        price,
+                        int(_co.get("lowest_overseas_price") or 0),
+                        int(_co.get("lowest_normal_price") or 0),
+                        (kid, nm) in cooldown,
+                        prod["fixed"].get(nm, 0),
+                        rate,
+                        tariff_threshold,
+                        low_keep=int(_co.get("lowest_100_price") or 0),
+                    )
+                    if "삭제" in _act or _tgt <= 0:
+                        r["rows"].append(
+                            (
+                                "skip",
+                                f"리스톡보류({_act})",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     r["rows"].append(
                         (
                             "restock",
