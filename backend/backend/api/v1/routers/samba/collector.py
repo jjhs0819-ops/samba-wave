@@ -2277,6 +2277,52 @@ async def reset_product_registration(
     return {"ok": True}
 
 
+# 리셀 채널 — 이 채널의 미출고 주문이 걸린 소싱상품은 삭제 금지.
+_RESELL_ORDER_CHANNELS = ("KREAM", "POIZON")
+_RESELL_ACTIVE_STATUSES = ("pending", "wait_ship")
+
+
+async def _protect_resell_linked(
+    session: AsyncSession, cp_ids: list[str]
+) -> tuple[list[str], list[str]]:
+    """삭제 대상에서 리셀 미출고 주문이 걸린 상품을 걷어낸다.
+
+    [2026-08-05] 크림 주문 6건이 소싱상품(SNKRDUNK) 행 자체가 삭제돼 연결이 끊겼다.
+    끊기면 원가·사진·소싱주문번호를 다 잃고 발주를 못 한다. 스니덩크는 C2C 라
+    매물이 다시 올라오므로 삭제할 이유도 없다 — 주문이 살아 있으면 상품도 살린다.
+
+    반환: (삭제 가능 id, 보호된 id)
+    """
+    from sqlalchemy import text as _t
+
+    if not cp_ids:
+        return [], []
+    rows = (
+        await session.execute(
+            _t(
+                "SELECT DISTINCT collected_product_id FROM samba_order "
+                "WHERE collected_product_id = ANY(:ids) "
+                "  AND status = ANY(:st) "
+                "  AND (UPPER(COALESCE(channel_name, '')) = ANY(:ch) "
+                "       OR UPPER(COALESCE(source_site, '')) = ANY(:ch))"
+            ),
+            {
+                "ids": cp_ids,
+                "st": list(_RESELL_ACTIVE_STATUSES),
+                "ch": list(_RESELL_ORDER_CHANNELS),
+            },
+        )
+    ).fetchall()
+    protected = {r[0] for r in rows if r[0]}
+    if protected:
+        logger.warning(
+            "[삭제보호] 리셀 미출고 주문 연결 상품 %d건 삭제 차단: %s",
+            len(protected),
+            ",".join(sorted(protected)[:20]),
+        )
+    return [i for i in cp_ids if i not in protected], sorted(protected)
+
+
 async def _snapshot_cp_to_orders(session: AsyncSession, cp_ids: list[str]) -> None:
     """CP 삭제 전 주문에 이미지 URL + 소싱처 스냅샷 저장.
 
@@ -2328,6 +2374,14 @@ async def delete_collected_product(
     if _cp is None:
         raise HTTPException(404, "상품을 찾을 수 없습니다")
 
+    # 리셀 미출고 주문이 걸린 상품은 삭제 금지 — 끊기면 발주 불가.
+    _ok_ids, _protected_one = await _protect_resell_linked(session, [product_id])
+    if _protected_one:
+        raise HTTPException(
+            400,
+            "크림·포이즌 미출고 주문이 연결된 상품입니다. 주문 출고 후 삭제하세요.",
+        )
+
     # 주문 스냅샷 — delete_from_markets 예외 시 rollback 방지를 위해 먼저 commit (issue #546)
     await _snapshot_cp_to_orders(session, [product_id])
     await session.commit()
@@ -2376,10 +2430,15 @@ async def bulk_delete_products(
     )
     from backend.domain.samba.shipment.service import SambaShipmentService as _SS_bd
 
-    await _snapshot_cp_to_orders(session, body.ids)
+    # 리셀 미출고 주문이 걸린 상품은 삭제 대상에서 제외 — 연결 끊기면 발주 불가.
+    _target_ids, _protected = await _protect_resell_linked(session, list(body.ids))
+    if not _target_ids:
+        return {"deleted": 0, "resell_protected": _protected}
+
+    await _snapshot_cp_to_orders(session, _target_ids)
     await session.commit()
 
-    _stmt = _sel_bd(_CP_bd).where(_col_bd(_CP_bd.id).in_(body.ids))
+    _stmt = _sel_bd(_CP_bd).where(_col_bd(_CP_bd.id).in_(_target_ids))
     _rows = (await session.execute(_stmt)).scalars().all()
 
     _market_pids: list[str] = []
@@ -2407,7 +2466,7 @@ async def bulk_delete_products(
                     _entry.get("product_id"),
                 )
 
-    _deletable = [pid for pid in body.ids if pid not in _failed_pids]
+    _deletable = [pid for pid in _target_ids if pid not in _failed_pids]
     svc = _get_services(session)
     deleted = await svc.bulk_delete_collected_products(_deletable)
     await cache.clear_pattern("products:*")
@@ -2415,6 +2474,8 @@ async def bulk_delete_products(
     _resp: dict[str, Any] = {"deleted": deleted}
     if _failed_pids:
         _resp["market_delete_failed"] = list(_failed_pids)
+    if _protected:
+        _resp["resell_protected"] = _protected
     return _resp
 
 
@@ -2473,8 +2534,13 @@ async def block_and_delete_products(
         new_row = SambaSettings(key="collection_blacklist", value=blacklist)
         session.add(new_row)
 
+    # 리셀 미출고 주문이 걸린 상품은 삭제 제외(차단 등록은 그대로 진행).
+    _bad_target, _bad_protected = await _protect_resell_linked(
+        session, list(body.product_ids)
+    )
+
     # 삭제 전 주문 이미지/소싱처 스냅샷
-    await _snapshot_cp_to_orders(session, list(body.product_ids))
+    await _snapshot_cp_to_orders(session, _bad_target)
     await session.commit()
 
     # 마켓 등록 상품 먼저 삭제 (issue #557)
@@ -2486,7 +2552,10 @@ async def block_and_delete_products(
     _bad_market_pids: list[str] = []
     _bad_all_accs: list[str] = []
     _bad_seen: set[str] = set()
+    _bad_target_set = set(_bad_target)
     for _p in products:
+        if _p.id not in _bad_target_set:
+            continue  # 리셀 주문 연결 — 마켓삭제도 하지 않는다
         _reg = list(getattr(_p, "registered_accounts", None) or [])
         if _reg:
             _bad_market_pids.append(_p.id)
@@ -2509,11 +2578,14 @@ async def block_and_delete_products(
                 )
 
     # 마켓 삭제 실패 상품 제외 후 DB 삭제
-    _deletable_ids = {pid for pid in body.product_ids if pid not in _bad_failed}
-    del_stmt = sa_delete(SambaCollectedProduct).where(
-        col(SambaCollectedProduct.id).in_(_deletable_ids)
-    )
-    del_result = await session.exec(del_stmt)  # type: ignore[arg-type]
+    _deletable_ids = {pid for pid in _bad_target if pid not in _bad_failed}
+    del_result_rowcount = 0
+    if _deletable_ids:
+        del_stmt = sa_delete(SambaCollectedProduct).where(
+            col(SambaCollectedProduct.id).in_(_deletable_ids)
+        )
+        del_result = await session.exec(del_stmt)  # type: ignore[arg-type]
+        del_result_rowcount = del_result.rowcount
     await session.commit()
     await cache.clear_pattern("products:*")
     _invalidate_blacklist_cache()
@@ -2521,10 +2593,12 @@ async def block_and_delete_products(
     _resp2: dict[str, Any] = {
         "ok": True,
         "blocked": added,
-        "deleted": del_result.rowcount,
+        "deleted": del_result_rowcount,
     }
     if _bad_failed:
         _resp2["market_delete_failed"] = list(_bad_failed)
+    if _bad_protected:
+        _resp2["resell_protected"] = _bad_protected
     return _resp2
 
 

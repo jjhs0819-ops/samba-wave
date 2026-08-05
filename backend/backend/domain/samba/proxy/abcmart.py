@@ -79,6 +79,7 @@ async def prepare_abcmart_cache() -> None:
         "cookies": cookies,
         "cookie": cookies[0] if cookies else "",
         "idx": 0,
+        "tried": 0,  # loginYn!=Y 로 회전한 횟수 — 보유 쿠키 한 바퀴 돌면 익명 폴백
         "expired": False,
         "loaded": True,  # 빈 결과여도 lazy-load 재시도 폭주 방지
     }
@@ -86,16 +87,38 @@ async def prepare_abcmart_cache() -> None:
 
 
 def _mark_abcmart_cookie_expired() -> None:
-    """현재 사용 중인 쿠키를 만료로 마킹 (loginYn != Y 응답 시 호출).
+    """loginYn != Y 응답 시 호출 — 다음 쿠키로 회전하고, 전부 실패해야 익명 폴백.
 
-    캐시에서만 마킹 — DB에는 다음 sync 때 확장앱이 직접 expired=True로 알림.
+    [2026-08-05 근본fix] 이전에는 단 1회 loginYn != Y 로 expired=True 를 박고
+    프로세스가 죽을 때까지 익명 폴백에 고정됐다. 그런데 loginYn='N' 은 쿠키가
+    실제로 만료됐을 때뿐 아니라 프록시 경유(발급 IP와 다른 IP)·일시적 세션 오류
+    로도 나온다. 그 결과 쿠키 4개가 전부 정상인데도(실측 확인) 모든 상품이
+    정가로 수집돼 원가가 최대혜택가보다 비싸게 잡히는 사고가 났다.
+    → 이제는 보유한 다음 쿠키로 회전해 재시도하고, 한 바퀴 다 실패했을 때만
+      익명 폴백으로 내린다. 계정별 세션이 살아있으면 자동 복구된다.
     """
     cache = ARTSourcingClient._bulk_cache
-    if cache.get("cookie") and not cache.get("expired"):
-        cache["expired"] = True
-        logger.warning(
-            "[ABCmart] 로그인 쿠키 만료 감지 — 익명 폴백으로 전환 (다음 sync까지 보수적 cost)"
-        )
+    if not cache.get("cookie") or cache.get("expired"):
+        return
+    cookies = cache.get("cookies") or []
+    if len(cookies) > 1:
+        idx = int(cache.get("idx") or 0)
+        tried = int(cache.get("tried") or 0) + 1
+        if tried < len(cookies):
+            nxt = (idx + 1) % len(cookies)
+            cache["idx"] = nxt
+            cache["cookie"] = cookies[nxt]
+            cache["tried"] = tried
+            logger.warning(
+                "[ABCmart] loginYn!=Y — 다음 로그인 쿠키로 회전 (%d/%d)",
+                tried + 1,
+                len(cookies),
+            )
+            return
+    cache["expired"] = True
+    logger.warning(
+        "[ABCmart] 보유 로그인 쿠키 전부 실패 — 익명 폴백으로 전환 (다음 sync까지 보수적 cost)"
+    )
 
 
 class ARTSourcingClient:
@@ -1026,6 +1049,9 @@ class ARTSourcingClient:
         if self._bulk_cache.get("cookie") and not self._bulk_cache.get("expired"):
             if _login_yn != "Y":
                 _mark_abcmart_cookie_expired()
+            else:
+                # 로그인 확인 — 회전 카운터 리셋(일시 오류로 쌓인 실패횟수 해제)
+                self._bulk_cache["tried"] = 0
 
         # 가격: displayProductPrice(페이지 실제 표시가)가 있으면 우선 사용
         # productPrice.sellAmt는 ERP 가격(할인 미반영)이라 페이지가와 다를 수 있음

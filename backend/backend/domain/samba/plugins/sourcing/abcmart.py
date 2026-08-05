@@ -150,10 +150,27 @@ class AbcMartPlugin(SourcingPlugin):
                 _get_rotated_proxy,
             )
 
-            # 오토튠 실행 시 무신사와 동일하게 20건마다 프록시 로테이션
+            # 오토튠 실행 시 무신사와 동일하게 20건마다 프록시 로테이션.
+            # [2026-08-05 근본fix] 단, 로그인 쿠키가 있으면 프록시를 쓰지 않는다.
+            # a-rt.com 세션은 발급 IP에 묶여 있어 프록시(다른 IP)로 보내면 서버가
+            # loginYn='N' 으로 응답한다. 그러면 get_product_detail 이 이를 "쿠키 만료"로
+            # 판정해 _mark_abcmart_cookie_expired() 로 캐시를 익명 폴백에 고정시키고,
+            # 그 뒤 모든 상품이 alwaysDscntAmt·쿠폰 없는 정가로 수집된다
+            # (실측 2026-08-05: 최대혜택가 49,000 상품이 55,000 으로 수집, 쿠키 4개는 전부 정상).
+            # CLAUDE.md 기준 ABCmart/GrandStage 는 로그인 필수(원가 정확성)이므로
+            # IP 로테이션보다 로그인 유지가 우선이다. 쿠키가 없을 때만 로테이션 사용.
+            _has_login_cookie = False
+            try:
+                _bc = ARTSourcingClient._bulk_cache or {}
+                _has_login_cookie = bool(_bc.get("cookie")) and not _bc.get("expired")
+            except Exception:
+                _has_login_cookie = False
             _proxy = (
                 _get_rotated_proxy(site="ABCmart")
-                if _current_refresh_source.get() == "autotune"
+                if (
+                    _current_refresh_source.get() == "autotune"
+                    and not _has_login_cookie
+                )
                 else None
             )
 
@@ -375,10 +392,29 @@ class AbcMartPlugin(SourcingPlugin):
                 new_original_price=float(new_original_price)
                 if new_original_price
                 else None,
-                # cost = 일반 판매가(salePrice) — 멤버십/쿠폰 미적용 실매입가 기준(#421).
-                # 과거 best_benefit_price(최대혜택가)를 cost 로 덮어써 cost<salePrice 역마진
-                # 위험을 유발했다. 혜택가는 collection 의 use_max_discount 옵션에서만 사용.
-                new_cost=float(new_sale_price) if new_sale_price else None,
+                # cost = 최대혜택가(멤버십 상시할인 + 쿠폰 적용가) [2026-08-05 사용자 결정]
+                #
+                # 이전 정책(#421)은 cost=salePrice 였다. 최대혜택가를 cost 로 쓰면
+                # 쿠폰 소진·만료 시 실제 매입가(정가)보다 cost 가 낮게 잡혀 역마진이
+                # 난다는 이유였다. 그러나 실제 매입은 로그인+쿠폰 적용가로 이뤄지므로
+                # salePrice 기준은 매입가를 과대계상해 판매가 경쟁력을 깎는다.
+                # → 사용자 지시로 최대혜택가를 cost 로 사용한다.
+                #
+                # 역마진 방어: 혜택가가 0/미수집이면 절대 0 으로 떨어뜨리지 않고
+                # salePrice 로 폴백한다(보수적). 혜택가 > salePrice 인 이상값도 폴백.
+                # 혜택가는 로그인 상태에서만 정확하다 — 비로그인 응답은
+                # get_product_detail 이 alwaysDscntAmt·쿠폰 없이 salePrice 를 돌려주므로
+                # 자동으로 보수적 값이 된다(2026-08-05 프록시·쿠키 회전 fix 로
+                # 로그인 유지 확인: loginYn='Y', best=49,000 실측).
+                new_cost=(
+                    float(best_benefit_price)
+                    if (
+                        best_benefit_price
+                        and best_benefit_price > 0
+                        and (not new_sale_price or best_benefit_price <= new_sale_price)
+                    )
+                    else (float(new_sale_price) if new_sale_price else None)
+                ),
                 # 혜택가(멤버십+쿠폰 적용 DOM값) — cost 로는 안 쓰지만(#421) 주문 역마진
                 # 판정용으로 별도 노출. 0/미수집이면 None → 판정 보류.
                 new_benefit_cost=float(best_benefit_price)

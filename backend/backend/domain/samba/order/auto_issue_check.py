@@ -57,6 +57,19 @@ def _parse_tags(raw: str | None) -> list[str]:
     return [t.strip() for t in (raw or "").split(",") if t.strip()]
 
 
+# 리셀 채널 — 품절 자동판정 제외 대상. 크림 주문의 소싱처는 SNKRDUNK(C2C)라
+# 한 셀러가 빠져도 다른 매물로 다시 잡히므로 "품절"로 끊으면 안 된다.
+_RESELL_CHANNELS = {"KREAM", "POIZON"}
+
+
+def _is_resell_order(o) -> bool:
+    """크림·포이즌 등 리셀 채널 주문인지."""
+    for f in ("channel_name", "source_site"):
+        if (getattr(o, f, "") or "").strip().upper() in _RESELL_CHANNELS:
+            return True
+    return False
+
+
 def _find_sold_out_option(product_option: str | None, options) -> str | None:
     """주문 옵션 문자열과 매칭되는 상품 옵션 중 재고 0 이하인 것의 이름을 반환.
 
@@ -307,7 +320,12 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                             no_price_product_ids.add(pid)
 
             # 재고없음(재고X): 상품 전체 품절 또는 주문 옵션 품절
-            if "no_stock" not in tag_set:
+            # [2026-08-05] 크림(리셀) 주문은 이 판정에서 제외 — 소싱상품이 SNKRDUNK 인데
+            # PSA 옵션이 stock 0 으로 write-back 되면 _derive_sale_status 가 sold_out 을
+            # 박고, 이후 옵션이 비워져도 그 상태가 남는다(옵션 0개 SNKRDUNK 15,703건).
+            # 그 잔재를 "상품 전체 품절"로 읽어 멀쩡한 주문 4건에 재고X 가 붙었다.
+            # SNKRDUNK 는 매물이 수시로 다시 올라오는 C2C 라 품절 판정 자체가 무의미하다.
+            if "no_stock" not in tag_set and not _is_resell_order(o):
                 reason: str | None = None
                 if r.new_sale_status == "sold_out":
                     reason = "상품 전체 품절"

@@ -169,6 +169,22 @@ async def _load_live_ranks(
 
 
 _g_price_guard: dict = {}
+# 옵션 매칭 실패 수집 [2026-08-05] — "kid|DB옵션명" → 크림 옵션명 목록.
+_g_optmiss: dict = {}
+# 리스톡 스킵 사유별 샘플 [2026-08-05] — 사유코드 → [(kid, 옵션, 부가정보)].
+# 카운터만 있어 "왜 안 붙었나"를 상품 하나씩 파봐야 알 수 있었다. 사유마다 실제
+# 건을 남겨 다음 사이클에 바로 추적한다. 사유당 최대 8건(로그 폭주 방지).
+_g_skip_samples: dict = {}
+
+
+def _skip_note(reason: str, kid: str, opt: str = "", extra: str = "") -> None:
+    """리스톡 스킵 사유 샘플 적재 — 사유당 8건까지."""
+    try:
+        lst = _g_skip_samples.setdefault(reason, [])
+        if len(lst) < 8:
+            lst.append(f"{kid}|{opt}{(' ' + extra) if extra else ''}")
+    except Exception:
+        pass
 
 
 def _guard_jpy(kid: str, opt: str, cur_jpy: int) -> int:
@@ -2806,9 +2822,11 @@ async def _process_shoe_restock(
                     continue  # 이미 등록된 사이즈
                 if jpy > POLICY["max_cost_jpy"]:
                     c["overcost"] += 1
+                    _skip_note("원가상한", kid, db_name, f"¥{jpy:,}")
                     continue
                 if not _trade_ok(kid, name or ""):
                     c["trade"] += 1
+                    _skip_note("거래게이트", kid, db_name)
                     continue
                 if api_j is None:  # 상품당 1회만 크림 조회(사이즈 여러개 공유)
                     try:
@@ -2828,6 +2846,12 @@ async def _process_shoe_restock(
                 )
                 if api_opt is None:
                     c["optmiss"] += 1
+                    # [2026-08-05] 어떤 옵션명이 안 맞았는지 남긴다 — 카운트만 있어서
+                    # 매핑 규칙을 보강할 근거가 없었다(의류 'JP S' vs 크림 'S' 를
+                    # 상품 하나 파보고서야 발견). 수집해서 규칙에 계속 반영한다.
+                    _g_optmiss[f"{kid}|{db_name}"] = ",".join(
+                        str(o.get("name") or "") for o in (api_j.get("options") or [])
+                    )[:200]
                     continue
                 mm_opt = str(api_opt.get("name"))
                 _key = f"{kid}|{mm_opt}"
@@ -2840,9 +2864,11 @@ async def _process_shoe_restock(
                 _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
                 if _key in _g_recent_posts:
                     c["recent"] += 1
+                    _skip_note("재게시쿨다운", kid, mm_opt)
                     continue
                 if _key in _g_failed_posts:
                     c["failed"] += 1
+                    _skip_note("실패쿨다운", kid, mm_opt)
                     continue
                 if (kid, mm_opt.replace(" ", "")) in _g_unfulfilled:
                     c["hold"] += 1
@@ -2866,6 +2892,7 @@ async def _process_shoe_restock(
                 )
                 if "삭제" in act or target <= 0:
                     c["policy"] += 1  # 1등불가/국내못이김 — 등록 안 함
+                    _skip_note("정책(1등불가/국내못이김)", kid, mm_opt, act)
                     continue
                 c["cand"] += 1
                 posted += 1
@@ -3640,7 +3667,9 @@ async def run_kream_unified_once() -> dict:
     #    (로컬 봇도 live 입찰은 매 라운드 조정했음. 로테이션에 넣으면 1회전 1.7시간 = 사실상 방치)
     #  · 리스톡 탐색(live 입찰 없음): 신규 재고 발굴이라 급하지 않음 → 나머지만 BATCH 로테이션.
     # 결과: 갱신 5분 주기 + 리스톡 탐색은 계속 순회. 스니덩크 fetch 부담도 상한 유지.
-    global _unified_offset
+    global _unified_offset, _g_optmiss, _g_skip_samples
+    _g_optmiss = {}
+    _g_skip_samples = {}
     total_products = len(products)
     _live_kids = {k for (k, _o) in ask_index}
     live_products = [p for p in products if p["kid"] in _live_kids]
@@ -4441,6 +4470,18 @@ async def run_kream_unified_once() -> dict:
         )
 
     # ── [C] 만료 회수(재입찰) — 신발/박스/카드. live 목록서 사라진 만료건 재입찰.
+    # [2026-08-05] 등록 실패/스킵 상세 — 카운터만으로는 "왜 안 붙었나"를 알 수 없어
+    # 상품 하나씩 파봐야 했다. 사유별 실제 건을 남겨 다음 사이클에 바로 추적한다.
+    if _g_optmiss:
+        _om = list(_g_optmiss.items())[:15]
+        logger.info(
+            "[크림통합] 옵션매칭실패 %d건 — 상위: %s",
+            len(_g_optmiss),
+            " | ".join(f"{k} → 크림[{v[:60]}]" for k, v in _om),
+        )
+    if _g_skip_samples:
+        for _rs, _lst in _g_skip_samples.items():
+            logger.info("[크림통합] 스킵사유 %s — 샘플: %s", _rs, ", ".join(_lst))
     logger.info("[크림통합] STAGE 만료회수 시작 %.0f초경과", _stage_t.time() - _t_stage)
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
     if expired.get("total"):
