@@ -44,6 +44,11 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     "playauto": "플레이오토",
 }
 
+# 저재고 오버셀 방지 캡 (#703) — 옵션 stock이 이 값 이하면 전송값만 0으로 캡.
+# 무재고 판매 특성상 재고 갱신 간격이 수십 시간이라, 마지막 1~2개는 그 사이
+# 팔릴 위험이 커 품절취소로 이어짐. DB 원본 재고는 건드리지 않음(다음 갱신 때 자연 복원).
+_LOW_STOCK_SEND_CAP_TH = 2
+
 
 def is_account_full_error(err: str | None) -> bool:
     """마켓 등록 '한도 초과'(계정 슬롯 만석) 거부인지 판정.
@@ -2497,6 +2502,26 @@ class SambaShipmentService:
                             await self.session.rollback()
                         except Exception:
                             pass
+                    # 저재고 오버셀 방지 캡 (#703) — 전송값만 0으로, DB 원본 재고는 보존.
+                    # 전 옵션 품절→마켓삭제 판정(위쪽)보다 반드시 뒤에 위치 — 캡이
+                    # 삭제 오발동을 유발하지 않도록. options는 새 리스트로 교체(깊은 복사) —
+                    # 얕은 복사(dict(product_dict))로 원본 product_dict/DB 오염 방지.
+                    if acct_product.get("options"):
+                        _capped_opts = []
+                        for _opt in acct_product["options"]:
+                            _opt_copy = dict(_opt) if isinstance(_opt, dict) else _opt
+                            if isinstance(_opt_copy, dict):
+                                try:
+                                    if (
+                                        int(_opt_copy.get("stock") or 0)
+                                        <= _LOW_STOCK_SEND_CAP_TH
+                                    ):
+                                        _opt_copy["stock"] = 0
+                                except (TypeError, ValueError):
+                                    pass
+                            _capped_opts.append(_opt_copy)
+                        acct_product["options"] = _capped_opts
+
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     start_time = time.time()
                     result = await dispatch_to_market(
@@ -3818,6 +3843,25 @@ class SambaShipmentService:
                     _std_cat = mapped_categories.get("ssg_std", "")
                     if _std_cat:
                         acct_product["_std_category_id"] = _std_cat
+                # 저재고 오버셀 방지 캡 (#703) — 정상 send path(위쪽)와 동일 패턴.
+                # options는 새 리스트로 교체(깊은 복사) — 원본 product_dict 오염 방지.
+                if acct_product.get("options"):
+                    _capped_opts_rt = []
+                    for _opt_rt in acct_product["options"]:
+                        _opt_rt_copy = (
+                            dict(_opt_rt) if isinstance(_opt_rt, dict) else _opt_rt
+                        )
+                        if isinstance(_opt_rt_copy, dict):
+                            try:
+                                if (
+                                    int(_opt_rt_copy.get("stock") or 0)
+                                    <= _LOW_STOCK_SEND_CAP_TH
+                                ):
+                                    _opt_rt_copy["stock"] = 0
+                            except (TypeError, ValueError):
+                                pass
+                        _capped_opts_rt.append(_opt_rt_copy)
+                    acct_product["options"] = _capped_opts_rt
                 result = await dispatch_to_market(
                     self.session,
                     account.market_type,
