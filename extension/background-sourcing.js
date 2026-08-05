@@ -3204,6 +3204,153 @@ async function _checkAbcmartLoggedInByApi(productId, site) {
   }
 }
 
+// ── SSG 상세 in-tab fetch (2026-08-04) ───────────────────────────────────
+// SSG 는 서버·헤드리스 접근을 Akamai 로 차단해 실브라우저가 필수지만, 상품마다
+// popup 창을 새로 띄워 "렌더링"까지 할 이유는 없다. 필요한 값이 전부 itemView.ssg
+// HTML 문서 안에 들어 있기 때문 — 웨일 CDP 실측(2026-08-04, 실제 상품 2건):
+//   · resultItemObj / sellprc(정상가) / bestAmt(원가)
+//   · 카드혜택가 dt + .cdtl_new_price 판매가
+//   · uitemObjArr = 옵션별 uitemId·옵션명·usablInvQty(재고)  ← 사이즈 5개 정상 확인
+// 렌더링이 추가로 하는 일은 광고·리뷰·추천 등 30여 개 부가 요청뿐이고, 그게
+// 건당 130초의 실체였다. fetch 는 실측 834ms.
+// 열려 있는 SSG 탭 컨텍스트에서 실행하므로 쿠키·TLS·Akamai 토큰을 그대로 사용한다.
+// 실패(탭 없음/차단/파싱 불가)하면 null 을 반환해 기존 popup 경로로 폴백한다.
+const SSG_FETCH_TAB_URL = 'https://department.ssg.com/item/itemView.ssg?itemId=1000633600861&siteNo=6009'
+let _ssgFetchTabId = null
+
+async function _getSsgFetchTab() {
+  // 기존 탭 재사용 — 살아있으면 그대로 쓴다(창 여닫이 자체를 없애는 게 목적).
+  if (_ssgFetchTabId != null) {
+    try {
+      const t = await chrome.tabs.get(_ssgFetchTabId)
+      if (t && /department\.ssg\.com/.test(t.url || '')) return _ssgFetchTabId
+    } catch { /* 닫힘 — 아래에서 재생성 */ }
+    _ssgFetchTabId = null
+  }
+  // 사용자가 이미 열어둔 SSG 탭이 있으면 그걸 빌려 쓴다.
+  try {
+    const found = await chrome.tabs.query({ url: '*://department.ssg.com/*' })
+    if (found && found.length) {
+      _ssgFetchTabId = found[0].id
+      return _ssgFetchTabId
+    }
+  } catch { /* 무시 */ }
+  // 없으면 백그라운드 탭 1개만 생성해 계속 재사용한다(상품마다 만들지 않음).
+  const tab = await chrome.tabs.create({ url: SSG_FETCH_TAB_URL, active: false })
+  _ssgFetchTabId = tab.id
+  await waitForTabLoad(_ssgFetchTabId, 30000)
+  return _ssgFetchTabId
+}
+
+async function _ssgFetchDetail(productId) {
+  if (!productId) return null
+  const tabId = await _getSsgFetchTab()
+  if (tabId == null) return null
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [String(productId)],
+    func: async (prdId) => {
+      const _wonInt = (txt) => {
+        const m = (txt || '').match(/[\d,]+/)
+        if (!m) return 0
+        const n = parseInt(m[0].replace(/,/g, ''), 10) || 0
+        return n >= 100000000 ? 0 : n
+      }
+      try {
+        const url = `/item/itemView.ssg?itemId=${prdId}&siteNo=6009`
+        const r = await fetch(url, { credentials: 'include' })
+        if (!r.ok) return { success: false, message: `SSG fetch HTTP ${r.status}` }
+        const h = await r.text()
+        if (h.includes('비정상적인 접근') || h.includes('자동화된 환경') ||
+            h.includes('연속적인 접근') || h.includes('로봇이 아닙니다')) {
+          return { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
+        }
+        if (h.indexOf('임직원 및 사업자 회원') !== -1 || h.indexOf('임직원만 구매') !== -1) {
+          return { success: false, staffOnly: true, message: 'SSG 임직원/사업자 회원 전용 상품' }
+        }
+        const doc = new DOMParser().parseFromString(h, 'text/html')
+
+        // 판매가 — resultItemObj.sellprc 는 정상가라 사용 금지(영구 금지 규칙).
+        let domSalePrice = 0
+        const spEl = doc.querySelector('.cdtl_new_price.notranslate em.ssg_price')
+          || doc.querySelector('.cdtl_new_price.notranslate .ssg_price')
+          || doc.querySelector('.cdtl_price.point em.ssg_price')
+          || doc.querySelector('.cdtl_price.point .ssg_price')
+        if (spEl) domSalePrice = _wonInt(spEl.textContent)
+
+        // 카드혜택가(원가)
+        let domCardPrice = 0
+        for (const dt of doc.querySelectorAll('dt')) {
+          if (dt.textContent.trim() === '카드혜택가') {
+            const em = dt.parentElement?.querySelector('em.ssg_price')
+              || dt.nextElementSibling?.querySelector('em.ssg_price, .ssg_price')
+              || dt.closest('dl')?.querySelector('em.ssg_price')
+            if (em) domCardPrice = _wonInt(em.textContent)
+            break
+          }
+        }
+
+        // 옵션·재고 — uitemObjArr 블록 파싱. 렌더링된 ul.selectLists 는 HTML 에
+        // 없지만(JS 생성) 원본 데이터는 여기 다 있다.
+        const uitemOptions = []
+        const rx = /uitemObj\s*=\s*\{([\s\S]{0,2000}?)\};/g
+        let m
+        while ((m = rx.exec(h)) !== null) {
+          const s = m[1]
+          const g = (k) => {
+            const mm = s.match(new RegExp(k + "\\s*:\\s*'([^']*)'"))
+            return mm ? mm[1] : ''
+          }
+          const uid = g('uitemId')
+          if (!uid) continue
+          const names = [1, 2, 3, 4, 5]
+            .map((i) => g('uitemOptnNm' + i))
+            .filter((v) => v)
+          const qtyRaw = g('usablInvQty')
+          const qty = qtyRaw === '' ? null : (parseInt(qtyRaw, 10) || 0)
+          uitemOptions.push({
+            uitemId: uid,
+            name: names.join(' / '),
+            stock: qty,
+            isSoldOut: qty === 0,
+            bestAmt: parseInt(g('bestAmt') || '0', 10) || 0,
+          })
+        }
+        // 대표단품(00000)만 있고 옵션명이 비면 단품 상품 — 그대로 둔다.
+        const domOptions = uitemOptions
+          .filter((o) => o.name)
+          .map((o) => ({ name: o.name, stock: o.stock, isSoldOut: o.isSoldOut }))
+
+        // resultItemObj 원본 스크립트 — 백엔드 파서가 쓰는 html 필드와 동일 용도.
+        const scripts = Array.from(doc.querySelectorAll('script:not([src])'))
+          .map((s) => s.textContent).join('\n')
+        if (!scripts.includes('resultItemObj') && !domSalePrice) {
+          return { success: false, message: 'SSG 빈 응답(resultItemObj 없음)' }
+        }
+
+        const detailEl = doc.querySelector('#item_detail, .cdtl_detail_area, #contents')
+        return {
+          success: true,
+          site_product_id: prdId,
+          source_site: 'SSG',
+          html: scripts,
+          uitemOptions,
+          domOptions,
+          domCardPrice,
+          domSalePrice,
+          detailHtml: detailEl ? detailEl.innerHTML : '',
+          url: location.origin + url,
+          _viaFetch: true,
+        }
+      } catch (e) {
+        return { success: false, message: 'SSG fetch 실패: ' + (e && e.message) }
+      }
+    },
+  })
+  return res?.result || null
+}
+
 // 사이트별 사전 로그인 게이트 — detail 잡 진입 시 비로그인이면 자동로그인 완료까지 대기.
 // 비로그인 상태 그대로 가격 수집되는 것을 원천 차단 (사후 검증 정책의 한계 보완).
 // 반환: true(로그인됨/판단불가, 진행) / false(비로그인, 잡 보류 필요)
@@ -3460,6 +3607,38 @@ async function handleSourcingJob(job) {
 
     // 작업취소 직후 탭 생성 막기
     if (_sourcingForceStop) { clearTimeout(hangTimer); return }
+
+    // ── SSG 상세: in-tab fetch 고속 경로 (2026-08-04) ─────────────────────
+    // 기존엔 상품마다 popup 창을 새로 띄워 페이지를 통째로 렌더링했다. 그런데
+    // 가격 데이터(resultItemObj / bestAmt / 카드혜택가 DOM)는 전부 itemView.ssg
+    // "HTML 문서 안에" 이미 들어 있고, 렌더링이 추가로 하는 일은 광고·리뷰·추천
+    // 등 30여 개 부가 요청뿐이다. 웨일 CDP 실측(2026-08-04): 이미 열린 SSG 탭에서
+    // 다른 itemId 를 fetch 하면 status 200 / 834ms / 차단 없음 / resultItemObj·
+    // bestAmt·카드혜택가 dt 전부 정상 확보. 창 여닫이 130초 → 1초 수준.
+    // Akamai 봇차단은 실브라우저 컨텍스트(쿠키·TLS)를 그대로 쓰므로 통과한다.
+    // 실패하면 아래 기존 popup 경로로 자연 폴백한다(회귀 안전).
+    if (job.type === 'detail' && job.site === 'SSG') {
+      try {
+        const _fast = await _ssgFetchDetail(job.productId)
+        // 성공 + 확정 실패(임직원 전용)는 즉시 회신. 차단은 popup 으로 재확인하지
+        // 않고 그대로 회신 — fetch 가 차단이면 렌더링도 차단이라 창만 낭비된다.
+        if (_fast && (_fast.success || _fast.staffOnly || _fast.blocked)) {
+          clearTimeout(hangTimer)
+          cleanedUp = true
+          if (_fast.blocked) {
+            pauseCollectPolling(60000, 'SSG 차단 감지(fetch)')
+          }
+          await postResult('sourcing/collect-result', {
+            requestId: job.requestId,
+            data: _fast,
+          })
+          return
+        }
+        console.log(`[SSG] in-tab fetch 미확보 → popup 폴백: ${job.productId}`)
+      } catch (e) {
+        console.log(`[SSG] in-tab fetch 오류 → popup 폴백: ${e?.message || e}`)
+      }
+    }
 
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     // SSG/ABCmart/GrandStage는 active 탭에서만 카드/최대 혜택가 AJAX 발동 →
