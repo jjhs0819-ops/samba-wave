@@ -2569,7 +2569,7 @@ async def _process_shoe_asks(
 ) -> dict:
     """신발(mm 사이즈)·의류/시계(S/M/L 등) ask 갱신/삭제 — 스니덩크.
     원가·재고는 수집된 DB 옵션(옵션별 price/stock)을 사용 — 신발/의류는 옵션별 실시간
-    시세 API가 없어 로컬 봇도 동일하게 DB 옵션을 썼다. 등록(리스톡)은 _process_shoe_restock 담당.
+    시세 API가 없어 로컬 봇도 동일하게 DB 옵션을 썼다. 등록(리스톡)은 통합 루프가 담당.
     추가마진은 '나머지(신발·의류)' 정책값 적용, 배송비는 박스(900엔) 기준.
     가격 이상치(상식범위 밖)는 오염 데이터일 수 있어 건드리지 않고 보류 — 오조정 방지.
     _EXEC_SHOE=1 일 때만 실제 PATCH/DELETE.
@@ -2756,159 +2756,10 @@ def _cm_to_mm_variants(name: str) -> set[str]:
     return out
 
 
-async def _process_shoe_restock(
-    asks: list, kid_to_snkr: dict, cooldown, rate: float, tariff: int, h: dict
-) -> dict:
-    """신발/의류/시계 신규 자동등록 — verified 확정 + 재고O + 해당 사이즈 미등록만.
-    카드 리스톡 동일 가드(2연속miss·재게시2h·실패6h·거래·이행대기) + 원가상한 + 정책(1등불가/
-    국내못이김) 스킵. 사이즈 옵션명 크림(mm)↔DB(cm) 변환 매칭. _EXEC_SHOE=1 일 때만 실제 POST.
-    상한 없이 후보 전량 등록."""
-    c = {
-        "cand": 0,
-        "post": 0,
-        "fail": 0,
-        "miss": 0,
-        "recent": 0,
-        "failed": 0,
-        "trade": 0,
-        "hold": 0,
-        "overcost": 0,
-        "policy": 0,
-        "optmiss": 0,
-        "capped": 0,
-    }
-    # 이미 라이브 ask 있는 (kid, mm옵션) — 재등록 방지
-    live_pairs = {
-        (str(a.get("product_id") or ""), str(a.get("option") or "").strip())
-        for a in asks
-        if _SHOE_OPT_RE.fullmatch(str(a.get("option") or "").strip())
-    }
-    _sur = POLICY["non_card_margin_rate"]
-    async with get_read_session() as s:
-        rows = (
-            await s.execute(
-                _text(
-                    "SELECT resell_matches->'kream'->>'product_id' AS kid, name, options::text "
-                    "FROM samba_collected_product "
-                    "WHERE source_site='SNKRDUNK' "
-                    "AND extra_data->>'snkr_type' IN ('sneaker','apparel','watch') "
-                    "AND COALESCE(resell_matches->'kream'->>'verified','')='true' "
-                    "AND COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
-                    "AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int) "
-                    "  FROM jsonb_array_elements(options::jsonb) o),0)>0"
-                )
-            )
-        ).all()
-    posted = 0
-    _now = _now_ts()
-    async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
-        for kid, name, opts_txt in rows:
-            kid = str(kid or "")
-            try:
-                opts = json.loads(opts_txt) if opts_txt else []
-            except Exception:
-                continue
-            instock = [
-                (str(o.get("name")), int(o.get("price") or 0))
-                for o in opts
-                if int(o.get("stock") or 0) > 0 and int(o.get("price") or 0) > 0
-            ]
-            if not instock:
-                continue
-            api_j = None
-            for db_name, jpy in instock:
-                variants = _cm_to_mm_variants(db_name)
-                if live_pairs & {(kid, v) for v in variants}:
-                    continue  # 이미 등록된 사이즈
-                if jpy > POLICY["max_cost_jpy"]:
-                    c["overcost"] += 1
-                    _skip_note("원가상한", kid, db_name, f"¥{jpy:,}")
-                    continue
-                if not _trade_ok(kid, name or ""):
-                    c["trade"] += 1
-                    _skip_note("거래게이트", kid, db_name)
-                    continue
-                if api_j is None:  # 상품당 1회만 크림 조회(사이즈 여러개 공유)
-                    try:
-                        r = await cli.get(
-                            f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
-                        )
-                        api_j = r.json() if r.status_code == 200 else {}
-                    except Exception:
-                        api_j = {}
-                api_opt = next(
-                    (
-                        o
-                        for o in api_j.get("options") or []
-                        if str(o.get("name") or "").replace(" ", "").upper() in variants
-                    ),
-                    None,
-                )
-                if api_opt is None:
-                    c["optmiss"] += 1
-                    # [2026-08-05] 어떤 옵션명이 안 맞았는지 남긴다 — 카운트만 있어서
-                    # 매핑 규칙을 보강할 근거가 없었다(의류 'JP S' vs 크림 'S' 를
-                    # 상품 하나 파보고서야 발견). 수집해서 규칙에 계속 반영한다.
-                    _g_optmiss[f"{kid}|{db_name}"] = ",".join(
-                        str(o.get("name") or "") for o in (api_j.get("options") or [])
-                    )[:200]
-                    continue
-                mm_opt = str(api_opt.get("name"))
-                _key = f"{kid}|{mm_opt}"
-                # 카드 리스톡 동일 가드 순서
-                # [2026-08-05] 2연속 대기 폐기 — 첫 발견은 무조건 건너뛰던 규칙.
-                # 어제까지 탐색이 3,000/사이클·사이클 6시간이라 55,672건 한 바퀴에 4.6일이
-                # 걸렸고, 두 번째 만남이 안 와서 하루가 지나도 등록이 안 됐다
-                # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
-                # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
-                _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-                if _key in _g_recent_posts:
-                    c["recent"] += 1
-                    _skip_note("재게시쿨다운", kid, mm_opt)
-                    continue
-                if _key in _g_failed_posts:
-                    c["failed"] += 1
-                    _skip_note("실패쿨다운", kid, mm_opt)
-                    continue
-                if (kid, mm_opt.replace(" ", "")) in _g_unfulfilled:
-                    c["hold"] += 1
-                    continue
-                low_over = int(api_opt.get("lowest_overseas_price") or 0)
-                low_norm = int(api_opt.get("lowest_normal_price") or 0)
-                act, target, _adj, _nc = _decide_price_action(
-                    0,
-                    mm_opt,
-                    jpy,
-                    low_over,
-                    low_norm,
-                    (kid, mm_opt) in cooldown,
-                    0,
-                    rate,
-                    tariff,
-                    is_box=True,
-                    surcharge_rate=_sur,
-                    fee_kind="item",  # 신발 리스톡
-                    low_keep=int(api_opt.get("lowest_100_price") or 0),
-                )
-                if "삭제" in act or target <= 0:
-                    c["policy"] += 1  # 1등불가/국내못이김 — 등록 안 함
-                    _skip_note("정책(1등불가/국내못이김)", kid, mm_opt, act)
-                    continue
-                c["cand"] += 1
-                posted += 1
-                if _EXEC_SHOE_RESTOCK:
-                    ok, reason = await _exec_create_ask(
-                        cli, h, kid, int(target), mm_opt
-                    )
-                    if ok:
-                        c["post"] += 1
-                        _g_recent_posts[_key] = _now
-                    else:
-                        c["fail"] += 1
-                        _g_failed_posts[_key] = _now
-                    await asyncio.sleep(0.12)
-    return c
-
+# [2026-08-05] _process_shoe_restock 제거 — 2026-08-01 에 호출부를 뺀 뒤로 정의만
+# 남아 있던 죽은 코드(154줄). 신발/의류 신규등록은 통합 루프의 kind=='restock' 이
+# 이미 처리한다(실측: 최근 1시간 등록 1,464건 중 sneaker 757개로 주력).
+# 되살리면 같은 일을 두 곳에서 하게 되고, 예전에 그것 때문에 사이클이 느려져 뺐다.
 
 # 박스/카드팩 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지.
 # 박스 신규 자동등록 실행 게이트 — 갱신/삭제(_EXEC_BOX)와 별도. 후보 검증 후 1.
@@ -3773,7 +3624,7 @@ async def run_kream_unified_once() -> dict:
             )
             if not has_psa_opt:
                 # 비카드(신발/의류/시계/박스) — 같은 사이클·같은 로테이션 안에서 리스톡만 판정.
-                # [2026-08-01] 별도 전량조회 경로(_process_shoe_restock 등)로 빼면 갱신 사이클이
+                # [2026-08-01] 별도 전량조회 경로로 빼면 갱신 사이클이
                 # 같이 느려져 20분 주기가 깨진다. 카테고리 구분 없이 이 큐에서 회차마다 이어서.
                 r["noncard"] = 1
                 if not prod.get("verified"):
@@ -4210,6 +4061,8 @@ async def run_kream_unified_once() -> dict:
             elif kind == "delete":
                 # 가격열위 삭제(국내못이김/1등불가)는 사이클당 상한(200) 적용 — 점진 삭제.
                 # 무재고·HTML확인 삭제는 상한 무관(전량 삭제).
+                if act in ("국내못이김삭제", "1등불가삭제"):
+                    _skip_note(f"가격열위({act})", kid, nm, f"{cur:,}")
                 if act in ("국내못이김삭제", "1등불가삭제") and not _price_del_take():
                     counts["price_del_skip"] = counts.get("price_del_skip", 0) + 1
                     continue
@@ -4227,12 +4080,16 @@ async def run_kream_unified_once() -> dict:
                 _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
                 if _key in _g_recent_posts:
                     rs["recent"] += 1
+                    _skip_note("재게시쿨다운", kid, nm)
                 elif _key in _g_failed_posts:
                     rs["failed"] += 1
+                    _skip_note("실패쿨다운", kid, nm)
                 elif not _trade_ok(kid, pname):
                     rs["trade"] += 1
+                    _skip_note("거래게이트", kid, nm, str(pname)[:20])
                 elif (str(kid), nm.replace(" ", "")) in _g_unfulfilled:
                     rs["hold"] += 1
+                    _skip_note("이행대기", kid, nm)
                 else:
                     rs["ok"] += 1
                     pend_restock.append((kid, nm, target, pname))
