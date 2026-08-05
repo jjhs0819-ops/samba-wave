@@ -1778,18 +1778,27 @@ _g_trade_counts: dict[str, int] = {}
 # SNKRDUNK 영문 카드명이라 needs_trade 문자열검사가 원피스/유희왕을 못 잡던 사고(2026-07-31)
 # 재발 방지: brand 로 확실히 판별. 신발/의류(sneaker/apparel/watch)는 로드서 제외(팬텀PSA 오게이트 방지).
 _g_card_brand: dict[str, str] = {}
-_POKEMON_BRANDS = {"포켓몬카드", "POKÉMON", "POKEMON"}
+# [2026-08-06] DB brand 를 크림 브랜드명 표기로 통일했다('포켓몬카드'→'Pokemon TCG',
+# 'ONE PIECE'→'One Piece TCG'). 여기 집합은 UPPER(TRIM(brand)) 와 정확일치로 비교하므로
+# 통일된 표기를 반드시 포함해야 한다. 종전엔 'POKEMON TCG'·'ONE PIECE TCG' 가 없어
+# 원피스 2,080건이 _TCG_BRANDS 에 안 걸려 거래이력 게이트를 통째로 빠져나갔다
+# (2026-07-31 사고와 같은 구멍이 표기 차이로 재발). 옛 표기도 남겨 과거 데이터 대비.
+_POKEMON_BRANDS = {"POKEMON TCG", "포켓몬카드", "POKÉMON", "POKEMON"}
 # 거래이력 게이트 적용 대상 = TCG 브랜드만. 신발/의류 브랜드(NIKE 등)는 제외. [2026-08-02]
 _TCG_BRANDS = {
+    "POKEMON TCG",
     "포켓몬카드",
     "POKÉMON",
     "POKEMON",
+    "ONE PIECE TCG",
     "ONE PIECE",
+    "YU-GI-OH OCG",
     "YU-GI-OH!",
     "YU-GI-OH",
     "유희왕",
     "원피스",
     "MAGIC: THE GATHERING",
+    "UNION ARENA TCG",
     "UNION ARENA",
     "DUEL MASTERS",
     "DRAGON BALL",
@@ -3528,8 +3537,19 @@ async def run_kream_unified_once() -> dict:
     # ── 중복입찰 정리 [로컬 이식] — (상품,옵션)당 내 입찰이 2개↑면 최고가 1개만 남기고 삭제.
     # 안 하면 무경쟁 인상 시 안 올린 다른 내 입찰이 rank1 이 돼, 올린 입찰이 rank2 로 밀림 →
     # 재확인 로직이 '경쟁자에 밀림'으로 오인 → 무경쟁 인상↔하향 무한 핑퐁 + 쿨다운 반복.
+    # [2026-08-06] **같은 ask id 를 먼저 접는다.** 종전엔 목록에 같은 입찰이 두 번
+    # 들어오면 그걸 '중복 입찰'로 보고 하나를 지웠다 — 실재하는 입찰이 사라진다.
+    # 라이브 입찰이 25,000건이면 페이지가 511장인데, 넘기는 도중 등록·삭제로 목록이
+    # 밀리면 같은 항목이 두 페이지에 걸쳐 들어온다(재시도 수신도 마찬가지).
+    # 실측: 총량이 분당 약 23건씩 줄었고, 이 루프의 sleep(0.1)+API 왕복 속도와 일치.
+    _seen_ids: set = set()
     _dup: dict = {}
     for a in asks:
+        _aid = str(a.get("id") or "")
+        if _aid and _aid in _seen_ids:
+            continue  # 같은 입찰의 중복 수신 — 중복 '입찰'이 아니다
+        if _aid:
+            _seen_ids.add(_aid)
         _k = (str(a.get("product_id") or ""), str(a.get("option") or ""))
         _dup.setdefault(_k, []).append(a)
     _dedup_del = 0
