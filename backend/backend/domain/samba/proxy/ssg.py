@@ -832,7 +832,20 @@ class SSGClient:
         if isinstance(iv, dict):
             items = [iv]
         elif isinstance(iv, list):
-            items = [x for x in iv if isinstance(x, dict)]
+            # [2026-08-05] items 가 [{"item": [...]}] 래퍼 리스트인 실응답 대응 —
+            # #699 가 list_live_items/get_product_count 만 고치고 이 함수는 누락돼,
+            # 안정키 검색이 래퍼 dict 를 상품으로 오인 → 항상 미발견 → 멱등가드 무력화
+            # (재전송 전량 "동일상품 존재" __exists__ 마커 실사고, 8/5 스케쳐스 파일럿).
+            items = []
+            for _w in iv:
+                if isinstance(_w, dict) and "item" in _w and "itemId" not in _w:
+                    _inner = _w.get("item")
+                    if isinstance(_inner, dict):
+                        items.append(_inner)
+                    elif isinstance(_inner, list):
+                        items.extend(x for x in _inner if isinstance(x, dict))
+                elif isinstance(_w, dict):
+                    items.append(_w)
         else:
             items = []
         for it in items:
