@@ -3847,7 +3847,23 @@ async def run_kream_unified_once() -> dict:
                     if _popt is not None:
                         _lo = int(_popt.get("lowest_overseas_price") or 0)
                         _ln = int(_popt.get("lowest_normal_price") or 0)
-                        _mkt = _lo or _ln
+                        _lk = int(_popt.get("lowest_100_price") or 0)
+                        # [2026-08-05] 등록과 갱신이 시장가를 다르게 계산해 왕복이 났다.
+                        #   등록: _lo or _ln  — 해외가 있으면 해외만 보고 국내를 무시하고,
+                        #                       보관가(lowest_100)는 아예 안 봤다.
+                        #   갱신: min(해외, 국내, 보관)
+                        # 해외 100만·국내 60만이면 등록은 '100만을 이기면 된다'고 넣고,
+                        # 다음 사이클 갱신은 '60만을 못 이긴다'고 지운다 — 매 사이클 등록↔삭제.
+                        # 갱신과 같은 기준(셋 중 최저)으로 맞춘다.
+                        _cand = [x for x in (_lo, _ln, _lk) if x > 0]
+                        _mkt = min(_cand) if _cand else 0
+                        # 국내 상한도 갱신과 같이 본다 — 갱신은 min_price > low_norm*0.9 면
+                        # '국내못이김'으로 지우는데 등록엔 이 검사가 없어, 넣자마자
+                        # 다음 사이클에 지워지는 건이 계속 나왔다.
+                        _dc = domestic_cap(_ln, tariff_threshold)
+                        if _ln > 0 and _mp > _dc:
+                            _drop("국내못이김", kid, _nm, f"min={_mp:,} 상한={_dc:,}")
+                            continue
                         if _mkt > 0:
                             if _mp > _mkt:
                                 # 최소마진으로 1등 불가 → 등록 안 함(2등 방지)
