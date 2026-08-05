@@ -3993,10 +3993,21 @@ async def run_kream_unified_once() -> dict:
                     except Exception:
                         _copt = None
                     if _copt is not None:
-                        # 카드는 해외배송 옵션 제외가 원칙이라 일반가를 우선 본다.
-                        _mkt = int(_copt.get("lowest_normal_price") or 0) or int(
-                            _copt.get("lowest_overseas_price") or 0
-                        )
+                        # [2026-08-05] 시장최저 = 일반·해외·보관100 **전부 중 최저**.
+                        # 종전엔 일반가만 보고(있으면 해외는 or 로 무시, 보관100 은 아예 미고려)
+                        # 등록해 놓고, 갱신 로직은 셋을 다 보므로 다음 사이클에 1등불가로
+                        # 지웠다 — 등록↔삭제 왕복의 발원지. 판정 기준을 갱신과 일치시킨다.
+                        # (95 등급은 하자품이라 제외 — 싼 하자가가 멀쩡한 등록을 막는다)
+                        _cands = [
+                            int(x)
+                            for x in (
+                                _copt.get("lowest_normal_price"),
+                                _copt.get("lowest_overseas_price"),
+                                _copt.get("lowest_100_price"),
+                            )
+                            if x and int(x) > 0
+                        ]
+                        _mkt = min(_cands) if _cands else 0
                         if _mkt > 0:
                             if mp > _mkt:
                                 r["rows"].append(
