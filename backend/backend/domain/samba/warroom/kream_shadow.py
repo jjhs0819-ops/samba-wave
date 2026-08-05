@@ -1606,17 +1606,16 @@ def _decide_price_action(
         rank1 = int(live_rank) == 1
     else:
         rank1 = market_low > 0 and 0 < cur <= market_low
-    _dcap = domestic_cap(low_norm, tariff_threshold)
+    # [2026-08-06] 국내 10% 할인 상한(domestic_cap) 게이트 **폐기**.
+    # 종전엔 국내가의 90% 이하로 못 들어가면 지웠다(사이클당 25,021건 제외 — 최대 사유).
+    # 최소하한으로 시장 최저를 이길 수 있으면 10% 여유가 없어도 입찰한다.
+    # 판정 기준은 '시장 최저(해외/국내/보관 중 최저)를 이기는가' 하나로 통일한다.
     # [2026-08-05] 삭제 게이트는 **1등이 아닐 때만** 본다.
     # 이미 입찰 중이고 내 순위가 1등이면 lowest_* 는 내 입찰 그 자체다. 그걸 상대로
     # "못 이긴다"고 판정하는 건 자기 자신과의 비교라 무의미하고, 그 오판으로 돈 되는
     # 무경쟁 입찰을 계속 지웠다. 1등이면 최저입찰가는 보지 않는다 — 유지·인상만.
     # (실측 147058|235: 나 혼자 567,000, lowest_overseas 도 567,000 = 내 가격)
     if not (cur > 0 and rank1):
-        # 국내입찰가 비교 — 국내가 더 싸서 최소마진(min_price) 지키며 못 이기면(국내상한
-        # 초과) 입찰 무의미(체결 안 되거나 손해) → 삭제 신호. [2026-07-26]
-        if low_norm > 0 and min_price > _dcap:
-            return "국내못이김삭제", 0, True, False
         # 최소마진 지키며 시장최저(해외/국내/보관) 못 이기면 1등 확보 불가 → 등록 무의미.
         if market_low > 0 and min_price > market_low:
             return "1등불가삭제", 0, True, False
@@ -3857,13 +3856,8 @@ async def run_kream_unified_once() -> dict:
                         # 갱신과 같은 기준(셋 중 최저)으로 맞춘다.
                         _cand = [x for x in (_lo, _ln, _lk) if x > 0]
                         _mkt = min(_cand) if _cand else 0
-                        # 국내 상한도 갱신과 같이 본다 — 갱신은 min_price > low_norm*0.9 면
-                        # '국내못이김'으로 지우는데 등록엔 이 검사가 없어, 넣자마자
-                        # 다음 사이클에 지워지는 건이 계속 나왔다.
-                        _dc = domestic_cap(_ln, tariff_threshold)
-                        if _ln > 0 and _mp > _dc:
-                            _drop("국내못이김", kid, _nm, f"min={_mp:,} 상한={_dc:,}")
-                            continue
+                        # [2026-08-06] 국내 10% 할인 상한 게이트 폐기 — 갱신과 동일.
+                        # 최소하한으로 시장 최저를 이길 수 있으면 그대로 입찰한다.
                         if _mkt > 0:
                             if _mp > _mkt:
                                 # 최소마진으로 1등 불가 → 등록 안 함(2등 방지)
