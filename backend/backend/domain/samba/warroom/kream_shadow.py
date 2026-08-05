@@ -1587,8 +1587,12 @@ def _decide_price_action(
         # 최소마진 지키며 시장최저(해외/국내/보관) 못 이기면 1등 확보 불가 → 등록 무의미.
         if market_low > 0 and min_price > market_low:
             return "1등불가삭제", 0, True, False
-    no_comp_eff = min(no_comp, _dcap)
-    band = max(3000, int(no_comp_eff * 0.03))
+    # [2026-08-05] 무경쟁 목표가를 국내가(_dcap)로 깎지 않는다.
+    # 이 값은 rank1(입찰 중 1등)일 때만 쓰이는데, 1등이면 최저입찰가는 보지 않는 게
+    # 규칙이다. 국내 상한으로 눌러 목표가를 낮추면 경쟁자도 없는데 스스로 깎는 꼴.
+    no_comp_eff = no_comp
+    # 문턱은 정책값(kreamAdjustDeadbandKrw)을 쓴다. 3,000원·3% 는 하드코딩이었다.
+    band = int(POLICY.get("adjust_deadband_krw") or 0)
     truly_nocomp = (rank1 or market_low >= no_comp_eff) and no_comp_eff > min_price
 
     act, target, is_nocomp = "유지", cur, False
@@ -1605,8 +1609,8 @@ def _decide_price_action(
                 act = "무경쟁인상(쿨다운보류)"
             else:
                 act, target, is_nocomp = "무경쟁인상", no_comp_eff, True
-        elif truly_nocomp and cur > no_comp_eff + band:
-            act, target = "과가격하향", no_comp_eff
+        # [2026-08-05] '과가격하향' 폐기 — 경쟁자가 없는데 값을 깎을 이유가 없다.
+        # 무경쟁 목표가보다 높게 걸려 있으면 그건 더 버는 것이지 고칠 대상이 아니다.
     else:
         # [2026-08-04] 목표가는 **해외·일반 통합 최저(market_low)** 기준이어야 한다.
         # is_ov(해외 호가 존재)만 보고 해외 최저에서 내리다 보니, 일반이 더 싸면
