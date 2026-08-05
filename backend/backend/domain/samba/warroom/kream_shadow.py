@@ -2832,10 +2832,12 @@ async def _process_shoe_restock(
                 mm_opt = str(api_opt.get("name"))
                 _key = f"{kid}|{mm_opt}"
                 # 카드 리스톡 동일 가드 순서
+                # [2026-08-05] 2연속 대기 폐기 — 첫 발견은 무조건 건너뛰던 규칙.
+                # 어제까지 탐색이 3,000/사이클·사이클 6시간이라 55,672건 한 바퀴에 4.6일이
+                # 걸렸고, 두 번째 만남이 안 와서 하루가 지나도 등록이 안 됐다
+                # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
+                # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
                 _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-                if _g_miss_counts[_key] < 2:
-                    c["miss"] += 1
-                    continue
                 if _key in _g_recent_posts:
                     c["recent"] += 1
                     continue
@@ -3072,10 +3074,12 @@ async def _process_box_restock(
                 c["optmiss"] += 1
                 continue
             _key = f"{kid}|{opt}"
+            # [2026-08-05] 2연속 대기 폐기 — 첫 발견은 무조건 건너뛰던 규칙.
+            # 어제까지 탐색이 3,000/사이클·사이클 6시간이라 55,672건 한 바퀴에 4.6일이
+            # 걸렸고, 두 번째 만남이 안 와서 하루가 지나도 등록이 안 됐다
+            # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
+            # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
             _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-            if _g_miss_counts[_key] < 2:
-                c["miss"] += 1  # 2사이클 연속 미검출 확인 후 등록(일시적 누락 방지)
-                continue
             if _key in _g_recent_posts:
                 c["recent"] += 1
                 continue
@@ -4186,20 +4190,12 @@ async def run_kream_unified_once() -> dict:
                 counts["restock"] += 1
                 # 리스톡 가드 (로컬 순서: 2연속miss → 재게시2h → 실패6h → 거래이력 → 이행대기)
                 _key = f"{kid}|{nm}"
+                # [2026-08-05] 2연속 대기 폐기 — 첫 발견은 무조건 건너뛰던 규칙.
+                # 어제까지 탐색이 3,000/사이클·사이클 6시간이라 55,672건 한 바퀴에 4.6일이
+                # 걸렸고, 두 번째 만남이 안 와서 하루가 지나도 등록이 안 됐다
+                # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
+                # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
                 _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-                if _g_miss_counts[_key] < 2:
-                    rs["miss"] += 1
-                elif _key in _g_recent_posts:
-                    rs["recent"] += 1
-                elif _key in _g_failed_posts:
-                    rs["failed"] += 1
-                elif not _trade_ok(kid, pname):
-                    rs["trade"] += 1
-                elif (str(kid), nm.replace(" ", "")) in _g_unfulfilled:
-                    rs["hold"] += 1
-                else:
-                    rs["ok"] += 1
-                    pend_restock.append((kid, nm, target, pname))
             if act not in ("유지", "유지(동률)"):
                 if _emitted < 120:
                     _emitted += 1
