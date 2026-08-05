@@ -344,7 +344,11 @@ async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
         ok = fail = 0
         async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
             for a in orphans:
-                if a.get("id") and await _exec_delete_ask(cli, h, a.get("id")):
+                # [2026-08-05] kid/opt 를 반드시 넘긴다 — 안 넘기면 "우리가 지운 것"으로
+                # 기록되지 않아 다음 사이클이 판매로 오인하고 6시간 재등록을 막는다.
+                if a.get("id") and await _exec_delete_ask(
+                    cli, h, a.get("id"), a.get("product_id"), a.get("option")
+                ):
                     ok += 1
                 else:
                     fail += 1
@@ -3470,7 +3474,9 @@ async def run_kream_unified_once() -> dict:
                 # 한 사이클 안에 2천건이 빠지던 원인.
                 _grp.sort(key=lambda x: int(x.get("price") or 0))  # 최저가(1등) 유지
                 for _a in _grp[1:]:
-                    if _a.get("id") and await _exec_delete_ask(_dcli, h, _a.get("id")):
+                    if _a.get("id") and await _exec_delete_ask(
+                        _dcli, h, _a.get("id"), _a.get("product_id"), _a.get("option")
+                    ):
                         _dedup_del += 1
                     await asyncio.sleep(0.1)
     if _dedup_del:
