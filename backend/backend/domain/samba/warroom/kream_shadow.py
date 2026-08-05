@@ -57,7 +57,10 @@ _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 신발·의류도 이미 앞줄에서 뽑힌다. 슬라이스 밖에서 따로 더 넣을 이유가 없어졌고,
 # 무제한으로 열려 있던 탓에 리스톡을 1만으로 줄여도 1.9만이 다시 들어와 분리가
 # 무력화됐다(실측: 갱신 11,879 + 리스톡 10,000 = 21,879 인데 조회 대상 41,286).
-_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 3000)
+# [2026-08-05] 기본 상한 폐기(0=무제한). 비카드는 17,014 상품인데 3,000 에서 잘려
+# 나머지 14,000 이 매 사이클 **로그도 카운트도 없이** return 됐다. "왜 등록이 안 되는지
+# 모르겠다"의 정체가 이것. 슬라이스(리스톡 1만)가 이미 총량을 제한하므로 이중 상한이다.
+_NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 0)
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
@@ -188,6 +191,34 @@ def _skip_note(reason: str, kid: str, opt: str = "", extra: str = "") -> None:
             lst.append(f"{kid}|{opt}{(' ' + extra) if extra else ''}")
     except Exception:
         pass
+
+
+# [2026-08-05] 상품 단위 추적 — "왜 이 상품이 등록 안 되냐"를 추측 없이 답하기 위해.
+# KREAM_TRACE_KIDS="14334,177955" 로 지정하면 그 상품이 지나가는 모든 분기를 남긴다.
+# 전량에 걸면 로그가 폭발하므로 지정한 kid 만 찍는다.
+_TRACE_KIDS: set = {
+    x.strip()
+    for x in (os.environ.get("KREAM_TRACE_KIDS") or "").split(",")
+    if x.strip()
+}
+# 사유별 소멸 집계 — 등록 후보에서 빠진 모든 경로가 여기 누적된다(사이클마다 리셋).
+_g_drop: dict[str, int] = {}
+
+
+def _trace(kid: str, opt: str, msg: str) -> None:
+    """지정 상품의 분기 통과 기록."""
+    if kid and str(kid) in _TRACE_KIDS:
+        logger.info("[크림추적] %s|%s %s", kid, opt, msg)
+
+
+def _drop(reason: str, kid: str = "", opt: str = "", extra: str = "") -> None:
+    """등록 후보에서 빠진 사유 기록 — 집계 + 샘플 + 추적.
+
+    조용한 continue/return 이 '이유 모를 미등록'을 만들었다. 빠지는 길목마다 부른다.
+    """
+    _g_drop[reason] = _g_drop.get(reason, 0) + 1
+    _skip_note(reason, kid, opt, extra)
+    _trace(kid, opt, f"제외: {reason}{(' ' + extra) if extra else ''}")
 
 
 def _guard_jpy(kid: str, opt: str, cur_jpy: int) -> int:
@@ -848,11 +879,11 @@ def _now_ts() -> float:
 
 
 # 입찰제한 보정 사이클 상한 — 대량 오조정 방지(로컬 _hb_clamp 와 동일 취지)
-_hb_clamp = {"used": 0, "cap": 20}
+_hb_clamp = {"used": 0, "cap": 10**9}  # [2026-08-05] 상한 제거
 # (kid, opt) → 마진 하한. 순위교정 시 이 아래로는 절대 안 내린다.
 _floor_map: dict = {}
 # 순위교정(rank>=2 → 1,000원 인하) 사이클 상한
-_rank_fix = {"used": 0, "cap": 300}
+_rank_fix = {"used": 0, "cap": 10**9}  # [2026-08-05] 상한 제거
 
 
 async def _fetch_highest_bid(cli, h, pid: str, opt: str) -> int:
@@ -3570,6 +3601,7 @@ async def run_kream_unified_once() -> dict:
     global _unified_offset, _g_optmiss, _g_skip_samples
     _g_optmiss = {}
     _g_skip_samples = {}
+    _g_drop.clear()
     total_products = len(products)
     _live_kids = {k for (k, _o) in ask_index}
     live_products = [p for p in products if p["kid"] in _live_kids]
@@ -3606,7 +3638,9 @@ async def run_kream_unified_once() -> dict:
     # 그래서 "이번 바퀴에 이미 본 kid" 를 기억해 배제한다. 재고 우선 정렬이 그대로
     # 살아나 재고 보유분부터 소진되고, 그 다음 재고 0 이 순회된다. 남은 게 없으면
     # 리셋해 새 바퀴를 시작한다. 건너뛰는 구간이 원천적으로 없다.
-    _restock_scan = int(os.environ.get("KREAM_RESTOCK_SCAN") or 10000)
+    # [2026-08-05] 리스톡 슬라이스 상한 제거(0=전량). 한 바퀴를 여러 사이클에 나눠
+    # 돌리면 뒷구간 상품이 언제 등록될지 알 수 없다.
+    _restock_scan = int(os.environ.get("KREAM_RESTOCK_SCAN") or 0)
     _scanned: set = set()
     try:
         _scanned = set((await _load_setting_map(_SET_SCANNED)).keys())
@@ -3705,31 +3739,38 @@ async def run_kream_unified_once() -> dict:
                 # 같이 느려져 20분 주기가 깨진다. 카테고리 구분 없이 이 큐에서 회차마다 이어서.
                 r["noncard"] = 1
                 if not prod.get("verified"):
-                    return r  # 검수 확정분만 신규등록 대상
+                    _drop("검수미확정", kid)  # 검수 확정분만 신규등록 대상
+                    return r
                 # [2026-08-01 통화가드] 옵션가가 JPY 가 아니면(스니덩크 글로벌 KRW/USD) 등록 금지.
                 # 코드 전체가 JPY 가정이라 원화·달러값을 엔으로 곱해 9배~100배 부풀린 입찰 사고 발생
                 # (DC7695-003: ¥9,999 상품을 236만원에 입찰). 환산 정합 확인 전까지 차단.
                 if str(prod.get("currency") or "JPY").upper() != "JPY":
+                    _drop("통화가드(비JPY)", kid, extra=str(prod.get("currency")))
                     return r
                 # [2026-08-02] 사이클당 비카드 등록 조회 상한 — 3,500상품 전량 크림조회하면
                 # 사이클이 안 끝난다. 상한 넘으면 이번 회차는 판정만 건너뛰고 다음 회차에 처리.
                 global _noncard_probe_used
-                if _noncard_probe_used >= _NONCARD_PROBE_MAX:
+                if _NONCARD_PROBE_MAX and _noncard_probe_used >= _NONCARD_PROBE_MAX:
+                    _drop("비카드조회상한", kid)
                     return r
                 _noncard_probe_used += 1
                 _kream_opts_cache = None  # 상품당 크림 옵션 1회 조회 캐시
                 for _nm, _d in (prod.get("db_opts") or {}).items():
                     _st, _pr = int(_d.get("stock") or 0), int(_d.get("price") or 0)
                     if _st <= 0 or _pr <= 0:
+                        _drop("재고0또는원가0", kid, _nm, f"st={_st} pr={_pr}")
                         continue
                     if (kid, _nm) in ask_index:
-                        continue  # 이미 입찰 있음
+                        _trace(kid, _nm, "이미 입찰 있음 — 리스톡 대상 아님")
+                        continue
                     # [2026-08-01 오염가드] DB 원가가 상식범위 밖이면 등록 금지.
                     # 실사고: ¥294(실제 ¥40,000)·¥188,000(실제 ¥13,950) 오염값으로 계산해
                     # 56만~262만원 이상입찰 23건(5,595만원) 발생. 신발/의류 하한 5,000엔.
                     if _pr < 5000:
+                        _drop("원가하한미달(5000엔)", kid, _nm, f"{_pr}")
                         continue
                     if _pr > POLICY["max_cost_jpy"]:
+                        _drop("원가상한초과", kid, _nm, f"{_pr}")
                         continue
                     _base = calc_base(
                         _pr, rate, True, False, POLICY["non_card_margin_rate"]
@@ -3790,6 +3831,7 @@ async def run_kream_unified_once() -> dict:
                         if _popt is None:
                             # [2026-08-02] 크림에 그 사이즈 옵션이 없으면 등록 시도 안 함 —
                             # POST 하면 "상품 정보가 변경되어..." 로 실패만 소모(실패 61건 정체).
+                            _drop("크림옵션없음", kid, _nm)
                             continue
                         _nm = str(_popt.get("name") or _nm)  # 크림 실제 옵션명으로 등록
                     except Exception:
@@ -3800,7 +3842,14 @@ async def run_kream_unified_once() -> dict:
                         _mkt = _lo or _ln
                         if _mkt > 0:
                             if _mp > _mkt:
-                                continue  # 최소마진으로 1등 불가 → 등록 안 함(2등 방지)
+                                # 최소마진으로 1등 불가 → 등록 안 함(2등 방지)
+                                _drop(
+                                    "1등불가(마진)",
+                                    kid,
+                                    _nm,
+                                    f"min={_mp:,} 시장={_mkt:,}",
+                                )
+                                continue
                             _tgt = max(_mp, min(_nc, _mkt - 1000))
                         else:
                             _tgt = max(_nc, _mp)
@@ -4696,6 +4745,16 @@ async def run_kream_unified_once() -> dict:
     if _g_skip_samples:
         for _rs, _lst in _g_skip_samples.items():
             logger.info("[크림통합] 스킵사유 %s — 샘플: %s", _rs, ", ".join(_lst))
+    # [2026-08-05] 등록 후보에서 빠진 사유 **총계**. 종전엔 샘플 8건만 찍혀
+    # "몇 건이 왜 빠졌는지" 를 알 수 없었고, 아예 안 찍히는 경로(비카드 조회 상한 등)가
+    # 수천 건을 조용히 삼켰다. 여기서 전량이 사유별로 드러난다.
+    if _g_drop:
+        logger.info(
+            "[크림통합] 등록제외 사유별 총계 — %s",
+            " / ".join(
+                f"{k}:{v:,}" for k, v in sorted(_g_drop.items(), key=lambda x: -x[1])
+            ),
+        )
     logger.info("[크림통합] STAGE 만료회수 시작 %.0f초경과", _stage_t.time() - _t_stage)
     expired = await _process_expired_asks(asks, h, rate, tariff_threshold)
     if expired.get("total"):
