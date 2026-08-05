@@ -2037,9 +2037,28 @@ class SmartStoreClient:
 
         # (주) 제거 함수
         def _clean_company(name: str) -> str:
+            """제조사/브랜드 문자열을 상호명만 남기고 정규화.
+
+            소싱처 원문이 "제조사: Nike inc. / 수입처 : 나이키코리아(유)" 처럼
+            라벨+부가정보가 붙은 문장으로 오는 경우가 많다. 그대로 보내면 네이버
+            상품정보 검색품질 체크에서 제조사가 문장으로 잡혀 점검 대상이 된다
+            (실측: 스마트스토어 등록분 다수). 첫 항목만 취하고 라벨·법인격을 뗀다.
+            """
             if not name:
                 return name
-            return re.sub(r"\(주\)|㈜|\(株\)", "", name).strip()
+            s = str(name)
+            # "제조사 ... / 수입처 ..." → 첫 항목만
+            s = re.split(r"[/|]", s)[0]
+            # 선행 라벨 제거 (제조사:, 수입처 :, 판매원- 등)
+            s = re.sub(
+                r"^\s*(제조사|제조원|제조업체|제조|수입처|수입원|수입사|"
+                r"판매원|판매자|공급사|브랜드)\s*[:：\-]\s*",
+                "",
+                s,
+            )
+            # 법인격 표기 제거
+            s = re.sub(r"\(주\)|㈜|\(株\)|\(유\)|\(합\)|주식회사|유한회사", "", s)
+            return s.strip(" .,-·")
 
         brand = product.get("brand", "") or "상세설명 참조"
         # 제조사: manufacturer → brand → "상세설명 참조" 순으로 폴백
@@ -2241,6 +2260,33 @@ class SmartStoreClient:
                         "attributeValueSeq": type_values[matched_type],
                     }
                 )
+
+        # 상품명 기반 추가 속성 매칭 (소재/패턴/핏/넥라인 등)
+        # 종전에는 성별·시즌·종류 3종만 채워 검색품질 체크의 '속성' 항목이 0~1건에
+        # 머물렀다(실측). 카테고리 속성값이 상품명에 그대로 있으면 안전하게 채운다.
+        # 이미 채운 attributeSeq 는 건너뛰고, 속성당 값 1개만(다중값 오염 방지).
+        _name_for_attr = f"{product.get('name', '')} {product.get('category', '')}"
+        _used_seq = {a["attributeSeq"] for a in product_attributes}
+        _extra: dict[int, tuple[int, str]] = {}
+        for a in cat_attrs:
+            if _is_input_type(a):
+                continue
+            seq = a.get("attributeSeq", 0)
+            vseq = a.get("attributeValueSeq", 0) or 0
+            val = a.get("minAttributeValue", "") or a.get("attributeValueName", "")
+            if not seq or not vseq or not val or seq in _used_seq:
+                continue
+            if val in _TYPE_SKIP or len(val) < 2:
+                continue
+            # 상품명/카테고리에 값이 그대로 등장할 때만 채택
+            if val in _name_for_attr and seq not in _extra:
+                _extra[seq] = (vseq, val)
+            if len(product_attributes) + len(_extra) >= 10:
+                break
+        for seq, (vseq, _val) in _extra.items():
+            product_attributes.append(
+                {"attributeSeq": seq, "attributeValueSeq": vseq}
+            )
 
         data: dict[str, Any] = {
             "originProduct": {
