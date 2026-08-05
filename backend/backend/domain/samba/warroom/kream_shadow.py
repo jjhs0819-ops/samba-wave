@@ -3540,13 +3540,25 @@ async def run_kream_unified_once() -> dict:
     # 3,000 슬라이스를 뽑아도 등록 가능한 건 ~1,050 밖에 안 됐다(나머지는 재고 0 이라
     # 처리해도 버려진다). 재고 매칭이 1.5만→3만으로 2배가 됐는데 입찰이 안 따라온 원인.
     # 로테이션 자체는 그대로라 재고 0 도 결국 훑는다 — 새로 재고가 생긴 건을 놓치지 않는다.
-    rest_products.sort(
-        key=lambda p: 0
+    # [2026-08-05] 정렬 대신 **재고 0 제외**. 정렬만 하면 offset 로테이션이 정렬을
+    # 무력화한다 — 재고 보유분(약 2만)을 앞에 세워도 슬라이스는 offset 34,785 부터
+    # 잘라가 재고 없는 뒷구간만 훑었다(실측: 14334 재고1·무경쟁 매물이 하루 넘게 미등록).
+    # 재고 0 은 등록 대상이 아니라 스캔 낭비이고, 재고가 생기면 스니덩크 실시간 조회로
+    # DB 가 갱신돼 다음 사이클에 자동으로 다시 들어온다.
+    _rest_all = len(rest_products)
+    rest_products = [
+        p
+        for p in rest_products
         if any(
             int((d or {}).get("stock") or 0) > 0
             for d in (p.get("db_opts") or {}).values()
         )
-        else 1
+    ]
+    logger.info(
+        "[크림통합] 리스톡 풀 — 미입찰 %d 중 재고보유 %d (재고0 %d 제외)",
+        _rest_all,
+        len(rest_products),
+        _rest_all - len(rest_products),
     )
     # [2026-08-05] 갱신/리스톡 사이클 분리 — 리스톡만 슬라이스로 되돌린다.
     # 전량(55,437) 처리로 바꿨더니 사이클이 7시간 20분이 됐고, 그동안 가격 갱신이
