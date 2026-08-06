@@ -357,18 +357,28 @@ def _all_ext_pcs_blocked_until(site: str) -> float:
     """
     now = time.time()
     site_u = (site or "").upper()
-    alive: list[str] = []
+    # [2026-08-06 fix] 판정 대상을 "최근 60초 내 폴링한 PC"에서 "그 사이트에
+    # 배정된 PC" 로 바꾼다.
+    #
+    # 기존 로직의 함정: PC 가 차단당하면 확장앱이 pauseCollectPolling(5분) 으로
+    # 폴링을 멈춘다. 그러면 _pc_last_seen 이 낡아 그 PC 가 alive 에서 빠진다.
+    # 반대로 멀쩡하지만 잠시 조용한 PC 도 똑같이 빠진다. 그 결과 alive 에
+    # "차단된 PC 한 대"만 남는 순간이 생기고, all() 이 참이 되어 사이트 전체가
+    # 멈춘다 — 실측 2026-08-06: SSG 배정 2대 중 76290318 만 차단인데
+    # "전 PC 차단 백오프" 로 SSG 가 통째로 정지하고 18,512건이 전량 실패.
+    #
+    # 배정 기준으로 보면 "정말로 모든 담당 PC 가 차단된 경우"에만 멈춘다.
+    # 일부만 차단이면 사이클은 계속 돌고, owner 라우팅이 건강한 PC 로 보낸다.
+    assigned: list[str] = []
     for dev, sites in _pc_allowed_sites.items():
         if dev.startswith("samba-daemon-"):
             continue
         if site_u not in {s.upper() for s in sites}:
             continue
-        if now - _pc_last_seen.get(dev, 0) > 60.0:
-            continue
-        alive.append(dev)
-    if not alive:
+        assigned.append(dev)
+    if not assigned:
         return 0.0
-    untils = [_site_block_backoff_until.get(f"{site_u}|{d}", 0.0) for d in alive]
+    untils = [_site_block_backoff_until.get(f"{site_u}|{d}", 0.0) for d in assigned]
     if all(u > now for u in untils):
         return min(untils)
     return 0.0
