@@ -3953,30 +3953,10 @@ async def run_kream_unified_once() -> dict:
                     if _pr > POLICY["max_cost_jpy"]:
                         _drop("원가상한초과", kid, _nm, f"{_pr}")
                         continue
-                    _base = calc_base(
-                        _pr, rate, True, False, POLICY["non_card_margin_rate"]
-                    )
-                    _mp = calc_min_price(
-                        _pr,
-                        rate,
-                        True,
-                        False,
-                        POLICY["non_card_margin_rate"],
-                        fee_kind="item",
-                    )
-                    _nc = (
-                        math.ceil(
-                            _base
-                            * (1 + POLICY["no_competition_margin_rate"] / 100)
-                            / 1000
-                        )
-                        * 1000
-                    )
-                    # [2026-08-02] 경쟁 확인 후 등록 — 기존엔 무경쟁가(max(_nc,_mp))로 바로 넣어
-                    # 등록 즉시 2등이 되는 입찰이 7,950건 쌓였다. 크림 실시세를 보고 최소마진으로
-                    # 1등(시장최저 이하)이 가능할 때만 등록하고, 목표가도 경쟁가에 맞춘다.
-                    # [2026-08-02] 상품당 1회만 크림 조회(옵션마다 호출하면 3,500상품 × N옵션
-                    # = 사이클 폭발). 첫 옵션에서 받아 캐시 재사용.
+                    # [2026-08-06] 비카드 리스톡도 **_decide_price_action 하나로** 판정한다.
+                    # 종전엔 이 경로만 _mp/_nc/_tgt 를 직접 계산해, 갱신과 기준이 어긋나면
+                    # 등록↔삭제 왕복이 났다(실측: 등록은 해외가만 보고 통과, 갱신은
+                    # min(해외,국내,보관)으로 삭제). 판정기를 쓰면 한쪽만 고쳐 어긋날 일이 없다.
                     try:
                         if _kream_opts_cache is None:
                             _pr_resp = await _rq(
@@ -3985,68 +3965,35 @@ async def run_kream_unified_once() -> dict:
                             _kream_opts_cache = (_pr_resp.json() or {}).get(
                                 "options"
                             ) or []
-                        _opts_all = _kream_opts_cache
-                        # [2026-08-02] 옵션명 정확일치 + 사이즈 프리픽스 매칭.
-                        # 크림 키즈/여성 사이즈는 '230(4Y)' 처럼 접미가 붙어 '230' 으로 보내면
-                        # "상품 정보가 변경되어..." 로 등록 전량 실패했다(등록 474 → 성공 0).
-                        _want = str(_nm).replace(" ", "")
-                        _popt = next(
-                            (
-                                _o
-                                for _o in _opts_all
-                                if str(_o.get("name") or "").replace(" ", "") == _want
-                            ),
-                            None,
-                        )
-                        if _popt is None:
-                            _popt = next(
-                                (
-                                    _o
-                                    for _o in _opts_all
-                                    if str(_o.get("name") or "")
-                                    .replace(" ", "")
-                                    .startswith(_want + "(")
-                                ),
-                                None,
-                            )
-                        if _popt is None:
-                            # [2026-08-02] 크림에 그 사이즈 옵션이 없으면 등록 시도 안 함 —
-                            # POST 하면 "상품 정보가 변경되어..." 로 실패만 소모(실패 61건 정체).
-                            _drop("크림옵션없음", kid, _nm)
-                            continue
-                        _nm = str(_popt.get("name") or _nm)  # 크림 실제 옵션명으로 등록
+                        # 옵션 매칭도 공용 매처로 통일 — 크림 접미('240(US 5.5)')·지역접두
+                        # ('JP S')·cm 표기를 한 곳에서 흡수한다.
+                        _popt = _match_kream_option(_nm, _kream_opts_cache)
                     except Exception:
                         _popt = None
-                    if _popt is not None:
-                        _lo = int(_popt.get("lowest_overseas_price") or 0)
-                        _ln = int(_popt.get("lowest_normal_price") or 0)
-                        _lk = int(_popt.get("lowest_100_price") or 0)
-                        # [2026-08-05] 등록과 갱신이 시장가를 다르게 계산해 왕복이 났다.
-                        #   등록: _lo or _ln  — 해외가 있으면 해외만 보고 국내를 무시하고,
-                        #                       보관가(lowest_100)는 아예 안 봤다.
-                        #   갱신: min(해외, 국내, 보관)
-                        # 해외 100만·국내 60만이면 등록은 '100만을 이기면 된다'고 넣고,
-                        # 다음 사이클 갱신은 '60만을 못 이긴다'고 지운다 — 매 사이클 등록↔삭제.
-                        # 갱신과 같은 기준(셋 중 최저)으로 맞춘다.
-                        _cand = [x for x in (_lo, _ln, _lk) if x > 0]
-                        _mkt = min(_cand) if _cand else 0
-                        # [2026-08-06] 국내 10% 할인 상한 게이트 폐기 — 갱신과 동일.
-                        # 최소하한으로 시장 최저를 이길 수 있으면 그대로 입찰한다.
-                        if _mkt > 0:
-                            if _mp > _mkt:
-                                # 최소마진으로 1등 불가 → 등록 안 함(2등 방지)
-                                _drop(
-                                    "1등불가(마진)",
-                                    kid,
-                                    _nm,
-                                    f"min={_mp:,} 시장={_mkt:,}",
-                                )
-                                continue
-                            _tgt = max(_mp, min(_nc, _mkt - 1000))
-                        else:
-                            _tgt = max(_nc, _mp)
-                    else:
-                        _tgt = max(_nc, _mp)
+                    if _popt is None:
+                        # 크림에 그 옵션이 없으면 등록 시도 안 함 — POST 해도
+                        # "상품 정보가 변경되어..." 로 실패만 소모한다.
+                        _drop("크림옵션없음", kid, _nm)
+                        continue
+                    _nm = str(_popt.get("name") or _nm)  # 크림 실제 옵션명으로 등록
+                    _act, _tgt, _adj, _isnc = _decide_price_action(
+                        0,
+                        _nm,
+                        _pr,
+                        int(_popt.get("lowest_overseas_price") or 0),
+                        int(_popt.get("lowest_normal_price") or 0),
+                        (kid, _nm) in cooldown,
+                        prod["fixed"].get(_nm, 0),
+                        rate,
+                        tariff_threshold,
+                        is_box=True,
+                        surcharge_rate=POLICY["non_card_margin_rate"],
+                        fee_kind="item",
+                        low_keep=int(_popt.get("lowest_100_price") or 0),
+                    )
+                    if "삭제" in _act or _tgt <= 0:
+                        _drop(f"리스톡보류({_act})", kid, _nm)
+                        continue
                     r["rows"].append(
                         (
                             "restock",
