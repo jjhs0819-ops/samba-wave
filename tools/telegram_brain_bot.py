@@ -38,6 +38,7 @@ from __future__ import annotations
 import calendar
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -70,6 +71,8 @@ NEW_ORDER_PUSH = os.environ.get("NEW_ORDER_PUSH", "").strip() in ("1", "true", "
 DAILY_REPORT_HOUR = os.environ.get("DAILY_REPORT_HOUR", "8").strip()
 # 상품 현황 보고 발송 시각(KST, 0~23). 빈 값이면 비활성화. 기본 12시(정오).
 PRODUCT_REPORT_HOUR = os.environ.get("PRODUCT_REPORT_HOUR", "12").strip()
+# 매월 1일 아침보고에 전월 확정 정산을 이어서 발송. 기본 ON, "0"으로 끔.
+MONTHLY_SETTLEMENT = os.environ.get("MONTHLY_SETTLEMENT", "1").strip() not in ("0", "false", "off", "no")
 
 TG_API = f"https://api.telegram.org/bot{TOKEN}"
 KST = timezone(timedelta(hours=9))
@@ -237,14 +240,16 @@ class SambaClient:
                 if e.code in (502, 503, 504) and attempt < 2:
                     time.sleep(2 * (attempt + 1))  # 일시 게이트웨이 오류 백오프
                     continue
-                print(f"[삼바] GET {path} 실패: {e}", file=sys.stderr)
+                print(f"[{datetime.now(KST):%m-%d %H:%M:%S}] [삼바] GET {path} 실패: {e}",
+                      file=sys.stderr)
                 return None
             except Exception as e:  # 타임아웃/URLError 등 → 재시도
                 last_err = e
                 if attempt < 2:
                     time.sleep(2 * (attempt + 1))
                     continue
-                print(f"[삼바] GET {path} 실패: {e}", file=sys.stderr)
+                print(f"[{datetime.now(KST):%m-%d %H:%M:%S}] [삼바] GET {path} 실패: {e}",
+                      file=sys.stderr)
                 return None
         if last_err:
             print(f"[삼바] GET {path} 재시도 소진: {last_err}", file=sys.stderr)
@@ -538,9 +543,26 @@ def _append_comment(lines: list[str], area: str) -> None:
 
 
 def _order_cancelled(o: dict) -> bool:
-    """취소/반품 계열 주문인가 (매출 집계 제외 대상)."""
+    """취소/반품 계열 주문인가 — 주문현황 보고 전용(발주/미발주 분모에서 제외).
+
+    ※ 매출 집계엔 쓰지 말 것. 매출은 취소와 반품을 다르게 다룬다
+      (취소=제외, 반품=고객비용/회사비용으로 대체 계상) → `_is_cancelled`/`_is_returned` 사용.
+    """
     s = (o.get("status") or "").lower()
     return "cancel" in s or "return" in s
+
+
+# 정산 스킬(.claude/skills/정산)과 동일한 상태값 집합
+CANCEL_STATUSES = ("cancelled", "cancelling", "cancel_requested")
+RETURN_STATUSES = ("returned", "return_requested", "return_completed")
+
+
+def _is_cancelled(o: dict) -> bool:
+    return (o.get("status") or "").lower() in CANCEL_STATUSES
+
+
+def _is_returned(o: dict) -> bool:
+    return (o.get("status") or "").lower() in RETURN_STATUSES
 
 
 def _order_registered(o: dict) -> bool:
@@ -578,27 +600,86 @@ def _f(o: dict, key: str) -> float:
         return 0.0
 
 
-def _sales_metrics(orders: list) -> dict:
-    """주문 목록 → 매출/실수익 집계.
+def _money(v) -> float:
+    """반품 금액 텍스트 → 숫자. '10,000'/'10000' 만 인정 ('받아야함' 등 = 0)."""
+    s = str(v or "").strip()
+    return float(s.replace(",", "")) if re.fullmatch(r"[0-9][0-9,]*", s) else 0.0
 
-    매출 = 등록상품·취소제외. 실수익 = 주문번호+주문금액(cost>0) 입력·취소제외 건의
-    백엔드 저장값(profit/revenue) 그대로 합산 (주문탭과 동일).
+
+def _return_amounts(start: str, end: str) -> dict:
+    """반품 주문의 order_id → (고객비용, 회사비용).
+
+    반품 목록은 `order_date` 기준 필터라 결제일 귀속 건을 놓칠 수 있어
+    앞뒤 45일 확장 조회한다. 주문당 복수 행이지만 금액은 1행에만 있어 합산 안전.
     """
-    sale_orders = [o for o in orders if _order_registered(o) and not _order_cancelled(o)]
-    m = [o for o in orders
-         if _order_has_so(o) and _f(o, "cost") > 0 and not _order_cancelled(o)]
-    pay = sum(_f(o, "total_payment_amount") or _f(o, "sale_price") for o in m)
-    profit = sum(_f(o, "profit") for o in m)
+    def _d(s: str) -> datetime:
+        return datetime.strptime(s, "%Y-%m-%d")
+
+    # /returns 의 limit 상한은 1000 (2000 이상은 422). 넓은 기간을 한 번에 부르면
+    # 조용히 잘리므로 30일 단위로 쪼개 조회 후 병합한다.
+    cur, stop = _d(start) - timedelta(days=45), _d(end) + timedelta(days=45)
+    rows: list = []
+    while cur <= stop:
+        chunk_end = min(cur + timedelta(days=29), stop)
+        got = samba.returns_list(cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d"))
+        if isinstance(got, dict):
+            got = got.get("items", [])
+        if isinstance(got, list):
+            if len(got) >= 1000:  # 30일에 1000건 = 상한 도달, 더 잘게 나눠야 함
+                print(f"[매출] 반품 조회 상한 도달({cur:%Y-%m-%d}~{chunk_end:%Y-%m-%d})"
+                      " — 반품비 누락 가능", file=sys.stderr)
+            rows += got
+        cur = chunk_end + timedelta(days=1)
+
+    amt: dict = {}
+    for r in rows:
+        oid = r.get("order_id")
+        if not oid:
+            continue
+        c, k = _money(r.get("customer_amount")), _money(r.get("company_amount"))
+        if c or k:
+            prev = amt.get(oid, (0.0, 0.0))
+            amt[oid] = (prev[0] + c, prev[1] + k)
+    return amt
+
+
+def _sales_metrics(orders: list, ret_amt: dict | None = None) -> dict:
+    """주문 목록 → 매출/매입/순이익 (정산 스킬 `.claude/skills/정산` 과 동일 규칙).
+
+    - 집계 대상 = 발주건(소싱주문번호 + `cost`>0). 취소(cancelled·cancelling·
+      cancel_requested)는 전부 제외.
+    - 정상판매: 매출 = `sale_price` × `quantity`, 매입 = `cost`, 수익 = `profit`.
+    - 반품건(returned·return_requested·return_completed): 원주문 매출·원가를 버리고
+      **대체** — 매출 = 고객비용, 매입 = 회사비용, 수익 = 차액. 미입력 = 0/0/0.
+    - 순마진율 = 순이익 ÷ 매출.
+    """
+    ret_amt = ret_amt or {}
+    target = [o for o in orders if _order_has_so(o) and _f(o, "cost") > 0]
+    normal = [o for o in target if not _is_cancelled(o) and not _is_returned(o)]
+    retn = [o for o in target if _is_returned(o)]
+
+    gross = sum(_f(o, "sale_price") * (_f(o, "quantity") or 1) for o in normal)
+    cost = sum(_f(o, "cost") for o in normal)
+    profit = sum(_f(o, "profit") for o in normal)
+    cust = sum(ret_amt.get(o.get("id"), (0.0, 0.0))[0] for o in retn)
+    comp = sum(ret_amt.get(o.get("id"), (0.0, 0.0))[1] for o in retn)
+
+    sales, buy = gross + cust, cost + comp
+    net = profit + (cust - comp)
     return {
-        "sale_orders": sale_orders,
-        "sales": sum(_f(o, "sale_price") for o in sale_orders),
-        "sales_cnt": len(sale_orders),
-        "margin_cnt": len(m),
-        "pay": pay,
-        "settle": sum(_f(o, "revenue") for o in m),
-        "buy": sum(_f(o, "cost") for o in m),
-        "profit": profit,
-        "rate": (profit / pay * 100) if pay else 0.0,
+        "normal": normal,
+        "sales": sales,
+        "buy": buy,
+        "profit": net,
+        "rate": (net / sales * 100) if sales else 0.0,
+        "cnt": len(target),
+        "normal_cnt": len(normal),
+        "return_cnt": len(retn),
+        "return_noamt_cnt": sum(1 for o in retn if o.get("id") not in ret_amt),
+        "gross": gross,
+        "cost": cost,
+        "cust": cust,
+        "comp": comp,
     }
 
 
@@ -615,7 +696,7 @@ def _last_month_same_period() -> tuple[str, str, str]:
 
 
 def build_sales_text(with_comment: bool = True) -> str:
-    """매출(등록상품) + 실수익/수익률(주문번호·주문금액 입력) + 전월 동기간 비교."""
+    """매출/매입/순이익 (정산 스킬과 동일 규칙) + 전월 동기간 비교."""
     now = datetime.now(KST)
     today = _kst_date()
     yday = _kst_date(-1)
@@ -625,50 +706,89 @@ def build_sales_text(with_comment: bool = True) -> str:
     if orders is None:
         return "❌ 삼바 서버 연결 실패 (매출)."
 
+    lm_start, lm_end, lm_label = _last_month_same_period()
+    prev_orders = samba.orders_by_date_range(lm_start, lm_end)
+    # 반품 금액은 이달·전월을 한 번에 조회 (내부에서 앞뒤 45일 확장)
+    ret_amt = _return_amounts(lm_start, today)
+
     # 이달 집계는 1일 이후만 (1일엔 전날=지난달이 섞이므로 분리)
     month_orders = [o for o in orders if (_order_kst_date(o) or "") >= month_first]
-    cur = _sales_metrics(month_orders)
+    cur = _sales_metrics(month_orders, ret_amt)
 
-    def _day_sales(day: str) -> tuple[float, int]:
-        ds = [o for o in orders if _order_kst_date(o) == day
-              and _order_registered(o) and not _order_cancelled(o)]
-        return sum(_f(o, "sale_price") for o in ds), len(ds)
+    def _day(day: str) -> dict:
+        return _sales_metrics([o for o in orders if _order_kst_date(o) == day], ret_amt)
 
-    yday_sales, yday_cnt = _day_sales(yday)
-    today_sales, today_cnt = _day_sales(today)
+    d_y, d_t = _day(yday), _day(today)
 
     lines = [
         f"💰 매출 보고 ({now.strftime('%m월 %d일')})",
         "",
-        f"▪️ 전날 매출 {_fmt_price(yday_sales)} · {yday_cnt}건",
-        f"▪️ 오늘 매출 {_fmt_price(today_sales)} · {today_cnt}건",
-        f"▪️ 이달 매출 {_fmt_price(cur['sales'])} · {cur['sales_cnt']}건",
+        f"▪️ 전날 매출 {_fmt_price(d_y['sales'])} · {d_y['cnt']}건",
+        f"▪️ 오늘 매출 {_fmt_price(d_t['sales'])} · {d_t['cnt']}건",
         "",
-        f"▪️ 이달 실수익 (주문건수 {cur['margin_cnt']}건)",
-        f"· 결제 {_fmt_price(cur['pay'])}",
-        f"· 정산 {_fmt_price(cur['settle'])}",
-        f"· 구매 {_fmt_price(cur['buy'])}",
+        f"▪️ 이달 누계 ({cur['cnt']}건 = 정상 {cur['normal_cnt']} + 반품 {cur['return_cnt']})",
+        f"· 매출 {_fmt_price(cur['sales'])}",
+        f"· 매입 {_fmt_price(cur['buy'])}",
+        f"· 순마진율 {cur['rate']:.1f}%",
         "",
-        f"· 수익률 {cur['rate']:.1f}%",
-        "",
-        f"💵 수익 {_fmt_price(cur['profit'])}",
+        f"💵 순이익 {_fmt_price(cur['profit'])}",
     ]
+    if cur["return_noamt_cnt"]:
+        lines.append(f"※ 반품비 미입력 {cur['return_noamt_cnt']}건 — 채우면 순이익 변동")
 
-    # 전월 동기간 비교 (수익 / 건수 / 수익률)
-    lm_start, lm_end, lm_label = _last_month_same_period()
-    prev_orders = samba.orders_by_date_range(lm_start, lm_end)
+    # 전월 동기간 비교 (순이익 / 건수 / 순마진율)
     if prev_orders is not None:
-        p = _sales_metrics(prev_orders)
+        p = _sales_metrics(prev_orders, ret_amt)
         prof_d = ((cur["profit"] - p["profit"]) / p["profit"] * 100) if p["profit"] else 0.0
-        cnt_d = cur["sales_cnt"] - p["sales_cnt"]
+        cnt_d = cur["cnt"] - p["cnt"]
         rate_d = cur["rate"] - p["rate"]
         lines += [
             "",
             f"📊 전월 동기간(~{lm_label}) 대비",
-            f"· 수익 전월 {_fmt_price(p['profit'])} {_arrow(prof_d)}{abs(prof_d):.0f}%",
-            f"· 건수 전월 {p['sales_cnt']}건 {_arrow(cnt_d)}{abs(cnt_d)}건",
-            f"· 수익률 전월 {p['rate']:.1f}% {_arrow(rate_d)}{abs(rate_d):.1f}%p",
+            f"· 순이익 전월 {_fmt_price(p['profit'])} {_arrow(prof_d)}{abs(prof_d):.0f}%",
+            f"· 건수 전월 {p['cnt']}건 {_arrow(cnt_d)}{abs(cnt_d)}건",
+            f"· 순마진율 전월 {p['rate']:.1f}% {_arrow(rate_d)}{abs(rate_d):.1f}%p",
         ]
+    return "\n".join(lines)
+
+
+def build_settlement_text(year: int, month: int) -> str:
+    """월 확정 정산 — 정산 스킬(`/정산`)과 동일 규칙·동일 표 구성."""
+    last = calendar.monthrange(year, month)[1]
+    start, end = f"{year:04d}-{month:02d}-01", f"{year:04d}-{month:02d}-{last:02d}"
+    orders = samba.orders_by_date_range(start, end)
+    if orders is None:
+        return "❌ 삼바 서버 연결 실패 (정산)."
+
+    m = _sales_metrics(orders, _return_amounts(start, end))
+    lines = [
+        f"📑 {year}년 {month}월 정산",
+        "",
+        f"· 주문 {m['cnt']}건 (정상 {m['normal_cnt']} + 반품 {m['return_cnt']})",
+        f"· 매출 {_fmt_price(m['sales'])}",
+        f"· 매입 {_fmt_price(m['buy'])}",
+        f"· 순이익 {_fmt_price(m['profit'])}",
+        f"· 순마진율 {m['rate']:.1f}%",
+    ]
+    if m["return_noamt_cnt"]:
+        lines.append(f"※ 반품비 미입력 {m['return_noamt_cnt']}건")
+
+    # 마켓별 (정상판매 기준 — 반품은 대체계상이라 마켓 귀속이 모호)
+    by_market: dict = {}
+    for o in m["normal"]:
+        # channel_name 은 '신세계몰(jjhs0819)' 처럼 계정이 붙어 있음 → 마켓 단위로 묶는다
+        k = re.sub(r"\s*\(.*\)$", "", o.get("channel_name") or "미지정")
+        c, g, p = by_market.get(k, (0, 0.0, 0.0))
+        by_market[k] = (c + 1, g + _f(o, "sale_price") * (_f(o, "quantity") or 1),
+                        p + _f(o, "profit"))
+    if by_market:
+        rows = ["", "🏬 마켓별 (정상판매)", "<pre>"]
+        rows.append(f"{'건수':>5} {'매출':>12} {'수익':>10}  마켓")
+        for k, (c, g, p) in sorted(by_market.items(), key=lambda x: -x[1][1]):
+            rows.append(f"{c:>5} {int(g):>12,} {int(p):>10,}  {k}")
+        rows.append("</pre>")
+        lines += rows
+    lines += ["", "※ 반품 상태는 마감 후에도 계속 바뀌어 확정치가 이동할 수 있음."]
     return "\n".join(lines)
 
 
@@ -927,6 +1047,30 @@ def cmd_sales(chat_id: int) -> None:
     tg_send(chat_id, build_sales_text())
 
 
+def _parse_month_arg(text: str) -> tuple[int, int]:
+    """'/정산 7월', '/정산 2026-07', '/정산' → (연, 월). 인자 없으면 전월,
+    연도 없이 월만 주면 올해(미래 월이면 작년)."""
+    now = datetime.now(KST)
+    m = re.search(r"(20\d{2})[-./](\d{1,2})", text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    m = re.search(r"(\d{1,2})\s*월", text) or re.search(r"\s(\d{1,2})$", text)
+    if m:
+        mon = int(m.group(1))
+        if 1 <= mon <= 12:
+            year = now.year if mon <= now.month else now.year - 1
+            return year, mon
+    return (now.year - 1, 12) if now.month == 1 else (now.year, now.month - 1)
+
+
+def cmd_settlement(chat_id: int, text: str) -> None:
+    if not _require_samba(chat_id):
+        return
+    y, m = _parse_month_arg(text)
+    tg_send(chat_id, f"📑 {y}년 {m}월 정산 집계 중...")
+    tg_send(chat_id, build_settlement_text(y, m))
+
+
 def cmd_order_status(chat_id: int) -> None:
     if not _require_samba(chat_id):
         return
@@ -976,7 +1120,8 @@ def cmd_help(chat_id: int) -> None:
         "\n"
         "📊 보고\n"
         "  /보고     — 아침 통합 보고 (매출+주문+반품+CS)\n"
-        "  /매출     — 오늘+이달 매출·이익·마진·베스트셀러\n"
+        "  /매출     — 전날·오늘·이달 매출/매입/순이익 (정산 규칙)\n"
+        "  /정산     — 월 확정 정산 (예: /정산 7월, 인자 없으면 전월)\n"
         "  /주문현황 — 상태별 건수·이행률·전월대비\n"
         "  /CS       — 미답변/답변완료·유형별\n"
         "  /반품     — 반품 상태·유형·사유·승인대기\n"
@@ -1098,12 +1243,31 @@ def _daily_report_loop() -> None:
 
         if not _notify_chat_ids:
             continue  # 아직 봇과 대화한 사용자가 없음 → 수신자 없음
-        try:
-            digest = build_morning_digest()
-        except Exception as e:
-            digest = f"⚠️ 아침 보고 생성 실패: {e}"
+
+        # 백엔드가 잠깐 흔들리면 보고가 통째로 날아가므로 5분 간격 3회까지 재시도
+        digest = ""
+        for attempt in range(3):
+            try:
+                digest = build_morning_digest()
+            except Exception as e:
+                digest = f"⚠️ 아침 보고 생성 실패: {e}"
+            if "삼바 서버 연결 실패" not in digest and "생성 실패" not in digest:
+                break
+            if attempt < 2:
+                print(f"[자동보고] 백엔드 응답 실패 — 5분 후 재시도 ({attempt + 1}/3)", file=sys.stderr)
+                time.sleep(300)
         for cid in list(_notify_chat_ids):
             tg_send(cid, digest)
+
+        # 매월 1일: 전월 확정 정산을 이어서 발송
+        if MONTHLY_SETTLEMENT and datetime.now(KST).day == 1:
+            ly, lm = _parse_month_arg("")  # 인자 없음 → 전월
+            try:
+                text = build_settlement_text(ly, lm)
+            except Exception as e:
+                text = f"⚠️ 전월 정산 생성 실패: {e}"
+            for cid in list(_notify_chat_ids):
+                tg_send(cid, text)
 
 
 def _product_report_loop() -> None:
@@ -1185,6 +1349,10 @@ def handle_message(msg: dict) -> None:
         cmd_sales(chat_id)
         return
 
+    if text.startswith(("/정산", "/settlement")):
+        cmd_settlement(chat_id, text)
+        return
+
     if text in ("/주문현황", "/orderstatus"):
         cmd_order_status(chat_id)
         return
@@ -1257,7 +1425,10 @@ def main() -> None:
             updates = _http_json(
                 f"{TG_API}/getUpdates?timeout=30&offset={offset}", timeout=40)
         except Exception as e:
-            print(f"[경고] {e} — 3초 후 재시도", file=sys.stderr)
+            # 대부분 텔레그램 API(api.telegram.org) 롱폴링의 일시 502 — 재시도로 복구됨.
+            # 시각을 남겨야 나중에 "언제 얼마나 끊겼나"를 판별할 수 있다.
+            print(f"[{datetime.now(KST):%m-%d %H:%M:%S}] [경고][텔레그램] {e} — 3초 후 재시도",
+                  file=sys.stderr)
             time.sleep(3)
             continue
         for upd in updates.get("result", []):
