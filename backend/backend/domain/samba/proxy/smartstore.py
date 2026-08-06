@@ -2279,11 +2279,50 @@ class SmartStoreClient:
                     }
                 )
 
-        # 상품명 기반 추가 속성 매칭 (소재/패턴/핏/넥라인 등)
+        # 상품명·소재·색상 기반 추가 속성 매칭 (소재/패턴/핏/넥라인 등)
         # 종전에는 성별·시즌·종류 3종만 채워 검색품질 체크의 '속성' 항목이 0~1건에
-        # 머물렀다(실측). 카테고리 속성값이 상품명에 그대로 있으면 안전하게 채운다.
+        # 머물렀다(실측: 킨 티셔츠 0건, 코닥 쇼츠 2건).
+        # 카테고리 속성값이 상품명/소재/색상에 그대로 있으면 안전하게 채운다.
         # 이미 채운 attributeSeq 는 건너뛰고, 속성당 값 1개만(다중값 오염 방지).
-        _name_for_attr = f"{product.get('name', '')} {product.get('category', '')}"
+        #
+        # ★소재(material)는 보유율이 높지만(6개 브랜드 실측 99.5%) 표기가 네이버
+        #   속성값과 달라 그대로는 매칭되지 않는다("코튼(Cotton) 100%" vs "면",
+        #   "폴리에스터" vs "폴리에스테르"). 표준 표기를 함께 덧붙여 매칭시킨다.
+        # 표기가 다른 것만 별칭으로 잡고, 표준 표기는 그대로 통과시킨다.
+        _MATERIAL_ALIAS = {
+            "코튼": "면", "cotton": "면", "폴리에스터": "폴리에스테르",
+            "스판": "스판덱스", "린넨": "마/리넨", "리넨": "마/리넨",
+            "레더": "가죽", "인조가죽": "인조가죽(합성피혁)", "합성피혁": "인조가죽(합성피혁)",
+            "레이온": "레이온/인견", "인견": "레이온/인견", "메쉬": "망사,메시",
+            "메시": "망사,메시", "울": "울/모", "모": "울/모",
+        }
+        # 네이버 '주요소재' 값 표준 표기 — material 에 그대로 있으면 매칭된다
+        _MATERIAL_STD = (
+            "면", "폴리에스테르", "나일론", "폴리우레탄", "아크릴", "스판덱스", "데님",
+            "시폰", "기모", "가죽", "스웨이드", "코듀로이", "벨벳", "새틴", "실크",
+            "텐셀", "모달", "캐시미어", "비스코스", "앙고라", "알파카", "견", "밍크",
+            "라마", "네오프렌", "모헤어", "폴리아미드", "리오셀", "아세테이트",
+            "시어서커", "쿨맥스", "플리스", "고어텍스",
+        )
+        _raw_material = str(product.get("material") or "")
+        _mat_norm: list[str] = []
+        if _raw_material and "참조" not in _raw_material:
+            _low = _raw_material.lower()
+            for _k, _v in _MATERIAL_ALIAS.items():
+                if _k in _low or _k in _raw_material:
+                    _mat_norm.append(_v)
+            for _std in _MATERIAL_STD:
+                if _std in _raw_material:
+                    _mat_norm.append(_std)
+        _name_for_attr = " ".join(
+            [
+                str(product.get("name", "")),
+                str(product.get("category", "")),
+                _raw_material,
+                " ".join(dict.fromkeys(_mat_norm)),
+                str(product.get("color") or ""),
+            ]
+        )
         _used_seq = {a["attributeSeq"] for a in product_attributes}
         _extra: dict[int, tuple[int, str]] = {}
         for a in cat_attrs:
