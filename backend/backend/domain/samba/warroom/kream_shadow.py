@@ -3096,9 +3096,7 @@ async def _process_box_restock(
             # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
             # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
             _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-            if _key in _g_recent_posts:
-                c["recent"] += 1
-                continue
+            # [2026-08-06] 재게시 쿨다운 폐기 — 위 통합 리스톡과 동일 사유.
             if _key in _g_failed_posts:
                 c["failed"] += 1
                 continue
@@ -3493,9 +3491,9 @@ async def _process_expired_asks(
             price = _guard_jpy(kid, opt, price)
             # 리스톡 가드 — 재게시/실패 쿨다운 + 거래이력 + 이행대기(판매 후 소싱 전 보류)
             _key = f"{kid}|{opt}"
+            # [2026-08-06] 재게시 쿨다운 폐기 — 위 통합 리스톡과 동일 사유.
             if (
-                _key in _g_recent_posts
-                or _key in _g_failed_posts
+                _key in _g_failed_posts
                 or not _trade_ok(kid, pname)
                 or (kid, opt.replace(" ", "")) in _g_unfulfilled
             ):
@@ -4642,10 +4640,14 @@ async def run_kream_unified_once() -> dict:
                 # (실측: 대기 32,257건 적체, 14334 무경쟁 매물도 miss=1 로 묶임).
                 # 재고는 스니덩크 실시간 조회로 매 사이클 확인하므로 한 번 더 볼 이유가 없다.
                 _g_miss_counts[_key] = int(_g_miss_counts.get(_key, 0)) + 1
-                if _key in _g_recent_posts:
-                    rs["recent"] += 1
-                    _skip_note("재게시쿨다운", kid, nm)
-                elif _key in _g_failed_posts:
+                # [2026-08-06] 재게시 쿨다운(2h) **폐기**.
+                # 등록에 성공하면 그 입찰은 라이브 목록에 잡히고, 리스톡은 이미
+                # _has_live_ask 로 라이브 보유분을 제외한다 — 쿨다운은 중복이다.
+                # 반대로 리스톡 후보로 올라왔다는 건 라이브에 없다는 뜻(= 실제로는
+                # 등록 안 됨)인데, 이 쿨다운이 그 재시도를 2시간 막았다.
+                #   실측(2026-08-06): 리스톡 2,507 중 재게시로 1,920건 차단.
+                # 실패 쿨다운(_g_failed_posts, 6h)은 성격이 다르므로 유지한다.
+                if _key in _g_failed_posts:
                     rs["failed"] += 1
                     _skip_note("실패쿨다운", kid, nm)
                 elif not _trade_ok(kid, pname):
