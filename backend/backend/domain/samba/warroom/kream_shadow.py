@@ -2932,6 +2932,26 @@ def _cm_to_mm_variants(name: str) -> set[str]:
     return out
 
 
+# [2026-08-06] 명품 구성(번들) 옵션 — 매칭·등록 금지.
+# 크림 명품은 옵션이 사이즈가 아니라 **구성**인 상품이 있다.
+#   실측 61808(구찌 인터로킹 G 펜던트 네클리스, 455535-J8400-0811):
+#     본품 750,000 / 본품+박스 / 본품+박스+더스트백 336,000 /
+#     본품+박스+더스트백+쇼핑백 390,000
+# 소싱처(스니덩크)는 본품만 파는데 여기에 붙이면 박스·더스트백·정품쇼핑백까지
+# 보내야 한다 — 물건이 다르다. 본품 단독만 매칭 대상으로 둔다.
+# 표본 120개 중 구성옵션 상품은 1%(나머지는 ONE SIZE·EU 사이즈)라 영향 범위는 좁다.
+_BUNDLE_OPT_RE = re.compile(r"더스트\s*백|쇼핑\s*백|dust\s*bag|shopping\s*bag", re.I)
+
+
+def is_bundle_option(name: str) -> bool:
+    """부속품이 딸린 구성 옵션인가 — 본품 단독이면 False."""
+    n = str(name or "")
+    if _BUNDLE_OPT_RE.search(n):
+        return True
+    # '본품+박스' 처럼 본품에 무언가 더 붙은 형태(단독 '본품'은 통과)
+    return "본품" in n and ("+" in n or "박스" in n)
+
+
 def _match_kream_option(nm: str, opts: list) -> dict | None:
     """DB 옵션명 → 크림 옵션 객체. 표기 차이를 흡수한다. [2026-08-05]
 
@@ -2941,6 +2961,10 @@ def _match_kream_option(nm: str, opts: list) -> dict | None:
       · cm 표기      — DB '24.5cm' vs 크림 '245'
       · 크림 접미    — DB '260' vs 크림 '260(US 5.5)'
     """
+    if not opts:
+        return None
+    # 구성(번들) 옵션은 후보에서 제외한다 — 본품만 판매 대상.
+    opts = [o for o in opts if not is_bundle_option(o.get("name"))]
     if not opts:
         return None
     want = {v.replace(" ", "").upper() for v in _cm_to_mm_variants(str(nm))}
