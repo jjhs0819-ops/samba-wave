@@ -46,6 +46,7 @@ function Wait-KreamCycle {
   if (-not $running) { return }
   $t0 = Get-Date
   $waited = $false
+  $postWait = $false
   while (((Get-Date) - $t0).TotalSeconds -lt $MaxSec) {
     # 최근 로그에 사이클 시작만 있고 종료(실행ON 요약)가 없으면 진행 중으로 본다
     # 크림통합 로그 전체를 보고 "마지막 줄이 완료 요약(실행ON)인가"로 판정한다.
@@ -55,6 +56,16 @@ function Wait-KreamCycle {
     if (-not $log) { break }
     $last = ($log | Select-Object -Last 1).ToString()
     if ($last -match "실행ON") { break }   # 마지막이 요약 = 사이클 끝남
+    # [2026-08-06] 등록 실행 중이면 반드시 기다린다.
+    # 등록은 '실행ON' 요약보다 앞 단계라 위 조건만으로는 감지되지 않는다. 6,604건을
+    # 내보내는 데 10분 넘게 걸리는데, 그 사이 컨테이너를 교체하면 남은 건이 통째로
+    # 날아간다(실측 2026-08-06 11:00 KST: 2,398건만 반영, 4,206건 유실).
+    if ($last -match "STAGE 실행-등록") {
+      if (-not $postWait) {
+        Write-Host "   등록 실행 중 — 완료까지 대기(중단하면 등록분이 날아간다)" -ForegroundColor Yellow
+        $postWait = $true
+      }
+    }
     if (-not $waited) {
       Write-Host "크림 사이클 진행 중 — 완주까지 대기(최대 $([int]($MaxSec/60))분)..." -ForegroundColor Yellow
       $waited = $true

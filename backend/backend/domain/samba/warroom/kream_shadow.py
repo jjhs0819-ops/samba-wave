@@ -4552,7 +4552,13 @@ async def run_kream_unified_once() -> dict:
             "[크림통합] 미판정 %d건 — 스캔목록서 제외(다음 사이클 재시도)",
             len(_g_unjudged),
         )
-    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _scanned})
+    # [2026-08-06] 스캔목록 저장을 **등록 실행 뒤로** 미룬다(아래 _SET_MISS 저장 옆).
+    # 여기서 저장하면 판정만 끝나고 등록 도중 프로세스가 죽었을 때(배포·컨테이너 교체)
+    # 그 슬라이스가 '봤음'으로 남아 다음 바퀴까지 통째로 제외된다.
+    #   실측(2026-08-06 11:00 KST): 등록 6,604건 실행 중 다른 세션 배포로 컨테이너가
+    #   교체돼 2,398건만 반영되고 4,206건이 날아갔다. 그 슬라이스는 이미 '봤음' 이라
+    #   재시도도 안 됐다.
+    # 등록까지 끝나야 저장하므로, 중간에 죽으면 다음 사이클이 같은 슬라이스를 다시 잡는다.
 
     # [Step 5] 리스톡 가드 상태 로드 + 실행대기 수집(순차 — 가드상태 race 방지)
     await _load_restock_guards()
@@ -4771,6 +4777,8 @@ async def run_kream_unified_once() -> dict:
             await _flush_logs_to_db()
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
         await _save_setting_map(_SET_FAILED, _g_failed_posts)
+    # 등록 실행까지 마쳤으므로 이제 '봤음'으로 확정한다(위 [2026-08-06] 주석 참조).
+    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _scanned})
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
