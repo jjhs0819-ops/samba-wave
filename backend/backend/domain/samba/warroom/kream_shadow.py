@@ -4516,9 +4516,30 @@ async def run_kream_unified_once() -> dict:
         "[크림통합] STAGE 조회·판정 시작 (대상 %d — 카드/신발/의류/박스 전량)",
         len(products),
     )
+    # [2026-08-06] 판정 진행률 로그. 대상이 6.7만으로 늘면서 이 구간이 50분 넘게
+    # 걸리는데 그동안 로그가 한 줄도 없어, 도는 중인지 멈춘 건지 알 수 없었다
+    # (실측: 대상 21,681 -> 1,000초 / 67,549 -> 50분+). 2,000건마다 남긴다.
+    _done_n = 0
+    _prog_every = max(2000, len(products) // 20)
+
+    async def _process_logged(_p, _cli):
+        nonlocal _done_n
+        try:
+            return await _process(_p, _cli)
+        finally:
+            _done_n += 1
+            if _done_n % _prog_every == 0:
+                logger.info(
+                    "[크림통합] 판정 진행 %d/%d (%.0f%%) %.0f초경과",
+                    _done_n,
+                    len(products),
+                    _done_n * 100.0 / max(1, len(products)),
+                    _stage_t.time() - _t_stage,
+                )
+
     async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
         results = await asyncio.gather(
-            *[_process(p, scli) for p in products], return_exceptions=True
+            *[_process_logged(p, scli) for p in products], return_exceptions=True
         )
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
     # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
