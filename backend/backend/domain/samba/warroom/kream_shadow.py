@@ -319,6 +319,49 @@ async def _unfulfilled_count() -> int:
         return 0
 
 
+async def _brand_reg_rates(limit: int = 6) -> str:
+    """브랜드별 등록률 한 줄 — 재고 있는 옵션 대비 라이브 입찰 비율. [2026-08-06]
+
+    저조 브랜드(Adidas·New Balance 등)가 처리에서 밀리는 걸 슬랙에서 바로 보려고 넣었다.
+    크림 접미 표기('240(US 5.5)')를 흡수해 DB 옵션명과 맞춘다.
+    """
+    try:
+        async with get_read_session() as s:
+            rows = (
+                await s.execute(
+                    _text(
+                        "WITH c AS ("
+                        "  SELECT cp.resell_matches->'kream'->>'product_id' kid,"
+                        "         TRIM(cp.brand) br, x->>'name' nm"
+                        "  FROM samba_collected_product cp"
+                        "  CROSS JOIN LATERAL jsonb_array_elements(cp.options::jsonb) x"
+                        "  WHERE cp.source_site='SNKRDUNK'"
+                        "    AND COALESCE(cp.resell_matches->'kream'->>'product_id','')<>''"
+                        "    AND jsonb_typeof(cp.options::jsonb)='array'"
+                        "    AND (cp.resell_matches->'kream'->>'verified')='true'"
+                        "    AND COALESCE((x->>'stock')::int,0) > 0"
+                        "    AND COALESCE((x->>'price')::int,0) BETWEEN 5000 AND 250000)"
+                        "SELECT c.br, COUNT(*) tot,"
+                        "       COUNT(*) FILTER (WHERE a.product_id IS NOT NULL) reg "
+                        "FROM c LEFT JOIN kream_live_asks a"
+                        "  ON a.product_id=c.kid"
+                        " AND (a.option=c.nm OR SPLIT_PART(REPLACE(a.option,' ',''),'(',1)"
+                        "      = REPLACE(c.nm,' ','')) "
+                        "GROUP BY c.br HAVING COUNT(*) >= 1000 ORDER BY 2 DESC LIMIT :n"
+                    ),
+                    {"n": limit},
+                )
+            ).all()
+        if not rows:
+            return ""
+        return " · ".join(
+            f"{r[0]} {round(100.0 * int(r[2]) / max(1, int(r[1])), 1)}%" for r in rows
+        )
+    except Exception as exc:
+        logger.info("[크림통합] 브랜드 등록률 집계 실패(무시): %s", str(exc)[:60])
+        return ""
+
+
 async def _count_cat1_verified_unreg() -> int:
     """검수 카테고리1(재고O+매칭) 중 '매칭확인(verified)'됐으나 크림 미등록(입찰 없음)인 상품수.
     자동입찰 누락 감시용 — 확인 끝난 재고상품이 아직 크림에 안 걸린 것. 실패 시 -1.
@@ -5085,38 +5128,29 @@ async def run_kream_unified_once() -> dict:
     _del_all = exec_del + int(box.get("del", 0)) + int(shoe.get("del", 0))
     _upd_all = exec_patch + int(box.get("patch", 0)) + int(shoe.get("patch", 0))
     _fail_all = exec_fail + int(box.get("fail", 0)) + int(shoe.get("fail", 0))
-    # [일치상품 리스톡·미등록 점검] — 로컬 _kream_restock_register 요약 포맷
-    _box_stock = max(0, int(box.get("total", 0)) - int(box.get("nocost", 0)))
-    _shoe_stock = int(shoe.get("stock", 0))
-    _stock_total = card_instock + _shoe_stock + _box_stock
-    # 무재고 전수 스캔 진행율 — 1,500/사이클 로테이션이라 1바퀴에 여러 사이클 걸림.
-    _scan_done = int(min(_unified_offset, rest_total))
-    _scan_pct = round(100 * _scan_done / rest_total) if rest_total else 0
     # 이번 사이클 리스톡 발견(무재고→재고 감지) — 등록 통과/보류 분리 표기.
     _rs_found = int(counts["restock"])
     _rs_hold = max(0, _rs_found - int(rs["ok"]))
-    # 검수 카테고리1(재고O+매칭) 중 매칭확인(verified)됐으나 크림 미등록 상품수 — 등록누락 감시.
-    _cat1_vunreg = await _count_cat1_verified_unreg()
-    _cat1_line = (
-        f"✅ 확인·미등록(cat1) {_cat1_vunreg:,}건 — 자동입찰 누락 점검\n"
-        if _cat1_vunreg >= 0
-        else ""
+    # [2026-08-06] cat1 미등록 수·재고 세부 집계 제거 — 슬랙에서 뺐는데 계산만 남아
+    # 매 사이클 전수 쿼리를 돌리고 있었다(제외 사유 총계가 같은 정보를 더 정확히 준다).
+    # [2026-08-06] 리스톡 섹션 간결화 — 중복 지표(cat1 미등록 수, 재고 세부)를 걷고
+    # '스캔 진행 / 등록 결과 / 제외 사유 / 브랜드 등록률' 로 줄인다.
+    _drop_top = " · ".join(
+        f"{k} {v:,}" for k, v in sorted(_g_drop.items(), key=lambda kv: -kv[1])[:4]
     )
+    _brand_rates = await _brand_reg_rates()
     _restock_sec = (
-        f"[일치상품 리스톡·미등록 점검]\n"
-        f"{_cat1_line}"
-        f"무재고 스캔 {min(_unified_offset, rest_total):,}/{rest_total:,}"
-        f" (이번 {len(rest_slice):,}건 · 재고보유 우선)\n"
-        f"이번 사이클 리스톡 발견 {_rs_found:,}건"
-        f" (등록 {int(rs['ok']):,} · 보류 {_rs_hold:,})\n"
-        f"재고 {_stock_total:,}건 (카드 {card_instock:,}·신발 {_shoe_stock:,}"
-        f"·박스/팩 {_box_stock:,})"
-        f" / 등록시도 {exec_post + exec_fail:,} → 성공 {exec_post:,} · 실패 {exec_fail:,}"
+        f"━━ 리스톡  스캔 {min(_unified_offset, rest_total):,}/{rest_total:,}"
+        f" (이번 {len(rest_slice):,} · 재고보유 우선)\n"
+        f"   발견 {_rs_found:,} → 등록 {exec_post:,} · 실패 {exec_fail:,}"
+        f" · 보류 {_rs_hold:,}"
     )
-    if registered_lines:
-        _restock_sec += "\n" + "\n".join(registered_lines[:10])
-        if len(registered_lines) > 10:
-            _restock_sec += f"\n외 {len(registered_lines) - 10:,}건"
+    if _drop_top:
+        _restock_sec += f"\n   제외  {_drop_top}"
+    if _brand_rates:
+        _restock_sec += f"\n━━ 브랜드 등록률  {_brand_rates}"
+    # [2026-08-06] 개별 등록 상품 나열 제거 — 슬랙에서 건별 확인은 하지 않는데
+    # 10줄 + '외 N건' 이 메시지의 절반을 먹었다. 총계만 남긴다.
     # 박스/카드팩 신규등록 — 카드 리스톡과 경로가 달라 별도 줄로 노출(누락 감시).
     if box_rs.get("cand") or box_rs.get("post"):
         _restock_sec += (
