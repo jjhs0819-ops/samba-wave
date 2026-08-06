@@ -930,6 +930,8 @@ async def snkrdunk_compare_all_public(
             COALESCE(resell_matches->'kream'->>'image', '') AS kream_image,
             COALESCE(resell_matches->'kream'->>'style_code', '') AS kream_style_code,
             (COALESCE(resell_matches->'kream'->>'verified', '') = 'true') AS verified,
+            -- [2026-08-06] 사람이 직접 확인한 건인지 (배치 자동 verified 와 구분)
+            (COALESCE(resell_matches->'kream'->>'verified_by', '') = 'human') AS verified_human,
             -- 이상감지 승인(리스톡 허용) — 사용자가 검수페이지에서 확인 후 체크
             (COALESCE(resell_matches->'kream'->>'anomaly_ok', '') = 'true') AS anomaly_ok,
             -- 이상감지 차단됨 — 봇이 저가위험으로 등록/갱신 막은 상품(검수페이지 필터용)
@@ -1168,13 +1170,22 @@ async def snkrdunk_update_verify_public(
             COALESCE(resell_matches, '{}'::jsonb),
             '{kream}',
             COALESCE(resell_matches -> 'kream', '{}'::jsonb)
-                || jsonb_build_object('verified', CAST(:verified AS jsonb)),
+                || jsonb_build_object('verified', CAST(:verified AS jsonb),
+                                      'verified_by', CAST(:by AS jsonb)),
             true
         ), updated_at = NOW()
         WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
     """)
     await session.exec(  # type: ignore[arg-type]
-        sql.bindparams(sid=snkr_id, verified="true" if body.verified else "false")
+        # [2026-08-06] '사람이 눌렀다'를 DB 에 남긴다.
+        # 종전엔 verified 하나뿐이라 배치가 넣은 것과 사람이 확인한 것을 구분할 수 없었다.
+        # 그 탓에 '카드는 사람 확인 필수' 규칙을 켜면 예전에 확인한 건까지 미확인으로
+        # 되돌아갔다(okSet 은 브라우저 localStorage 라 다른 PC 에서 안 보인다).
+        sql.bindparams(
+            sid=snkr_id,
+            verified="true" if body.verified else "false",
+            by='"human"' if body.verified else "null",
+        )
     )
     await session.commit()
     return {"ok": True}
