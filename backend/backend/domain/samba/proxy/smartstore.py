@@ -2138,12 +2138,30 @@ class SmartStoreClient:
         cat_attrs = product.get("_category_attributes") or []
 
         # INPUT/RANGE 타입(단위 있는 측정값) 식별 — attributeRealValue 필요한 속성은 매칭 제외
+        # ★2026-08-06 보강: 아래 판별을 빠져나간 속성이 남아
+        #   "originProduct.detailAttribute.productAttributes[0].attributeRealValue:
+        #    1번째 속성실제값 항목을 입력해 주세요" 로 400 이 났다(실측).
+        #   플러그인의 'productAttributes 제거 후 재시도' fallback 이 받아내 최종 등록은
+        #   되지만 매번 왕복 1회가 낭비된다. 실제값 요구 신호를 더 넓게 잡는다.
         def _is_input_type(a: dict[str, Any]) -> bool:
             atype = (a.get("attributeType") or a.get("type") or "").upper()
-            if atype in {"INPUT", "RANGE", "REAL", "TEXT", "NUMBER"}:
+            if atype in {"INPUT", "RANGE", "REAL", "TEXT", "NUMBER", "DECIMAL", "INT"}:
                 return True
             # 단위(unitName/unitCode/usableUnitCodes) 보유 → 측정값 입력형
             if a.get("unitName") or a.get("unitCode") or a.get("usableUnitCodes"):
+                return True
+            # 실제값 관련 필드가 스키마에 있으면 입력형으로 간주
+            for k in (
+                "attributeRealValue",
+                "attributeRealValueUnitCode",
+                "minAttributeRealValue",
+                "maxAttributeRealValue",
+                "realValueUnitCode",
+            ):
+                if k in a:
+                    return True
+            # 값 선택형은 attributeValueSeq 가 양수여야 한다. 없으면 실제값 입력형.
+            if not (a.get("attributeValueSeq") or 0):
                 return True
             return False
 
