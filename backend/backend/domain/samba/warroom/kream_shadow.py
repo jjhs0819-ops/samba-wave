@@ -1900,6 +1900,25 @@ _TCG_BRANDS = {
     "WEISS SCHWARZ",
     "VANGUARD",
 }
+
+
+def _is_tcg_brand(brand: str) -> bool:
+    """TCG 브랜드인가 — **부분 일치**. [2026-08-06]
+
+    정확 일치로 보면 브랜드 표기가 조금만 달라도 놓친다. 실제로 브랜드를 크림 기준
+    ('Pokemon TCG' / 'One Piece TCG')으로 통일한 뒤 검수 화면의 정확일치 판정이
+    통째로 깨져 거래이력 게이트가 무력화됐다. 같은 규칙을 쓰는 곳
+    (백엔드 / 검수 화면 / samba-tools 의 _verify_rule) 모두 부분 일치로 맞춘다.
+    """
+    br = str(brand or "").upper()
+    return bool(br) and any(t in br for t in _TCG_BRANDS)
+
+
+def _is_pokemon_brand(brand: str) -> bool:
+    br = str(brand or "").upper()
+    return bool(br) and any(t in br for t in _POKEMON_BRANDS)
+
+
 _g_unfulfilled: set[tuple[str, str]] = set()
 # 즉시판매 보류 [로컬 이식] — 직전 스냅샷엔 있었는데 지금 사라진 입찰=팔린 것. 주문폴링(랙)
 # 을 기다리지 않고 판매 즉시 재입찰 차단. 소싱완료(sourcing_order_number)되면 해제, 6h 만료.
@@ -2160,10 +2179,10 @@ def _trade_ok(kid: str, name: str) -> bool:
     br = _g_card_brand.get(str(kid), "")
     # [2026-08-02] TCG 브랜드 화이트리스트로만 판정 — snkr_type 이 빈 신발/의류가 섞여
     # NIKE 같은 브랜드가 "거래이력없음"으로 잘못 막히던 것 차단. 거래게이트는 TCG 전용.
-    if br and br in _TCG_BRANDS and br not in _POKEMON_BRANDS:
+    if _is_tcg_brand(br) and not _is_pokemon_brand(br):
         # 비포켓몬 TCG = 항상 거래≥1 필수(시세 불안정 → 무리한 입찰 시 소싱불가 손실)
         return _g_trade_counts.get(str(kid), 0) >= 1
-    if br and br not in _TCG_BRANDS:
+    if br and not _is_tcg_brand(br):
         return True  # 신발/의류 등 비TCG — 거래이력 게이트 대상 아님
     # 포켓몬/미상 카드 or 비카드 — 기존 name 기반(팩/박스 + 원피스/유희왕 문자열 폴백)
     if not needs_trade(name):
