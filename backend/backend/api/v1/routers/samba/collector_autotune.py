@@ -936,6 +936,73 @@ PC_LAST_SEEN_TTL = 86400.0  # 24시간
 _pc_site_poll_seen: dict[tuple[str, str], float] = {}
 PC_SITE_POLL_TTL = 180.0  # 3분 내 그 사이트로 폴링한 PC 만 owner 후보
 
+# 차단 백오프 중 "실제로 풀렸는지" 확인하는 탐침 간격/기록.
+# 고정 백오프(2시간)는 실제 해제 시점과 무관해 대기시간을 통째로 버린다.
+# 5분마다 1건만 시도해 성공하면 즉시 해제 — 부하는 무시할 수준.
+BLOCK_PROBE_INTERVAL_SEC = int(os.getenv("AUTOTUNE_BLOCK_PROBE_SEC", "300"))
+_block_probe_at: dict[tuple[str, str], float] = {}  # {(device_id, site): 마지막 탐침}
+
+
+async def _probe_block_release(site: str, device_id: str) -> bool:
+    """차단 백오프 중인 사이트에 상품 1건만 실제 갱신해보고, 성공하면 해제.
+
+    반환: True = 해제됨(재개 가능) / False = 여전히 차단(대기 유지)
+
+    주의 — 탐침은 반드시 "1건"이어야 한다. 차단 중에 여러 건을 던지면
+    차단이 더 길어진다(2026-08-06 실측: 30건 몰아치기 → 20분 넘게 403).
+    """
+    from sqlalchemy import select as _sel
+
+    from backend.db.orm import get_read_session
+    from backend.domain.samba.collector.refresher import refresh_products_bulk
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CPm
+
+    try:
+        async with get_read_session() as _s:
+            _row = (
+                (
+                    await _s.execute(
+                        _sel(_CPm)
+                        .where(_CPm.source_site == site)
+                        .where(_CPm.site_product_id != "")
+                        .order_by(_CPm.last_refreshed_at.asc().nullsfirst())
+                        .limit(1)
+                    )
+                )
+                .scalars()
+                .first()
+            )
+        if _row is None:
+            return False
+    except Exception:
+        return False
+
+    # 백오프 키를 잠시 비워야 refresher 의 사전 차단 가드를 통과한다.
+    _keys = [k for k in _site_block_backoff_until if k.startswith(f"{site.upper()}|")]
+    _saved = {k: _site_block_backoff_until[k] for k in _keys}
+    for k in _keys:
+        _site_block_backoff_until.pop(k, None)
+    try:
+        _results, _ = await refresh_products_bulk([_row], max_concurrency={site: 1})
+        _ok = bool(_results) and not (_results[0].error or "")
+    except Exception:
+        _ok = False
+    finally:
+        if not _ok:
+            # 실패 — 원래 백오프 복원(탐침이 백오프를 지워버리면 안 된다)
+            for k, v in _saved.items():
+                _site_block_backoff_until.setdefault(k, v)
+    if _ok:
+        # 성공 — 이 사이트 백오프 전부 해제 + DB 반영
+        try:
+            asyncio.create_task(
+                _persist_block_backoff_to_db(), name="probe-clear-backoff"
+            )
+        except Exception:
+            pass
+    return _ok
+
+
 # Gunicorn 다중 worker 환경에서 in-memory dict 는 worker 마다 별도.
 # lifecycle background task 가 매 10초 sync_pc_allowed_sites_from_db 호출 → 모든
 # worker 의 _pc_allowed_sites 가 DB 진실 출처와 일치.
@@ -1532,10 +1599,42 @@ async def _site_autotune_loop(device_id: str, site: str):
                 # (일부 PC만 백오프면 owner 라우팅이 알아서 건강한 PC로 보내므로 계속 진행)
                 _bo_all = _all_ext_pcs_blocked_until(site)
                 if _bo_all:
+                    # [2026-08-06] 고정 대기 대신 탐침(probe) — 실제로 풀리면 즉시 재개.
+                    #
+                    # 백오프는 AUTOTUNE_BLOCK_BACKOFF_SEC(기본 2시간) 고정인데,
+                    # 실측상 차단 지속시간은 요청 강도에 따라 수 분 ~ 20분 이상으로
+                    # 편차가 크다(2026-08-06: 30건 몰아치기 → 20분 넘게 403,
+                    # 가벼운 초과 → 수 분 내 해제). 고정 2시간이면 실제로 5분 만에
+                    # 풀린 경우에도 115분을 그냥 버린다 — SSG 처리량이 낮았던
+                    # 주된 이유다.
+                    #
+                    # 그래서 PROBE 간격마다 "1건만" 실제로 갱신해보고, 성공하면
+                    # 그 PC 백오프를 즉시 해제한다. 실패하면 아무 것도 안 바꾸고
+                    # 다음 주기를 기다린다(부하 = 5분에 1건, 사실상 없음).
+                    _probe_key = (device_id, site)
+                    _last_probe = _block_probe_at.get(_probe_key, 0.0)
+                    if time.time() - _last_probe >= BLOCK_PROBE_INTERVAL_SEC:
+                        _block_probe_at[_probe_key] = time.time()
+                        try:
+                            _released = await _probe_block_release(site, device_id)
+                        except Exception as _pe:
+                            _released = False
+                            log.warning(
+                                "[오토튠][%s] 차단 해제 탐침 오류(무시): %s", site, _pe
+                            )
+                        if _released:
+                            log.warning(
+                                "[오토튠][%s|%s] 탐침 성공 — 차단 해제 확인, 즉시 재개",
+                                site,
+                                device_id[:8],
+                            )
+                            continue  # 백오프 풀렸으니 바로 다음 사이클로
                     log.info(
-                        "[오토튠][%s] 전 PC 차단 백오프 중 — %s초 후 재개",
+                        "[오토튠][%s] 전 PC 차단 백오프 중 — %s초 후 재개 "
+                        "(%s초마다 탐침)",
                         site,
                         f"{int(_bo_all - time.time()):,}",
+                        f"{BLOCK_PROBE_INTERVAL_SEC:,}",
                     )
                     await asyncio.sleep(60)
                     continue
