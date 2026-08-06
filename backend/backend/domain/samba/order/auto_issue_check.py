@@ -1,11 +1,10 @@
-"""주문 자동수집 후 역마진(가격X)·재고없음(재고X) 자동 판정 + 상품 갱신 + 메모 기록.
+"""주문 자동수집 후 역마진(가격X) 자동 판정 + 상품 갱신 + 메모 기록.
 
 주문수집(poller)이 끝난 뒤 호출된다. 출고 전(활성) 주문 중 수집상품이 연결된 건만 대상으로:
   1) 연결된 소싱 상품을 refresh_products_bulk 로 원소싱처에서 실시간 재조회(오토튠과 동일 엔진)
   2) 최신 원가/재고를 상품 DB(samba_collected_product)에 반영
   3) 역마진(원가×수량 + 배송비 > 정산금액)이면 action_tag 'no_price'(가격X) 추가
-  4) 주문 옵션이 품절(또는 상품 전체 품절)이면 action_tag 'no_stock'(재고X) 추가
-  5) notes 에 사유 + 시각(KST) 1줄 기록
+  4) notes 에 사유 + 시각(KST) 1줄 기록
 
 판정 기준은 "원소싱처 실시간 재조회 후 저장 cost". 값이 불확실한 주문
 (price_uncertain / error / needs_extension)은 그 사이클에서 판정 보류한다 — 비로그인가/오류값으로
@@ -57,50 +56,6 @@ def _parse_tags(raw: str | None) -> list[str]:
     return [t.strip() for t in (raw or "").split(",") if t.strip()]
 
 
-# 리셀 채널 — 품절 자동판정 제외 대상. 크림 주문의 소싱처는 SNKRDUNK(C2C)라
-# 한 셀러가 빠져도 다른 매물로 다시 잡히므로 "품절"로 끊으면 안 된다.
-_RESELL_CHANNELS = {"KREAM", "POIZON"}
-
-
-def _is_resell_order(o) -> bool:
-    """크림·포이즌 등 리셀 채널 주문인지."""
-    for f in ("channel_name", "source_site"):
-        if (getattr(o, f, "") or "").strip().upper() in _RESELL_CHANNELS:
-            return True
-    return False
-
-
-def _find_sold_out_option(product_option: str | None, options) -> str | None:
-    """주문 옵션 문자열과 매칭되는 상품 옵션 중 재고 0 이하인 것의 이름을 반환.
-
-    매칭은 옵션 key(name 또는 size)가 주문 옵션 문자열에 단어 경계 기준으로 포함되는지 판단한다.
-    단순 in 비교 시 "S" in "XS" = True 오판 발생 → regex 단어 경계로 방지.
-    매칭되는 옵션이 없으면 None (옵션 단위 품절 판정 불가 → 호출부에서 전체품절만 사용).
-    """
-    import re
-
-    if not product_option or not options:
-        return None
-    for opt in options:
-        if not isinstance(opt, dict):
-            continue
-        key = (opt.get("name") or opt.get("size") or "").strip()
-        if not key:
-            continue
-        # 단어 경계 매칭: XS 주문에 S 옵션이 걸리지 않도록 (S in XS = True 오판 방지)
-        if not re.search(
-            r"(?<![A-Za-z0-9])" + re.escape(key) + r"(?![A-Za-z0-9])", product_option
-        ):
-            continue
-        try:
-            stock = int(opt.get("stock") or 0)
-        except (TypeError, ValueError):
-            stock = 0
-        if stock <= 0:
-            return key
-    return None
-
-
 def _append_note(existing: str | None, line: str) -> str:
     """기존 notes 뒤에 한 줄 추가 (기존 내용 보존)."""
     base = (existing or "").rstrip()
@@ -108,9 +63,9 @@ def _append_note(existing: str | None, line: str) -> str:
 
 
 async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
-    """활성 주문의 연결 상품을 재조회해 역마진/재고없음을 자동 태깅 + 메모 기록.
+    """활성 주문의 연결 상품을 재조회해 역마진을 자동 태깅 + 메모 기록.
 
-    Returns: 처리 요약 dict (검사 주문수/스킵/가격X/재고X 카운트).
+    Returns: 처리 요약 dict (검사 주문수/스킵/가격X 카운트).
     """
     from sqlmodel import col, or_, select
 
@@ -123,7 +78,6 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
         "checked": 0,
         "skipped": 0,
         "no_price": 0,
-        "no_stock": 0,
         "auto_delivered": 0,
         "errors": 0,
     }
@@ -150,11 +104,9 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
         result = await session.execute(stmt)
         orders = list(result.scalars().all())
 
-        # 이미 가격X·재고X 둘 다 붙은 주문은 더 볼 게 없음 (add-only)
+        # 이미 가격X 붙은 주문은 더 볼 게 없음 (add-only)
         pending_orders = [
-            o
-            for o in orders
-            if not {"no_price", "no_stock"}.issubset(set(_parse_tags(o.action_tag)))
+            o for o in orders if "no_price" not in set(_parse_tags(o.action_tag))
         ]
         if not pending_orders:
             return summary
@@ -219,8 +171,6 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
         now = datetime.now(timezone.utc)
         # 역마진 감지된 상품 ID 수집 → 오토튠 우선 처리용
         no_price_product_ids: set[str] = set()
-        # 재고없음 감지된 상품 ID 수집 → 즉시 마켓 품절 전송용
-        no_stock_product_ids: set[str] = set()
         for r in results:
             prod = product_map.get(r.product_id)
             if not prod:
@@ -238,7 +188,7 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                 prod.sale_status = r.new_sale_status  # type: ignore[assignment]
             if r.changed and r.new_sale_price is not None:
                 prod.sale_price = r.new_sale_price  # type: ignore[assignment]
-            # last_refreshed_at: 역마진/재고없음 감지 상품은 오토튠이 다음 사이클에서
+            # last_refreshed_at: 역마진 감지 상품은 오토튠이 다음 사이클에서
             # 최우선 처리하도록 2일 과거로 설정. 정상 상품만 now로 기록.
             prod.last_refreshed_at = now  # type: ignore[assignment]  # 5)에서 no_price 확인 후 재설정
             # 가격이력 스냅샷 추가 (UI 가격/재고 이력에 표시되도록)
@@ -319,35 +269,8 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                         if pid:
                             no_price_product_ids.add(pid)
 
-            # 재고없음(재고X): 상품 전체 품절 또는 주문 옵션 품절
-            # [2026-08-05] 크림(리셀) 주문은 이 판정에서 제외 — 소싱상품이 SNKRDUNK 인데
-            # PSA 옵션이 stock 0 으로 write-back 되면 _derive_sale_status 가 sold_out 을
-            # 박고, 이후 옵션이 비워져도 그 상태가 남는다(옵션 0개 SNKRDUNK 15,703건).
-            # 그 잔재를 "상품 전체 품절"로 읽어 멀쩡한 주문 4건에 재고X 가 붙었다.
-            # SNKRDUNK 는 매물이 수시로 다시 올라오는 C2C 라 품절 판정 자체가 무의미하다.
-            if "no_stock" not in tag_set and not _is_resell_order(o):
-                reason: str | None = None
-                if r.new_sale_status == "sold_out":
-                    reason = "상품 전체 품절"
-                else:
-                    _opt = _find_sold_out_option(o.product_option, r.new_options)
-                    if _opt:
-                        reason = f"옵션 품절 ({_opt})"
-                if reason:
-                    tag_set.add("no_stock")
-                    new_notes = _append_note(
-                        new_notes,
-                        f"[{_now_kst_str()}] 자동: 재고없음 — {reason}",
-                    )
-                    changed = True
-                    summary["no_stock"] += 1
-                    pid = o.collected_product_id
-                    if pid:
-                        no_stock_product_ids.add(pid)
-                        no_price_product_ids.add(pid)  # last_refreshed_at 우선순위용
-
             # 소액 주문 자동 배송완료: 정산금액 < 1,000원인 주문
-            # (역마진·재고없음과 무관하게 처리 — 이미 배송완료 상태인 건은 건너뜀)
+            # (역마진과 무관하게 처리 — 이미 배송완료 상태인 건은 건너뜀)
             _rev = float(o.revenue or 0)
             if o.status in _ACTIVE_STATUSES and 0 < _rev < _AUTO_DELIVER_THRESHOLD:
                 o.status = "delivered"
@@ -365,7 +288,7 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                 o.notes = new_notes
                 session.add(o)
 
-        # 6) 역마진/재고없음 감지 상품 → last_refreshed_at 2일 과거로 재설정
+        # 6) 역마진 감지 상품 → last_refreshed_at 2일 과거로 재설정
         #    오토튠이 ORDER BY last_refreshed_at ASC 로 처리하므로, 과거로 설정하면
         #    다음 사이클에서 최우선 처리 → 마켓 판매가 즉시 재계산·전송
         if no_price_product_ids:
@@ -376,13 +299,13 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                     _p.last_refreshed_at = _past  # type: ignore[assignment]
                     session.add(_p)
             logger.info(
-                "[주문이슈체크] 역마진/재고없음 상품 %d개 → 오토튠 우선 처리 예약",
+                "[주문이슈체크] 역마진 상품 %d개 → 오토튠 우선 처리 예약",
                 len(no_price_product_ids),
             )
 
         await session.commit()
 
-        # 역마진/재고없음 감지 상품 → 즉시 가격·재고 직접 전송 (업데이트 버튼과 동일 경로)
+        # 역마진 감지 상품 → 즉시 가격·재고 직접 전송 (업데이트 버튼과 동일 경로)
         # skip_refresh=True: 위에서 이미 소싱처 재조회 완료, DB 최신 원가/재고 반영됨
         # skip_policy_account_filter=True: worker.py 테트리스 게이트 우회, start_update 레이어 직접 호출
         if no_price_product_ids:
@@ -418,124 +341,15 @@ async def auto_check_order_issues(tenant_id: str | None = None) -> dict:
                     )
             if _sent:
                 logger.info(
-                    "[주문이슈체크] 역마진/재고없음 상품 %d개 즉시 가격·재고 전송 완료",
+                    "[주문이슈체크] 역마진 상품 %d개 즉시 가격·재고 전송 완료",
                     _sent,
                 )
 
-        # 재고없음 감지 상품 → 마켓 삭제 + 주문 스냅샷(이미지/소싱처 보존) + DB 삭제
-        # 수동 삭제 버튼과 동일한 파이프: _snapshot_cp_to_orders → delete_from_markets → bulk_delete
-        if no_stock_product_ids:
-            from sqlalchemy import text as _t2
-            from backend.db.orm import get_write_session as _gws2
-            from backend.domain.samba.collector.repository import (
-                SambaCollectedProductRepository,
-            )
-            from backend.domain.samba.shipment.repository import (
-                SambaShipmentRepository as _SR2,
-            )
-            from backend.domain.samba.shipment.service import (
-                SambaShipmentService as _SS2,
-            )
-
-            _deleted = 0
-            for _pid in no_stock_product_ids:
-                _p = product_map.get(_pid)
-                if not _p:
-                    continue
-                # SNKRDUNK(스니덩크) 리셀 매칭상품은 절대 자동삭제 금지.
-                # C2C 다중셀러라 원소싱 품절돼도 곧 재입고됨 → 삭제하면 크림 리스팅·주문연결이
-                # 통째로 끊긴다(주문 collected_product_id='DELETED' 사고). 재고없음 태그만 남기고
-                # 상품·마켓 삭제는 건너뛴다. lock_delete 여부와 무관하게 소싱처 기준으로 차단.
-                if (getattr(_p, "source_site", "") or "").upper() == "SNKRDUNK":
-                    logger.info(
-                        "[주문이슈체크] SNKRDUNK 리셀상품 자동삭제 제외 pid=%s (재입고 대비)",
-                        _pid,
-                    )
-                    continue
-                # 삭제잠금(크림 매칭 등 보호 대상)은 소싱처 무관하게 자동삭제에서 제외.
-                if getattr(_p, "lock_delete", False):
-                    logger.info(
-                        "[주문이슈체크] lock_delete=True 상품 자동삭제 제외 pid=%s",
-                        _pid,
-                    )
-                    continue
-                _reg_accounts = list(getattr(_p, "registered_accounts", None) or [])
-                try:
-                    async with _gws2() as _del_sess:
-                        # 1) 주문에 이미지/소싱처 스냅샷 저장 + collected_product_id='DELETED'
-                        _cp_rows = (
-                            await _del_sess.execute(
-                                _t2(
-                                    "SELECT id, source_site, images->>0 AS thumb "
-                                    "FROM samba_collected_product WHERE id = :id"
-                                ),
-                                {"id": _pid},
-                            )
-                        ).fetchall()
-                        if _cp_rows:
-                            _cp_src = _cp_rows[0][1] or ""
-                            _cp_thumb = _cp_rows[0][2] or ""
-                            await _del_sess.execute(
-                                _t2(
-                                    "UPDATE samba_order "
-                                    "SET product_image = CASE WHEN product_image IS NULL OR product_image = '' "
-                                    "    THEN :img ELSE product_image END, "
-                                    "source_site = CASE WHEN source_site IS NULL OR source_site = '' "
-                                    "    THEN :src ELSE source_site END, "
-                                    "collected_product_id = 'DELETED' "
-                                    "WHERE collected_product_id = :cpid"
-                                ),
-                                {"img": _cp_thumb, "src": _cp_src, "cpid": _pid},
-                            )
-                            # 배지 UPDATE를 마켓삭제 이전에 독립 commit.
-                            # delete_from_market 디스패처가 예외 시 session.rollback()을
-                            # 호출해 같은 세션의 pending UPDATE까지 날리는 버그 방지.
-                            await _del_sess.commit()
-
-                        # 2) 마켓 삭제 (등록된 계정 전체)
-                        _del_ok = True
-                        if _reg_accounts:
-                            _ship_svc2 = _SS2(_SR2(_del_sess), _del_sess)
-                            _del_r = await _ship_svc2.delete_from_markets(
-                                [_pid], _reg_accounts
-                            )
-                            _del_entry = (_del_r.get("results") or [{}])[0]
-                            _del_ok = _del_entry.get("success_count", 0) >= len(
-                                _del_entry.get("delete_results") or {}
-                            )
-                            if not _del_ok:
-                                logger.warning(
-                                    "[주문이슈체크] 마켓삭제 일부 실패 — DB삭제 보류 pid=%s "
-                                    "(issue #546: 고아상품 방지)",
-                                    _pid,
-                                )
-
-                        # 3) 수집상품 DB 삭제 — 마켓삭제 전부 성공 시에만
-                        if _del_ok:
-                            _coll_repo = SambaCollectedProductRepository(_del_sess)
-                            await _coll_repo.delete_async(_pid)
-
-                        await _del_sess.commit()
-                    if _del_ok:
-                        _deleted += 1
-                except Exception as _de:
-                    logger.warning(
-                        "[주문이슈체크] 자동삭제 실패 pid=%s: %s",
-                        _pid,
-                        str(_de)[:120],
-                    )
-            if _deleted:
-                logger.info(
-                    "[주문이슈체크] 재고없음 상품 %d개 마켓삭제·DB삭제·DELETED 처리 완료",
-                    _deleted,
-                )
-
     logger.info(
-        "[주문이슈체크] 완료 — 검사 %d / 보류 %d / 가격X %d / 재고X %d / 소액배송완료 %d",
+        "[주문이슈체크] 완료 — 검사 %d / 보류 %d / 가격X %d / 소액배송완료 %d",
         summary["checked"],
         summary["skipped"],
         summary["no_price"],
-        summary["no_stock"],
         summary["auto_delivered"],
     )
     return summary
