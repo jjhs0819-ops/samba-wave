@@ -62,6 +62,8 @@ _EXEC_SHOE_RESTOCK = os.environ.get("KREAM_EXEC_SHOE_RESTOCK") == "1"
 # 모르겠다"의 정체가 이것. 슬라이스(리스톡 1만)가 이미 총량을 제한하므로 이중 상한이다.
 _NONCARD_PROBE_MAX = int(os.environ.get("KREAM_NONCARD_PROBE_MAX") or 0)
 _noncard_probe_used = 0  # 사이클당 비카드 크림조회 사용량(사이클 시작 시 리셋)
+# 프로세스 기동 후 첫 사이클인가 — 첫 사이클은 스캔목록을 리셋하고 처음부터 훑는다.
+_fresh_boot = True
 _ANOMALY_FLOOR = 0.7  # target 이 시장최저의 70% 미만이면 이상(헐값) — 실행 차단
 _DROP_CAP = 0.20  # 한 사이클 하향 폭 상한 = 현재가의 20%
 # 슬랙 알림 — 로컬 봇(_kream_ask_adjust._send_slack)이 사이클마다 보내던 것 이식.
@@ -3742,10 +3744,20 @@ async def run_kream_unified_once() -> dict:
     # 남은 대상이 한 사이클치(1만)에 못 미치면 새 바퀴를 시작해 전량을 다시 훑는다.
     _reset_below = int(os.environ.get("KREAM_RESTOCK_RESET_BELOW") or 10000)
     _scanned: set = set()
-    try:
-        _scanned = set((await _load_setting_map(_SET_SCANNED)).keys())
-    except Exception:
-        _scanned = set()
+    # [2026-08-06] 프로세스가 새로 뜬 뒤 **첫 사이클은 무조건 리셋**한다.
+    # 배포·컨테이너 교체로 사이클이 중간에 죽으면 그때까지 등록하던 슬라이스가
+    # 통째로 날아가는데, 스캔목록은 남아 있어 다시 잡히지 않는다
+    # (실측 2026-08-06 11:00 KST: 등록 6,604건 중 2,398건만 반영, 4,206건 유실).
+    # 새로 떴다 = 직전 사이클이 정상 완주하지 못했을 수 있다 → 처음부터 다시 훑는다.
+    global _fresh_boot
+    if _fresh_boot:
+        _fresh_boot = False
+        logger.info("[크림통합] 기동 후 첫 사이클 — 스캔목록 리셋(처음부터 재순회)")
+    else:
+        try:
+            _scanned = set((await _load_setting_map(_SET_SCANNED)).keys())
+        except Exception:
+            _scanned = set()
     _fresh = [p for p in rest_products if p["kid"] not in _scanned]
     if len(_fresh) < _reset_below:
         logger.info(
