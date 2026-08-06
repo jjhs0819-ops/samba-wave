@@ -739,16 +739,23 @@ def build_sales_text(with_comment: bool = True) -> str:
     # 전월 동기간 비교 (순이익 / 건수 / 순마진율)
     if prev_orders is not None:
         p = _sales_metrics(prev_orders, ret_amt)
+        sale_d = ((cur["sales"] - p["sales"]) / p["sales"] * 100) if p["sales"] else 0.0
         prof_d = ((cur["profit"] - p["profit"]) / p["profit"] * 100) if p["profit"] else 0.0
         cnt_d = cur["cnt"] - p["cnt"]
         rate_d = cur["rate"] - p["rate"]
         lines += [
             "",
             f"📊 전월 동기간(~{lm_label}) 대비",
+            f"· 매출 전월 {_fmt_price(p['sales'])} {_arrow(sale_d)}{abs(sale_d):.0f}%",
             f"· 순이익 전월 {_fmt_price(p['profit'])} {_arrow(prof_d)}{abs(prof_d):.0f}%",
             f"· 건수 전월 {p['cnt']}건 {_arrow(cnt_d)}{abs(cnt_d)}건",
             f"· 순마진율 전월 {p['rate']:.1f}% {_arrow(rate_d)}{abs(rate_d):.1f}%p",
         ]
+        # 전월은 반품이 이미 다 터진 뒤, 이달은 아직 진행 중 → 이달이 유리하게 보인다.
+        # 수치를 손대지 않는 대신 반품 건수를 나란히 보여 오해를 막는다.
+        if cur["return_cnt"] or p["return_cnt"]:
+            lines.append(f"※ 반품 이달 {cur['return_cnt']}건 vs 전월 {p['return_cnt']}건"
+                         " — 이달은 반품이 더 들어올 수 있어 유리하게 보임")
     return "\n".join(lines)
 
 
