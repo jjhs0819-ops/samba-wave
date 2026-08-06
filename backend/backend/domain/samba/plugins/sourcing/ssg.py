@@ -283,7 +283,26 @@ class SSGPlugin(SourcingPlugin):
                         # HTML 파싱이 정상가로 fallback됐거나 미설정이면 확장앱 실시간값 우선
                         detail["bestBenefitPrice"] = _ext_benefit
                     elif not _cur_benefit:
-                        detail["bestBenefitPrice"] = _rob_sell
+                        # [2026-08-06 fix] 마지막 폴백을 정가(_rob_sell=sellprc)에서
+                        # 판매가로 바꾼다.
+                        #
+                        # _rob_sell 은 주석대로 "정상가(originalPrice 용도만)" 인데
+                        # 원가 폴백에 쓰여, 카드혜택가·bestAmt 를 못 가져온 상품의
+                        # 원가가 할인 전 정가로 박혔다. 실측(2026-08-06): SSG 등록상품
+                        # 20,210건 중 4,325건이 cost > sale_price 였고, 표본에서
+                        # cost 가 original_price 와 정확히 일치했다
+                        # (예: 원가 45,000 = 정가 45,000, 판매가 38,250).
+                        # 역마진은 아니지만 매입가를 과대계상해 판매가 경쟁력을 깎는다.
+                        #
+                        # CLAUDE.md SSG 원가 규칙도 domCardPrice → bestAmt → salePrice
+                        # 순이라 정가는 애초에 후보가 아니다. 판매가 후보가 전부 없을
+                        # 때만 정가로 내려간다(0 저장 방지).
+                        _fallback_sale = (
+                            _dom_sale
+                            or _rob_best
+                            or int(detail.get("salePrice", 0) or 0)
+                        )
+                        detail["bestBenefitPrice"] = _fallback_sale or _rob_sell
 
                 # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드): resultItemObj 폴백
                 if not detail:
