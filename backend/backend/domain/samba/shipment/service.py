@@ -3062,15 +3062,23 @@ class SambaShipmentService:
 
                 await self.session.execute(
                     _mpn_sa_text(
+                        # ★registered_accounts 가 JSON null 인 행(신규 수집분 다수,
+                        # 2026-08-06 실측 40,801건)에서 COALESCE 는 SQL NULL 만 잡고
+                        # JSON null 은 통과시켜 `null - text[]` →
+                        # InvalidParameterValueError: cannot delete from scalar 로
+                        # UPDATE 전체가 롤백됐다. 그 결과 마켓엔 등록됐는데 상품번호·
+                        # 등록기록이 저장되지 않아 링크분실(중복등록/주문 미이행)이 생겼다.
+                        # market_product_nos 처럼 jsonb_typeof 로 타입을 확인해 방어한다.
                         "UPDATE samba_collected_product SET"
                         "  market_product_nos = ("
-                        "    (CASE WHEN jsonb_typeof(market_product_nos) = 'object'"
-                        "          THEN market_product_nos ELSE '{}'::jsonb END)"
+                        "    (CASE WHEN jsonb_typeof(CAST(market_product_nos AS jsonb)) = 'object'"
+                        "          THEN CAST(market_product_nos AS jsonb) ELSE '{}'::jsonb END)"
                         "    - CAST(:nos_clear AS text[])"
                         "  ) || CAST(:nos_add AS jsonb),"
                         "  registered_accounts = COALESCE(("
                         "    SELECT jsonb_agg(DISTINCT val) FROM jsonb_array_elements_text("
-                        "      (COALESCE(registered_accounts, '[]'::jsonb)"
+                        "      ((CASE WHEN jsonb_typeof(CAST(registered_accounts AS jsonb)) = 'array'"
+                        "             THEN CAST(registered_accounts AS jsonb) ELSE '[]'::jsonb END)"
                         "        - CAST(:reg_remove AS text[]))"
                         "      || CAST(:reg_add AS jsonb)"
                         "    ) AS val"
