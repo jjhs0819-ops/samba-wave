@@ -646,6 +646,24 @@ async def _snkrdunk_remove_match_impl(
             sid=snkr_id
         )
     )  # type: ignore[arg-type]
+    # [2026-08-06] 상품 행 안의 후보(resell_matches.kream_candidates)도 거부 등록한다.
+    # 위 세 경로(확정 kream / match_candidates / ambig_pairs)는 등록했는데 정작
+    # **검수화면이 실제로 보여주는** 이 후보만 거부 없이 지우고 있었다. 그래서 확정 없이
+    # 후보만 있는 상품을 해제하면 거부목록에 한 줄도 안 들어가고, 다음 배치가 같은 쌍을
+    # 그대로 다시 붙였다 — 사용자가 같은 상품을 20번 넘게 해제한 원인.
+    # (실사례: snkr 141830 ↔ kream 989693, snkr 141835 ↔ 990245·990244)
+    await session.exec(
+        text("""
+        INSERT INTO kream_snkr_rejected (snkr_id, kream_pid, reason)
+        SELECT :sid, cd->>'product_id', '검수 매칭해제(행내 후보)'
+        FROM samba_collected_product p,
+             jsonb_array_elements(
+                 COALESCE(p.resell_matches->'kream_candidates', '[]'::jsonb)) cd
+        WHERE p.source_site IN ('SNKRDUNK', 'ONITSUKA') AND p.site_product_id = :sid
+          AND COALESCE(cd->>'product_id', '') <> ''
+        ON CONFLICT (snkr_id, kream_pid) DO NOTHING
+    """).bindparams(sid=snkr_id)
+    )  # type: ignore[arg-type]
     # 후보(kream_candidates)를 남기면 재로드 시 후보 1개 자동선택으로 매칭이 되살아나는
     # 도돌이 발생 [2026-07-20 라이츄·샤워즈 사고] — 해제 시 함께 삭제
     sql = text("""
@@ -899,7 +917,14 @@ async def snkrdunk_compare_all_public(
             COALESCE(extra_data->>'name_ja', '') AS name_ja,
             COALESCE(extra_data->>'name_en', '') AS name_en,
             COALESCE((images::jsonb)->>0, '') AS snkr_image,
-            COALESCE(resell_matches->'kream'->>'product_id', '') AS kream_id,
+            -- [2026-08-06] 거부한 쌍이 확정 자리에 되살아난 경우도 없는 것으로 취급한다.
+            -- 재매칭 배치가 거부를 못 보고 다시 붙인 건이 실측 3건 있었다. 여기서 가려야
+            -- 검수 화면에 다시 뜨지 않는다(원본 resell_matches 는 배치가 정리).
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'product_id', '') END AS kream_id,
             COALESCE(resell_matches->'kream'->>'name_ko', '') AS kream_name_ko,
             COALESCE(resell_matches->'kream'->>'name_en', '') AS kream_name_en,
             COALESCE(resell_matches->'kream'->>'image', '') AS kream_image,
@@ -913,7 +938,22 @@ async def snkrdunk_compare_all_public(
             COALESCE(resell_matches->'kream'->>'anomaly_reason', '') AS anomaly_reason,
             -- 다중매칭 후보 [2026-07-19] — 품번 매칭이 후보 여럿(재판/홀로 등)으로 못 가른 상품.
             -- 검수페이지에서 사용자가 후보 선택 후 일치 확정 (PATCH /match → /verify)
-            COALESCE(resell_matches->'kream_candidates', '[]'::jsonb)::text AS kream_candidates,
+            --
+            -- [2026-08-06] 거부한 쌍은 여기서 제외한다. 종전엔 매칭해제로 거부목록
+            -- (kream_snkr_rejected)에 넣어도 이 응답이 후보를 그대로 뿌려, 해제해도
+            -- 화면에 같은 오매칭이 계속 떠 사용자가 같은 상품을 20번 넘게 해제했다.
+            -- 거부는 (snkr_id, kream_pid) 쌍 단위 — 그 크림 상품이 다른 스니덩크와
+            -- 맺은 정상 매칭은 건드리지 않는다.
+            COALESCE((
+                SELECT jsonb_agg(cd)
+                FROM jsonb_array_elements(
+                    COALESCE(resell_matches->'kream_candidates', '[]'::jsonb)) cd
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kream_snkr_rejected rj
+                    WHERE rj.snkr_id = site_product_id
+                      AND rj.kream_pid = cd->>'product_id'
+                )
+            ), '[]'::jsonb)::text AS kream_candidates,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
