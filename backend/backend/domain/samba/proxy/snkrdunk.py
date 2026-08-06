@@ -117,17 +117,23 @@ def _is_streetwear_id(site_product_id: str) -> bool:
 
 
 # 트레이딩카드 브랜드(프랜차이즈) 추론 — 이름 키워드 + 품번 접두어
+# [2026-08-06] 브랜드 표기는 **크림 브랜드명 그대로** 쓴다(크림 고시정보 목록 기준:
+# 'Pokemon TCG', 'One Piece TCG', 'Yu-Gi-Oh OCG'). 검수는 스니덩크↔크림 대조인데
+# 표기가 갈리면 한 브랜드가 화면에서 여러 줄로 쪼개지고, 거래이력 게이트의 브랜드
+# 화이트리스트(kream_shadow._TCG_BRANDS)에도 안 걸려 게이트를 통째로 빠져나간다
+# (원피스 2,080건이 'One Piece TCG' 표기라 게이트 누락된 채 돌고 있었다).
+# 여기 값을 바꾸면 _TCG_BRANDS / _POKEMON_BRANDS 도 반드시 같이 맞출 것.
 _CARD_BRAND_NAME_MAP = [
-    ("one piece", "ONE PIECE"),
-    ("pokemon", "Pokémon"),
-    ("pokémon", "Pokémon"),
+    ("one piece", "One Piece TCG"),
+    ("pokemon", "Pokemon TCG"),
+    ("pokémon", "Pokemon TCG"),
     ("dragon ball", "DRAGON BALL"),
-    ("yu-gi-oh", "Yu-Gi-Oh!"),
-    ("yugioh", "Yu-Gi-Oh!"),
+    ("yu-gi-oh", "Yu-Gi-Oh OCG"),
+    ("yugioh", "Yu-Gi-Oh OCG"),
     ("weiss", "Weiss Schwarz"),
     ("duel masters", "Duel Masters"),
     ("lorcana", "Disney Lorcana"),
-    ("union arena", "Union Arena"),
+    ("union arena", "Union Arena TCG"),
     ("gundam", "GUNDAM"),
     ("digimon", "Digimon"),
     ("hololive", "hololive"),
@@ -136,11 +142,11 @@ _CARD_BRAND_NAME_MAP = [
     ("magic", "Magic: The Gathering"),
 ]
 _CARD_BRAND_PREFIX_MAP = [
-    ("pkmn", "Pokémon"),
-    ("ygo", "Yu-Gi-Oh!"),
+    ("pkmn", "Pokemon TCG"),
+    ("ygo", "Yu-Gi-Oh OCG"),
     ("dbsc", "DRAGON BALL"),
     ("dbsd", "DRAGON BALL"),
-    ("uatcg", "Union Arena"),
+    ("uatcg", "Union Arena TCG"),
     ("ws", "Weiss Schwarz"),
     ("dm", "Duel Masters"),
     ("mtg", "Magic: The Gathering"),
@@ -149,13 +155,13 @@ _CARD_BRAND_PREFIX_MAP = [
     ("holo", "hololive"),
     ("gcg", "GUNDAM"),
     ("cnn", "Detective Conan"),
-    ("opcd", "ONE PIECE"),
-    ("opc", "ONE PIECE"),
-    ("op", "ONE PIECE"),
-    ("eb", "ONE PIECE"),
-    ("st", "ONE PIECE"),
-    ("prb", "ONE PIECE"),
-    ("p-", "ONE PIECE"),
+    ("opcd", "One Piece TCG"),
+    ("opc", "One Piece TCG"),
+    ("op", "One Piece TCG"),
+    ("eb", "One Piece TCG"),
+    ("st", "One Piece TCG"),
+    ("prb", "One Piece TCG"),
+    ("p-", "One Piece TCG"),
 ]
 
 
