@@ -12,6 +12,7 @@ import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { fmtNum } from '@/lib/samba/styles'
 import { STATUS_MAP } from '@/app/samba/orders/constants'
 import { useOrderLinks } from '@/app/samba/orders/hooks/useOrderLinks'
+import { useSettlement } from '@/app/samba/orders/hooks/useSettlement'
 
 // KST 기준 'YYYY-MM-DD' (sv-SE 로케일이 ISO 포맷 반환)
 const kstDate = (offsetDays = 0): string => {
@@ -123,6 +124,9 @@ export default function SambaMobileOrdersPage() {
   // 마켓 계정 — PC 주문화면과 동일하게 useOrderLinks에 그대로 넘겨 원문/판매링크 생성 위임
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const { handleSourceLink, handleMarketLink } = useOrderLinks(accounts)
+
+  // 정산금 — PC 주문화면과 동일한 계산(크림 수수료 차감 포함) 공유
+  const { getRevenue } = useSettlement()
 
   useEffect(() => {
     accountApi.listActiveCached(setAccounts)
@@ -291,6 +295,8 @@ export default function SambaMobileOrdersPage() {
   const unshippedCount = orders.filter(isUnshipped).length
   // 표시(필터 적용)된 주문 기준 매출 합계
   const shownSale = shown.reduce((s, o) => s + (amountOf(o) || 0), 0)
+  // 정산금 합계 — 취소/반품류는 정산 대상이 아니라 제외
+  const shownSettle = shown.reduce((s, o) => s + (isCancelled(o) ? 0 : getRevenue(o) || 0), 0)
 
   // ── 로딩 게이트 ──
   if (!ready) {
@@ -556,8 +562,25 @@ export default function SambaMobileOrdersPage() {
       </div>
 
       {/* 요약 */}
-      <div style={{ padding: '0.6rem 0.85rem', fontSize: 12, color: c.textSub }}>
-        표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원 · 기간 총 {fmtNum(orders.length)}건
+      {/* 한 줄 유지 — 좌: 건수·매출 / 우: 정산금 합계 (2행 줄바꿈 방지 nowrap) */}
+      <div
+        style={{
+          padding: '0.6rem 0.85rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          fontSize: 12,
+          color: c.textSub,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <span>
+          표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원
+        </span>
+        <span style={{ fontWeight: 700, color: c.text }}>
+          정산 {fmtNum(Math.round(shownSettle))}원
+        </span>
       </div>
 
       {/* 상태 메시지 */}
@@ -703,9 +726,17 @@ export default function SambaMobileOrdersPage() {
                 <span style={{ fontSize: 12, color: c.textSub }}>
                   {o.customer_name || '-'} · 수량 {fmtNum(o.quantity)}
                 </span>
-                <span style={{ fontSize: 15, fontWeight: 700 }}>
-                  {fmtNum(Math.round(amountOf(o)))}원
-                </span>
+                {/* 우측: 결제금액(큰 글씨) + 그 아래 정산금. 정산 미산출(0)이면 숨김 */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>
+                    {fmtNum(Math.round(amountOf(o)))}원
+                  </div>
+                  {getRevenue(o) > 0 && (
+                    <div style={{ fontSize: 12, color: c.textSub, marginTop: 1 }}>
+                      정산 {fmtNum(Math.round(getRevenue(o)))}원
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div style={{ fontSize: 11, color: c.textMuted, marginTop: 4 }}>
