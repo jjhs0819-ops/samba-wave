@@ -710,6 +710,23 @@ export default function ReturnsPage() {
                           value={cd}
                           onChange={async (e) => {
                             const val = e.target.value
+                            if (val === '반품') {
+                              // 요청 #2: '반품완료' 선택 시 고객주문·원주문도 자동 '완료' (취소완료·교환완료는 미적용)
+                              // 역방향(완료→진행중 등)은 자동으로 되돌리지 않음 — 사장님이 수동 조정한 값 보호
+                              const prevVals = {
+                                completion_detail: r.completion_detail,
+                                customer_order_no: r.customer_order_no,
+                                original_order_no: r.original_order_no,
+                              }
+                              setReturns(prev => prev.map(x => x.id === r.id
+                                ? { ...x, completion_detail: val, customer_order_no: 'return_complete', original_order_no: 'return_complete' }
+                                : x))
+                              // 3필드를 PATCH 1회로 전송 — 실패 시 로컬 state가 서버와 어긋나므로 알림 + 직전 값 복원 (saveCell 패턴)
+                              saveCell(r.id, { completion_detail: val, customer_order_no: 'return_complete', original_order_no: 'return_complete' }, () => {
+                                setReturns(prev => prev.map(x => x.id === r.id ? { ...x, ...prevVals } : x))
+                              }, '완료내역')
+                              return
+                            }
                             setReturns(prev => prev.map(x => x.id === r.id ? { ...x, completion_detail: val } : x))
                             try {
                               await returnApi.patch(r.id, { completion_detail: val })
@@ -840,7 +857,12 @@ export default function ReturnsPage() {
                         <div
                           onClick={() => {
                             const inp = document.getElementById(`ck-${r.id}`) as HTMLInputElement
-                            inp?.showPicker?.()
+                            if (!inp) return
+                            // 피커가 항상 "오늘" 기준으로 열리도록 showPicker 직전에 DOM 값을 비운다 (요청 #1).
+                            // - React value tracker는 직전 prop 값을 기억 → 날짜 선택 시 ''→'YYYY-MM-DD' 변화로 onChange 정상 발화
+                            // - ESC 취소 시 DOM 값만 ''로 남지만, 화면 표시는 옆 div의 fmtMD(state 기반)라 깨지지 않음
+                            inp.value = ''
+                            inp.showPicker?.()
                           }}
                           style={{ cursor: 'pointer', fontSize: '0.8rem', color: r.check_date ? c.text : c.textMuted, minWidth: '40px' }}
                         >
