@@ -3663,9 +3663,10 @@ def _return_row_touch_reasons(ret: Any, order: SambaOrder) -> list[str]:
         reasons.append(f"completion_detail={detail}")
     if ret.status != "requested":
         reasons.append(f"status={ret.status}")
-    memo = (ret.memo or "").strip()
-    if memo not in ("", "취소요청"):  # '취소요청'은 백필 자동 기입값 (요청 #5)
-        reasons.append("memo(수기)")
+    # memo 는 의도적으로 검사하지 않는다 (사장님 결정 2026-08-08).
+    # 메모는 참고 문구일 뿐 금전·확정 정보가 아니며, 메모 하나 때문에 claim 철회 후
+    # 유령 반품행이 계속 쌓이는 쪽이 운영에 더 해롭다. 대신 삭제 직전 로그에
+    # 메모 전문을 남겨 복구 근거를 확보한다 (_sync_returns_with_order_status 참조).
     if (ret.customer_amount or "").strip():
         reasons.append("customer_amount")
     if (ret.company_amount or "").strip():
@@ -3758,11 +3759,15 @@ async def _sync_returns_with_order_status(
                     f"— 수기/확정 흔적: {', '.join(reasons)}"
                 )
                 continue
+            # 메모는 삭제를 막지 않는 대신(사장님 결정) 전문을 로그에 남긴다 —
+            # 이 로그가 삭제된 메모의 유일한 복구 수단이므로 자르지 않는다
+            memo = (ret.memo or "").strip()
+            memo_note = f" (메모='{memo}')" if memo else ""
             await session.delete(ret)
             deleted += 1
             logger.info(
                 f"[주문→반품동기화] 삭제 return={ret.id} order={order.id} "
-                f"status={order.status} — claim 철회로 자동생성 행 제거"
+                f"status={order.status} — claim 철회로 자동생성 행 제거{memo_note}"
             )
         if deleted:
             await session.commit()
