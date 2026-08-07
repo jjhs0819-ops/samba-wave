@@ -81,6 +81,17 @@ def _claim_status_from_order(status: str | None, shipping_status: str | None) ->
     return "requested"
 
 
+def _is_cancel_requested(status: str | None, shipping_status: str | None) -> bool:
+    # 취소 '요청' 단계만 판별하는 헬퍼 (요청 #5: 반품탭 메모 자동기입 '취소요청').
+    # _claim_kind_from_order 의 'cancel' 은 취소진행중(cancelling)·취소완료(cancelled)까지
+    # 포함하므로 그대로 쓰면 이미 취소가 끝난 건에도 '취소요청'이 적혀 혼란을 준다.
+    # → 주문탭 드롭다운 '취소요청' 저장값(status='cancel_requested',
+    #   shipping_status='취소요청' — order.py 상태 매핑)에만 반응하도록 좁힌다.
+    status_text = (status or "").lower()
+    ship_text = shipping_status or ""
+    return status_text == "cancel_requested" or "취소요청" in ship_text
+
+
 def _completion_detail(claim_type: str, claim_status: str) -> str:
     if claim_status == "rejected":
         return "\uac70\ubd80"
@@ -200,6 +211,13 @@ async def _backfill_returns_from_claim_orders(
             completion_date=now if claim_status in {"completed", "rejected"} else None,
             notes=[],
             timeline=timeline,
+            # 취소요청 건은 반품탭 메모에 '취소요청' 자동 기입 (요청 #5, 사장님 결정:
+            # 취소요청만 — 취소진행중/취소완료·교환·반품 생성 행에는 기입 안 함).
+            # 신규 INSERT 경로에만 적용 — 기존 행은 위 existing_* 가드로 건너뛰므로
+            # 사장님이 손으로 쓴 메모를 덮어쓸 일 없음. memo 컬럼은 nullable(기본 None).
+            memo="취소요청"
+            if _is_cancel_requested(order.status, order.shipping_status)
+            else None,
         )
         created += 1
 
