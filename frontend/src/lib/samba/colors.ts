@@ -38,6 +38,9 @@ export interface Palette {
   inputBg: string      // 입력 배경
   gaugeTrack: string   // 게이지(용량바) 트랙(빈) 배경
   gaugeFill: string    // 게이지(용량바) 채움(중성 회색)
+  rowHover: string     // 테이블 행 hover 배경
+  badgePinkFg: string  // 반품완료 뱃지 글자(핑크)
+  badgePinkBg: string  // 반품완료 뱃지 배경(옅은 핑크)
 }
 
 export const light: Palette = {
@@ -68,6 +71,9 @@ export const light: Palette = {
   inputBg: '#ffffff',
   gaugeTrack: '#e4e6e8',
   gaugeFill: '#525a64',
+  rowHover: '#e8f1fd',
+  badgePinkFg: '#c2255c',
+  badgePinkBg: 'rgba(194,37,92,0.10)',
 }
 
 export const dark: Palette = {
@@ -98,6 +104,9 @@ export const dark: Palette = {
   inputBg: '#1A1A1A',
   gaugeTrack: '#232733',
   gaugeFill: '#6f7782',
+  rowHover: '#1a2740',
+  badgePinkFg: '#F783AC',
+  badgePinkBg: 'rgba(247,131,172,0.14)',
 }
 
 /**

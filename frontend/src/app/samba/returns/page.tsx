@@ -1,15 +1,15 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { accountApi, orderApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { card, inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import type { Palette } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
 
 import {
@@ -18,7 +18,7 @@ import {
 } from './constants'
 import { ReturnDetailModal } from './components/ReturnDetailModal'
 
-// 완료내역(completion_detail) 옵션 + 색상 (다크테마: 옅은 배경 + 글자색)
+// 완료내역(completion_detail) 옵션 + 색상 (옅은 배경 + 팔레트 글자색)
 // value = 백엔드 저장 어휘(진행중/취소/반품/교환/거부), label = 화면 표시(완료형)
 // 백엔드 정식값과 일치시켜야 필터/표시가 동작 (issue #334)
 const COMPLETION_DEFAULT = '진행중'
@@ -29,16 +29,19 @@ const COMPLETION_OPTIONS: { value: string; label: string }[] = [
   { value: '교환', label: '교환완료' },
   { value: '거부', label: '거부' },
 ]
-const COMPLETION_COLORS: Record<string, { bg: string; fg: string }> = {
+// 라이트/다크 팔레트를 받아 뱃지 색을 만든다 — 모듈 스코프 다크 고정이던 것을 테마 반응형으로 전환
+const makeCompletionColors = (c: Palette): Record<string, { bg: string; fg: string }> => ({
   '진행중': { bg: 'rgba(255,217,61,0.12)', fg: c.warn },   // 노랑(대기중)
   '취소': { bg: 'rgba(255,107,107,0.12)', fg: c.danger },    // 빨강(취소완료)
-  '반품': { bg: 'rgba(247,131,172,0.14)', fg: '#F783AC' },    // 핑크(반품완료)
+  '반품': { bg: c.badgePinkBg, fg: c.badgePinkFg },    // 핑크(반품완료)
   '교환': { bg: 'rgba(76,154,255,0.12)', fg: c.link },     // 파랑(교환완료)
   '거부': { bg: 'rgba(150,150,150,0.14)', fg: c.textSub },    // 회색(거부)
-}
+})
 
 export default function ReturnsPage() {
   const c = useTheme()
+  // 완료내역 뱃지 색 — 테마(c) 변경 시에만 재생성
+  const COMPLETION_COLORS = useMemo(() => makeCompletionColors(c), [c])
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
   const [returns, setReturns] = useState<SambaReturn[]>([])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -378,7 +381,7 @@ export default function ReturnsPage() {
           </span>
           <button
             onClick={clearOrderNumberFilter}
-            style={{ ...btn('secondary'), padding: '0.3rem 0.8rem', fontSize: '0.78rem' }}
+            style={{ ...btn('secondary', c), padding: '0.3rem 0.8rem', fontSize: '0.78rem' }}
           >전체보기</button>
         </div>
       )}
@@ -391,13 +394,13 @@ export default function ReturnsPage() {
           { key: 'completed', label: '완료됨', color: c.success },
           { key: 'rejected', label: '거절됨', color: c.danger },
         ].map(({ key, label, color }) => (
-          <div key={key} style={{ ...card, padding: '1rem 1.25rem' }}>
+          <div key={key} style={{ ...makeCard(c), padding: '1rem 1.25rem' }}>
             <p style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem' }}>{label}</p>
             <p style={{ fontSize: '1.5rem', fontWeight: 700, color }}>{fmtNum(completionCounts[key as keyof typeof completionCounts] ?? 0)}{key === 'requested' ? '건' : ''}</p>
           </div>
         ))}
         {/* 수익총액 통계 */}
-        <div style={{ ...card, padding: '1rem 1.25rem', border: `1px solid ${totalProfit >= 0 ? 'rgba(81,207,102,0.2)' : 'rgba(255,107,107,0.2)'}` }}>
+        <div style={{ ...makeCard(c), padding: '1rem 1.25rem', border: `1px solid ${totalProfit >= 0 ? 'rgba(81,207,102,0.2)' : 'rgba(255,107,107,0.2)'}` }}>
           <p style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem' }}>수익총액</p>
           <p style={{ fontSize: '1.25rem', fontWeight: 700, color: totalProfit >= 0 ? c.success : c.danger }}>₩{fmtNum(totalProfit)}</p>
         </div>
@@ -408,8 +411,8 @@ export default function ReturnsPage() {
         <div style={{ padding: '6px 14px', background: c.headerBg, borderBottom: `1px solid ${c.borderStrong}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '0.8rem', fontWeight: 600, color: c.headerText }}>반품교환 로그</span>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ ...btn('ghost'), fontSize: '0.72rem', padding: '1px 8px' }}>복사</button>
-            <button onClick={() => setLogMessages(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])} style={{ ...btn('ghost'), fontSize: '0.72rem', padding: '1px 8px' }}>초기화</button>
+            <button onClick={() => navigator.clipboard.writeText(logMessages.join('\n'))} style={{ ...btn('ghost', c), fontSize: '0.72rem', padding: '1px 8px' }}>복사</button>
+            <button onClick={() => setLogMessages(['[대기] 반품교환 가져오기 결과가 여기에 표시됩니다...'])} style={{ ...btn('ghost', c), fontSize: '0.72rem', padding: '1px 8px' }}>초기화</button>
           </div>
         </div>
         <div ref={logRef} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: c.textMuted, background: c.surfaceAlt, lineHeight: 1.8 }}>
@@ -434,14 +437,14 @@ export default function ReturnsPage() {
             >{pb.label}</button>
           ))}
           <span style={{ width: '1px', background: c.border, height: '18px', margin: '0 4px' }} />
-          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: c.danger, color: c.text } : {}) }} />
+          <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...makeInputStyle(c), padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: c.danger, color: c.text } : {}) }} />
           <button onClick={() => setStartLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: startLocked ? c.danger : c.btnBg, border: startLocked ? `1px solid ${c.danger}` : `1px solid ${c.border}`, color: startLocked ? '#fff' : c.text }}>고정</button>
           <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>~</span>
-          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
+          <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...makeInputStyle(c), padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
           <button onClick={() => setDateLocked(p => !p)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', whiteSpace: 'nowrap', background: dateLocked ? c.danger : c.btnBg, border: dateLocked ? `1px solid ${c.danger}` : `1px solid ${c.border}`, color: dateLocked ? '#fff' : c.text }}>고정</button>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
+          <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...makeInputStyle(c), padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
@@ -453,27 +456,27 @@ export default function ReturnsPage() {
               ])
             })()}
           </select>
-          <button onClick={loadReturns} style={{ ...btn('primary'), padding: '0.22rem 0.65rem', fontSize: '0.75rem' }}>가져오기</button>
+          <button onClick={loadReturns} style={{ ...btn('primary', c), padding: '0.22rem 0.65rem', fontSize: '0.75rem' }}>가져오기</button>
         </div>
       </div>
 
       {/* 필터 바 */}
       <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...inputStyle, width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select style={{ ...makeInputStyle(c), width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="검색어 입력" />
-        <button onClick={() => { /* 검색은 입력 즉시 목록에 반영됨 */ }} style={{ ...btn('secondary'), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
+        <input style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="검색어 입력" />
+        <button onClick={() => { /* 검색은 입력 즉시 목록에 반영됨 */ }} style={{ ...btn('secondary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
         <button
           onClick={handleBatchDelete}
-          style={{ ...btn('danger'), padding: '0.22rem 0.6rem', fontSize: '0.75rem' }}
+          style={{ ...btn('danger', c), padding: '0.22rem 0.6rem', fontSize: '0.75rem' }}
         >
           선택삭제
         </button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
-          <select style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
             {(() => {
               const marketTypes = [...new Map(accounts.map(a => [a.market_type, a.market_name])).entries()]
@@ -485,8 +488,8 @@ export default function ReturnsPage() {
               ])
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{COMPLETION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
-          <select style={{ ...inputStyle, width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+          <select style={{ ...makeInputStyle(c), width: '110px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}><option value="">전체내역</option>{COMPLETION_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+          <select style={{ ...makeInputStyle(c), width: '92px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={50}>50개 보기</option><option value={100}>100개 보기</option><option value={200}>200개 보기</option><option value={500}>500개 보기</option>
           </select>
         </div>
@@ -494,16 +497,16 @@ export default function ReturnsPage() {
 
       {/* 등록 폼 */}
       {showForm && (
-        <div style={{ ...card, padding: '1.5rem', marginBottom: '1rem' }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem', marginBottom: '1rem' }}>
           <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem' }}>반품/교환 등록</h3>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
             <div>
               <label style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem', display: 'block' }}>주문 ID</label>
-              <input style={inputStyle} value={form.order_id} onChange={(e) => setForm({ ...form, order_id: e.target.value })} />
+              <input style={makeInputStyle(c)} value={form.order_id} onChange={(e) => setForm({ ...form, order_id: e.target.value })} />
             </div>
             <div>
               <label style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem', display: 'block' }}>유형</label>
-              <select style={inputStyle} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+              <select style={makeInputStyle(c)} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
                 <option value='return'>반품</option>
                 <option value='exchange'>교환</option>
                 <option value='cancel'>취소</option>
@@ -513,7 +516,7 @@ export default function ReturnsPage() {
             <div>
               <label style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem', display: 'block' }}>사유 선택</label>
               <select
-                style={inputStyle}
+                style={makeInputStyle(c)}
                 value={form.reason}
                 onChange={(e) => setForm({ ...form, reason: e.target.value })}
               >
@@ -528,7 +531,7 @@ export default function ReturnsPage() {
                 {form.reason ? '추가 상세 사유' : '사유 직접입력'}
               </label>
               <input
-                style={inputStyle}
+                style={makeInputStyle(c)}
                 value={form.customReason}
                 onChange={(e) => setForm({ ...form, customReason: e.target.value })}
                 placeholder={form.reason ? '추가 설명 (선택)' : '반품/교환 사유를 입력하세요'}
@@ -536,22 +539,22 @@ export default function ReturnsPage() {
             </div>
             <div>
               <label style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem', display: 'block' }}>수량</label>
-              <input type='number' style={inputStyle} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} />
+              <input type='number' style={makeInputStyle(c)} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: Number(e.target.value) })} />
             </div>
             <div>
               <label style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.375rem', display: 'block' }}>요청 금액</label>
-              <input type='number' style={inputStyle} value={form.requested_amount} onChange={(e) => setForm({ ...form, requested_amount: Number(e.target.value) })} />
+              <input type='number' style={makeInputStyle(c)} value={form.requested_amount} onChange={(e) => setForm({ ...form, requested_amount: Number(e.target.value) })} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-            <button onClick={() => setShowForm(false)} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
-            <button onClick={handleSubmit} style={{ ...btn('primary'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>저장</button>
+            <button onClick={() => setShowForm(false)} style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
+            <button onClick={handleSubmit} style={{ ...btn('primary', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>저장</button>
           </div>
         </div>
       )}
 
       {/* 테이블 */}
-      <div style={card}>
+      <div style={makeCard(c)}>
         <div style={{ overflowX: 'auto' }}>
           {loading ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</div>
@@ -584,10 +587,12 @@ export default function ReturnsPage() {
                   <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>원주문</th>
                 </tr>
               </thead>
-              <tbody>
-                {filteredReturns.map((r, idx) => {
+              {/* 한 반품건 = tr 2줄 세트. Fragment 대신 건별 <tbody>로 묶고 tbody에 hover 클래스를
+                  붙여 마우스가 어느 줄에 있든 두 줄이 함께 강조되게 한다.
+                  (table의 다중 tbody는 HTML상 유효, 렌더 결과·레이아웃 동일) */}
+              {filteredReturns.map((r, idx) => {
                   return (
-                    <Fragment key={r.id}>
+                    <tbody key={r.id} className="samba-row-hover">
                       <tr>
                         <td rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.5rem', verticalAlign: 'middle' }}>
                           <div style={{ fontSize: '0.675rem', color: c.textMuted, marginBottom: '2px' }}>{idx + 1}</div>
@@ -908,13 +913,12 @@ export default function ReturnsPage() {
                         </select>
                       </td>
                       </tr>
-                    </Fragment>
+                    </tbody>
                   )
                 })}
-                {dedupedReturns.length === 0 && (
-                  <tr><td colSpan={13} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>반품/교환 내역이 없습니다</td></tr>
-                )}
-              </tbody>
+              {dedupedReturns.length === 0 && (
+                <tbody><tr><td colSpan={13} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>반품/교환 내역이 없습니다</td></tr></tbody>
+              )}
             </table>
           )}
         </div>
@@ -926,7 +930,7 @@ export default function ReturnsPage() {
           <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '16px', padding: '2rem', width: '400px', maxWidth: '90vw' }}>
             <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>거절 사유 입력</h3>
             <input
-              style={inputStyle}
+              style={makeInputStyle(c)}
               placeholder="거절 사유를 입력하세요"
               value={rejectModal.reason}
               onChange={e => setRejectModal({ ...rejectModal, reason: e.target.value })}
@@ -934,8 +938,8 @@ export default function ReturnsPage() {
               autoFocus
             />
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
-              <button onClick={() => setRejectModal(null)} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
-              <button onClick={submitReject} style={{ ...btn('dangerSolid'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>거절</button>
+              <button onClick={() => setRejectModal(null)} style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
+              <button onClick={submitReject} style={{ ...btn('dangerSolid', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>거절</button>
             </div>
           </div>
         </div>
@@ -970,15 +974,15 @@ export default function ReturnsPage() {
             </div>
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               {addressModal.address && (
-                <button onClick={() => { navigator.clipboard.writeText(addressModal.address); showAlert('주소가 복사되었습니다', 'success') }} style={{ ...btn('secondary'), padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}>복사</button>
+                <button onClick={() => { navigator.clipboard.writeText(addressModal.address); showAlert('주소가 복사되었습니다', 'success') }} style={{ ...btn('secondary', c), padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}>복사</button>
               )}
-              <button onClick={() => setAddressModal(null)} style={{ ...btn('ghost'), padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}>닫기</button>
+              <button onClick={() => setAddressModal(null)} style={{ ...btn('ghost', c), padding: '0.55rem 1.1rem', fontSize: '0.85rem' }}>닫기</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 상품위치 수정 모달 */}      {locationModal && (        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>상품위치 수정</h3>            {locationModal.address && (              <div style={{ padding: '0.75rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: c.text, lineHeight: 1.5 }}>                <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>전체 주소</span><br/>                {locationModal.address}              </div>            )}            <input style={inputStyle} placeholder="시/군/구 입력" value={locationModal.value} onChange={e => setLocationModal({ ...locationModal, value: e.target.value })} onKeyDown={async e => { if (e.key === 'Enter') { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) } }} autoFocus />            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>              <button onClick={() => setLocationModal(null)} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>              <button onClick={async () => { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) }} style={{ ...btn('primary'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>저장</button>            </div>          </div>        </div>      )}
+      {/* 상품위치 수정 모달 */}      {locationModal && (        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>          <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '16px', padding: '2rem', width: '420px', maxWidth: '90vw' }}>            <h3 style={{ fontSize: '1.125rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>상품위치 수정</h3>            {locationModal.address && (              <div style={{ padding: '0.75rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', color: c.text, lineHeight: 1.5 }}>                <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>전체 주소</span><br/>                {locationModal.address}              </div>            )}            <input style={makeInputStyle(c)} placeholder="시/군/구 입력" value={locationModal.value} onChange={e => setLocationModal({ ...locationModal, value: e.target.value })} onKeyDown={async e => { if (e.key === 'Enter') { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) } }} autoFocus />            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', marginTop: '1rem' }}>              <button onClick={() => setLocationModal(null)} style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>              <button onClick={async () => { const val = locationModal.value.trim(); setReturns(prev => prev.map(x => x.id === locationModal.id ? { ...x, product_location: val } : x)); try { await returnApi.patch(locationModal.id, { product_location: val }) } catch (_e) { /* */ } setLocationModal(null) }} style={{ ...btn('primary', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>저장</button>            </div>          </div>        </div>      )}
       {/* 교환 액션 선택 모달 */}
       {exchangeActionItem && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
@@ -987,8 +991,8 @@ export default function ReturnsPage() {
             <p style={{ fontSize: '0.8125rem', color: c.textMuted, marginBottom: '1.5rem' }}>주문번호: {exchangeActionItem.order_number || exchangeActionItem.order_id || '-'}</p>
             {!reshipStep ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <button onClick={() => setReshipStep(true)} style={{ ...btn('primary'), padding: '0.75rem', fontSize: '0.875rem' }}>교환재배송</button>
-                <button onClick={() => handleExchangeAction(exchangeActionItem, 'convert_return')} style={{ ...btn('secondary'), padding: '0.75rem', fontSize: '0.875rem' }}>반품변경</button>
+                <button onClick={() => setReshipStep(true)} style={{ ...btn('primary', c), padding: '0.75rem', fontSize: '0.875rem' }}>교환재배송</button>
+                <button onClick={() => handleExchangeAction(exchangeActionItem, 'convert_return')} style={{ ...btn('secondary', c), padding: '0.75rem', fontSize: '0.875rem' }}>반품변경</button>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -1010,14 +1014,14 @@ export default function ReturnsPage() {
                 />
                 <button
                   onClick={() => handleExchangeAction(exchangeActionItem, 'reship', { tracking_number: reshipForm.tracking_number, shipping_company: reshipForm.shipping_company })}
-                  style={{ ...btn('primary'), padding: '0.75rem', fontSize: '0.875rem' }}
+                  style={{ ...btn('primary', c), padding: '0.75rem', fontSize: '0.875rem' }}
                 >재배송 처리</button>
               </div>
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
               <button
                 onClick={() => { setExchangeActionItem(null); setReshipStep(false); setReshipForm({ tracking_number: '', shipping_company: '롯데택배' }) }}
-                style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
+                style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
               >닫기</button>
             </div>
           </div>

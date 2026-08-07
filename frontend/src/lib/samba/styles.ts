@@ -3,6 +3,8 @@
  * policies, settings 등 여러 페이지에서 공유
  */
 
+import type { Palette } from './colors'
+
 export const LOG_FONT_FAMILY = 'Consolas, "Malgun Gothic", "Noto Sans KR", monospace'
 
 export const card = {
@@ -23,6 +25,31 @@ export const inputStyle = {
   outline: 'none',
   boxSizing: 'border-box' as const,
 }
+
+/**
+ * 테마 반응형 카드 스타일 팩토리 — card 상수와 모양은 동일, 색만 팔레트 참조.
+ * 위의 card/inputStyle 상수는 policies·settings 등 다크 고정 화면이 쓰므로 값 변경 금지(하위호환).
+ * 라이트/다크 토글 화면은 useTheme()의 c를 넘겨 makeCard(c)/makeInputStyle(c)를 쓴다.
+ */
+export const makeCard = (c: Palette) => ({
+  background: c.surface,
+  backdropFilter: 'blur(20px)',
+  border: `1px solid ${c.border}`,
+  borderRadius: '12px',
+})
+
+/** 테마 반응형 입력칸 스타일 팩토리 — inputStyle 상수와 모양은 동일, 색만 팔레트 참조 */
+export const makeInputStyle = (c: Palette) => ({
+  width: '100%',
+  padding: '0.5rem 0.75rem',
+  background: c.inputBg,
+  border: `1px solid ${c.border}`,
+  borderRadius: '6px',
+  color: c.text,
+  fontSize: '0.875rem',
+  outline: 'none',
+  boxSizing: 'border-box' as const,
+})
 
 /** 숫자 포맷 (콤마 구분) */
 export function fmtNum(v: number | string | null | undefined): string {

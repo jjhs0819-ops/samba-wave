@@ -696,6 +696,10 @@ export default function SambaLayout({
           0%, 100% { box-shadow: 0 0 0 2px ${c.pageBg}, 0 0 0 0 rgba(255, 68, 68, 0.6); }
           50% { box-shadow: 0 0 0 2px ${c.pageBg}, 0 0 0 6px rgba(255, 68, 68, 0); }
         }
+        /* 테이블 행 hover 강조 — tr 또는 건별 tbody에 클래스를 붙여 쓴다.
+           주문탭 행은 인라인 background(취소경고 틴트)를 가져 !important 없이는 hover가 안 먹음 */
+        .samba-row-hover { transition: background-color 0.12s; }
+        .samba-row-hover:hover { background: ${c.rowHover} !important; }
       `}</style>
     </div>
   );
