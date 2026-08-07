@@ -965,6 +965,13 @@ class ImageTransformService:
         # 있으나(아래 fashionplus 분기) R2 선미러 목록엔 누락 → 추가. 우리 서버는
         # 다운로드 가능(200 실측) → R2 선미러 후 SSG 재전송 시 상품컷 정상 표시.
         "fashionplus.co.kr",
+        # 더현대Hi CDN — 대표/추가는 image.thehyundai.com, 상세는 hica.thehyundai.com
+        # (더현대 이미지 프록시)과 nimg/img.lfmall.co.kr(LF몰, 질스튜어트 등 LF 브랜드).
+        # 미러 없이 전송하면 ①마켓 상세/상품컷에 소싱처 도메인이 그대로 노출되고
+        # ②롯데홈처럼 서버가 직접 fetch·검증하는 마켓은 규격 보정(500 정사각)을
+        # 건너뛰어 반려된다. 우리 서버는 다운로드 가능(2026-08-07 실측 200) → 선미러.
+        "thehyundai.com",
+        "lfmall.co.kr",
         # ★2026-07-26 제거(원복). GS샵 상세컷 호스트(image.ellotte.com,
         # lotteeps.com, ykpartner.com, brandimages.co.kr)를 2026-07-25 에 여기
         # 추가했으나, 이 호스트들은 상품컷과 함께 **타사몰 안내배너·브랜드
@@ -1557,15 +1564,29 @@ class ImageTransformService:
     )
 
     @classmethod
-    def strip_foreign_notice_imgs_in_html(cls, html: str) -> str:
+    def strip_foreign_notice_imgs_in_html(cls, html: str, source_site: str = "") -> str:
         """타사 몰 안내/로고 배너 <img> 를 제거. 미러링 **이전**에 호출할 것.
 
         상품컷은 건드리지 않는다 — URL 조각 화이트리스트 매칭이라 오탐 위험이 낮다.
         제거분은 warning 으로 남겨 패턴 누락을 조기에 발견한다.
+
+        ★source_site="THEHYUNDAI" 면 현대 계열 호스트 차단을 건너뛴다.
+        `thehyundai.com`/`hmall.com` 패턴은 **GS샵 소싱분에 섞여 들어온 현대백화점
+        홍보배너**를 막으려고 넣은 것인데(2026-07-26), 더현대를 직접 소싱하면
+        상세 이미지가 전부 그 호스트다 — `hica.thehyundai.com/S/<외부호스트>/…`
+        (프록시 경유 상품컷)와 `image.thehyundai.com/CO/EDITOR/…`(에디터 본문).
+        예외 없이 적용하면 상세가 통째로 사라진다(2026-08-07 실측: 질스튜어트
+        400건 표본의 매칭 URL 186개가 전부 상품 콘텐츠, 홍보배너 0건).
         """
         if not html:
             return html
         import re as _re
+
+        _parts = cls._FOREIGN_NOTICE_URL_PARTS
+        if (source_site or "").upper() == "THEHYUNDAI":
+            _parts = tuple(
+                p for p in _parts if p not in ("thehyundai.com", "hmall.com")
+            )
 
         removed: dict[str, int] = {}
 
@@ -1577,7 +1598,7 @@ class ImageTransformService:
             if not src:
                 return tag
             url = src.group(1).lower()
-            for part in cls._FOREIGN_NOTICE_URL_PARTS:
+            for part in _parts:
                 if part in url:
                     removed[part] = removed.get(part, 0) + 1
                     return ""
@@ -1599,15 +1620,34 @@ class ImageTransformService:
 
         - 이미 실제 `src` 가 있는 태그는 그대로 둔다(플레이스홀더 유지가 안전).
         - `src` 가 없는 태그만 `data-src` → `src` 로 이름 변경.
+        - ★단, `src` 가 **빈 플레이스홀더**면 `data-src` 실주소로 덮어쓴다.
+          더현대Hi 상세는 `src="//hica.thehyundai.com/lz/t.gif?w=840&h=1280"`
+          (1.8KB 투명 GIF) + `data-src=실주소` 구조라, "src 있음"으로 건너뛰면
+          상세 전체가 빈 이미지로 등록된다(2026-08-07 실측, 질스튜어트 328/2417건).
         """
         if not html or "data-src" not in html:
             return html
         import re as _re
 
+        # lazy 플레이스홀더 판별 — 실제 상품컷이 아닌 투명/스페이서 이미지
+        _PLACEHOLDER = _re.compile(
+            r"(/lz/t\.gif|blank\.gif|spacer\.gif|placeholder|^data:image/)",
+            _re.IGNORECASE,
+        )
+
         def _fix(m: "_re.Match[str]") -> str:
             tag = m.group(0)
-            # `data-src=` 를 제외한 진짜 src 속성이 이미 있으면 손대지 않는다
-            if _re.search(r'(?<![\w-])src\s*=', tag, _re.IGNORECASE):
+            _data_src = _re.search(
+                r'(?<![\w-])data-src\s*=\s*["\']([^"\']+)["\']', tag, _re.IGNORECASE
+            )
+            # `data-src=` 를 제외한 진짜 src 속성
+            _src = _re.search(
+                r'(?<![\w-])src\s*=\s*["\']([^"\']*)["\']', tag, _re.IGNORECASE
+            )
+            if _src:
+                # src 가 플레이스홀더이고 data-src 에 실주소가 있으면 교체
+                if _data_src and _PLACEHOLDER.search(_src.group(1)):
+                    return tag[: _src.start(1)] + _data_src.group(1) + tag[_src.end(1) :]
                 return tag
             return _re.sub(r'(?<![\w-])data-src(\s*=)', r"src\1", tag, flags=_re.I)
 

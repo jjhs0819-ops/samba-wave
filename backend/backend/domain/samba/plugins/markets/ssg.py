@@ -478,7 +478,7 @@ class SSGPlugin(MarketPlugin):
                     #    우리 CDN URL 이 되어 아래 strip 이 못 거른다.
                     #    (신세계몰 상품에 롯데백화점/GS SHOP 로고 노출 방지)
                     _detail_html = _img_svc.strip_foreign_notice_imgs_in_html(
-                        _detail_html
+                        _detail_html, source_site=str(product.get("source_site") or "")
                     )
                     # ① 지연로딩 data-src → src 승격. 소싱처 상세는 상품컷이
                     #    data-src 인 경우가 있어, 그대로 두면 미러돼도 렌더링 안 됨.

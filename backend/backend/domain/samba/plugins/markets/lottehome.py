@@ -1138,8 +1138,24 @@ class LotteHomePlugin(MarketPlugin):
                         _,
                     ) = await _img_svc.mirror_oversized_to_r2(_dimgs1)
                 if _detail_html:
+                    # 타사 몰 안내배너 제거 — 미러링 **전에** 해야 한다. 미러 후엔
+                    # 우리 CDN URL 이 되어 걸러내지 못한다(SSG 경로와 동일).
+                    # 롯데홈 상세에 더현대/신세계 등 타사몰 로고·주문안내가 노출되는 것 방지.
+                    _detail_html = _img_svc.strip_foreign_notice_imgs_in_html(
+                        _detail_html, source_site=str(product.get("source_site") or "")
+                    )
+                    # 지연로딩 data-src → src 승격 (SSG 경로와 동일).
+                    # 더현대 등 일부 소싱처는 상세 <img src> 에 1.8KB 빈 GIF
+                    # (hica.thehyundai.com/lz/t.gif) 를 넣고 실주소를 data-src 에 둔다.
+                    # 승격하지 않으면 미러 대상도 못 잡고 상세가 빈 화면으로 등록된다.
+                    _detail_html = _img_svc.normalize_lazy_img_src(_detail_html)
                     _html1 = await _img_svc.mirror_urls_in_html(_detail_html)
-                    product["detail_html"] = await _img_svc.mirror_oversized_in_html(
+                    _html1 = await _img_svc.mirror_oversized_in_html(_html1)
+                    # 미러 실패로 남은 외부 <img> 제거 (SSG 경로와 동일).
+                    # 소싱처 도메인이 상세에 그대로 노출되는 것을 막는다. 실측상
+                    # 남는 것들은 lazy 플레이스홀더(67~1,198B 빈 GIF)·깨진 판매자
+                    # 공지(316B)·타몰 UI 라벨 gif 뿐이라 상품컷 손실이 없다.
+                    product["detail_html"] = await _img_svc.strip_external_imgs_in_html(
                         _html1
                     )
         except Exception as e:
