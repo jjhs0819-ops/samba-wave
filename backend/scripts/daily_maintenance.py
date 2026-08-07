@@ -637,10 +637,14 @@ async def task_soldout_cleanup(conn: asyncpg.Connection) -> dict:
         deleted_db = len(ids)
 
     # 마켓 등록된 품절 → 백엔드 API 호출
+    # price_locked 제외 [2026-08-08] — 고정가 상품은 소스 품절돼도 리스팅 유지가 원칙인데
+    # 이 가드가 없어서 daily_maintenance가 eBay GTC 리스팅을 영구 종료시킨 사고 발생
+    # (잉어킹 프로모 카드, 재고10 남았는데 market-delete로 종료 → 조회925/판매23건 이력 유실).
     with_market = await conn.fetch("""
         SELECT id, registered_accounts::text AS ra
         FROM samba_collected_product
         WHERE sale_status = 'sold_out'
+          AND COALESCE(price_locked, FALSE) = FALSE
           AND registered_accounts IS NOT NULL
           AND registered_accounts::text NOT IN ('null', '[]', '')
           AND jsonb_typeof(registered_accounts::jsonb) = 'array'
