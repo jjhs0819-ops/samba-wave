@@ -7,7 +7,7 @@ import {
   type SambaMarketAccount,
   type MessageLog,
 } from '@/lib/samba/api/commerce'
-import { forbiddenApi } from '@/lib/samba/legacy'
+import { forbiddenApi, orderApi } from '@/lib/samba/legacy'
 import { showAlert } from '@/components/samba/Modal'
 
 interface SmsTemplate {
@@ -25,11 +25,16 @@ const DEFAULT_SMS_TEMPLATES: SmsTemplate[] = [
   { id: 't6', label: '발주 후 품절', msg: '{{marketName}} 품절안내\n주문상품 : {{goodsName}}\n\n안녕하세요 {{rvcName}} 고객님. 저희가 해당 제품 발주를 넣었는데 공급처에서 품절이라고 연락이 왔습니다.\n취소 처리 도와드리겠습니다.' },
 ]
 
-export function useSmsMessage(accounts: SambaMarketAccount[]) {
+export function useSmsMessage(
+  accounts: SambaMarketAccount[],
+  // 전화번호 저장 성공 시 주문 목록의 해당 행만 즉시 갱신하는 콜백 (page.tsx의 patchOrder)
+  onOrderPatch?: (id: string, patch: Partial<SambaOrder>) => void,
+) {
   const [msgModal, setMsgModal] = useState<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>(null)
   const [msgText, setMsgText] = useState('')
   const [msgPhone, setMsgPhone] = useState('')
   const [msgSending, setMsgSending] = useState(false)
+  const [msgPhoneSaving, setMsgPhoneSaving] = useState(false)
   const msgTextRef = useRef<HTMLTextAreaElement>(null)
   const [msgHistory, setMsgHistory] = useState<MessageLog[]>([])
   const [sentFlags, setSentFlags] = useState<Record<string, { sms: boolean; kakao: boolean }>>({})
@@ -140,6 +145,36 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
     proxyApi.fetchMessageHistory(order.id).then(setMsgHistory).catch(() => {})
   }
 
+  // 전화번호 [저장] — 사장님이 버튼을 눌렀을 때만 DB에 기록 (자동 저장 금지)
+  // 발송(handleSendMsg)은 저장 없이 임시 수정 번호로 보내는 기존 동작 유지
+  const handleSavePhone = async () => {
+    if (!msgModal) return
+    const phone = msgPhone.replace(/[^0-9]/g, '') // 발송 시 정규화와 동일 규칙
+    if (!phone) {
+      showAlert('저장할 전화번호를 입력해주세요', 'error')
+      return
+    }
+    if (phone.length < 9 || phone.length > 11) {
+      showAlert('전화번호는 숫자 9~11자리여야 합니다', 'error')
+      return
+    }
+    setMsgPhoneSaving(true)
+    try {
+      await orderApi.update(msgModal.order.id, { customer_phone: phone })
+      // 주문 목록의 해당 행만 갱신 — 전체 재조회 없이 화면 즉시 반영
+      onOrderPatch?.(msgModal.order.id, { customer_phone: phone })
+      // 모달이 들고 있는 주문 스냅샷도 갱신 — {{rcvHPNo}} 치환·재열람 시 일관성 유지
+      setMsgModal(prev => (prev ? { ...prev, order: { ...prev.order, customer_phone: phone } } : prev))
+      setMsgPhone(phone)
+      showAlert('전화번호가 저장되었습니다', 'success')
+    } catch (e) {
+      console.error('전화번호 저장 실패:', e)
+      showAlert(e instanceof Error ? e.message : '전화번호 저장 실패', 'error')
+    } finally {
+      setMsgPhoneSaving(false)
+    }
+  }
+
   const handleSendMsg = async () => {
     if (!msgModal || !msgText.trim()) {
       showAlert('메시지를 입력해주세요', 'error')
@@ -188,6 +223,8 @@ export function useSmsMessage(accounts: SambaMarketAccount[]) {
     msgText, setMsgText,
     msgPhone, setMsgPhone,
     msgSending,
+    msgPhoneSaving,
+    handleSavePhone,
     msgTextRef,
     msgHistory,
     sentFlags, setSentFlags,

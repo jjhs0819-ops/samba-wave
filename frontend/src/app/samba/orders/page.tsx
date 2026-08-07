@@ -127,12 +127,21 @@ export default function OrdersPage() {
   const [priceHistoryProduct, setPriceHistoryProduct] = useState<{ name: string; source_site: string }>({ name: '', source_site: '' })
 
 
-  const sms = useSmsMessage(accounts)
+  // 주문 목록에서 해당 행만 부분 갱신 (전체 재조회 없이 즉시 반영)
+  // — SMS 모달 전화번호 저장(useSmsMessage)에도 주입하므로 훅 호출보다 먼저 선언
+  const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
+    setOrders(prev => prev.map(order => (
+      order.id === id ? { ...order, ...patch } : order
+    )))
+  }, [])
+
+  const sms = useSmsMessage(accounts, patchOrder)
   const {
     msgModal, setMsgModal,
     msgText, setMsgText,
     msgPhone, setMsgPhone,
     msgSending, msgTextRef, msgHistory,
+    msgPhoneSaving, handleSavePhone,
     sentFlags, setSentFlags,
     smsTemplates,
     templateEditModal, setTemplateEditModal,
@@ -219,12 +228,6 @@ export default function OrdersPage() {
     }
     setLoading(false)
   }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, invoiceFilter, registrationFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
-
-  const patchOrder = useCallback((id: string, patch: Partial<SambaOrder>) => {
-    setOrders(prev => prev.map(order => (
-      order.id === id ? { ...order, ...patch } : order
-    )))
-  }, [])
 
   const applySearch = useCallback(() => {
     setCurrentPage(1)
@@ -1045,6 +1048,8 @@ export default function OrdersPage() {
         setMsgPhone={setMsgPhone}
         msgTextRef={msgTextRef}
         msgSending={msgSending}
+        msgPhoneSaving={msgPhoneSaving}
+        handleSavePhone={handleSavePhone}
         msgHistory={msgHistory}
         smsTemplates={smsTemplates}
         insertMsgTag={insertMsgTag}

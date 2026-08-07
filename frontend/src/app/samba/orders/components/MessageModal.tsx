@@ -29,6 +29,8 @@ interface Props {
   setMsgPhone: Dispatch<SetStateAction<string>>
   msgTextRef: RefObject<HTMLTextAreaElement | null>
   msgSending: boolean
+  msgPhoneSaving: boolean
+  handleSavePhone: () => void | Promise<void>
   msgHistory: MessageLog[]
   smsTemplates: SmsTemplate[]
   insertMsgTag: (tag: string) => void
@@ -45,6 +47,7 @@ export default function MessageModal(props: Props) {
     msgText, setMsgText,
     msgPhone, setMsgPhone,
     msgTextRef, msgSending, msgHistory,
+    msgPhoneSaving, handleSavePhone,
     smsTemplates, insertMsgTag,
     openEditTemplate, openNewTemplate, deleteTemplate,
     handleSendMsg,
@@ -74,6 +77,20 @@ export default function MessageModal(props: Props) {
                 placeholder="01012345678"
                 style={{ width: '140px', padding: '0.25rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text, fontSize: '0.8125rem', outline: 'none' }}
               />
+              {/* 수정한 번호를 주문 DB에 저장 — 누를 때만 저장 (발송은 저장 없이도 가능) */}
+              <button
+                onClick={handleSavePhone}
+                disabled={msgPhoneSaving}
+                title="수정한 전화번호를 주문에 저장"
+                style={{
+                  ...btn('secondary'),
+                  ...(msgPhoneSaving ? btnDisabled : null),
+                  padding: '0.25rem 0.625rem',
+                  fontSize: '0.75rem',
+                }}
+              >
+                {msgPhoneSaving ? '저장중...' : '저장'}
+              </button>
             </div>
           </div>
           <div>
