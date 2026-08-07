@@ -350,6 +350,25 @@ class CoupangPlugin(MarketPlugin):
             _main = product.get("coupang_main_image") or ""
             _detail_html = product.get("detail_html") or ""
 
+            # (2026-08-07) 핫링크 차단 CDN 선미러 — lotteon/msscdn 등 외부 CDN
+            # 직링크가 그대로 나가면 쿠팡 검수 화면에서 이미지가 안 떠
+            # "상세페이지 미업로드" 반려가 난다(실사고: 롯데온 소싱 609건).
+            # mirror_oversized_to_r2 는 용량·픽셀 기준만 봐서 정상 용량의 차단
+            # CDN을 통과시킴 → 롯데홈 플러그인과 동일하게 mirror_with_persistence
+            # (차단 CDN → R2 + image_mirror_map 영속)를 먼저 태운다.
+            _pid = product.get("id")
+            if _images:
+                _images, _ = await _img_svc.mirror_with_persistence(_pid, _images)
+            if _detail_images:
+                _detail_images, _ = await _img_svc.mirror_with_persistence(
+                    _pid, _detail_images
+                )
+            if _main:
+                _m1, _ = await _img_svc.mirror_with_persistence(_pid, [_main])
+                _main = _m1[0] if _m1 else _main
+            if _detail_html:
+                _detail_html = await _img_svc.mirror_urls_in_html(_detail_html)
+
             if _images:
                 product["images"], _, _ = await _img_svc.mirror_oversized_to_r2(
                     _images, **_kw
