@@ -24,10 +24,17 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 # proxy.coupang import 시 BackendSettings(DB env)가 필요 — 테스트는 DB 무관
 for _k, _v in {
-    "WRITE_DB_USER": "x", "WRITE_DB_PASSWORD": "x", "WRITE_DB_HOST": "x",
-    "WRITE_DB_PORT": "5432", "WRITE_DB_NAME": "x",
-    "READ_DB_USER": "x", "READ_DB_PASSWORD": "x", "READ_DB_HOST": "x",
-    "READ_DB_PORT": "5432", "READ_DB_NAME": "x", "JWT_SECRET_KEY": "x",
+    "WRITE_DB_USER": "x",
+    "WRITE_DB_PASSWORD": "x",
+    "WRITE_DB_HOST": "x",
+    "WRITE_DB_PORT": "5432",
+    "WRITE_DB_NAME": "x",
+    "READ_DB_USER": "x",
+    "READ_DB_PASSWORD": "x",
+    "READ_DB_HOST": "x",
+    "READ_DB_PORT": "5432",
+    "READ_DB_NAME": "x",
+    "JWT_SECRET_KEY": "x",
 }.items():
     os.environ.setdefault(_k, _v)
 
@@ -69,6 +76,6 @@ class TestContentsBlocks:
         src = (BACKEND_ROOT / "backend/domain/samba/proxy/coupang.py").read_text(
             encoding="utf-8"
         )
-        assert '"contentsType": "HTML"' not in src.replace(
-            "contentsType=HTML", ""
-        ), "HTML 단일 블록 조립이 부활함 — 타입 짝 반려 재발"
+        assert '"contentsType": "HTML"' not in src.replace("contentsType=HTML", ""), (
+            "HTML 단일 블록 조립이 부활함 — 타입 짝 반려 재발"
+        )

@@ -1761,7 +1761,7 @@ def _decide_price_action(
             target = max(no_comp, min_price)
         elif market_target == min_price - 1000:
             target = min_price - 1000
-        elif market_target <= min_price:
+        elif market_target < min_price:
             # [2026-08-04] 1등 가격(market_target)이 마진 하한보다 낮으면 1등이 불가능하다.
             # 여기서 min_price 로 올려놓으면 시장최저보다 비싼 값이라 **2등이 확정**되고,
             # 체결도 안 되면서 계속 유지된다(판매자센터 '일반 입찰 순번 2' 다수).
@@ -1769,6 +1769,15 @@ def _decide_price_action(
             # 못 걸러 이 틈으로 샜다(예: market_low 500,000 / min_price 499,500 /
             # market_target 499,000 → 삭제도 안 되고 1등도 못 감).
             # 2등 입찰은 체결되지 않으므로 유지할 이유가 없다 → 삭제로 보낸다.
+            #
+            # [2026-08-07] 비교를 `<=` → `<` 로 고친다. **경계 1틱이 통째로 버려지고 있었다.**
+            # market_target == min_price 는 "마진 하한을 정확히 지키면서 1등이 되는 가격"이라
+            # 삭제가 아니라 등록·유지 대상이다. 그런데 `<=` 라서 이 건들이 전부 지워졌다.
+            #   실측(2026-08-07 삭제상세 로그, 표본 20건 중 9건 = 45%):
+            #     495687|280 내가격191,000 시장최저190,000 최소가189,000 → market_target 189,000
+            #     38207|280  내가격152,000 시장최저151,000 최소가150,000 → market_target 150,000
+            #   전부 1등 가능한데 삭제됐다. 사이클당 1등불가 996건 중 약 450건이 이 경우다.
+            # 삭제와 등록이 같은 판정기를 쓰므로 리스톡 재등록도 함께 막혀 영구 손실이었다.
             return "1등불가삭제", 0, True, False
         else:
             target = max(market_target, min_price)
