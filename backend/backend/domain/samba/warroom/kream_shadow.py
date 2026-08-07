@@ -162,6 +162,15 @@ async def _load_live_ranks(
         rest = []
     target = pri + rest
     if not target:
+        # [2026-08-07] 조용히 건너뛰던 자리. KREAM_RANK_SCAN_MAX 미설정(기본 0) + 우선분
+        # 미지정이면 target 이 비어 실순위를 **한 건도 안 받는다**. 그러면 판정은 전부
+        # cur <= market_low 추정으로 떨어지는데, market_low 에는 내 입찰이 섞여 있어
+        # 동가 경합에서 내가 몇 등인지 알 수 없다. 꺼져 있다는 사실이라도 남긴다.
+        logger.info(
+            "[크림통합] 실순위 조회 건너뜀 — 대상0건 (KREAM_RANK_SCAN_MAX=%d). "
+            "순위는 시세 추정으로 판정",
+            _RANK_SCAN_MAX,
+        )
         return
     _t = _time_mod.time()
     _g_live_rank = await _fetch_live_ranks(h, target)
@@ -2941,15 +2950,17 @@ async def _process_shoe_asks(
                 continue
             c["stock"] += 1
             cur = int(a.get("price") or 0)
-            _floor_map[(kid, opt)] = calc_min_price(
-                price, rate, True, False, _sur, fee_kind="item"
-            )
+            _min_p = calc_min_price(price, rate, True, False, _sur, fee_kind="item")
+            _floor_map[(kid, opt)] = _min_p
+            _lo = int(a.get("lowest_overseas_price") or 0)
+            _ln = int(a.get("lowest_normal_price") or 0)
+            _lk = int(a.get("lowest_100_price") or 0)
             act, target, adjusting, is_nc = _decide_price_action(
                 cur,
                 opt,
                 price,
-                int(a.get("lowest_overseas_price") or 0),
-                int(a.get("lowest_normal_price") or 0),
+                _lo,
+                _ln,
                 (kid, opt) in cooldown,
                 0,
                 rate,
@@ -2958,7 +2969,7 @@ async def _process_shoe_asks(
                 surcharge_rate=_sur,
                 fee_kind="item",  # 신발·의류·시계 = 2,750 + 6.16%
                 live_rank=_g_live_rank.get(str(a.get("id"))),
-                low_keep=int(a.get("lowest_100_price") or 0),
+                low_keep=_lk,
             )
             if act in ("국내못이김삭제", "1등불가삭제"):
                 if not _price_del_take():
@@ -2970,6 +2981,35 @@ async def _process_shoe_asks(
                         c["del_rank1"] = c.get("del_rank1", 0) + 1
                     else:
                         c["del_domestic"] = c.get("del_domestic", 0) + 1
+                    # [2026-08-07] 가격열위 삭제 **개별 계측**.
+                    # 종전엔 집계(del_rank1=996)만 남아 "무엇을 왜 지웠나"를 사후에 볼 수
+                    # 없었다. 삭제된 ask 는 live 목록에서 사라지므로 나중에 재판정해도
+                    # 생존분만 보여(생존 편향) 원인 추적이 불가능했다. 값을 그 자리에서 남긴다.
+                    _mk = min([x for x in (_lo, _ln, _lk) if x > 0] or [0])
+                    _bs = calc_base(price, rate, True, False, _sur)
+                    # 마진이 비율이 아니라 최소마진액에 걸린 건 = 마진율을 낮춰도 안 움직인다
+                    _by_floor = (_bs * POLICY["competitive_margin_rate"] / 100) < float(
+                        POLICY["min_margin_amount"]
+                    )
+                    if _by_floor:
+                        c["del_by_min_margin"] = c.get("del_by_min_margin", 0) + 1
+                    if c.get("del_log", 0) < 40:
+                        c["del_log"] = c.get("del_log", 0) + 1
+                        logger.info(
+                            "[크림통합] 삭제상세 %s %s — 내가격%s 시장최저%s(해외%s 국내%s 보관%s) "
+                            "최소가%s 원가¥%s %s%s",
+                            kid,
+                            opt,
+                            f"{cur:,}",
+                            f"{_mk:,}",
+                            f"{_lo:,}",
+                            f"{_ln:,}",
+                            f"{_lk:,}",
+                            f"{_min_p:,}",
+                            f"{int(price):,}",
+                            act,
+                            " [최소마진액지배]" if _by_floor else "",
+                        )
                     if _EXEC_SHOE and a.get("id"):
                         _pend_del.append((a.get("id"), kid, opt))
             elif adjusting and target != cur:
@@ -4111,7 +4151,24 @@ async def run_kream_unified_once() -> dict:
                         low_keep=int(_popt.get("lowest_100_price") or 0),
                     )
                     if "삭제" in _act or _tgt <= 0:
-                        _drop(f"리스톡보류({_act})", kid, _nm)
+                        # [2026-08-07] 등록이 막히는 진짜 이유를 값으로 남긴다.
+                        # 마진율을 14%→10% 로 낮춰도 등록이 안 늘던 원인이
+                        # min_margin_amount(금액 하한)에 걸린 건인지, 원가 자체가
+                        # 시장최저를 못 이기는 건인지 집계로는 구분이 안 됐다.
+                        #   margin = max(min_margin_amount, base × competitive_rate/100)
+                        # 앞항이 이기면 **마진율을 아무리 낮춰도 최소가가 안 내려간다**.
+                        _bs = calc_base(
+                            _pr, rate, True, False, POLICY["non_card_margin_rate"]
+                        )
+                        _by_floor = (
+                            _bs * POLICY["competitive_margin_rate"] / 100
+                        ) < float(POLICY["min_margin_amount"])
+                        _drop(
+                            f"리스톡보류({_act})"
+                            + ("[최소마진액지배]" if _by_floor else ""),
+                            kid,
+                            _nm,
+                        )
                         continue
                     r["rows"].append(
                         (
@@ -4935,8 +4992,8 @@ async def run_kream_unified_once() -> dict:
     # 갱신·삭제가 조회한 실시간값도 되쓰기 대상에 합친다(5126 _write_back_db_options).
     db_updates.extend(shoe.get("db_updates") or [])
     logger.info(
-        "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d[재고0:%d 1등불가:%d 국내못이김:%d 가격열위보류:%d] "
-        "보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
+        "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d[재고0:%d 1등불가:%d 국내못이김:%d 가격열위보류:%d "
+        "최소마진액지배:%d] 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
         shoe["total"],
         shoe.get("live_ok", 0),
         shoe["stock"],
@@ -4946,6 +5003,9 @@ async def run_kream_unified_once() -> dict:
         shoe.get("del_rank1", 0),
         shoe.get("del_domestic", 0),
         shoe.get("price_del_skip", 0),
+        # 마진율이 아니라 금액 하한(min_margin_amount)에 걸려 지워진 건.
+        # 이 수가 크면 마진율을 낮춰도 등록·유지가 안 늘어난다.
+        shoe.get("del_by_min_margin", 0),
         shoe["hold"],
         shoe["nocost"],
         shoe["patch"],

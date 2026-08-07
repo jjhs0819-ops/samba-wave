@@ -43,9 +43,7 @@ class TestRegisterCacheBust:
         for n in ast.walk(tree):
             if not isinstance(n, ast.Try):
                 continue
-            body_src = "".join(
-                ast.get_source_segment(text, b) or "" for b in n.body
-            )
+            body_src = "".join(ast.get_source_segment(text, b) or "" for b in n.body)
             final_src = "".join(
                 ast.get_source_segment(text, f) or "" for f in n.finalbody
             )
