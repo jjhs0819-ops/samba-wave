@@ -372,6 +372,17 @@ class PlayAutoClient:
         found = name_map.get(name)
         return found[0] if found else ""
 
+    def invalidate_name_master_cache(self) -> None:
+        """이름→MasterCode 캐시 즉시 무효화.
+
+        register 시도 직후에 호출한다. 등록(성공·타임아웃 불문) 이후에도 60초
+        캐시가 살아 있으면, 초 단위 재시도의 사전 중복조회가 방금 만든 상품을
+        못 보고 통과해 EMP 복제본이 쌓인다(2026-08-06 데상트 189건 실사고 —
+        복제본 생성 간격 6초 < TTL 60초). 캐시를 비워 다음 조회가 실목록을
+        다시 읽게 한다.
+        """
+        _NAME_MASTER_CACHE.pop(self.api_key, None)
+
     # ── 주문 API ──
 
     async def get_orders(

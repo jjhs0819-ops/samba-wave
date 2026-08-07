@@ -200,7 +200,15 @@ class PlayAutoPlugin(MarketPlugin):
                             "data": {"market_product_no": _dup_code},
                         }
                     logger.info("[플레이오토] 신규 등록(POST)")
-                    results = await client.register_product([emp_data])
+                    # register 시도 후에는 성공·실패·타임아웃 불문 이름캐시를
+                    # 비운다 — EMP에 상품이 만들어졌을 수 있는데 60초 캐시가
+                    # 살아 있으면 초 단위 재시도의 사전 중복조회가 그걸 못 보고
+                    # 통과해 복제본이 쌓인다(2026-08-06 데상트 189건: 복제 간격
+                    # 6초 < TTL 60초). finally라 타임아웃 예외 경로도 덮는다.
+                    try:
+                        results = await client.register_product([emp_data])
+                    finally:
+                        client.invalidate_name_master_cache()
 
             if not results:
                 return {
