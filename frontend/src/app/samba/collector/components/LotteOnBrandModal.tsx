@@ -108,13 +108,13 @@ export default function LotteOnBrandModal({
               }
             }}
             disabled={brandModalSelected.size === 0}
-            style={{ ...btn('primary'), ...(brandModalSelected.size === 0 ? btnDisabled : null), flex: 1, padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}
+            style={{ ...btn('primary', c), ...(brandModalSelected.size === 0 ? btnDisabled : null), flex: 1, padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}
           >
             카테고리 스캔 진행 ({fmtNum(brandModalSelected.size)}개)
           </button>
           <button
             onClick={onClose}
-            style={{ ...btn('ghost'), padding: '10px 16px', borderRadius: '8px', fontSize: '0.82rem' }}
+            style={{ ...btn('ghost', c), padding: '10px 16px', borderRadius: '8px', fontSize: '0.82rem' }}
           >
             취소
           </button>

@@ -1,8 +1,8 @@
 'use client'
 
-import { card, inputStyle } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import type { Palette } from '@/lib/samba/colors'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import {
   type ProxyConfigItem,
@@ -16,14 +16,19 @@ type Props = ProxySettingsState & Pick<ProxySettingsActions,
   'setProxyModalOpen' | 'setProxyForm' | 'setProxyFields'
 >
 
-const PURPOSE_STYLES: Record<ProxyPurpose, { bg: string; color: string; label: string }> = {
+// 테마 팔레트를 인자로 받는 팩토리 — 모듈 스코프 정적 팔레트(dark 고정) 참조 제거
+const makePurposeStyles = (c: Palette): Record<ProxyPurpose, { bg: string; color: string; label: string }> => ({
   transmit: { bg: 'rgba(0,200,150,0.1)', color: c.success, label: '전송' },
   collect: { bg: 'rgba(255,184,77,0.1)', color: c.warn, label: '수집' },
   autotune: { bg: '#e3f4f0', color: '#0f6a5b', label: '오토튠' },
-}
+})
 
 export function ProxySettingsPanel(props: Props) {
   const c = useTheme()
+  // 테마 반응형 카드/입력칸 스타일 (다크 팔레트에서는 기존 상수와 동일한 값)
+  const card = makeCard(c)
+  const inputStyle = makeInputStyle(c)
+  const PURPOSE_STYLES = makePurposeStyles(c)
   const {
     proxies,
     proxyModalOpen,
@@ -56,7 +61,7 @@ export function ProxySettingsPanel(props: Props) {
           </div>
           <button
             onClick={openProxyAdd}
-            style={{ ...btn('primary'), padding: '0.4rem 1rem', fontSize: '0.8125rem' }}
+            style={{ ...btn('primary', c), padding: '0.4rem 1rem', fontSize: '0.8125rem' }}
           >+ 추가</button>
         </div>
 
@@ -115,15 +120,15 @@ export function ProxySettingsPanel(props: Props) {
                       <button
                         onClick={() => testProxy(i)}
                         disabled={proxyTesting === i}
-                        style={{ ...btn('secondary'), ...(proxyTesting === i ? btnDisabled : null), padding: '2px 8px', fontSize: '0.75rem', marginRight: '4px' }}
+                        style={{ ...btn('secondary', c), ...(proxyTesting === i ? btnDisabled : null), padding: '2px 8px', fontSize: '0.75rem', marginRight: '4px' }}
                       >{proxyTesting === i ? '테스트중' : '테스트'}</button>
                       <button
                         onClick={() => openProxyEdit(i)}
-                        style={{ ...btn('secondary'), padding: '2px 8px', fontSize: '0.75rem', marginRight: '4px' }}
+                        style={{ ...btn('secondary', c), padding: '2px 8px', fontSize: '0.75rem', marginRight: '4px' }}
                       >수정</button>
                       <button
                         onClick={() => handleProxyDelete(i)}
-                        style={{ ...btn('danger'), padding: '2px 8px', fontSize: '0.75rem' }}
+                        style={{ ...btn('danger', c), padding: '2px 8px', fontSize: '0.75rem' }}
                       >삭제</button>
                     </td>
                   </tr>
@@ -202,9 +207,9 @@ export function ProxySettingsPanel(props: Props) {
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '1.25rem' }}>
               <button onClick={() => setProxyModalOpen(false)}
-                style={{ ...btn('ghost'), padding: '0.4rem 1rem', fontSize: '0.8125rem' }}>취소</button>
+                style={{ ...btn('ghost', c), padding: '0.4rem 1rem', fontSize: '0.8125rem' }}>취소</button>
               <button onClick={handleProxySave} disabled={proxySaving}
-                style={{ ...btn('primary'), ...(proxySaving ? btnDisabled : null), padding: '0.4rem 1rem', fontSize: '0.8125rem' }}>
+                style={{ ...btn('primary', c), ...(proxySaving ? btnDisabled : null), padding: '0.4rem 1rem', fontSize: '0.8125rem' }}>
                 {proxySaving ? '저장중...' : '저장'}
               </button>
             </div>

@@ -1,4 +1,5 @@
 import type { CSSProperties } from 'react'
+import { dark, type Palette } from '@/lib/samba/colors'
 import { fmtDateTime } from '@/lib/samba/utils'
 
 export interface License {
@@ -44,16 +45,17 @@ export const months = () => Array.from({ length: 12 }, (_, i) => i + 1)
 export const daysInMonth = (y: number, m: number) => new Date(y, m, 0).getDate()
 export const pad = (n: number) => String(n).padStart(2, '0')
 
-export const selectStyle: CSSProperties = {
-  padding: '0.35rem 0.5rem', fontSize: '0.8rem', background: '#1A1A1A',
-  border: '1px solid #333', color: '#E5E5E5', borderRadius: '4px', cursor: 'pointer',
-}
-export const thStyle: CSSProperties = {
-  padding: '0.6rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: '#888',
-}
-export const tdStyle: CSSProperties = {
-  padding: '0.5rem 1rem', textAlign: 'center', fontSize: '0.8rem', color: '#C5C5C5',
-}
+// 테마 반응형 스타일 팩토리 — 다크는 기존 값과 픽셀 동일 유지(정확 토큰 없는 색은 다크 원값 분기)
+export const makeSelectStyle = (c: Palette): CSSProperties => ({
+  padding: '0.35rem 0.5rem', fontSize: '0.8rem', background: c.inputBg,
+  border: `1px solid ${c === dark ? '#333' : c.border}`, color: c.text, borderRadius: '4px', cursor: 'pointer',
+})
+export const makeThStyle = (c: Palette): CSSProperties => ({
+  padding: '0.6rem 1rem', textAlign: 'center', fontSize: '0.75rem', color: c === dark ? '#888' : c.textSub,
+})
+export const makeTdStyle = (c: Palette): CSSProperties => ({
+  padding: '0.5rem 1rem', textAlign: 'center', fontSize: '0.8rem', color: c === dark ? '#C5C5C5' : c.text,
+})
 
 // 로그인 일시 포맷: 2026-04-07 [08:44:50] — KST 명시적 변환
 export const fmtLoginDate = (iso: string) => fmtDateTime(iso)

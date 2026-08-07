@@ -74,7 +74,7 @@ export default function MappingModal({
               } catch (e) { showAlert(e instanceof Error ? e.message : 'AI 매핑 실패', 'error') }
               finally { setMappingLoading(false) }
             }}
-            style={{ ...btn('accent'), ...(mappingLoading ? btnDisabled : null), padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px' }}
+            style={{ ...btn('accent', c), ...(mappingLoading ? btnDisabled : null), padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px' }}
           >{mappingLoading ? 'AI 분석중...' : 'AI 매핑'}</button>
           <button
             onClick={async () => {
@@ -86,7 +86,7 @@ export default function MappingModal({
                 onSaved()
               } catch (e) { showAlert(e instanceof Error ? e.message : '초기화 실패', 'error') }
             }}
-            style={{ ...btn('danger'), padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px' }}
+            style={{ ...btn('danger', c), padding: '7px 20px', fontSize: '0.82rem', borderRadius: '6px' }}
           >매핑 초기화</button>
         </div>
 
@@ -104,7 +104,7 @@ export default function MappingModal({
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
           <button
             onClick={onClose}
-            style={{ ...btn('ghost'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
+            style={{ ...btn('ghost', c), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
           >취소</button>
           <button
             onClick={async () => {
@@ -116,7 +116,7 @@ export default function MappingModal({
                 onSaved()
               } catch (e) { showAlert(e instanceof Error ? e.message : '저장 실패', 'error') }
             }}
-            style={{ ...btn('primary'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
+            style={{ ...btn('primary', c), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
           >
             저장 ({fmtNum(Object.values(mappingData).filter(Boolean).length)}개 마켓)
           </button>

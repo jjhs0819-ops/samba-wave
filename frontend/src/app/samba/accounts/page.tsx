@@ -45,7 +45,7 @@ export default function AccountsPage() {
     <div className="p-6 space-y-4" style={{ color: c.text }}>
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold">마켓 계정 관리</h2>
-        <button onClick={() => setShowForm(true)} className="px-4 py-2 text-sm rounded-lg font-medium" style={{ ...btn('primary') }}>+ 계정 추가</button>
+        <button onClick={() => setShowForm(true)} className="px-4 py-2 text-sm rounded-lg font-medium" style={{ ...btn('primary', c) }}>+ 계정 추가</button>
       </div>
 
       {showForm && (
@@ -64,8 +64,8 @@ export default function AccountsPage() {
             <FI label="사업자명" value={form.business_name} onChange={(v) => setForm({ ...form, business_name: v })} />
           </div>
           <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm" style={{ ...btn('ghost') }}>취소</button>
-            <button onClick={handleSubmit} className="px-4 py-1.5 text-sm rounded-lg font-medium" style={{ ...btn('primary') }}>저장</button>
+            <button onClick={() => setShowForm(false)} className="px-3 py-1.5 text-sm" style={{ ...btn('ghost', c) }}>취소</button>
+            <button onClick={handleSubmit} className="px-4 py-1.5 text-sm rounded-lg font-medium" style={{ ...btn('primary', c) }}>저장</button>
           </div>
         </div>
       )}

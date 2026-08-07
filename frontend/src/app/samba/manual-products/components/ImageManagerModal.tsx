@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import { type Palette } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
 
 interface Props {
@@ -15,11 +15,14 @@ interface Props {
 
 type Tab = 'main' | 'extra' | 'detail'
 
-const INPUT = `flex-1 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
+// 모듈 스코프라 훅을 못 쓰므로 팔레트(c)를 인자로 받는 팩토리 — 테마 반응형
+const mkInput = (c: Palette) => `flex-1 px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
 
 export default function ImageManagerModal({
   images, detailImages, onSave, onClose }: Props) {
   const c = useTheme()
+  // 테마 반응형 입력칸 클래스 (다크에서는 기존 상수와 동일 값)
+  const INPUT = mkInput(c)
   const [tab, setTab] = useState<Tab>('main')
   const [imgs, setImgs] = useState<string[]>(images)
   const [details, setDetails] = useState<string[]>(detailImages)
@@ -126,7 +129,7 @@ export default function ImageManagerModal({
                   />
                   <button
                     onClick={() => setMainImg(mainInput)}
-                    style={btn('secondary')}
+                    style={btn('secondary', c)}
                     className='px-3 py-1.5 text-xs'
                   >
                     변경
@@ -146,7 +149,7 @@ export default function ImageManagerModal({
                   onKeyDown={e => { if (e.key === 'Enter') addExtra(urlInput) }}
                   placeholder='추가이미지 URL 입력'
                 />
-                <button onClick={() => addExtra(urlInput)} style={btn('secondary')} className='px-3 py-1.5 text-xs'>추가</button>
+                <button onClick={() => addExtra(urlInput)} style={btn('secondary', c)} className='px-3 py-1.5 text-xs'>추가</button>
               </div>
               {extraImgs.length === 0 && (
                 <p className={`text-xs text-[${c.textMuted}] text-center py-4`}>추가이미지가 없습니다.</p>
@@ -178,7 +181,7 @@ export default function ImageManagerModal({
                   onKeyDown={e => { if (e.key === 'Enter') addDetail(urlInput) }}
                   placeholder='상세이미지 URL 입력'
                 />
-                <button onClick={() => addDetail(urlInput)} style={btn('secondary')} className='px-3 py-1.5 text-xs'>추가</button>
+                <button onClick={() => addDetail(urlInput)} style={btn('secondary', c)} className='px-3 py-1.5 text-xs'>추가</button>
               </div>
               {details.length === 0 && (
                 <p className={`text-xs text-[${c.textMuted}] text-center py-4`}>상세이미지가 없습니다.</p>
@@ -202,8 +205,8 @@ export default function ImageManagerModal({
         </div>
 
         <div className={`flex justify-end gap-2 px-4 py-3 border-t border-[${c.border}]`}>
-          <button onClick={onClose} style={btn('ghost')} className='px-4 py-1.5 text-sm'>취소</button>
-          <button onClick={handleSave} style={btn('primary')} className='px-4 py-1.5 text-sm'>저장</button>
+          <button onClick={onClose} style={btn('ghost', c)} className='px-4 py-1.5 text-sm'>취소</button>
+          <button onClick={handleSave} style={btn('primary', c)} className='px-4 py-1.5 text-sm'>저장</button>
         </div>
       </div>
     </div>

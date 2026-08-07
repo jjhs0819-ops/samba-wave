@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTheme } from '@/lib/samba/useTheme'
 
 // ── 타입 ──
 
@@ -47,6 +48,8 @@ export function showConfirm(message: string): Promise<boolean> {
 // ── 컴포넌트 ──
 
 export default function SambaModal() {
+  // 훅은 early return(if (!state) return null) 앞에서 호출해야 함 — React 훅 규칙
+  const c = useTheme()
   const [state, setState] = useState<ModalState>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -92,14 +95,14 @@ export default function SambaModal() {
     >
       <div
         style={{
-          background: '#1E1E1E', border: '1px solid #3D3D3D', borderRadius: '10px',
+          background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '10px',
           width: 'min(400px, 90vw)', padding: '0',
           boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
         }}
         onClick={e => e.stopPropagation()}
       >
         {/* 메시지 */}
-        <div style={{ padding: '24px 24px 16px', fontSize: '0.85rem', color: '#E5E5E5', lineHeight: 1.6 }}>
+        <div style={{ padding: '24px 24px 16px', fontSize: '0.85rem', color: c.text, lineHeight: 1.6 }}>
           {state.message}
         </div>
 
@@ -113,7 +116,7 @@ export default function SambaModal() {
               onClick={() => close(false)}
               style={{
                 padding: '7px 20px', fontSize: '0.8rem', borderRadius: '6px',
-                border: '1px solid #3D3D3D', background: '#2A2A2A', color: '#999',
+                border: `1px solid ${c.btnBorder}`, background: c.btnBg, color: c.btnText,
                 cursor: 'pointer',
               }}
             >취소</button>

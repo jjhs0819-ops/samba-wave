@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 
 import { API_BASE_URL } from '@/config/api'
-import { dark as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 
 /** 상품 이미지 컴포넌트 — 로드 실패 시 이름 첫 글자 표시. */
 const API_BASE = API_BASE_URL
@@ -16,6 +16,7 @@ function resolveImageUrl(url?: string): string | undefined {
 }
 
 const ProductImage = React.memo(function ProductImage({ src, name, size = 110 }: { src?: string; name: string; size?: number }) {
+  const c = useTheme() // 테마 팔레트 (라이트/다크 반응형)
   const [error, setError] = useState(false)
   const firstChar = (name || '?')[0]
   const resolvedSrc = resolveImageUrl(src)

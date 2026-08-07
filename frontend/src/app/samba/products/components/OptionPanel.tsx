@@ -6,7 +6,7 @@ import {
   type SambaCollectedProduct,
 } from '@/lib/samba/api/commerce'
 import { fmtNum } from '@/lib/samba/styles'
-import { dark as c } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 import { btn } from '@/lib/samba/buttons'
 
 /** 옵션 패널 — 옵션명/가격/재고 편집 + 일괄수정. */
@@ -25,6 +25,7 @@ const OptionPanel = React.memo(function OptionPanel({
   nameRule?: import('@/lib/samba/api/support').SambaNameRule
   curSym?: string
 }) {
+  const c = useTheme() // 테마 팔레트 (라이트/다크 반응형)
   const [open, setOpen] = useState(false)
   const [selectAll, setSelectAll] = useState(true)
   const [editingName, setEditingName] = useState<number | null>(null)
@@ -85,7 +86,7 @@ const OptionPanel = React.memo(function OptionPanel({
         <span style={{ color: c.textSub, fontSize: '0.78rem' }}>{fmtNum(opts.length)}개 옵션</span>
         <button
           onClick={() => setOpen(!open)}
-          style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '2px 8px' }}
+          style={{ ...btn('secondary', c), fontSize: '0.7rem', padding: '2px 8px' }}
         >
           {open ? '접기' : '펼치기'}
         </button>
@@ -108,11 +109,11 @@ const OptionPanel = React.memo(function OptionPanel({
                   옵션명
                   <button
                     onClick={() => setEditingName(editingName === -1 ? null : -1)}
-                    style={{ ...btn(editingName === -1 ? 'accent' : 'secondary'), marginLeft: '0.4rem', fontSize: '0.7rem', padding: '1px 6px' }}
+                    style={{ ...btn(editingName === -1 ? 'accent' : 'secondary', c), marginLeft: '0.4rem', fontSize: '0.7rem', padding: '1px 6px' }}
                   >{editingName === -1 ? '편집완료' : '옵션명변경'}</button>
                   <button
                     onClick={() => { setBulkModal('addOption'); setBulkValue('') }}
-                    style={{ ...btn('secondary'), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
+                    style={{ ...btn('secondary', c), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
                   >옵션추가</button>
                 </th>
                 <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
@@ -127,14 +128,14 @@ const OptionPanel = React.memo(function OptionPanel({
                   상품가<br />
                   <button
                     onClick={() => { setBulkModal('price'); setBulkValue('') }}
-                    style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '1px 6px', marginTop: '2px' }}
+                    style={{ ...btn('secondary', c), fontSize: '0.7rem', padding: '1px 6px', marginTop: '2px' }}
                   >일괄수정</button>
                 </th>
                 <th style={{ padding: '0.5rem', textAlign: 'center', fontSize: '0.8rem', color: c.textSub, fontWeight: 500 }}>
                   옵션재고
                   <button
                     onClick={() => { setBulkModal('stock'); setBulkValue('') }}
-                    style={{ ...btn('secondary'), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
+                    style={{ ...btn('secondary', c), marginLeft: '0.3rem', fontSize: '0.7rem', padding: '1px 6px' }}
                   >일괄수정</button>
                 </th>
                 {sourceSite === 'SNKRDUNK' && (
@@ -354,7 +355,7 @@ const OptionPanel = React.memo(function OptionPanel({
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
                   <button onClick={() => setBulkModal(null)}
-                    style={{ ...btn('ghost'), padding: '6px 16px', fontSize: '0.8rem' }}>취소</button>
+                    style={{ ...btn('ghost', c), padding: '6px 16px', fontSize: '0.8rem' }}>취소</button>
                   <button onClick={() => {
                     if (bulkModal === 'addOption') {
                       if (bulkValue.trim()) {
@@ -364,7 +365,7 @@ const OptionPanel = React.memo(function OptionPanel({
                       applyBulk(bulkModal, bulkValue)
                     }
                     setBulkModal(null)
-                  }} style={{ ...btn('primary'), padding: '6px 16px', fontSize: '0.8rem' }}>
+                  }} style={{ ...btn('primary', c), padding: '6px 16px', fontSize: '0.8rem' }}>
                     {bulkModal === 'addOption' ? '추가' : '적용'}
                   </button>
                 </div>

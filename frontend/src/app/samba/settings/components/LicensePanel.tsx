@@ -71,14 +71,14 @@ export function LicensePanel() {
               onClick={handleVerify}
               disabled={loading}
               className="px-4 py-2 text-sm rounded-lg transition-colors"
-              style={{ ...btn('secondary'), ...(loading ? btnDisabled : null) }}
+              style={{ ...btn('secondary', c), ...(loading ? btnDisabled : null) }}
             >
               {loading ? '확인 중...' : '재검증'}
             </button>
             <button
               onClick={() => setEditing(true)}
               className="px-4 py-2 text-sm rounded-lg"
-              style={{ ...btn('ghost') }}
+              style={{ ...btn('ghost', c) }}
             >
               변경
             </button>
@@ -104,7 +104,7 @@ export function LicensePanel() {
               onClick={handleVerify}
               disabled={loading || !newKey.trim()}
               className="px-4 py-2 text-sm rounded-lg transition-colors"
-              style={{ ...btn('primary'), ...(loading || !newKey.trim() ? btnDisabled : null) }}
+              style={{ ...btn('primary', c), ...(loading || !newKey.trim() ? btnDisabled : null) }}
             >
               {loading ? '확인 중...' : '등록'}
             </button>

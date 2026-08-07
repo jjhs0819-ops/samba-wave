@@ -42,7 +42,7 @@ export default function DeleteJobModal({
         </div>
         <div style={{ marginTop: '0.75rem' }}>
           {done && (
-            <button onClick={onClose} style={{ ...btn('ghost'), width: '100%', padding: '0.5rem', borderRadius: '6px', fontSize: '0.8rem' }}>닫기</button>
+            <button onClick={onClose} style={{ ...btn('ghost', c), width: '100%', padding: '0.5rem', borderRadius: '6px', fontSize: '0.8rem' }}>닫기</button>
           )}
         </div>
       </div>

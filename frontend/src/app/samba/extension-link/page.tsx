@@ -82,7 +82,7 @@ export default function ExtensionLinkPage() {
           <button
             onClick={() => void issueKey()}
             className="w-full rounded-md py-2.5 text-sm font-bold"
-            style={{ ...btn('primary'), width: '100%' }}
+            style={{ ...btn('primary', c), width: '100%' }}
           >
             🔄 다시 시도
           </button>

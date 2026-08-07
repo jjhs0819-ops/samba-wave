@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { collectorApi } from '@/lib/samba/api/commerce'
+import { useTheme } from '@/lib/samba/useTheme'
 
 interface BlockedSite {
   site: string
@@ -11,6 +12,8 @@ interface BlockedSite {
 const POLL_INTERVAL = 30_000
 
 export default function SambaBlockAlert() {
+  // 훅은 early return(if (visible.length === 0) return null) 앞에서 호출 — React 훅 규칙
+  const c = useTheme()
   const [blockedSites, setBlockedSites] = useState<BlockedSite[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(new Set())
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -92,16 +95,16 @@ export default function SambaBlockAlert() {
           }}
         >
           {/* 경고 아이콘 */}
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FF6B6B" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={c.danger} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
             <line x1="12" y1="9" x2="12" y2="13" />
             <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
 
-          <span style={{ fontSize: '0.8125rem', color: '#FF6B6B', fontWeight: 600, flexShrink: 0 }}>
+          <span style={{ fontSize: '0.8125rem', color: c.danger, fontWeight: 600, flexShrink: 0 }}>
             접속 차단
           </span>
-          <span style={{ fontSize: '0.8125rem', color: '#E5E5E5' }}>
+          <span style={{ fontSize: '0.8125rem', color: c.text }}>
             <strong style={{ color: '#FFB84D' }}>{site}</strong> 소싱처가 접속 차단되었습니다 — {error}
           </span>
 

@@ -107,7 +107,7 @@ export function ConnectedAccountsList(props: Props) {
                   }
                 }}
                 style={{
-                  ...btn('secondary'),
+                  ...btn('secondary', c),
                   padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', whiteSpace: 'nowrap',
                   ...(editingAccountId === a.id ? { background: '#e3f4f0', color: '#0f6a5b', border: '1px solid #a9ddd2' } : null),
                 }}
@@ -115,7 +115,7 @@ export function ConnectedAccountsList(props: Props) {
               <button
                 onClick={() => handleAccountDelete(a.id)}
                 style={{
-                  ...btn('danger'),
+                  ...btn('danger', c),
                   padding: '0.15rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', whiteSpace: 'nowrap',
                 }}
               >삭제</button>

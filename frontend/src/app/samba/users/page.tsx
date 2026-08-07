@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { userApi, type SambaUser } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { inputStyle } from '@/lib/samba/styles'
+import { makeInputStyle } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import { useTheme } from '@/lib/samba/useTheme'
@@ -11,11 +11,16 @@ import { btn, btnDisabled } from '@/lib/samba/buttons'
 import {
   type License, type LoginHistory,
   STATUS_MAP, maskIp, years, months, daysInMonth, pad,
-  selectStyle, thStyle, tdStyle, fmtLoginDate,
+  makeSelectStyle, makeThStyle, makeTdStyle, fmtLoginDate,
 } from './constants'
 
 export default function UsersPage() {
   const c = useTheme()
+  // 테마 반응형 공용 스타일 (다크에서는 기존 값과 동일)
+  const inputStyle = makeInputStyle(c)
+  const selectStyle = makeSelectStyle(c)
+  const thStyle = makeThStyle(c)
+  const tdStyle = makeTdStyle(c)
   useEffect(() => { document.title = 'SAMBA-사용자' }, [])
   const [users, setUsers] = useState<SambaUser[]>([])
   const [loading, setLoading] = useState(true)
@@ -209,7 +214,7 @@ export default function UsersPage() {
             style={{ ...inputStyle, fontSize: '0.85rem' }} />
         </div>
         <button onClick={createLicense} disabled={licCreating || !licForm.buyer_name || !licForm.buyer_email}
-          style={{ ...btn('primary'), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', ...(licCreating || !licForm.buyer_name || !licForm.buyer_email ? btnDisabled : null) }}>
+          style={{ ...btn('primary', c), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', ...(licCreating || !licForm.buyer_name || !licForm.buyer_email ? btnDisabled : null) }}>
           {licCreating ? '발급 중...' : '발급'}
         </button>
 
@@ -239,9 +244,9 @@ export default function UsersPage() {
                             onChange={e => setEditExpiresValue(e.target.value)}
                             style={{ background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.75rem' }} />
                           <button onClick={() => saveExpires(lic.id)}
-                            style={{ ...btn('secondary'), padding: '2px 8px', fontSize: '0.72rem', borderRadius: '4px' }}>저장</button>
+                            style={{ ...btn('secondary', c), padding: '2px 8px', fontSize: '0.72rem', borderRadius: '4px' }}>저장</button>
                           <button onClick={() => setEditingExpires(null)}
-                            style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.72rem', borderRadius: '4px' }}>취소</button>
+                            style={{ ...btn('ghost', c), padding: '2px 8px', fontSize: '0.72rem', borderRadius: '4px' }}>취소</button>
                         </div>
                       ) : (
                         <span onClick={() => { setEditingExpires(lic.id); setEditExpiresValue(lic.expires_at ? lic.expires_at.slice(0, 10) : '') }}
@@ -261,11 +266,11 @@ export default function UsersPage() {
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
                         <button onClick={() => toggleLicense(lic.id, !lic.is_active)}
-                          style={{ ...btn('secondary'), padding: '3px 10px', fontSize: '0.72rem', borderRadius: '4px' }}>
+                          style={{ ...btn('secondary', c), padding: '3px 10px', fontSize: '0.72rem', borderRadius: '4px' }}>
                           {lic.is_active ? '비활성화' : '활성화'}
                         </button>
                         <button onClick={() => deleteLicense(lic.id, lic.license_key)}
-                          style={{ ...btn('danger'), padding: '3px 10px', fontSize: '0.72rem', borderRadius: '4px' }}>
+                          style={{ ...btn('danger', c), padding: '3px 10px', fontSize: '0.72rem', borderRadius: '4px' }}>
                           삭제
                         </button>
                       </div>
@@ -286,7 +291,7 @@ export default function UsersPage() {
         </div>
         <button
           onClick={openCreate}
-          style={{ ...btn('primary'), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
+          style={{ ...btn('primary', c), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
         >
           + 계정 추가
         </button>
@@ -341,10 +346,10 @@ export default function UsersPage() {
                   <td style={{ padding: '0.625rem 1rem', textAlign: 'center' }}>
                     <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                       <button onClick={() => openEdit(u)}
-                        style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}
+                        style={{ ...btn('secondary', c), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}
                       >수정</button>
                       <button onClick={() => handleDelete(u)}
-                        style={{ ...btn('danger'), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}
+                        style={{ ...btn('danger', c), fontSize: '0.72rem', padding: '3px 10px', borderRadius: '4px' }}
                       >삭제</button>
                     </div>
                   </td>
@@ -447,10 +452,10 @@ export default function UsersPage() {
 
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '1.25rem' }}>
               <button onClick={() => setShowModal(false)}
-                style={{ ...btn('ghost'), padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
+                style={{ ...btn('ghost', c), padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
               >취소</button>
               <button onClick={handleSave}
-                style={{ ...btn('primary'), padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
+                style={{ ...btn('primary', c), padding: '0.5rem 1.25rem', fontSize: '0.85rem' }}
               >{editingId ? '수정' : '생성'}</button>
             </div>
           </div>

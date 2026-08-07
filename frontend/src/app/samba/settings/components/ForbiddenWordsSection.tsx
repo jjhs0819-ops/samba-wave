@@ -1,7 +1,7 @@
 'use client'
 
 import { Dispatch, SetStateAction, useCallback, useEffect, useState } from 'react'
-import { card, fmtNum } from '@/lib/samba/styles'
+import { makeCard, fmtNum } from '@/lib/samba/styles'
 import { forbiddenApi, type SambaForbiddenWord } from '@/lib/samba/api/commerce'
 import { MARKETS } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
@@ -59,6 +59,8 @@ const wordsToText = (words: SambaForbiddenWord[], type: string) =>
 
 export function ForbiddenWordsSection({ tagBanned, setTagBanned }: Props) {
   const c = useTheme()
+  // 테마 반응형 카드 스타일 (다크 팔레트에서는 기존 상수와 동일한 값)
+  const card = makeCard(c)
   const [market, setMarket] = useState('common')
   const [forbiddenText, setForbiddenText] = useState('')
   const [deletionText, setDeletionText] = useState('')
@@ -210,7 +212,7 @@ export function ForbiddenWordsSection({ tagBanned, setTagBanned }: Props) {
           <button
             disabled={exemptSaving}
             onClick={saveExempt}
-            style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}
+            style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}
           >{exemptSaving ? '...' : '저장'}</button>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -258,7 +260,7 @@ export function ForbiddenWordsSection({ tagBanned, setTagBanned }: Props) {
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.danger }}>태그 금지어</span>
           <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>** 스마트스토어 등록 시 자동 제외되는 단어 (API 거부 + 소싱처 + 브랜드)</span>
           <button onClick={() => forbiddenApi.getTagBannedWords().then(setTagBanned).catch(() => {})}
-            style={{ ...btn('secondary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>새로고침</button>
+            style={{ ...btn('secondary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>새로고침</button>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div>

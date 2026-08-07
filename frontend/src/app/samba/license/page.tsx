@@ -68,7 +68,7 @@ export default function LicensePage() {
           disabled={loading || !key.trim()}
           className="w-full font-semibold py-3 rounded-lg transition-colors"
           style={{
-            ...btn('primary'),
+            ...btn('primary', c),
             width: '100%',
             ...(loading || !key.trim() ? btnDisabled : null),
           }}

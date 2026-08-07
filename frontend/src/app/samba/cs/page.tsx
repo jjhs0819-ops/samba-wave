@@ -22,16 +22,18 @@ function htmlToText(html: string): string {
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 }
-import { card, inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { btn } from '@/lib/samba/buttons'
 import { useTheme } from '@/lib/samba/useTheme'
+import { dark, type Palette } from '@/lib/samba/colors'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { fmtDate, fmtTime, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 
 import { REPLY_STATUS_MAP, INQUIRY_TYPE_MAP } from './constants'
 
 
-function renderCsLogMessage(message: string) {
+// 로그 문구의 건수 강조 — 다크는 기존 흰색 유지(픽셀 동일), 라이트는 본문 토큰
+function renderCsLogMessage(message: string, c: Palette) {
   const formatted = fmtTextNumbers(message)
   const parts = formatted.split(/(\d[\d,]*)(건)/g)
 
@@ -40,7 +42,7 @@ function renderCsLogMessage(message: string) {
   return parts.map((part, index) => {
     const isCount = index % 3 === 1
     if (isCount && Number(part.replace(/,/g, '')) > 0) {
-      return <span key={`${part}-${index}`} style={{ color: '#FFFFFF', fontWeight: 700 }}>{part}</span>
+      return <span key={`${part}-${index}`} style={{ color: c === dark ? '#FFFFFF' : c.text, fontWeight: 700 }}>{part}</span>
     }
     return <span key={`${part}-${index}`}>{part}</span>
   })
@@ -50,6 +52,9 @@ function renderCsLogMessage(message: string) {
 
 export default function CSPage() {
   const c = useTheme()
+  // 테마 반응형 공용 스타일 (다크에서는 기존 상수와 동일)
+  const card = makeCard(c)
+  const inputStyle = makeInputStyle(c)
   useEffect(() => { document.title = 'SAMBA-CS관리' }, [])
   // 데이터
   const [inquiries, setInquiries] = useState<SambaCSInquiry[]>([])
@@ -495,7 +500,7 @@ export default function CSPage() {
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: c.headerText, background: c.headerBg, lineHeight: 1.8 }}>
-          {csLogMessages.map((msg, i) => <p key={i} style={{ color: c.headerText, fontSize: 'inherit', margin: 0 }}>{renderCsLogMessage(msg)}</p>)}
+          {csLogMessages.map((msg, i) => <p key={i} style={{ color: c.headerText, fontSize: 'inherit', margin: 0 }}>{renderCsLogMessage(msg, c)}</p>)}
         </div>
       </div>
 
@@ -545,10 +550,10 @@ export default function CSPage() {
       {/* 필터 바 */}
       <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
         <input style={{ ...inputStyle, width: '150px', fontSize: '0.75rem', height: '28px', padding: '0 0.3rem' }} value={searchInput} onChange={e => setSearchInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleFilterSearch() }} placeholder='고객/주문번호 검색' />
-        <button onClick={handleFilterSearch} style={{ ...btn('primary'), padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
+        <button onClick={handleFilterSearch} style={{ ...btn('primary', c), padding: '0 0.6rem', borderRadius: '4px', fontSize: '0.75rem', whiteSpace: 'nowrap', height: '28px' }}>검색</button>
         <button
           onClick={handleBatchDelete}
-          style={{ ...btn('danger'), padding: '0 0.6rem', fontSize: '0.75rem', borderRadius: '4px', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
+          style={{ ...btn('danger', c), padding: '0 0.6rem', fontSize: '0.75rem', borderRadius: '4px', whiteSpace: 'nowrap', height: '28px', lineHeight: '26px' }}
         >
           선택삭제
         </button>
@@ -1073,7 +1078,7 @@ export default function CSPage() {
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
               <button onClick={() => setReplyModal(null)} style={{ padding: '0.625rem 1.25rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '8px', color: c.textMuted, fontSize: '0.875rem', cursor: 'pointer' }}>취소</button>
-              <button onClick={handleReply} style={{ ...btn('primary'), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}>답변 등록</button>
+              <button onClick={handleReply} style={{ ...btn('primary', c), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}>답변 등록</button>
             </div>
           </div>
         </div>
@@ -1122,7 +1127,7 @@ export default function CSPage() {
               <button
                 onClick={saveTemplate}
                 disabled={!templateEditModal.name.trim() || !templateEditModal.content.trim()}
-                style={{ ...btn('primary'), padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.875rem', opacity: (!templateEditModal.name.trim() || !templateEditModal.content.trim()) ? 0.5 : 1 }}
+                style={{ ...btn('primary', c), padding: '0.5rem 1rem', borderRadius: '8px', fontSize: '0.875rem', opacity: (!templateEditModal.name.trim() || !templateEditModal.content.trim()) ? 0.5 : 1 }}
               >저장</button>
             </div>
           </div>
@@ -1177,7 +1182,7 @@ export default function CSPage() {
               >취소</button>
               <button
                 onClick={submitElevenstExchangeReject}
-                style={{ ...btn('dangerSolid'), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
+                style={{ ...btn('dangerSolid', c), padding: '0.625rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
               >거부 확정</button>
             </div>
           </div>

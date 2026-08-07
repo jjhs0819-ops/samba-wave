@@ -182,7 +182,7 @@ export default function CategorySelector({
                       {marketUrl && (
                         <button
                           onClick={() => window.open(marketUrl, '_blank')}
-                          style={{ ...btn('secondary'), padding: '2px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
+                          style={{ ...btn('secondary', c), padding: '2px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
                         >
                           구매페이지
                         </button>
@@ -191,7 +191,7 @@ export default function CategorySelector({
                         <button
                           onClick={() => !isDeleting && onDeleteFromMarket(acc.id)}
                           disabled={isDeleting}
-                          style={{ ...btn('danger'), padding: '2px 8px', fontSize: 11, whiteSpace: 'nowrap', ...(isDeleting ? btnDisabled : null) }}
+                          style={{ ...btn('danger', c), padding: '2px 8px', fontSize: 11, whiteSpace: 'nowrap', ...(isDeleting ? btnDisabled : null) }}
                         >
                           {isDeleting ? '삭제 중...' : '마켓삭제'}
                         </button>

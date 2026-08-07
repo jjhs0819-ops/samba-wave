@@ -202,28 +202,28 @@ export default function DuplicatesModal({
             <button
               onClick={() => setChecked(new Set(groups.flatMap(g => g.duplicates.map(d => d.id))))}
               disabled={!loaded || groups.length === 0}
-              style={{ ...btn('ghost'), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
+              style={{ ...btn('ghost', c), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
             >전체선택</button>
             <button
               onClick={() => setChecked(new Set())}
               disabled={!loaded || checked.size === 0}
-              style={{ ...btn('ghost'), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
+              style={{ ...btn('ghost', c), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
             >전체해제</button>
             <button
               onClick={load}
               disabled={loading}
-              style={{ ...btn('secondary'), ...(loading ? btnDisabled : null), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
+              style={{ ...btn('secondary', c), ...(loading ? btnDisabled : null), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
             >
               {loading ? '조회중...' : '새로고침'}
             </button>
             <button
               onClick={handleDelete}
               disabled={deleting || checked.size === 0}
-              style={{ ...btn('danger'), ...(deleting || checked.size === 0 ? btnDisabled : null), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
+              style={{ ...btn('danger', c), ...(deleting || checked.size === 0 ? btnDisabled : null), fontSize: '0.75rem', padding: '0.3rem 0.75rem', borderRadius: '6px' }}
             >
               {deleting ? '삭제중...' : `선택 삭제 (${fmtNum(checked.size)})`}
             </button>
-            <button onClick={onClose} style={{ ...btn('ghost'), fontSize: '0.85rem', padding: '0.2rem 0.4rem' }}>✕</button>
+            <button onClick={onClose} style={{ ...btn('ghost', c), fontSize: '0.85rem', padding: '0.2rem 0.4rem' }}>✕</button>
           </div>
         </div>
 
@@ -266,8 +266,8 @@ export default function DuplicatesModal({
               <div style={{ padding: '0.6rem 0.875rem', background: c.surface, borderBottom: `1px solid ${c.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <span style={{ fontSize: '0.82rem', color: c.text, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '480px' }}>{group.name}</span>
                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                  <button onClick={() => toggleGroup(group, true)} style={{ ...btn('ghost'), fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>전체선택</button>
-                  <button onClick={() => toggleGroup(group, false)} style={{ ...btn('ghost'), fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>선택해제</button>
+                  <button onClick={() => toggleGroup(group, true)} style={{ ...btn('ghost', c), fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>전체선택</button>
+                  <button onClick={() => toggleGroup(group, false)} style={{ ...btn('ghost', c), fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '4px' }}>선택해제</button>
                 </div>
               </div>
 

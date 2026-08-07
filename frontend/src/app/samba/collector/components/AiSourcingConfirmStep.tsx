@@ -262,7 +262,7 @@ export default function AiSourcingConfirmStep(props: Props) {
                       })
                       setAiSelectedCombos(next)
                     }}
-                    style={{ ...btn('danger'), marginLeft: '4px', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px' }}
+                    style={{ ...btn('danger', c), marginLeft: '4px', fontSize: '0.65rem', padding: '1px 6px', borderRadius: '3px' }}
                   >위험 해제</button>
                 )}
               </th>
@@ -324,7 +324,7 @@ export default function AiSourcingConfirmStep(props: Props) {
           <button onClick={() => {
             setAiSourcingStep('config')
             setAiResult(null)
-          }} style={{ ...btn('secondary'), padding: '8px 16px', borderRadius: '6px' }}>다시 설정</button>
+          }} style={{ ...btn('secondary', c), padding: '8px 16px', borderRadius: '6px' }}>다시 설정</button>
           <button
             onClick={async () => {
               const selected = aiResult.combinations
@@ -350,7 +350,7 @@ export default function AiSourcingConfirmStep(props: Props) {
             }}
             disabled={aiCreating || aiSelectedCombos.size === 0}
             style={{
-              ...btn('primary'), ...(aiCreating || aiSelectedCombos.size === 0 ? btnDisabled : null),
+              ...btn('primary', c), ...(aiCreating || aiSelectedCombos.size === 0 ? btnDisabled : null),
               padding: '8px 20px', borderRadius: '6px', fontSize: '0.85rem',
             }}
           >

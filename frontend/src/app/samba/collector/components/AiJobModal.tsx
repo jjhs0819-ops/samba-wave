@@ -43,10 +43,10 @@ export default function AiJobModal({
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
           {!done && (
-            <button onClick={() => { abortRef.current = true }} style={{ ...btn('danger'), flex: 1, padding: '0.5rem', borderRadius: '6px', fontSize: '0.8rem' }}>중단</button>
+            <button onClick={() => { abortRef.current = true }} style={{ ...btn('danger', c), flex: 1, padding: '0.5rem', borderRadius: '6px', fontSize: '0.8rem' }}>중단</button>
           )}
           {done && (
-            <button onClick={onClose} style={{ ...btn('ghost'), flex: 1, padding: '0.5rem', borderRadius: '6px', fontSize: '0.8rem' }}>닫기</button>
+            <button onClick={onClose} style={{ ...btn('ghost', c), flex: 1, padding: '0.5rem', borderRadius: '6px', fontSize: '0.8rem' }}>닫기</button>
           )}
         </div>
       </div>

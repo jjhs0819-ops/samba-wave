@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { rewardsApi, type RewardAccountRow, type RewardJob, type RewardsStatus } from '@/lib/samba/api'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import type { Palette } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
 import { getDeviceId } from '@/lib/samba/deviceId'
 import { fmtNum } from '@/lib/samba/styles'
@@ -41,13 +41,14 @@ const ACTION_LABEL: Record<string, string> = {
   kream_review: '리뷰 자동작성',
 }
 
-const JOB_STATUS_VIEW: Record<string, { label: string; color: string; bg: string }> = {
+// 잡 상태 뷰 — 팔레트를 인자로 받아 테마 반응 (다크에서는 기존 값과 동일)
+const makeJobStatusView = (c: Palette): Record<string, { label: string; color: string; bg: string }> => ({
   pending: { label: '적재됨', color: c.textMuted, bg: 'rgba(160,160,160,0.12)' },
   dispatched: { label: '실행중', color: c.link, bg: 'rgba(76,154,255,0.15)' },
   completed: { label: '완료', color: c.success, bg: 'rgba(81,207,102,0.15)' },
   failed: { label: '실패', color: c.danger, bg: 'rgba(231,76,60,0.15)' },
   expired: { label: '만료', color: c.warn, bg: 'rgba(232,163,61,0.15)' },
-}
+})
 
 // 처리 PC 표시: 내 PC(트리거 device)와 일치하면 '이 PC', 아니면 device 끝 4자리.
 function deviceTag(ownerDeviceId: string, myDeviceId: string): { label: string; mine: boolean } {
@@ -85,6 +86,14 @@ function reviewAction(site: string): string {
 
 export default function RewardsPage() {
   const c = useTheme()
+  // 테마 반응형 공용 스타일 (다크에서는 기존 상수와 동일)
+  const cardStyle = makeCardStyle(c)
+  const labelStyle = makeLabelStyle(c)
+  const valueStyle = makeValueStyle(c)
+  const thStyle = makeThStyle(c)
+  const logBtnStyle = makeLogBtnStyle(c)
+  const btnStylePrimary = makeBtnStylePrimary(c)
+  const JOB_STATUS_VIEW = makeJobStatusView(c)
   const [data, setData] = useState<RewardsStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [intervalDraft, setIntervalDraft] = useState<number>(24)
@@ -507,6 +516,12 @@ function AccountRow({
   jobs?: RewardJob[]
   myDeviceId: string
 }) {
+  const c = useTheme()
+  // 테마 반응형 공용 스타일 (다크에서는 기존 상수와 동일)
+  const tdStyle = makeTdStyle(c)
+  const btnStyleSmall = makeBtnStyleSmall(c)
+  const btnStyleSmallPrimary = makeBtnStyleSmallPrimary(c)
+  const JOB_STATUS_VIEW = makeJobStatusView(c)
   const isMusinsa = a.site_name === 'MUSINSA'
   const isAbc = a.site_name === 'ABCmart'
   const attendanceFresh = isFresh24h(a.last_musinsa_attendance_at)
@@ -694,7 +709,8 @@ function AccountRow({
   )
 }
 
-const logBtnStyle: React.CSSProperties = {
+// 테마 반응형 스타일 팩토리 — 팔레트를 인자로 받아 컴포넌트에서 자기 c를 넘긴다
+const makeLogBtnStyle = (c: Palette): React.CSSProperties => ({
   fontSize: '0.72rem',
   color: c.textMuted,
   background: 'transparent',
@@ -702,30 +718,30 @@ const logBtnStyle: React.CSSProperties = {
   padding: '1px 8px',
   borderRadius: '4px',
   cursor: 'pointer',
-}
+})
 
-const cardStyle: React.CSSProperties = {
+const makeCardStyle = (c: Palette): React.CSSProperties => ({
   padding: '0.75rem 1rem',
   background: c.surface,
   backdropFilter: 'blur(20px)',
   border: `1px solid ${c.border}`,
   borderRadius: '8px',
   color: c.text,
-}
+})
 
-const labelStyle: React.CSSProperties = {
+const makeLabelStyle = (c: Palette): React.CSSProperties => ({
   fontSize: '0.75rem',
   color: c.textMuted,
   marginBottom: '0.25rem',
-}
+})
 
-const valueStyle: React.CSSProperties = {
+const makeValueStyle = (c: Palette): React.CSSProperties => ({
   fontSize: '1.2rem',
   fontWeight: 700,
   color: c.text,
-}
+})
 
-const thStyle: React.CSSProperties = {
+const makeThStyle = (c: Palette): React.CSSProperties => ({
   padding: '0.5rem 0.75rem',
   textAlign: 'left',
   fontWeight: 600,
@@ -733,32 +749,32 @@ const thStyle: React.CSSProperties = {
   fontSize: '0.78rem',
   borderBottom: `1px solid ${c.border}`,
   background: c.surfaceAlt,
-}
+})
 
-const tdStyle: React.CSSProperties = {
+const makeTdStyle = (c: Palette): React.CSSProperties => ({
   padding: '0.5rem 0.75rem',
   verticalAlign: 'top',
   color: c.text,
   fontSize: '0.85rem',
-}
+})
 
-const btnStylePrimary: React.CSSProperties = {
-  ...btn('primary'),
+const makeBtnStylePrimary = (c: Palette): React.CSSProperties => ({
+  ...btn('primary', c),
   padding: '0.35rem 0.7rem',
   fontSize: '0.8rem',
   borderRadius: '4px',
-}
+})
 
-const btnStyleSmall: React.CSSProperties = {
-  ...btn('secondary'),
+const makeBtnStyleSmall = (c: Palette): React.CSSProperties => ({
+  ...btn('secondary', c),
   padding: '0.2rem 0.5rem',
   fontSize: '0.75rem',
   borderRadius: '3px',
-}
+})
 
-const btnStyleSmallPrimary: React.CSSProperties = {
-  ...btn('primary'),
+const makeBtnStyleSmallPrimary = (c: Palette): React.CSSProperties => ({
+  ...btn('primary', c),
   padding: '0.2rem 0.55rem',
   fontSize: '0.75rem',
   borderRadius: '3px',
-}
+})

@@ -69,7 +69,7 @@ export default function AiSourcingModal({
             </span>
           </div>
           {!aiAnalyzing && (
-            <button onClick={onClose} style={{ ...btn('ghost'), fontSize: '1.2rem' }}>✕</button>
+            <button onClick={onClose} style={{ ...btn('ghost', c), fontSize: '1.2rem' }}>✕</button>
           )}
         </div>
 
@@ -255,7 +255,7 @@ export default function AiSourcingModal({
                 setAiAnalyzing(false)
               }}
               style={{
-                ...btn('primary'), width: '100%', padding: '10px',
+                ...btn('primary', c), width: '100%', padding: '10px',
                 borderRadius: '8px', fontSize: '0.9rem',
               }}
             >
@@ -285,11 +285,11 @@ export default function AiSourcingModal({
               <div style={{ marginTop: '12px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                 {aiResult && (
                   <button onClick={() => setAiSourcingStep('confirm')} style={{
-                    ...btn('secondary'), padding: '8px 20px', borderRadius: '6px',
+                    ...btn('secondary', c), padding: '8px 20px', borderRadius: '6px',
                   }}>결과 확인 →</button>
                 )}
                 <button onClick={onClose} style={{
-                  ...btn('ghost'), padding: '8px 20px', borderRadius: '6px',
+                  ...btn('ghost', c), padding: '8px 20px', borderRadius: '6px',
                 }}>닫기</button>
               </div>
             )}

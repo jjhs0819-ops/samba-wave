@@ -4,7 +4,7 @@ import type { Dispatch, RefObject, SetStateAction } from 'react'
 import { fetchWithAuth, API_BASE } from '@/lib/samba/api/shared'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import { type Palette } from '@/lib/samba/colors'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import type { MusinsaAccount, PoolInfo } from '../hooks/useProxyAuth'
 
@@ -37,7 +37,8 @@ type StatusProps = {
 
 // 쿠키 갱신 시각 → 상대시간 문자열 + 색상
 // 5분 미만: 회색 '방금 갱신', 24시간 미만: 회색 'N분/시간 전 갱신', 24시간 이상: 주황 'N일 전 갱신'
-function formatCookieFreshness(iso: string | null | undefined): { text: string; color: string } | null {
+// 모듈 스코프라 훅을 못 쓰므로 팔레트(c)를 인자로 받는다 — 테마 반응형
+function formatCookieFreshness(iso: string | null | undefined, c: Palette): { text: string; color: string } | null {
   if (!iso) return null
   const ts = Date.parse(iso)
   if (Number.isNaN(ts)) return null
@@ -83,7 +84,7 @@ export default function CollectorStatusPanel(props: Props) {
       setProxyStatus,
       setProxyText,
     } = props
-    const cookieFresh = musinsaAuth === 'ok' ? formatCookieFreshness(musinsaCookieUpdatedAt) : null
+    const cookieFresh = musinsaAuth === 'ok' ? formatCookieFreshness(musinsaCookieUpdatedAt, c) : null
 
     // 쿠키 주인 식별 정보 — slot vs cookie hashId 매칭 결과
     let accountText: string | null = null
@@ -183,7 +184,7 @@ export default function CollectorStatusPanel(props: Props) {
                 .catch(() => { setProxyStatus('error'); setProxyText('백엔드 서버 연결 실패') })
             }}
             style={{
-              ...btn('secondary'), marginLeft: 'auto',
+              ...btn('secondary', c), marginLeft: 'auto',
               padding: '2px 10px', borderRadius: '4px', fontSize: '0.72rem',
             }}
           >재확인</button>
@@ -308,7 +309,7 @@ export default function CollectorStatusPanel(props: Props) {
                   <button
                     onClick={() => handleCancelCollectJob(j.id)}
                     disabled={busy}
-                    style={{ ...btn('danger'), ...(busy ? btnDisabled : null), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', minWidth: '44px' }}
+                    style={{ ...btn('danger', c), ...(busy ? btnDisabled : null), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', minWidth: '44px' }}
                   >{busy ? '취소중' : '취소'}</button>
                 </div>
               )
@@ -325,7 +326,7 @@ export default function CollectorStatusPanel(props: Props) {
                   <button
                     onClick={() => handleCancelCollectJob(j.id)}
                     disabled={busy}
-                    style={{ ...btn('danger'), ...(busy ? btnDisabled : null), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', minWidth: '44px' }}
+                    style={{ ...btn('danger', c), ...(busy ? btnDisabled : null), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', minWidth: '44px' }}
                   >{busy ? '취소중' : '취소'}</button>
                 </div>
               )
@@ -347,14 +348,14 @@ export default function CollectorStatusPanel(props: Props) {
           <div style={{ display: "flex", gap: "4px" }}>
             {collecting && (
               <button onClick={handleStopCollect} style={{
-                ...btn('danger'), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
+                ...btn('danger', c), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
               }}>수집 중단</button>
             )}
             <button onClick={handleCopyLog} style={{
-              ...btn('ghost'), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
+              ...btn('ghost', c), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
             }}>복사</button>
             <button onClick={handleClearLog} style={{
-              ...btn('ghost'), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
+              ...btn('ghost', c), fontSize: "0.75rem", padding: "2px 10px", borderRadius: "4px",
             }}>초기화</button>
           </div>
         </div>

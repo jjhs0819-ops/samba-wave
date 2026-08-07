@@ -4,7 +4,7 @@ import { useEffect, useCallback } from 'react'
 import { type AnalyticsAggregateRow } from '@/lib/samba/api/commerce'
 import { useLocalStorageState } from '@/hooks/useLocalStorageState'
 import { STORAGE_KEYS } from '@/lib/samba/constants'
-import { card, fmtNum } from '@/lib/samba/styles'
+import { makeCard, fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn } from '@/lib/samba/buttons'
 import { RevenueTrendLine, SalesBarChart } from '@/components/samba/AnalyticsCharts'
@@ -20,6 +20,8 @@ const fmt = fmtNum
 
 export default function AnalyticsPage() {
   const c = useTheme()
+  // 테마 반응형 카드 스타일 (다크에서는 기존 상수와 동일)
+  const card = makeCard(c)
   useEffect(() => { document.title = 'SAMBA-분석' }, [])
   // 검색 조건 (localStorage 자동 복원/저장)
   const now = new Date()
@@ -348,7 +350,7 @@ export default function AnalyticsPage() {
             {Array.from({ length: 12 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}월</option>)}
           </select>
           <button onClick={load}
-            style={{ ...btn('primary'), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', borderRadius: '4px' }}>매출검색</button>
+            style={{ ...btn('primary', c), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', borderRadius: '4px' }}>매출검색</button>
           <span style={{ marginLeft: 'auto', fontSize: '0.8125rem', color: c.textSub }}>
             총 <span style={{ color: c.text, fontWeight: 700 }}>{fmtNum(totalOrders)}</span>건 · 매출 <span style={{ color: c.text, fontWeight: 700 }}>₩{fmtNum(totalSales)}</span>
           </span>

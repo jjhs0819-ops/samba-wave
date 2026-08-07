@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback, useMemo } from "react"
 import { orderApi, collectorApi, type OrderDashboardStats } from "@/lib/samba/api/commerce"
-import { card, fmtNum } from "@/lib/samba/styles"
+import { makeCard, fmtNum } from "@/lib/samba/styles"
 import { useTheme } from '@/lib/samba/useTheme'
 
 // 날짜 포맷: 3. 14. 형식
@@ -251,27 +251,27 @@ export default function SambaDashboard() {
 
       {/* KPI 카드 5개 */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-        <div style={{ ...card, padding: '1.5rem', borderColor: c.border }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem', borderColor: c.border }}>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.5rem' }}>총 매출 (금월)</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: c.text }}>₩{fmtNum(thisMonthSales)}</p>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginTop: '0.5rem' }}>{fmtNum(thisMonthCount)}건</p>
         </div>
-        <div style={{ ...card, padding: '1.5rem', borderColor: c.border }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem', borderColor: c.border }}>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.5rem' }}>이행매출 (금월)</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: c.text }}>₩{fmtNum(thisMonthFulfillmentSales)}</p>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginTop: '0.5rem' }}>{month + 1}월 기준 · {Number(salesChange) >= 0 ? '▲' : '▼'}{Math.abs(Number(salesChange))}%</p>
         </div>
-        <div style={{ ...card, padding: '1.5rem', borderColor: c.border }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem', borderColor: c.border }}>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.5rem' }}>수집상품</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: c.text }}>{fmtNum(collectedCount)}개</p>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginTop: '0.5rem' }}>전체 수집</p>
         </div>
-        <div style={{ ...card, padding: '1.5rem', borderColor: c.border }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem', borderColor: c.border }}>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.5rem' }}>마켓등록 상품수</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: c.text }}>{fmtNum(marketRegisteredCount)}개</p>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginTop: '0.5rem' }}>1개 마켓이라도 등록</p>
         </div>
-        <div style={{ ...card, padding: '1.5rem', borderColor: c.border }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem', borderColor: c.border }}>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginBottom: '0.5rem' }}>주문이행율</p>
           <p style={{ fontSize: '1.75rem', fontWeight: 700, color: c.text }}>{thisMonthFulfillment}%</p>
           <p style={{ fontSize: '0.8125rem', color: c.textSub, marginTop: '0.5rem' }}>이번 달 기준</p>
@@ -281,7 +281,7 @@ export default function SambaDashboard() {
       {/* 최근 일주일 매출 + 금월/전월 비교 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
         {/* 최근 일주일 매출 */}
-        <div style={{ ...card, padding: '1.5rem' }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem' }}>
           <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>최근 일주일 매출</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
@@ -318,7 +318,7 @@ export default function SambaDashboard() {
         </div>
 
         {/* 금월/전월 비교 */}
-        <div style={{ ...card, padding: '1.5rem' }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem' }}>
           <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>금월 / 전월 비교</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
@@ -348,7 +348,7 @@ export default function SambaDashboard() {
       </div>
 
       {/* 월별 매출 추이 */}
-      <div style={{ ...card, padding: '1.5rem' }}>
+      <div style={{ ...makeCard(c), padding: '1.5rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <div>
             <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '0.25rem' }}>월별 매출 추이</h3>
@@ -369,7 +369,7 @@ export default function SambaDashboard() {
       {/* 소싱처별 수집현황 + 계정별 등록현황 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.5rem' }}>
         {/* 소싱처별 수집현황 */}
-        <div style={{ ...card, padding: '1.5rem' }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem' }}>
           <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>소싱처별 수집현황</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>
@@ -427,7 +427,7 @@ export default function SambaDashboard() {
         </div>
 
         {/* 계정별 등록현황 */}
-        <div style={{ ...card, padding: '1.5rem' }}>
+        <div style={{ ...makeCard(c), padding: '1.5rem' }}>
           <h3 style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text, marginBottom: '1rem' }}>계정별 등록현황</h3>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
             <thead>

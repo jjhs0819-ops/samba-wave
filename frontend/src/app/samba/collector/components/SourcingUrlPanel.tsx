@@ -155,7 +155,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                 setAiExcludedKeywords(new Set())
               }}
               style={{
-                ...btn('accent'), marginLeft: 'auto', padding: '0.6rem 1.2rem',
+                ...btn('accent', c), marginLeft: 'auto', padding: '0.6rem 1.2rem',
                 borderRadius: '6px', fontSize: '0.82rem', whiteSpace: 'nowrap',
               }}
             >
@@ -400,7 +400,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               } catch (e) { addLog(`[카테고리스캔] ${selectedSite} 스캔 실패: ${e instanceof Error ? e.message : '오류'}`); showAlert(e instanceof Error ? e.message : '스캔 실패', 'error') }
               setBrandScanning(false)
             }} disabled={brandScanning}
-              style={{ ...btn('accent'), ...(brandScanning ? btnDisabled : null), padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
+              style={{ ...btn('accent', c), ...(brandScanning ? btnDisabled : null), padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem', whiteSpace: 'nowrap' }}>
               {brandScanning ? '탐색 중...' : '카테고리 스캔'}
             </button>
           )}
@@ -444,7 +444,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
             }}
             disabled={collecting}
             style={{
-              ...btn('primary'), ...(collecting ? btnDisabled : null),
+              ...btn('primary', c), ...(collecting ? btnDisabled : null),
               padding: '0.6rem 1.2rem', borderRadius: '6px', fontSize: '0.82rem',
               whiteSpace: 'nowrap',
             }}
@@ -473,7 +473,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               }}
               disabled={collecting}
               style={{
-                ...btn('secondary'), ...(collecting ? btnDisabled : null),
+                ...btn('secondary', c), ...(collecting ? btnDisabled : null),
                 padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem',
                 whiteSpace: 'nowrap',
               }}
@@ -503,7 +503,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               }}
               disabled={collecting}
               style={{
-                ...btn('secondary'), ...(collecting ? btnDisabled : null),
+                ...btn('secondary', c), ...(collecting ? btnDisabled : null),
                 padding: '0.6rem 1rem', borderRadius: '6px', fontSize: '0.82rem',
                 whiteSpace: 'nowrap',
               }}
@@ -526,11 +526,11 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
                   </span>
                   <div style={{ display: 'flex', gap: '0.25rem' }}>
                     <button onClick={() => setBrandSelectedCats(new Set(brandCategories.map(c => c.categoryCode)))}
-                      style={{ ...btn('ghost'), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>전체선택</button>
+                      style={{ ...btn('ghost', c), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>전체선택</button>
                     <button onClick={() => setBrandSelectedCats(new Set())}
-                      style={{ ...btn('ghost'), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>전체해제</button>
+                      style={{ ...btn('ghost', c), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>전체해제</button>
                     <button onClick={() => { setBrandCategories([]); setBrandSelectedCats(new Set()) }}
-                      style={{ ...btn('ghost'), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>초기화</button>
+                      style={{ ...btn('ghost', c), fontSize: '0.68rem', padding: '2px 6px', borderRadius: '4px' }}>초기화</button>
                   </div>
                 </div>
                 {brandCategories.map(cat => (

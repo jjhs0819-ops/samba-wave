@@ -292,7 +292,7 @@ export default function AiToolsPanel(props: Props) {
             setSelectedIds(new Set()); setSelectAll(false)
           }}
           disabled={aiImgTransforming}
-          style={{ ...btn('secondary'), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+          style={{ ...btn('secondary', c), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
 
@@ -421,7 +421,7 @@ export default function AiToolsPanel(props: Props) {
             }
           }}
           disabled={imgFiltering}
-          style={{ ...btn('secondary'), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+          style={{ ...btn('secondary', c), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', borderRadius: '6px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : `필터링 실행 (${fmtNum(selectedIds.size)}개)`}</button>
       </div>
     </div>

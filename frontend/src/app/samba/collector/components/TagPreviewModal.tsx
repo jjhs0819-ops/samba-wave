@@ -211,7 +211,7 @@ export default function TagPreviewModal({
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
           <button
             onClick={handleClose}
-            style={{ ...btn('ghost'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
+            style={{ ...btn('ghost', c), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
           >취소</button>
           <button
             onClick={async () => {
@@ -238,7 +238,7 @@ export default function TagPreviewModal({
                 showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
               }
             }}
-            style={{ ...btn('primary'), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
+            style={{ ...btn('primary', c), padding: '7px 20px', fontSize: '0.85rem', borderRadius: '6px' }}
           >
             전체 그룹에 적용 ({fmtNum(tagPreviews.reduce((s, p) => s + p.tags.length, 0))}개 태그)
           </button>

@@ -1,6 +1,6 @@
 'use client'
 
-import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle, fmtNum } from '@/lib/samba/styles'
 import { proxyApi } from '@/lib/samba/api/commerce'
 import { showAlert } from '@/components/samba/Modal'
 import { NumInputStr as NumInput } from '@/components/samba/NumInput'
@@ -22,6 +22,9 @@ type Props = ExternalSettingsState & ExternalSettingsActions & {
 
 export function ExternalIntegrationsPanel(props: Props) {
   const c = useTheme()
+  // 테마 반응형 카드/입력칸 스타일 (다크 팔레트에서는 기존 상수와 동일한 값)
+  const card = makeCard(c)
+  const inputStyle = makeInputStyle(c)
   const {
     // 환율
     exchangeRates, exchangeStatus, exchangeSaving,
@@ -75,14 +78,14 @@ export function ExternalIntegrationsPanel(props: Props) {
           </span>
           <button
             onClick={() => loadExchangeRates(true)}
-            style={{ ...btn('secondary'), marginLeft: 'auto', padding: '0.35rem 0.8rem', fontSize: '0.78rem' }}
+            style={{ ...btn('secondary', c), marginLeft: 'auto', padding: '0.35rem 0.8rem', fontSize: '0.78rem' }}
           >
             최신환율 새로고침
           </button>
           <button
             onClick={saveExchangeSettings}
             disabled={exchangeSaving}
-            style={{ ...btn('primary'), ...(exchangeSaving ? btnDisabled : null), padding: '0.35rem 0.8rem', fontSize: '0.78rem' }}
+            style={{ ...btn('primary', c), ...(exchangeSaving ? btnDisabled : null), padding: '0.35rem 0.8rem', fontSize: '0.78rem' }}
           >
             환율 저장
           </button>
@@ -154,15 +157,15 @@ export function ExternalIntegrationsPanel(props: Props) {
             <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>** 알리고(ALIGO) 문자메세지 설정을 할 수 있습니다.</span>
             {smsStatus && <span style={{ fontSize: '0.8rem', color: smsStatus === '저장됨' || smsStatus.includes('유효') ? c.success : smsStatus.includes('오류') ? c.danger : c.warn }}>{smsStatus === '저장됨' ? '✓ 저장됨' : smsStatus}</span>}
             <a href="https://smartsms.aligo.in/admin/api/info.html" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-            <button onClick={saveSmsSettings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+            <button onClick={saveSmsSettings} style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'nowrap' }}>
               <label style={{ color: c.textSub, minWidth: '120px', fontSize: '0.875rem', flexShrink: 0 }}>SMS API KEY</label>
               <input style={{ ...inputStyle, flex: 2, minWidth: '100px' }} value={smsUserId} onChange={(e) => setSmsUserId(e.target.value)} placeholder='Identifier' />
               <input style={{ ...inputStyle, flex: 4, minWidth: '140px' }} value={smsApiKey} onChange={(e) => setSmsApiKey(e.target.value)} placeholder='API Key' />
-              <button onClick={() => window.open('https://www.aligo.in/index.html', '_blank')} style={{ ...btn('secondary'), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>Key 발급</button>
-              <button onClick={testSmsKey} style={{ ...btn('secondary'), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>테스트</button>
+              <button onClick={() => window.open('https://www.aligo.in/index.html', '_blank')} style={{ ...btn('secondary', c), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>Key 발급</button>
+              <button onClick={testSmsKey} style={{ ...btn('secondary', c), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>테스트</button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <label style={{ color: c.textSub, minWidth: '160px', fontSize: '0.875rem' }}>SMS 발신번호</label>
@@ -179,15 +182,15 @@ export function ExternalIntegrationsPanel(props: Props) {
             <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>** 알리고(ALIGO) 카카오 알림톡 설정을 할 수 있습니다.</span>
             {kakaoStatus && <span style={{ fontSize: '0.8rem', color: kakaoStatus === '저장됨' || kakaoStatus.includes('유효') ? c.success : kakaoStatus.includes('오류') ? c.danger : c.warn }}>{kakaoStatus === '저장됨' ? '✓ 저장됨' : kakaoStatus}</span>}
             <a href="https://smartsms.aligo.in/admin/api/kakao.html" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-            <button onClick={saveKakaoSettings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+            <button onClick={saveKakaoSettings} style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'nowrap' }}>
               <label style={{ color: c.textSub, minWidth: '120px', fontSize: '0.875rem', flexShrink: 0 }}>알림톡 API KEY</label>
               <input style={{ ...inputStyle, flex: 2, minWidth: '100px' }} value={kakaoUserId} onChange={(e) => setKakaoUserId(e.target.value)} placeholder='Identifier' />
               <input style={{ ...inputStyle, flex: 4, minWidth: '140px' }} value={kakaoApiKey} onChange={(e) => setKakaoApiKey(e.target.value)} placeholder='API Key' />
-              <button onClick={() => window.open('https://www.aligo.in/index.html', '_blank')} style={{ ...btn('secondary'), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>Key 발급</button>
-              <button onClick={testKakaoKey} style={{ ...btn('secondary'), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>테스트</button>
+              <button onClick={() => window.open('https://www.aligo.in/index.html', '_blank')} style={{ ...btn('secondary', c), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>Key 발급</button>
+              <button onClick={testKakaoKey} style={{ ...btn('secondary', c), padding: '0.35rem 0.75rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>테스트</button>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <label style={{ color: c.textSub, minWidth: '160px', fontSize: '0.875rem' }}>알림톡 SenderKey</label>
@@ -208,7 +211,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>Gemini AI (이미지 변환 / AI태그)</span>
           <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>상품사진 → 모델착용컷 생성 (₩430/장)</span>
           <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(66,133,244,0.1)', border: '1px solid rgba(66,133,244,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveGeminiSettings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+          <button onClick={saveGeminiSettings} style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
         </div>
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -217,7 +220,7 @@ export function ExternalIntegrationsPanel(props: Props) {
               <input type={visiblePasswords.has('gemini_apiKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={geminiApiKey} onChange={(e) => setGeminiApiKey(e.target.value)} placeholder='AIzaSy...' />
               <button type="button" onClick={() => togglePasswordVisibility('gemini_apiKey')} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textMuted, cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('gemini_apiKey') ? '숨김' : '보기'}</button>
             </div>
-            <button onClick={testGeminiApi} style={{ ...btn('secondary'), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
+            <button onClick={testGeminiApi} style={{ ...btn('secondary', c), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: c.textSub, minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
@@ -239,7 +242,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>OpenAI (이미지 편집)</span>
           <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>상품사진 자연스러운 합성/편집용</span>
           <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(16,163,127,0.1)', border: '1px solid rgba(16,163,127,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveOpenaiSettings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+          <button onClick={saveOpenaiSettings} style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
         </div>
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -248,7 +251,7 @@ export function ExternalIntegrationsPanel(props: Props) {
               <input type={visiblePasswords.has('openai_apiKey') ? 'text' : 'password'} style={{ ...inputStyle, flex: 1, fontFamily: 'monospace' }} value={openaiApiKey} onChange={(e) => setOpenaiApiKey(e.target.value)} placeholder='sk-...' />
               <button type="button" onClick={() => togglePasswordVisibility('openai_apiKey')} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textMuted, cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('openai_apiKey') ? '숨김' : '보기'}</button>
             </div>
-            <button onClick={testOpenaiApi} style={{ ...btn('secondary'), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
+            <button onClick={testOpenaiApi} style={{ ...btn('secondary', c), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: c.textSub, minWidth: '100px', fontSize: '0.875rem' }}>모델</label>
@@ -270,7 +273,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>Cloudflare R2 연동</span>
           <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>** 변환된 이미지 저장용 (미설정 시 서버 로컬 저장)</span>
           <a href="https://dash.cloudflare.com/?to=/:account/r2/api-tokens" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveR2Settings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+          <button onClick={saveR2Settings} style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
         </div>
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -295,7 +298,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: c.textSub, minWidth: '120px', fontSize: '0.875rem' }}>Public URL</label>
             <input type='text' style={{ ...inputStyle, flex: 1 }} value={r2PublicUrl} onChange={(e) => setR2PublicUrl(e.target.value)} placeholder='https://pub-xxx.r2.dev' />
-            <button onClick={testR2} style={{ ...btn('secondary'), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
+            <button onClick={testR2} style={{ ...btn('secondary', c), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           {r2Status && (
             <div style={{ fontSize: '0.8125rem', color: r2Status.includes('저장') || r2Status.includes('✓') ? c.success : r2Status.includes('확인') ? c.warn : c.danger, padding: '0.4rem 0' }}>
@@ -311,7 +314,7 @@ export function ExternalIntegrationsPanel(props: Props) {
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>Claude AI API 연동</span>
           <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>** Anthropic Claude API를 연결하면 상품명 가공, CS 자동 답변 등 AI 기능을 사용할 수 있습니다.</span>
           <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" style={{ padding: '0.3rem 0.75rem', background: 'rgba(76,154,255,0.1)', border: '1px solid rgba(76,154,255,0.3)', borderRadius: '6px', fontSize: '0.75rem', color: c.link, textDecoration: 'none', whiteSpace: 'nowrap' }}>API 발급</a>
-          <button onClick={saveClaudeSettings} style={{ ...btn('primary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
+          <button onClick={saveClaudeSettings} style={{ ...btn('primary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>설정저장</button>
         </div>
         <div style={{ maxWidth: '720px', display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -326,7 +329,7 @@ export function ExternalIntegrationsPanel(props: Props) {
               />
               <button type="button" onClick={() => togglePasswordVisibility('claude_apiKey')} style={{ padding: '0.3rem 0.5rem', fontSize: '0.7rem', background: 'transparent', border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textMuted, cursor: 'pointer', whiteSpace: 'nowrap' }}>{visiblePasswords.has('claude_apiKey') ? '숨김' : '보기'}</button>
             </div>
-            <button onClick={testClaudeApi} style={{ ...btn('secondary'), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
+            <button onClick={testClaudeApi} style={{ ...btn('secondary', c), padding: '0.35rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap' }}>연결 테스트</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
             <label style={{ color: c.textSub, minWidth: '100px', fontSize: '0.875rem' }}>모델 선택</label>
@@ -348,7 +351,7 @@ export function ExternalIntegrationsPanel(props: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.25rem' }}>
           <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: c.text }}>AI 모델 프리셋</span>
           <span style={{ fontSize: '0.8125rem', color: c.textMuted }}>** 모델 착용 이미지 생성 시 참조하는 기준 모델</span>
-          <button onClick={loadPresets} style={{ ...btn('secondary'), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>새로고침</button>
+          <button onClick={loadPresets} style={{ ...btn('secondary', c), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.8125rem' }}>새로고침</button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '1rem' }}>
           {presets.map(p => (
@@ -418,15 +421,15 @@ export function ExternalIntegrationsPanel(props: Props) {
                       <button
                         onClick={() => handleRegeneratePreset(p.key, editingDesc, editingLabel)}
                         disabled={regenerating !== null}
-                        style={{ ...btn('secondary'), ...(regenerating !== null ? btnDisabled : null), flex: 1, padding: '0.2rem', fontSize: '0.65rem', borderRadius: '4px' }}
+                        style={{ ...btn('secondary', c), ...(regenerating !== null ? btnDisabled : null), flex: 1, padding: '0.2rem', fontSize: '0.65rem', borderRadius: '4px' }}
                       >저장 & 재생성</button>
                       <button
                         onClick={() => handleSavePreset(p.key, editingLabel, editingDesc)}
-                        style={{ ...btn('secondary'), flex: 1, padding: '0.2rem', fontSize: '0.65rem', borderRadius: '4px' }}
+                        style={{ ...btn('secondary', c), flex: 1, padding: '0.2rem', fontSize: '0.65rem', borderRadius: '4px' }}
                       >저장만</button>
                       <button
                         onClick={() => setEditingPreset(null)}
-                        style={{ ...btn('ghost'), padding: '0.2rem 0.4rem', fontSize: '0.65rem', borderRadius: '4px' }}
+                        style={{ ...btn('ghost', c), padding: '0.2rem 0.4rem', fontSize: '0.65rem', borderRadius: '4px' }}
                       >취소</button>
                     </div>
                   </div>
@@ -436,7 +439,7 @@ export function ExternalIntegrationsPanel(props: Props) {
                     <div style={{ fontSize: '0.65rem', color: c.textMuted, marginBottom: '0.35rem', lineHeight: 1.3 }}>{p.desc.length > 40 ? p.desc.slice(0, 40) + '...' : p.desc}</div>
                     <button
                       onClick={() => { setEditingPreset(p.key); setEditingLabel(p.label); setEditingDesc(p.desc) }}
-                      style={{ ...btn('secondary'), width: '100%', padding: '0.2rem', fontSize: '0.65rem', borderRadius: '4px' }}
+                      style={{ ...btn('secondary', c), width: '100%', padding: '0.2rem', fontSize: '0.65rem', borderRadius: '4px' }}
                     >수정</button>
                   </div>
                 )}

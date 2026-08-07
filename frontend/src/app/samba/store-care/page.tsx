@@ -3,18 +3,19 @@
 import { useCallback, useEffect, useState } from 'react'
 import { accountApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { storeCareApi, sourcingAccountApi, type StoreCareSchedule, type StoreCarePurchase, type StoreCareMarketMetric, type MetricRecommendation, type SambaSourcingAccount } from '@/lib/samba/api/operations'
-import { card as baseCard, fmtNum } from '@/lib/samba/styles'
+import { makeCard, fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import { type Palette } from '@/lib/samba/colors'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 
-const card = { ...baseCard, padding: '20px' }
+// 카드/입력칸 스타일 팩토리 — 모듈 스코프라 훅을 못 쓰므로 팔레트(c)를 인자로 받는다
+const makeCardPadded = (c: Palette) => ({ ...makeCard(c), padding: '20px' })
 
-const inputStyle = {
+const makeInput = (c: Palette) => ({
   padding: '8px 10px', fontSize: '0.82rem', background: c.inputBg,
   border: `1px solid ${c.border}`, borderRadius: '6px', color: c.text,
   width: '100%', boxSizing: 'border-box' as const,
-}
+})
 
 const MARKET_COLORS: Record<string, string> = {
   smartstore: '#03C75A', coupang: '#E6282B', '11st': '#FF0038',
@@ -25,7 +26,8 @@ const MARKET_COLORS: Record<string, string> = {
 
 const fmt = fmtNum
 
-function getStatusBadge(status: string) {
+// 모듈 스코프라 훅을 못 쓰므로 팔레트(c)를 인자로 받는다 — 테마 반응형
+function getStatusBadge(status: string, c: Palette) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
     running: { bg: 'rgba(81,207,102,0.15)', color: c.success, label: '실행중' },
     scheduled: { bg: 'rgba(76,154,255,0.15)', color: c.link, label: '예약됨' },
@@ -67,6 +69,9 @@ function targetLabel(target: { metric: string; op: string; value: number }): str
 
 export default function StoreCare() {
   const c = useTheme()
+  // 테마 반응형 카드/입력칸 스타일 (다크에서는 기존 상수와 동일 값)
+  const card = makeCardPadded(c)
+  const inputStyle = makeInput(c)
   useEffect(() => { document.title = 'SAMBA-스토어케어' }, [])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [schedules, setSchedules] = useState<StoreCareSchedule[]>([])
@@ -288,7 +293,7 @@ export default function StoreCare() {
                         </div>
                       </div>
                       <div style={{ textAlign: 'right' }}>
-                        {getStatusBadge(m.status)}
+                        {getStatusBadge(m.status, c)}
                         <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '4px' }}>다음: {m.next_run_at ? new Date(m.next_run_at).toLocaleTimeString('ko', { hour: '2-digit', minute: '2-digit' }) : '-'}</div>
                       </div>
                     </div>
@@ -326,7 +331,7 @@ export default function StoreCare() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: c.text, margin: 0 }}>가구매 스케줄</h3>
                 <button style={{
-                  ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px',
+                  ...btn('primary', c), padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px',
                 }}>
                   + 스케줄 추가
                 </button>
@@ -362,7 +367,7 @@ export default function StoreCare() {
                         </span>
                       </td>
                       <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.78rem', color: c.textSub }}>{s.next_run_at ? new Date(s.next_run_at).toLocaleString('ko') : '-'}</td>
-                      <td style={{ padding: '10px', textAlign: 'center' }}>{getStatusBadge(s.status)}</td>
+                      <td style={{ padding: '10px', textAlign: 'center' }}>{getStatusBadge(s.status, c)}</td>
                       <td style={{ padding: '10px', textAlign: 'center' }}>
                         <div style={{ display: 'flex', gap: '4px', justifyContent: 'center' }}>
                           <button onClick={async () => {
@@ -416,7 +421,7 @@ export default function StoreCare() {
                       <td style={{ padding: '10px', fontSize: '0.82rem', color: c.text, maxWidth: '250px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{h.product_name}</td>
                       <td style={{ padding: '10px', textAlign: 'right', fontSize: '0.82rem', fontWeight: 600, color: c.text }}>₩{fmt(h.amount)}</td>
                       <td style={{ padding: '10px', textAlign: 'center', fontSize: '0.75rem', color: c.textSub }}>{h.order_no || '-'}</td>
-                      <td style={{ padding: '10px', textAlign: 'center' }}>{getStatusBadge(h.status)}</td>
+                      <td style={{ padding: '10px', textAlign: 'center' }}>{getStatusBadge(h.status, c)}</td>
                       <td style={{ padding: '10px', textAlign: 'right', fontSize: '0.75rem', color: c.textSub }}>{h.created_at}</td>
                     </tr>
                   ))}
@@ -435,7 +440,7 @@ export default function StoreCare() {
                   <p style={{ fontSize: '0.72rem', color: c.textSub, marginTop: '4px' }}>각 계정 셀러센터에 로그인된 상태에서 계정 카드의 &lsquo;수집&rsquo;을 누르면 그 계정 점수가 수집돼요. 확장앱 설치·로그인된 PC에서 실행.</p>
                 </div>
                 <button onClick={runCollect} disabled={collecting} style={{
-                  ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px',
+                  ...btn('primary', c), padding: '6px 14px', fontSize: '0.78rem', borderRadius: '6px',
                   ...(collecting ? btnDisabled : null),
                 }}>
                   {collecting ? '새로고침…' : '🔄 새로고침'}
@@ -641,7 +646,7 @@ export default function StoreCare() {
                   </label>
                 </div>
                 <button onClick={runPurchase} disabled={purchaseRunning} style={{
-                  ...btn('primary'), marginTop: '4px', padding: '10px', fontSize: '0.85rem', borderRadius: '8px', fontWeight: 700,
+                  ...btn('primary', c), marginTop: '4px', padding: '10px', fontSize: '0.85rem', borderRadius: '8px', fontWeight: 700,
                   ...(purchaseRunning ? btnDisabled : null),
                 }}>
                   {purchaseRunning ? '실행 중…' : '지금 실행 (장바구니 담기)'}

@@ -8,7 +8,7 @@ import type { SambaCollectedProduct } from '@/lib/samba/legacy'
 import { fmtNum } from '@/lib/samba/styles'
 import { buildMarketPriceList } from '@/lib/samba/marketPrice'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import { type Palette } from '@/lib/samba/colors'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 
 interface Policy { id: string; name: string; market_policies?: Record<string, unknown>; pricing?: Record<string, unknown> }
@@ -42,9 +42,10 @@ interface Props {
   onRefresh: () => void
 }
 
-const SELECT = `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] focus:outline-none focus:border-[${c.primary}]`
-const INPUT = `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
-const LABEL = `text-xs text-[${c.textSub}] mb-1 block`
+// 모듈 스코프라 훅을 못 쓰므로 팔레트(c)를 인자로 받는 팩토리 — 테마 반응형
+const mkSelect = (c: Palette) => `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] focus:outline-none focus:border-[${c.primary}]`
+const mkInput = (c: Palette) => `w-full px-2.5 py-1.5 bg-[${c.inputBg}] border border-[${c.border}] rounded text-sm text-[${c.text}] placeholder-[${c.textMuted}] focus:outline-none focus:border-[${c.primary}]`
+const mkLabel = (c: Palette) => `text-xs text-[${c.textSub}] mb-1 block`
 
 // 수정 폼 옵션 행 (UI 전용 id 포함) — 옵션별 가격 미사용(판매가는 정책 기반)
 interface EditOption { id: string; name: string; stock: number }
@@ -65,6 +66,10 @@ function toEditOptions(raw: unknown[] | undefined): EditOption[] {
 export default function ManualProductCard({
   product, policies, accounts, onDeleted, onUpdated, onRefresh }: Props) {
   const c = useTheme()
+  // 테마 반응형 클래스 문자열 (다크에서는 기존 상수와 동일 값)
+  const SELECT = mkSelect(c)
+  const INPUT = mkInput(c)
+  const LABEL = mkLabel(c)
   const [showCategories, setShowCategories] = useState(false)
   const [showPrices, setShowPrices] = useState(false)
   const [showImageModal, setShowImageModal] = useState(false)
@@ -348,8 +353,8 @@ export default function ManualProductCard({
           {editErr && <p className={`text-[${c.danger}] text-xs`}>{editErr}</p>}
 
           <div className='flex gap-2 justify-end pt-1'>
-            <button onClick={() => setEditing(false)} disabled={savingEdit} style={{ ...btn('ghost'), ...(savingEdit ? btnDisabled : null) }} className='px-3 py-1.5 text-sm rounded'>취소</button>
-            <button onClick={saveEdit} disabled={savingEdit} style={{ ...btn('primary'), ...(savingEdit ? btnDisabled : null) }} className='px-4 py-1.5 text-sm'>{savingEdit ? '저장 중...' : '저장'}</button>
+            <button onClick={() => setEditing(false)} disabled={savingEdit} style={{ ...btn('ghost', c), ...(savingEdit ? btnDisabled : null) }} className='px-3 py-1.5 text-sm rounded'>취소</button>
+            <button onClick={saveEdit} disabled={savingEdit} style={{ ...btn('primary', c), ...(savingEdit ? btnDisabled : null) }} className='px-4 py-1.5 text-sm'>{savingEdit ? '저장 중...' : '저장'}</button>
           </div>
         </div>
       )}
@@ -425,7 +430,7 @@ export default function ManualProductCard({
           <button
             onClick={transmit}
             disabled={transmitting}
-            style={{ ...btn('primary'), ...(transmitting ? btnDisabled : null) }}
+            style={{ ...btn('primary', c), ...(transmitting ? btnDisabled : null) }}
             className='px-4 py-1.5 text-sm'
           >
             {transmitting ? '전송 중...' : '마켓 전송'}

@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { collectorApi, categoryApi, accountApi, type SambaCollectedProduct } from '@/lib/samba/api/commerce'
 import { MARKET_LABELS, MARKETS, expandSyncMarkets } from '@/lib/samba/markets'
 import { showAlert } from '@/components/samba/Modal'
-import { card, fmtNum } from '@/lib/samba/styles'
+import { makeCard, fmtNum } from '@/lib/samba/styles'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
 import { useTheme } from '@/lib/samba/useTheme'
@@ -16,9 +16,9 @@ import {
   GRID_COLS,
   stickyColA,
   stickyColB,
-  stickyHeadA,
-  stickyHeadB,
-  colStyle,
+  makeStickyHeadA,
+  makeStickyHeadB,
+  makeColStyle,
   itemStyle,
 } from './styles'
 import { buildCategoryTree, getCatList } from './categoryTree'
@@ -1017,7 +1017,7 @@ export default function CategoriesPage() {
           }}
           disabled={seedLoading}
           style={{
-            ...btn('secondary'),
+            ...btn('secondary', c),
             padding: '0.375rem 0.875rem',
             fontSize: '0.8125rem',
             ...(seedLoading ? btnDisabled : null),
@@ -1056,7 +1056,7 @@ export default function CategoriesPage() {
           <button
             onClick={handleOpenAiMarketSelect}
             style={{
-              ...btn('primary'),
+              ...btn('primary', c),
               padding: '0.5rem 1rem',
               borderRadius: '8px',
               fontSize: '0.875rem',
@@ -1067,7 +1067,7 @@ export default function CategoriesPage() {
             onClick={handleBulkDelete}
             disabled={filteredMappings.length === 0}
             style={{
-              ...btn('danger'),
+              ...btn('danger', c),
               padding: '0.5rem 1rem',
               borderRadius: '8px',
               fontSize: '0.875rem',
@@ -1079,7 +1079,7 @@ export default function CategoriesPage() {
       </div>
 
       {/* 5단 드릴다운 테이블 (사이트 포함) */}
-      <div style={{ ...card, overflow: 'hidden', marginBottom: '1.25rem' }}>
+      <div style={{ ...makeCard(c), overflow: 'hidden', marginBottom: '1.25rem' }}>
         {/* 헤더 */}
         <div style={{ display: 'flex', borderBottom: `1px solid ${c.border}`, background: c.surfaceAlt }}>
           {['사이트', '대분류', '중분류', '소분류', '세분류'].map((h, i) => {
@@ -1109,21 +1109,21 @@ export default function CategoriesPage() {
         ) : (
           <div style={{ display: 'flex' }}>
             {/* 사이트: 항상 표시 */}
-            <div style={colStyle}>
+            <div style={makeColStyle(c)}>
               {getCrossSites().length === 0 ? (
                 <div style={{ padding: '1rem', color: c.textMuted, fontSize: '0.8125rem' }}>수집 상품이 없습니다</div>
               ) : getCrossSites().map(site => (
-                <div key={site} style={itemStyle(selectedSite === site)} onClick={() => handleSiteClick(site)}
+                <div key={site} style={itemStyle(selectedSite === site, c)} onClick={() => handleSiteClick(site)}
                   onMouseEnter={e => { if (selectedSite !== site) e.currentTarget.style.background = c.surfaceAlt }}
                   onMouseLeave={e => { if (selectedSite !== site) e.currentTarget.style.background = 'transparent' }}
                 >{site}</div>
               ))}
             </div>
             {/* 대분류: 사이트 선택 후 표시 */}
-            <div style={colStyle}>
+            <div style={makeColStyle(c)}>
               {selectedSite ? (
                 getCat1List().map(cat => (
-                  <div key={cat} style={itemStyle(selectedCat1 === cat)} onClick={() => handleCat1Click(cat)}
+                  <div key={cat} style={itemStyle(selectedCat1 === cat, c)} onClick={() => handleCat1Click(cat)}
                     onMouseEnter={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
                     onMouseLeave={e => { if (selectedCat1 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
@@ -1131,10 +1131,10 @@ export default function CategoriesPage() {
               ) : null}
             </div>
             {/* 중분류: 대분류 선택 후 표시 */}
-            <div style={colStyle}>
+            <div style={makeColStyle(c)}>
               {selectedCat1 ? (
                 getCat2List().map(cat => (
-                  <div key={cat} style={itemStyle(selectedCat2 === cat)} onClick={() => handleCat2Click(cat)}
+                  <div key={cat} style={itemStyle(selectedCat2 === cat, c)} onClick={() => handleCat2Click(cat)}
                     onMouseEnter={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
                     onMouseLeave={e => { if (selectedCat2 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
@@ -1142,10 +1142,10 @@ export default function CategoriesPage() {
               ) : null}
             </div>
             {/* 소분류: 중분류 선택 후 표시 */}
-            <div style={colStyle}>
+            <div style={makeColStyle(c)}>
               {selectedCat2 ? (
                 getCat3List().map(cat => (
-                  <div key={cat} style={itemStyle(selectedCat3 === cat)} onClick={() => handleCat3Click(cat)}
+                  <div key={cat} style={itemStyle(selectedCat3 === cat, c)} onClick={() => handleCat3Click(cat)}
                     onMouseEnter={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
                     onMouseLeave={e => { if (selectedCat3 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
@@ -1153,10 +1153,10 @@ export default function CategoriesPage() {
               ) : null}
             </div>
             {/* 세분류: 소분류 선택 후 표시 */}
-            <div style={{ ...colStyle, borderRight: 'none' }}>
+            <div style={{ ...makeColStyle(c), borderRight: 'none' }}>
               {selectedCat3 ? (
                 getCat4List().map(cat => (
-                  <div key={cat} style={itemStyle(selectedCat4 === cat)} onClick={() => handleCat4Click(cat)}
+                  <div key={cat} style={itemStyle(selectedCat4 === cat, c)} onClick={() => handleCat4Click(cat)}
                     onMouseEnter={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = c.surfaceAlt }}
                     onMouseLeave={e => { if (selectedCat4 !== cat) e.currentTarget.style.background = 'transparent' }}
                   >{cat}</div>
@@ -1178,12 +1178,12 @@ export default function CategoriesPage() {
                 : `${fmtNum(filteredMappings.length)}건 / 전체 ${fmtNum(baseFilteredMappings.length)}건`})
             </span>
           </h3>
-          <div ref={tableScrollRef} style={{ ...card, overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
+          <div ref={tableScrollRef} style={{ ...makeCard(c), overflow: 'auto', maxHeight: 'calc(100vh - 260px)' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
                 <tr style={{ display: 'grid', gridTemplateColumns: GRID_COLS, borderBottom: `1px solid ${c.border}`, background: c.surface }}>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadA }}>사이트</th>
-                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...stickyHeadB }}>소싱 카테고리</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...makeStickyHeadA(c) }}>사이트</th>
+                  <th style={{ padding: '0.625rem 0.75rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', ...makeStickyHeadB(c) }}>소싱 카테고리</th>
                   {MARKET_KEYS.map(mk => (
                     <th key={mk} style={{ padding: '0.625rem 0.5rem', textAlign: 'center', color: c.textMuted, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', minWidth: 0 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.125rem', alignItems: 'center' }}>
@@ -1536,7 +1536,7 @@ export default function CategoriesPage() {
             <div ref={productGridRef}>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
                 {selectedProducts.map(p => (
-                  <div key={p.id} style={{ ...card, overflow: 'hidden', cursor: 'pointer' }}
+                  <div key={p.id} style={{ ...makeCard(c), overflow: 'hidden', cursor: 'pointer' }}
                     onClick={() => router.push(`/samba/products?highlight=${p.id}`)}
                   >
                     {/* 이미지 */}
@@ -1770,7 +1770,7 @@ export default function CategoriesPage() {
                   <button
                     onClick={() => { setAiModalOpen(false); load() }}
                     style={{
-                      ...btn('primary'),
+                      ...btn('primary', c),
                       padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
                     }}
                   >확인</button>
@@ -1778,7 +1778,7 @@ export default function CategoriesPage() {
                   <button
                     onClick={() => { setAiModalOpen(false); setAiFailMessage(null) }}
                     style={{
-                      ...btn('ghost'),
+                      ...btn('ghost', c),
                       padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
                     }}
                   >닫기</button>
@@ -1787,14 +1787,14 @@ export default function CategoriesPage() {
                     <button
                       onClick={() => setAiModalOpen(false)}
                       style={{
-                        ...btn('ghost'),
+                        ...btn('ghost', c),
                         padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
                       }}
                     >취소</button>
                     <button
                       onClick={handleAiSave}
                       style={{
-                        ...btn('primary'),
+                        ...btn('primary', c),
                         padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
                       }}
                     >매핑 저장</button>
@@ -1879,7 +1879,7 @@ export default function CategoriesPage() {
                   <button
                     onClick={() => { setMarketAiProgress(null); load() }}
                     style={{
-                      ...btn('primary'),
+                      ...btn('primary', c),
                       padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px',
                     }}
                   >확인</button>
@@ -1988,11 +1988,11 @@ export default function CategoriesPage() {
             <div style={{ padding: '1rem 1.5rem', borderTop: `1px solid ${c.border}`, display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               <button
                 onClick={() => setAiMarketSelectOpen(false)}
-                style={{ ...btn('ghost'), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
+                style={{ ...btn('ghost', c), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
               >취소</button>
               <button
                 onClick={handleAiMarketConfirm}
-                style={{ ...btn('primary'), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
+                style={{ ...btn('primary', c), padding: '0.5rem 1.25rem', fontSize: '0.8125rem', borderRadius: '6px' }}
               >AI 매핑 시작</button>
             </div>
           </div>
@@ -2013,11 +2013,11 @@ export default function CategoriesPage() {
                   MARKETS.filter(m => !m.categoryOnly && !SYNC_EXCLUDED_MARKETS.has(m.id)).forEach(m => { all[m.id] = true })
                   setSyncSelected(all)
                 }}
-                style={{ ...btn('ghost'), fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                style={{ ...btn('ghost', c), fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
               >전체선택</button>
               <button
                 onClick={() => setSyncSelected({})}
-                style={{ ...btn('ghost'), fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                style={{ ...btn('ghost', c), fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
               >전체해제</button>
             </div>
 
@@ -2065,7 +2065,7 @@ export default function CategoriesPage() {
               <button
                 onClick={() => setSyncModalOpen(false)}
                 disabled={seedLoading}
-                style={{ ...btn('ghost'), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
+                style={{ ...btn('ghost', c), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem' }}
               >닫기</button>
               <button
                 onClick={async () => {
@@ -2097,7 +2097,7 @@ export default function CategoriesPage() {
                   showAlert(`동기화 완료: ${fmtNum(okCount)}건 성공${failCount > 0 ? `, ${fmtNum(failCount)}건 실패` : ''}`, failCount > 0 ? 'error' : 'success')
                 }}
                 disabled={seedLoading}
-                style={{ ...btn('primary'), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', ...(seedLoading ? btnDisabled : null) }}
+                style={{ ...btn('primary', c), padding: '0.5rem 1.25rem', borderRadius: '8px', fontSize: '0.875rem', ...(seedLoading ? btnDisabled : null) }}
               >{seedLoading ? '동기화 중...' : '동기화 시작'}</button>
             </div>
           </div>

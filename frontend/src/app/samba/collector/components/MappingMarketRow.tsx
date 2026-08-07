@@ -57,7 +57,7 @@ export default function MappingMarketRow({
       </div>
       {value && (
         <button onClick={onClear}
-          style={{ ...btn('ghost'), fontSize: '1rem' }}>&times;</button>
+          style={{ ...btn('ghost', c), fontSize: '1rem' }}>&times;</button>
       )}
     </div>
   )

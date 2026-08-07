@@ -15,7 +15,8 @@ import { fmtNum } from '@/lib/samba/styles'
 import { fmtDate } from '@/lib/samba/utils'
 import ProductImage from './ProductImage'
 import OptionPanel from './OptionPanel'
-import { dark as c } from '@/lib/samba/colors'
+import { type Palette } from '@/lib/samba/colors'
+import { useTheme } from '@/lib/samba/useTheme'
 import { btn } from '@/lib/samba/buttons'
 
 // 마켓별 상품 검색 URL (구매페이지 바로가기용)
@@ -382,7 +383,8 @@ function composeProductName(
 }
 
 // 삭제어 취소선이 적용된 등록 상품명 렌더링 (캐싱된 정규식 사용)
-function renderRegisteredName(name: string, deletionWords: string[]): React.ReactNode {
+// 모듈 스코프라 훅을 못 쓰므로 팔레트(c)를 인자로 받는다 — 테마 반응형
+function renderRegisteredName(name: string, deletionWords: string[], c: Palette): React.ReactNode {
   const regex = getDeletionRegex(deletionWords)
   if (!regex) return name
   const parts = name.split(regex)
@@ -431,6 +433,7 @@ const ProductCard = React.memo(function ProductCard({
   onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
   catMappingMap, filters, detailTemplates, usdRate = 1400, jpyRate = 9.5, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
+  const c = useTheme() // 테마 팔레트 (라이트/다크 반응형)
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
   const [showPriceHistoryModal, setShowPriceHistoryModal] = useState(false)
   const [priceHistoryData, setPriceHistoryData] = useState<Record<string, unknown>[] | null>(null)
@@ -1135,9 +1138,9 @@ const ProductCard = React.memo(function ProductCard({
                   },
                 })
               }}
-                style={{ ...btn('danger'), padding: '3px 8px', fontSize: '0.7rem' }}>추적삭제</button>
+                style={{ ...btn('danger', c), padding: '3px 8px', fontSize: '0.7rem' }}>추적삭제</button>
               <button onClick={() => setList(list.filter((_, j) => j !== i))}
-                style={{ ...btn('danger'), padding: '3px 8px', fontSize: '0.7rem' }}>삭제</button>
+                style={{ ...btn('danger', c), padding: '3px 8px', fontSize: '0.7rem' }}>삭제</button>
             </div>
           </div>
         )
@@ -1204,7 +1207,7 @@ const ProductCard = React.memo(function ProductCard({
                                   }).catch(() => {})
                                   input.value = ''
                                 }
-                              }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
+                              }} style={{ ...btn('primary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
                             </div>
                             <button onClick={() => {
                               const remaining = productImages.slice(1)
@@ -1217,7 +1220,7 @@ const ProductCard = React.memo(function ProductCard({
                               collectorApi.updateProduct(p.id, updateData).then(() => {
                                 onProductUpdate(p.id, updateData)
                               }).catch(() => {})
-                            }} style={{ ...btn('danger'), marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>대표이미지 삭제</button>
+                            }} style={{ ...btn('danger', c), marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>대표이미지 삭제</button>
                             <button onClick={() => {
                               setCardConfirm({
                                 msg: '이 대표이미지를 동일 이미지를 가진 모든 상품에서 삭제하시겠습니까?',
@@ -1231,7 +1234,7 @@ const ProductCard = React.memo(function ProductCard({
                                   } catch (e) { setCardAlert({ msg: '추적삭제 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' }) }
                                 },
                               })
-                            }} style={{ ...btn('danger'), marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>추적삭제</button>
+                            }} style={{ ...btn('danger', c), marginTop: '4px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>추적삭제</button>
                           </div>
                         </div>
                       ) : (
@@ -1270,7 +1273,7 @@ const ProductCard = React.memo(function ProductCard({
                                 onProductUpdate(p.id, ud)
                               }).catch(() => {})
                               if (input) input.value = ''
-                            }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
+                            }} style={{ ...btn('primary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
                           </div>
                           {coupangMainImg && (
                             <button onClick={() => {
@@ -1278,7 +1281,7 @@ const ProductCard = React.memo(function ProductCard({
                               collectorApi.updateProduct(p.id, ud).then(() => {
                                 onProductUpdate(p.id, ud)
                               }).catch(() => {})
-                            }} style={{ ...btn('danger'), marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>쿠팡 대표이미지 삭제</button>
+                            }} style={{ ...btn('danger', c), marginTop: '8px', padding: '5px 14px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>쿠팡 대표이미지 삭제</button>
                           )}
                           {!coupangMainImg && (
                             <p style={{ marginTop: '8px', fontSize: '0.72rem', color: c.textMuted }}>
@@ -1335,7 +1338,7 @@ const ProductCard = React.memo(function ProductCard({
                           }).catch(() => {})
                           input.value = ''
                         }
-                      }} style={{ ...btn('secondary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>추가</button>
+                      }} style={{ ...btn('secondary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>추가</button>
                     </div>
                   </div>
                 )}
@@ -1536,10 +1539,10 @@ const ProductCard = React.memo(function ProductCard({
             />
             <span style={{ fontSize: '0.7rem', color: c.textMuted }}>삭제잠금</span>
           </label>
-          <button style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '3px 10px' }}>수정</button>
+          <button style={{ ...btn('secondary', c), fontSize: '0.7rem', padding: '3px 10px' }}>수정</button>
           <button
             onClick={() => onDelete(p.id)}
-            style={{ ...btn('danger'), fontSize: '0.7rem', padding: '3px 10px' }}
+            style={{ ...btn('danger', c), fontSize: '0.7rem', padding: '3px 10px' }}
           >삭제</button>
         </div>
       </div>
@@ -1566,7 +1569,7 @@ const ProductCard = React.memo(function ProductCard({
               <button onClick={(e) => { e.stopPropagation(); onEnrich(p.id) }}
                 style={{ fontSize: '0.6rem', padding: '2px 5px', borderRadius: '3px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted, whiteSpace: 'nowrap' }}>업데이트</button>
               <button onClick={(e) => { e.stopPropagation(); window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank') }}
-                style={{ ...btn('secondary'), fontSize: '0.6rem', padding: '2px 5px', whiteSpace: 'nowrap' }}>판매</button>
+                style={{ ...btn('secondary', c), fontSize: '0.6rem', padding: '2px 5px', whiteSpace: 'nowrap' }}>판매</button>
               <span style={{ color: c.text, fontWeight: 600, flexShrink: 0 }}>{curSym}{fmt(cost)}</span>
             </div>
             <div style={{ color: c.textMuted, fontSize: '0.72rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1599,13 +1602,13 @@ const ProductCard = React.memo(function ProductCard({
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', marginBottom: '8px' }}>
             <button
               onClick={() => openPriceHistory()}
-              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>가격변경이력</button>
+              style={{ ...btn('secondary', c), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>가격변경이력</button>
             <button
               onClick={() => {
                 const url = getSourceUrl(p)
                 if (url) window.open(url, '_blank')
               }}
-              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>원문링크</button>
+              style={{ ...btn('secondary', c), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>원문링크</button>
             <button
               onClick={async () => {
                 // 상세페이지 미리보기 — 백엔드 _build_detail_html과 동일한 로직
@@ -1681,16 +1684,16 @@ const ProductCard = React.memo(function ProductCard({
                 const blob = new Blob([html], { type: 'text/html' })
                 window.open(URL.createObjectURL(blob), '_blank')
               }}
-              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>상세페이지</button>
+              style={{ ...btn('secondary', c), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>상세페이지</button>
             <button
               onClick={() => onEnrich(p.id)}
-              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>업데이트</button>
+              style={{ ...btn('secondary', c), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>업데이트</button>
             <button
               onClick={() => window.open(`/samba/orders?cpId=${encodeURIComponent(p.id)}&cpName=${encodeURIComponent(p.name)}`, '_blank')}
-              style={{ ...btn('secondary'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>판매이력</button>
+              style={{ ...btn('secondary', c), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>판매이력</button>
             <button
               onClick={() => onMarketDelete(p.id)}
-              style={{ ...btn('danger'), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>마켓삭제</button>
+              style={{ ...btn('danger', c), fontSize: '0.72rem', padding: '3px 9px', whiteSpace: 'nowrap' }}>마켓삭제</button>
           </div>
 
           {/* Detail table */}
@@ -1722,7 +1725,8 @@ const ProductCard = React.memo(function ProductCard({
                           {marketComps.length > 0 && <span style={{ color: c.textMuted, marginRight: '4px' }}>기본</span>}
                           {renderRegisteredName(
                             composeProductName(p, nameRule, undefined, undefined),
-                            deletionWords ?? []
+                            deletionWords ?? [],
+                            c
                           )}
                         </span>
                         {marketComps.map(mkt => (
@@ -1732,7 +1736,8 @@ const ProductCard = React.memo(function ProductCard({
                             </span>
                             {renderRegisteredName(
                               composeProductName(p, nameRule, undefined, mkt),
-                              deletionWords ?? []
+                              deletionWords ?? [],
+                              c
                             )}
                           </div>
                         ))}
@@ -2345,7 +2350,7 @@ const ProductCard = React.memo(function ProductCard({
                       }}
                     />
                     <button
-                      style={{ ...btn('secondary'), fontSize: '0.68rem', padding: '2px 7px', whiteSpace: 'nowrap' }}
+                      style={{ ...btn('secondary', c), fontSize: '0.68rem', padding: '2px 7px', whiteSpace: 'nowrap' }}
                       onClick={() => {
                         const input = document.querySelector<HTMLInputElement>(`input[placeholder="태그는 ','로 구분입력"]`)
                         if (!input || !input.value.trim()) return
@@ -2554,7 +2559,7 @@ const ProductCard = React.memo(function ProductCard({
             onClick={e => e.stopPropagation()}>
             <p style={{ margin: '0 0 16px', color: c.text, fontSize: '0.9rem' }}>{cardAlert.msg}</p>
             <button onClick={() => setCardAlert(null)}
-              style={{ ...btn('secondary'), padding: '6px 24px', fontSize: '0.85rem' }}>확인</button>
+              style={{ ...btn('secondary', c), padding: '6px 24px', fontSize: '0.85rem' }}>확인</button>
           </div>
         </div>
       )}
@@ -2567,9 +2572,9 @@ const ProductCard = React.memo(function ProductCard({
             <p style={{ margin: '0 0 20px', color: c.text, fontSize: '0.9rem' }}>{cardConfirm.msg}</p>
             <div style={{ display: 'flex', justifyContent: 'center', gap: '10px' }}>
               <button onClick={() => setCardConfirm(null)}
-                style={{ ...btn('ghost'), padding: '6px 24px', fontSize: '0.85rem' }}>취소</button>
+                style={{ ...btn('ghost', c), padding: '6px 24px', fontSize: '0.85rem' }}>취소</button>
               <button onClick={cardConfirm.onOk}
-                style={{ ...btn('dangerSolid'), padding: '6px 24px', fontSize: '0.85rem' }}>확인</button>
+                style={{ ...btn('dangerSolid', c), padding: '6px 24px', fontSize: '0.85rem' }}>확인</button>
             </div>
           </div>
         </div>

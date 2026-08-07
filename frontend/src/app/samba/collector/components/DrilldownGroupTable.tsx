@@ -100,19 +100,19 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             </select>
             <button
               onClick={() => setShowDuplicatesModal(true)}
-              style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
             >
               중복 상품
             </button>
             <button
               onClick={handleDeleteSelectedGroups}
-              style={{ ...btn('danger'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{ ...btn('danger', c), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
             >
               그룹 삭제
             </button>
             <button
               onClick={handleCollectGroups}
-              style={{ ...btn('primary'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{ ...btn('primary', c), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
             >
               상품수집
             </button>
@@ -120,18 +120,18 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             <button
               onClick={handleSyncRequestedCounts}
               title="선택된(없으면 전체) 그룹의 요청수를 현재 수집수로 일괄 맞춥니다"
-              style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
             >
               수집동기화
             </button>
             <button
               disabled={tagPreviewLoading}
               onClick={handleAiTagPreview}
-              style={{ ...btn('accent'), ...(tagPreviewLoading ? btnDisabled : null), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
+              style={{ ...btn('accent', c), ...(tagPreviewLoading ? btnDisabled : null), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}
             >
               {tagPreviewLoading ? '태그 생성중...' : 'AI태그'}
             </button>
-            <button onClick={handleClearAiTags} style={{ ...btn('danger'), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}>태그삭제</button>
+            <button onClick={handleClearAiTags} style={{ ...btn('danger', c), padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem' }}>태그삭제</button>
           </div>
         </div>
 
@@ -386,7 +386,7 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
                             setDrillGroup(null)
                             load(); loadTree()
                           }}
-                          style={{ ...btn('danger'), fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', flexShrink: 0 }}
+                          style={{ ...btn('danger', c), fontSize: '0.6rem', padding: '1px 5px', borderRadius: '3px', flexShrink: 0 }}
                         >삭제</button>
                       </div>
                     )

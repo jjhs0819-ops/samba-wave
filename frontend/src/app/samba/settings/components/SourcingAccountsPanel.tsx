@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle, fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import {
   sourcingAccountApi,
@@ -22,6 +22,9 @@ type Props = SourcingAccountsState & Pick<SourcingAccountsActions,
 
 export function SourcingAccountsPanel(props: Props) {
   const c = useTheme()
+  // 테마 반응형 카드/입력칸 스타일 (다크 팔레트에서는 기존 상수와 동일한 값)
+  const card = makeCard(c)
+  const inputStyle = makeInputStyle(c)
   const {
     sourcingAccounts,
     sourcingSites,
@@ -129,7 +132,7 @@ export function SourcingAccountsPanel(props: Props) {
                     setSourcingEditId(null)
                     setSourcingForm({ site_name: sourcingTab, account_label: '', username: '', password: '', chrome_profile: '', memo: '' })
                   }}
-                  style={{ ...btn('ghost'), padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px' }}
+                  style={{ ...btn('ghost', c), padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px' }}
                 >취소</button>
               </>
             )}
@@ -162,7 +165,7 @@ export function SourcingAccountsPanel(props: Props) {
                 disabled={revealing}
                 title={showPassword ? '숨기기' : '보기 (저장된 비밀번호 확인)'}
                 style={{
-                  ...btn('secondary'),
+                  ...btn('secondary', c),
                   ...(revealing ? btnDisabled : null),
                   padding: '0.55rem 0.8rem',
                   fontSize: '0.8125rem',
@@ -184,7 +187,7 @@ export function SourcingAccountsPanel(props: Props) {
                     onClick={handleSyncChromeProfiles}
                     disabled={chromeProfilesSyncing}
                     style={{
-                      ...btn('secondary'),
+                      ...btn('secondary', c),
                       ...(chromeProfilesSyncing ? btnDisabled : null),
                       padding: '0.55rem 0.8rem',
                       fontSize: '0.8rem',
@@ -206,11 +209,11 @@ export function SourcingAccountsPanel(props: Props) {
           <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.5rem' }}>
             <button
               onClick={handleSourcingSave}
-              style={{ ...btn('primary'), padding: '0.625rem 1.75rem', fontSize: '0.875rem' }}
+              style={{ ...btn('primary', c), padding: '0.625rem 1.75rem', fontSize: '0.875rem' }}
             >{sourcingEditId ? '계정 수정' : '계정 추가'}</button>
             <button
               onClick={handleFetchAllBalances}
-              style={{ ...btn('secondary'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
+              style={{ ...btn('secondary', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
             >잔액 새로고침</button>
           </div>
         </div>
@@ -277,17 +280,17 @@ export function SourcingAccountsPanel(props: Props) {
                       {a.balance_updated_at && <span style={{ color: c.textMuted }}>{new Date(a.balance_updated_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>}
                     </div>
                     <div style={{ display: 'flex', gap: '0.25rem' }}>
-                      <button onClick={() => handleFetchBalance(a.id)} disabled={balanceLoading[a.id]} style={{ ...btn('secondary'), ...(balanceLoading[a.id] ? btnDisabled : null), padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px' }}>{balanceLoading[a.id] ? '조회중' : '잔액'}</button>
+                      <button onClick={() => handleFetchBalance(a.id)} disabled={balanceLoading[a.id]} style={{ ...btn('secondary', c), ...(balanceLoading[a.id] ? btnDisabled : null), padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px' }}>{balanceLoading[a.id] ? '조회중' : '잔액'}</button>
                       <button onClick={() => sourcingAccountApi.toggle(a.id).then(() => loadSourcingAccounts())} style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: a.is_active ? '#e3f4f0' : c.surfaceAlt, border: `1px solid ${a.is_active ? '#a9ddd2' : c.border}`, color: a.is_active ? '#0f6a5b' : c.textMuted, borderRadius: '4px', cursor: 'pointer' }}>{a.is_active ? 'ON' : 'OFF'}</button>
                       <button
                         onClick={() => handleSourcingEdit(a)}
                         style={{
-                          ...btn('secondary'),
+                          ...btn('secondary', c),
                           padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px',
                           ...(sourcingEditId === a.id ? { background: '#e3f4f0', color: '#0f6a5b', border: '1px solid #a9ddd2' } : null),
                         }}
                       >{sourcingEditId === a.id ? '수정중' : '수정'}</button>
-                      <button onClick={() => handleSourcingDelete(a.id)} style={{ ...btn('danger'), padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px' }}>삭제</button>
+                      <button onClick={() => handleSourcingDelete(a.id)} style={{ ...btn('danger', c), padding: '0.15rem 0.4rem', fontSize: '0.68rem', borderRadius: '4px' }}>삭제</button>
                     </div>
                   </div>
                 ))}

@@ -64,7 +64,7 @@ export default function RefreshResultModal({
         <button
           onClick={onClose}
           style={{
-            ...btn('primary'), width: '100%', marginTop: '1.25rem',
+            ...btn('primary', c), width: '100%', marginTop: '1.25rem',
             padding: '0.625rem', borderRadius: '8px', fontSize: '0.85rem',
           }}
         >

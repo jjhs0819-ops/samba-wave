@@ -261,7 +261,7 @@ export default function NewProductCard({
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }}
               placeholder='태그 입력 후 Enter'
             />
-            <button onClick={addTag} style={btn('secondary')} className='px-3 py-1.5 text-sm'>추가</button>
+            <button onClick={addTag} style={btn('secondary', c)} className='px-3 py-1.5 text-sm'>추가</button>
           </div>
           {tags.length > 0 && (
             <div className='flex flex-wrap gap-1'>
@@ -303,7 +303,7 @@ export default function NewProductCard({
           <button
             onClick={handleSubmit}
             disabled={saving}
-            style={{ ...btn('primary'), ...(saving ? btnDisabled : null) }}
+            style={{ ...btn('primary', c), ...(saving ? btnDisabled : null) }}
             className='px-5 py-2 text-sm'
           >
             {saving ? '등록 중...' : '등록'}

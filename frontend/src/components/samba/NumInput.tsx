@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
-import { inputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
+import { makeInputStyle, fmtNum, parseNum } from '@/lib/samba/styles'
+import { useTheme } from '@/lib/samba/useTheme'
 
 /** 숫자 입력 컴포넌트 (콤마 서식 + 스피너 제거) */
 export default function NumInput({ value, onChange, style, placeholder, suffix }: {
@@ -11,6 +12,7 @@ export default function NumInput({ value, onChange, style, placeholder, suffix }
   placeholder?: string
   suffix?: string
 }) {
+  const c = useTheme()
   const [display, setDisplay] = useState(fmtNum(value))
   const ref = useRef<HTMLInputElement>(null)
 
@@ -27,7 +29,7 @@ export default function NumInput({ value, onChange, style, placeholder, suffix }
         ref={ref}
         type="text"
         inputMode="numeric"
-        style={{ ...inputStyle, ...style }}
+        style={{ ...makeInputStyle(c), ...style }}
         value={display}
         placeholder={placeholder || '0'}
         onChange={(e) => {
@@ -55,6 +57,7 @@ export function NumInputStr({ value, onChange, style, placeholder }: {
   style?: React.CSSProperties
   placeholder?: string
 }) {
+  const c = useTheme()
   const [display, setDisplay] = useState(() => {
     const n = parseNum(value)
     return n > 0 ? fmtNum(n) : ''
@@ -73,7 +76,7 @@ export function NumInputStr({ value, onChange, style, placeholder }: {
       ref={ref}
       type="text"
       inputMode="numeric"
-      style={{ ...inputStyle, ...style }}
+      style={{ ...makeInputStyle(c), ...style }}
       value={display}
       placeholder={placeholder || '0'}
       onChange={(e) => {

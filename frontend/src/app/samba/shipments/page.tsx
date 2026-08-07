@@ -17,7 +17,7 @@ import { fetchWithAuth } from '@/lib/samba/api/shared'
 import { tetrisApi } from '@/lib/samba/api/tetris'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { SITE_COLORS } from '@/lib/samba/constants'
-import { inputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
+import { makeInputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn } from '@/lib/samba/buttons'
@@ -1333,7 +1333,7 @@ export default function ShipmentsPage() {
         {/* 검색항목 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
           <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>검색항목</span>
-          <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...inputStyle, width: '100px' }}>
+          <select value={searchField} onChange={e => setSearchField(e.target.value)} style={{ ...makeInputStyle(c), width: '100px' }}>
             <option value="name">검색항목</option>
             <option value="brand">브랜드</option>
             <option value="name_all">상품명</option>
@@ -1341,19 +1341,19 @@ export default function ShipmentsPage() {
             <option value="no">상품번호</option>
             <option value="policy">정책</option>
           </select>
-          <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색 (콤마로 다중)' : '그룹명 검색'} style={{ ...inputStyle, width: '200px' }} />
+          <input type="text" value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} placeholder={searchField === 'name' ? '상품명 검색' : searchField === 'no' ? '상품번호 검색 (콤마로 다중)' : '그룹명 검색'} style={{ ...makeInputStyle(c), width: '200px' }} />
         </div>
         {/* 소싱사이트 필터 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
           <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>소싱사이트</span>
-          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
+          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ ...makeInputStyle(c), width: '140px' }}>
             {SOURCE_SITES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         {/* 품절여부 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
           <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>품절여부</span>
-          <select value={soldOutFilter} onChange={e => setSoldOutFilter(e.target.value)} style={{ ...inputStyle, width: '140px' }}>
+          <select value={soldOutFilter} onChange={e => setSoldOutFilter(e.target.value)} style={{ ...makeInputStyle(c), width: '140px' }}>
             <option value="전체">전체</option>
             <option value="품절">품절</option>
             <option value="비품절">비품절</option>
@@ -1362,7 +1362,7 @@ export default function ShipmentsPage() {
         {/* 마켓등록 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
           <span style={{ minWidth: '72px', color: c.textSub, fontSize: '0.78rem' }}>마켓등록</span>
-          <select value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)} style={{ ...inputStyle, width: '180px' }}>
+          <select value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)} style={{ ...makeInputStyle(c), width: '180px' }}>
             <option value="전체">전체</option>
             <optgroup label="── 전체 ──">
               <option value="미등록">미등록상품</option>
@@ -1396,7 +1396,7 @@ export default function ShipmentsPage() {
         {/* 검색하기 버튼 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: `2px solid ${c.border}`, flexWrap: 'wrap', gap: '8px' }}>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleSearch} style={{ ...btn('primary'), padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, borderRadius: '6px' }}>검색하기</button>
+            <button onClick={handleSearch} style={{ ...btn('primary', c), padding: '6px 40px', fontSize: '0.875rem', fontWeight: 700, borderRadius: '6px' }}>검색하기</button>
             <button onClick={handleResetSearch} style={{ padding: '6px 24px', fontSize: '0.875rem', background: 'transparent', border: `1px solid ${c.border}`, color: c.textSub, borderRadius: '6px', cursor: 'pointer' }}>초기화</button>
           </div>
         </div>
@@ -1557,7 +1557,7 @@ export default function ShipmentsPage() {
                       onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
                       disabled={!j.id || busy}
                       title={'이 잡만 취소'}
-                      style={{ ...btn('danger'), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', minWidth: '40px', flexShrink: 0, ...(busy ? { opacity: 0.6 } : null) }}
+                      style={{ ...btn('danger', c), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', minWidth: '40px', flexShrink: 0, ...(busy ? { opacity: 0.6 } : null) }}
                     >{busy ? '취소중' : '취소'}</button>
                   </div>
                 )
@@ -1585,7 +1585,7 @@ export default function ShipmentsPage() {
                       onClick={() => j.id && handleCancelSingleJob(j.id, j.markets)}
                       disabled={!j.id || busy}
                       title={'이 잡만 취소'}
-                      style={{ ...btn('danger'), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', minWidth: '40px', flexShrink: 0, ...(busy ? { opacity: 0.6 } : null) }}
+                      style={{ ...btn('danger', c), padding: '2px 8px', fontSize: '0.7rem', borderRadius: '3px', cursor: (!j.id || busy) ? 'not-allowed' : 'pointer', minWidth: '40px', flexShrink: 0, ...(busy ? { opacity: 0.6 } : null) }}
                     >{busy ? '취소중' : '취소'}</button>
                   </div>
                 )
@@ -1673,11 +1673,11 @@ export default function ShipmentsPage() {
                 setTransmitting(false)
                 setStopping('')
               }}
-                style={{ ...btn('danger'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
+                style={{ ...btn('danger', c), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px', cursor: stopping ? 'not-allowed' : 'pointer', fontWeight: 700, opacity: stopping ? 0.7 : 1 }}
               >{stopping === 'emergency' ? '취소중...' : '작업취소'}</button>
             {<>
               <button onClick={() => handleStart()}
-                style={{ ...btn('secondary'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px' }}
+                style={{ ...btn('secondary', c), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px' }}
               >선택전송</button>
               <button onClick={async () => {
                 // 전체 상품 ID를 서버에서 조회 → Job에 직접 전달 (프론트 필터링 스킵)
@@ -1822,10 +1822,10 @@ export default function ShipmentsPage() {
                   }, JOB_POLL_INTERVAL_MS)
                 } catch (e) { showAlert(e instanceof Error ? e.message : '전송 실패', 'error') }
               }}
-                style={{ ...btn('primary'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px' }}
+                style={{ ...btn('primary', c), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px' }}
               >검색결과전송 ({fmtNum(totalCount)})</button>
               <button onClick={handleSearchDelete}
-                style={{ ...btn('danger'), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer' }}
+                style={{ ...btn('danger', c), padding: '4px 14px', fontSize: '0.78rem', borderRadius: '4px', cursor: deleting ? 'not-allowed' : 'pointer' }}
               >검색결과삭제 ({fmtNum(totalCount)})</button>
             </>}
           </div>
@@ -1853,7 +1853,7 @@ export default function ShipmentsPage() {
         {/* 상단 탭 */}
         <div style={{ display: 'flex', alignItems: 'center', padding: '8px 16px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}`, gap: '8px' }}>
           <span style={{ fontSize: '0.8rem', color: c.textMuted }}>총 <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(totalCount)}</span> 개의 상품이 검색되었습니다.</span>
-          <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...inputStyle, width: '250px', marginLeft: 'auto' }}>
+          <select value={sortBy} onChange={e => { onFilterChange(); setSortBy(e.target.value) }} style={{ ...makeInputStyle(c), width: '250px', marginLeft: 'auto' }}>
             <option value="update-desc">상품업데이트 날짜순 ▼</option>
             <option value="update-asc">상품업데이트 날짜순 ▲</option>
             <option value="collect-desc">상품수집 날짜순 ▼</option>
@@ -1863,7 +1863,7 @@ export default function ShipmentsPage() {
               <option key={`${m.type}_desc`} value={`market_${m.type}_desc`}>{m.name} ▼</option>,
             ])}
           </select>
-          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }} style={{ ...inputStyle, width: '80px' }}>
+          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1) }} style={{ ...makeInputStyle(c), width: '80px' }}>
             <option value={20}>20개</option>
             <option value={50}>50개</option>
             <option value={100}>100개</option>

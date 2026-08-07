@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { card, inputStyle } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
@@ -23,6 +23,9 @@ function splitPhone(phone: string): [string, string, string] {
 
 export function OfficeShippingPanel() {
   const c = useTheme()
+  // 테마 반응형 카드/입력칸 스타일 (다크 팔레트에서는 기존 상수와 동일한 값)
+  const card = makeCard(c)
+  const inputStyle = makeInputStyle(c)
   const [form, setForm] = useState<OfficeShipping>({ name: '', phone: '', address: '', address_detail: '' })
   const [ph, setPh] = useState<[string, string, string]>(['', '', ''])
   const [saving, setSaving] = useState(false)
@@ -132,7 +135,7 @@ export function OfficeShippingPanel() {
         <button
           onClick={handleSave}
           disabled={saving}
-          style={{ ...btn('primary'), ...(saving ? btnDisabled : null), padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}
+          style={{ ...btn('primary', c), ...(saving ? btnDisabled : null), padding: '0.5rem 1.25rem', fontSize: '0.875rem' }}
         >
           {saving ? '저장 중...' : '저장'}
         </button>

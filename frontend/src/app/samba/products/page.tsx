@@ -1510,13 +1510,13 @@ export default function ProductsPage() {
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => setMusinsaAuthDismissed(true)}
-                style={{ ...btn('ghost'), flex: 1, padding: '0.75rem', fontSize: '0.9375rem' }}
+                style={{ ...btn('ghost', c), flex: 1, padding: '0.75rem', fontSize: '0.9375rem' }}
               >
                 나중에
               </button>
               <button
                 onClick={() => { window.location.href = '/samba/settings#sourcing-accounts-MUSINSA' }}
-                style={{ ...btn('dangerSolid'), flex: 2, padding: '0.75rem', fontSize: '0.9375rem' }}
+                style={{ ...btn('dangerSolid', c), flex: 2, padding: '0.75rem', fontSize: '0.9375rem' }}
               >
                 지금 설정하기
               </button>
@@ -1543,11 +1543,11 @@ export default function ProductsPage() {
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               onClick={() => setGhostChoiceModal(true)}
-              style={{ ...btn('dangerSolid'), fontSize: '0.78rem', padding: '4px 12px' }}
+              style={{ ...btn('dangerSolid', c), fontSize: '0.78rem', padding: '4px 12px' }}
             >정리하기</button>
             <button
               onClick={dismissGhostBanner}
-              style={{ ...btn('ghost'), fontSize: '0.78rem', padding: '4px 10px' }}
+              style={{ ...btn('ghost', c), fontSize: '0.78rem', padding: '4px 10px' }}
             >오늘 그만보기</button>
           </div>
         </div>
@@ -1567,14 +1567,14 @@ export default function ProductsPage() {
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
             }}>
               <span style={{ fontWeight: 700, fontSize: '0.9rem', color: c.text }}>{marketDeleteModal.title}</span>
-              <button onClick={() => setMarketDeleteModal(null)} style={{ ...btn('ghost'), fontSize: '0.77rem' }}>닫기</button>
+              <button onClick={() => setMarketDeleteModal(null)} style={{ ...btn('ghost', c), fontSize: '0.77rem' }}>닫기</button>
             </div>
             <div style={{ padding: '16px 20px 10px', color: c.textSub, fontSize: '0.8rem', lineHeight: 1.6 }}>
               삭제할 판매처를 선택하세요. 선택한 판매처에 등록된 상품만 삭제됩니다.
             </div>
             <div style={{ padding: '0 20px 16px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: prev.options.map(option => option.accountId) } : prev)} style={{ ...btn('secondary'), padding: '5px 10px', fontSize: '0.75rem' }}>전체선택</button>
-              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: [] } : prev)} style={{ ...btn('secondary'), padding: '5px 10px', fontSize: '0.75rem' }}>선택해제</button>
+              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: prev.options.map(option => option.accountId) } : prev)} style={{ ...btn('secondary', c), padding: '5px 10px', fontSize: '0.75rem' }}>전체선택</button>
+              <button onClick={() => setMarketDeleteModal(prev => prev ? { ...prev, selectedAccountIds: [] } : prev)} style={{ ...btn('secondary', c), padding: '5px 10px', fontSize: '0.75rem' }}>선택해제</button>
             </div>
             <div style={{ padding: '0 20px 20px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
               {marketDeleteModal.options.map(option => {
@@ -1615,7 +1615,7 @@ export default function ProductsPage() {
               padding: '14px 20px', borderTop: `1px solid ${c.border}`,
               display: 'flex', justifyContent: 'flex-end', gap: '8px',
             }}>
-              <button onClick={() => setMarketDeleteModal(null)} style={{ ...btn('ghost'), padding: '7px 16px' }}>취소</button>
+              <button onClick={() => setMarketDeleteModal(null)} style={{ ...btn('ghost', c), padding: '7px 16px' }}>취소</button>
               <button onClick={async () => {
                 if (!marketDeleteModal.selectedAccountIds.length) {
                   showAlert('삭제할 판매처를 선택해주세요.')
@@ -1624,7 +1624,7 @@ export default function ProductsPage() {
                 const modal = marketDeleteModal
                 setMarketDeleteModal(null)
                 await executeMarketDelete(modal.products, modal.selectedAccountIds, modal.title, modal.deleteMode)
-              }} style={{ ...btn('dangerSolid'), padding: '7px 16px' }}>삭제 실행</button>
+              }} style={{ ...btn('dangerSolid', c), padding: '7px 16px' }}>삭제 실행</button>
             </div>
           </div>
         </div>
@@ -1699,7 +1699,7 @@ export default function ProductsPage() {
               </button>
               <button
                 onClick={() => setGhostChoiceModal(false)}
-                style={{ ...btn('ghost'), padding: '8px 14px', fontSize: '0.78rem', marginTop: '4px' }}
+                style={{ ...btn('ghost', c), padding: '8px 14px', fontSize: '0.78rem', marginTop: '4px' }}
               >취소</button>
             </div>
           </div>
@@ -1767,7 +1767,7 @@ export default function ProductsPage() {
                       <span style={{ color: c.text, flex: 1 }}>
                         {fmt(j.current)}/{fmt(j.total)} ({fmt(pct)}%)
                       </span>
-                      <button onClick={() => cancelBgJob(j.job_id)} style={{ ...btn('danger'), padding: '3px 10px', fontSize: '0.65rem' }}>취소</button>
+                      <button onClick={() => cancelBgJob(j.job_id)} style={{ ...btn('danger', c), padding: '3px 10px', fontSize: '0.65rem' }}>취소</button>
                     </div>
                   )
                 })}
@@ -1796,10 +1796,10 @@ export default function ProductsPage() {
             </div>
             <div style={{ padding: '12px 20px', borderTop: `1px solid ${c.border}`, display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
               {!aiJobDone && (
-                <button onClick={abortAiJob} style={{ ...btn('danger'), padding: '6px 20px', fontSize: '0.56rem' }}>중단</button>
+                <button onClick={abortAiJob} style={{ ...btn('danger', c), padding: '6px 20px', fontSize: '0.56rem' }}>중단</button>
               )}
               {aiJobDone && (
-                <button onClick={() => setAiJobModal(false)} style={{ ...btn('secondary'), padding: '6px 20px', fontSize: '0.56rem' }}>확인</button>
+                <button onClick={() => setAiJobModal(false)} style={{ ...btn('secondary', c), padding: '6px 20px', fontSize: '0.56rem' }}>확인</button>
               )}
             </div>
           </div>
@@ -1873,7 +1873,7 @@ export default function ProductsPage() {
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
               }}>
                 <span>{refreshSummary}</span>
-                <button onClick={() => setRefreshModal(false)} style={{ ...btn('secondary'), padding: '5px 16px', fontSize: '0.75rem' }}>확인</button>
+                <button onClick={() => setRefreshModal(false)} style={{ ...btn('secondary', c), padding: '5px 16px', fontSize: '0.75rem' }}>확인</button>
               </div>
             )}
           </div>
@@ -1898,11 +1898,11 @@ export default function ProductsPage() {
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
               <button
                 onClick={() => setDeleteConfirm(null)}
-                style={{ ...btn('ghost'), padding: "7px 20px", fontSize: "0.85rem" }}
+                style={{ ...btn('ghost', c), padding: "7px 20px", fontSize: "0.85rem" }}
               >취소</button>
               <button
                 onClick={confirmDelete}
-                style={{ ...btn('dangerSolid'), padding: "7px 20px", fontSize: "0.85rem" }}
+                style={{ ...btn('dangerSolid', c), padding: "7px 20px", fontSize: "0.85rem" }}
               >삭제</button>
             </div>
           </div>
@@ -2000,7 +2000,7 @@ export default function ProductsPage() {
             )}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
               <button onClick={() => { setShowTagPreview(false); setRemovedTags([]) }}
-                style={{ ...btn('ghost'), padding: '7px 20px', fontSize: '0.85rem' }}>취소</button>
+                style={{ ...btn('ghost', c), padding: '7px 20px', fontSize: '0.85rem' }}>취소</button>
               <button onClick={async () => {
                 const groups = tagPreviews.filter(p => p.tags.length > 0).map(p => ({ group_id: p.group_id, tags: p.tags, seo_keywords: p.seo_keywords, coupang_search_tags: (p as { coupang_search_tags?: string[] }).coupang_search_tags || [] }))
                 if (groups.length === 0) { showAlert('적용할 태그가 없습니다'); return }
@@ -2037,7 +2037,7 @@ export default function ProductsPage() {
                   showAlert(`태그 적용 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
                 }
               }}
-                style={{ ...btn('primary'), padding: '7px 20px', fontSize: '0.85rem' }}>
+                style={{ ...btn('primary', c), padding: '7px 20px', fontSize: '0.85rem' }}>
                 전체 그룹에 적용 ({fmt(tagPreviews.reduce((s, p) => s + p.tags.length, 0))}개 태그)
               </button>
             </div>
@@ -2062,7 +2062,7 @@ export default function ProductsPage() {
           </span>
           <button
             onClick={() => { setFilterByGroupId(""); setFilterGroupName("") }}
-            style={{ ...btn('ghost'), marginLeft: "auto", padding: "2px 10px", fontSize: "0.75rem" }}
+            style={{ ...btn('ghost', c), marginLeft: "auto", padding: "2px 10px", fontSize: "0.75rem" }}
           >
             ✕ 해제
           </button>
@@ -2082,7 +2082,7 @@ export default function ProductsPage() {
           </span>
           <button
             onClick={() => setHighlightProductId("")}
-            style={{ ...btn('ghost'), marginLeft: "auto", padding: "2px 10px", fontSize: "0.75rem" }}
+            style={{ ...btn('ghost', c), marginLeft: "auto", padding: "2px 10px", fontSize: "0.75rem" }}
           >전체보기</button>
         </div>
       )}
@@ -2183,7 +2183,7 @@ export default function ProductsPage() {
             }}
           />
           <button onClick={handleSearch}
-            style={{ ...btn('primary'), padding: "0.3rem 0.625rem", fontSize: "0.78rem", whiteSpace: "nowrap", flexShrink: 0 }}>검색</button>
+            style={{ ...btn('primary', c), padding: "0.3rem 0.625rem", fontSize: "0.78rem", whiteSpace: "nowrap", flexShrink: 0 }}>검색</button>
         </div>
       </div>
 
@@ -2192,8 +2192,8 @@ export default function ProductsPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
           <span style={{ fontSize: '0.78rem', fontWeight: 600, color: c.textSub }}>작업 로그</span>
           <div style={{ display: 'flex', gap: '6px' }}>
-            <button onClick={() => navigator.clipboard.writeText(taskLogs.join('\n'))} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.68rem' }}>복사</button>
-            <button onClick={() => setTaskLogs([])} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.68rem' }}>초기화</button>
+            <button onClick={() => navigator.clipboard.writeText(taskLogs.join('\n'))} style={{ ...btn('ghost', c), padding: '2px 8px', fontSize: '0.68rem' }}>복사</button>
+            <button onClick={() => setTaskLogs([])} style={{ ...btn('ghost', c), padding: '2px 8px', fontSize: '0.68rem' }}>초기화</button>
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ maxHeight: '150px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.72rem', lineHeight: 1.7 }}>
@@ -2456,7 +2456,7 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={aiImgTransforming}
-          style={{ ...btn('accent'), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+          style={{ ...btn('accent', c), ...(aiImgTransforming ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{aiImgTransforming ? '변환중...' : '변환 실행'}</button>
       </div>
 
@@ -2594,7 +2594,7 @@ export default function ProductsPage() {
             reloadProducts()
           }}
           disabled={imgFiltering}
-          style={{ ...btn('accent'), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+          style={{ ...btn('accent', c), ...(imgFiltering ? btnDisabled : null), marginLeft: 'auto', padding: '0.3rem 0.875rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
         >{imgFiltering ? '필터링중...' : '필터링 실행'}</button>
       </div>
       </div>
@@ -2701,7 +2701,7 @@ export default function ProductsPage() {
             } catch (e) {
               showAlert(`태그 삭제 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`, 'error')
             }
-          }} style={{ ...btn('danger'), fontSize: "0.78rem", padding: "4px 12px", whiteSpace: "nowrap" }}>태그삭제</button>
+          }} style={{ ...btn('danger', c), fontSize: "0.78rem", padding: "4px 12px", whiteSpace: "nowrap" }}>태그삭제</button>
           <button
             onClick={() => {
               if (selectedIds.size === 0) { showAlert('전송할 상품을 선택해주세요'); return }
@@ -2941,7 +2941,7 @@ export default function ProductsPage() {
           {loadError && (
             <button
               onClick={() => loadProducts()}
-              style={{ ...btn("secondary"), padding: "4px 12px", fontSize: "0.75rem" }}
+              style={{ ...btn("secondary", c), padding: "4px 12px", fontSize: "0.75rem" }}
             >다시 시도</button>
           )}
         </div>
@@ -2977,7 +2977,7 @@ export default function ProductsPage() {
           <div style={{ color: c.danger, marginBottom: "8px" }}>서버 연결에 실패했습니다</div>
           <button
             onClick={() => loadProducts()}
-            style={{ ...btn('secondary'), padding: "6px 16px", fontSize: "0.8rem" }}
+            style={{ ...btn('secondary', c), padding: "6px 16px", fontSize: "0.8rem" }}
           >다시 시도</button>
         </div>
       ) : products.length === 0 ? (

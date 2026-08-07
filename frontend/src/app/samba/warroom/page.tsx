@@ -198,14 +198,14 @@ const AutotuneLogPanel = memo(function AutotuneLogPanel({ onStatusChange, extern
               .filter(l => shouldShowLog(l.msg, filterSources ?? null))
               .map(l => l.msg).join('\n')
             navigator.clipboard.writeText(text)
-          }} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.65rem', borderRadius: '4px' }}>복사</button>
+          }} style={{ ...btn('ghost', clr), padding: '2px 8px', fontSize: '0.65rem', borderRadius: '4px' }}>복사</button>
           <button onClick={async () => {
             setLogs([]); sinceIdxRef.current = 0
             try {
               const { API_BASE_URL: apiBase } = await import('@/config/api')
               await fetchWithAuth(`${apiBase}/api/v1/samba/monitor/refresh-logs/clear`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
             } catch { /* ignore */ }
-          }} style={{ ...btn('ghost'), padding: '2px 8px', fontSize: '0.65rem', borderRadius: '4px' }}>초기화</button>
+          }} style={{ ...btn('ghost', clr), padding: '2px 8px', fontSize: '0.65rem', borderRadius: '4px' }}>초기화</button>
         </div>
       </div>
       <div
@@ -505,7 +505,7 @@ function ActiveCyclesPanel(): React.ReactElement {
         <div style={{ fontSize: '0.96rem', fontWeight: 600, color: clr.text }}>
           활성 사이클 ({fmtNum(cycles.length)}개)
         </div>
-        <button onClick={fetchCycles} style={{ ...btn('secondary'), padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem' }}>새로고침</button>
+        <button onClick={fetchCycles} style={{ ...btn('secondary', clr), padding: '0.25rem 0.6rem', borderRadius: '6px', fontSize: '0.75rem' }}>새로고침</button>
       </div>
       {deadDaemons.length > 0 && (
         <div style={{
@@ -652,7 +652,7 @@ function ActiveCyclesPanel(): React.ReactElement {
                         disabled={busy === k}
                         onClick={() => removeAllowedSite(c.device_id, c.site)}
                         style={{
-                          ...btn('secondary'),
+                          ...btn('secondary', clr),
                           padding: '0.2rem 0.6rem',
                           borderRadius: '4px',
                           fontSize: '0.75rem',
@@ -665,7 +665,7 @@ function ActiveCyclesPanel(): React.ReactElement {
                           disabled={busy === k}
                           onClick={() => cancelCycle(c.device_id, c.site)}
                           style={{
-                            ...btn('danger'),
+                            ...btn('danger', clr),
                             padding: '0.2rem 0.6rem',
                             borderRadius: '4px',
                             fontSize: '0.75rem',
@@ -676,7 +676,7 @@ function ActiveCyclesPanel(): React.ReactElement {
                           disabled={busy === k}
                           onClick={() => removeAllowedSite(c.device_id, c.site)}
                           style={{
-                            ...btn('secondary'),
+                            ...btn('secondary', clr),
                             padding: '0.2rem 0.6rem',
                             borderRadius: '4px',
                             fontSize: '0.75rem',
@@ -689,7 +689,7 @@ function ActiveCyclesPanel(): React.ReactElement {
                         disabled={busy === k}
                         onClick={() => cancelCycle(c.device_id, c.site)}
                         style={{
-                          ...btn('danger'),
+                          ...btn('danger', clr),
                           padding: '0.2rem 0.6rem',
                           borderRadius: '4px',
                           fontSize: '0.75rem',
@@ -1216,7 +1216,7 @@ export default function WarroomPage() {
               aria-label='알람 닫기'
               title='닫기'
               onClick={() => setMusinsaAuthDismissed(true)}
-              style={{ ...btn('ghost'), position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', fontSize: '1.25rem', fontWeight: 700, lineHeight: 1 }}
+              style={{ ...btn('ghost', clr), position: 'absolute', top: '0.75rem', right: '0.75rem', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px', fontSize: '1.25rem', fontWeight: 700, lineHeight: 1 }}
             >
               &#10005;
             </button>
@@ -1236,13 +1236,13 @@ export default function WarroomPage() {
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => setMusinsaAuthDismissed(true)}
-                style={{ ...btn('ghost'), flex: 1, padding: '0.75rem', borderRadius: '8px', fontSize: '0.9375rem' }}
+                style={{ ...btn('ghost', clr), flex: 1, padding: '0.75rem', borderRadius: '8px', fontSize: '0.9375rem' }}
               >
                 나중에
               </button>
               <button
                 onClick={() => { window.location.href = '/samba/settings#sourcing-accounts-MUSINSA' }}
-                style={{ ...btn('dangerSolid'), flex: 2, padding: '0.75rem', borderRadius: '8px', fontSize: '0.9375rem' }}
+                style={{ ...btn('dangerSolid', clr), flex: 2, padding: '0.75rem', borderRadius: '8px', fontSize: '0.9375rem' }}
               >
                 지금 설정하기
               </button>
@@ -1288,7 +1288,7 @@ export default function WarroomPage() {
               onClick={() => { downloadDaemonInstaller(getOrCreateAutotuneDaemonDeviceId()) }}
               title="데몬 설치/재설치 — 미감지 배너 없어도 항상 다운로드 가능"
               style={{
-                ...btn('secondary'),
+                ...btn('secondary', clr),
                 padding: '0.25rem 0.6rem',
                 borderRadius: '6px', fontSize: '0.75rem',
               }}

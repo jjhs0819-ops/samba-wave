@@ -68,13 +68,13 @@ export default function MusinsaBrandModal({
           <button
             onClick={() => onConfirm(selectedBrandCodes)}
             disabled={selectedBrandCodes.size === 0}
-            style={{ ...btn('primary'), ...(selectedBrandCodes.size === 0 ? btnDisabled : null), flex: 1, padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}
+            style={{ ...btn('primary', c), ...(selectedBrandCodes.size === 0 ? btnDisabled : null), flex: 1, padding: '10px', borderRadius: '8px', fontSize: '0.85rem' }}
           >
             선택 확인 ({fmtNum(selectedBrandCodes.size)}개)
           </button>
           <button
             onClick={() => onConfirm(new Set())}
-            style={{ ...btn('secondary'), padding: '10px 16px', borderRadius: '8px', fontSize: '0.82rem' }}
+            style={{ ...btn('secondary', c), padding: '10px 16px', borderRadius: '8px', fontSize: '0.82rem' }}
           >
             전체 검색
           </button>

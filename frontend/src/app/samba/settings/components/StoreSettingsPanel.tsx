@@ -1,6 +1,6 @@
 'use client'
 
-import { card, inputStyle, fmtNum } from '@/lib/samba/styles'
+import { makeCard, makeInputStyle, fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn } from '@/lib/samba/buttons'
 import {
@@ -30,6 +30,9 @@ type Props = StoreSettingsState & Pick<StoreSettingsActions,
 
 export function StoreSettingsPanel(props: Props) {
   const c = useTheme()
+  // 테마 반응형 카드/입력칸 스타일 (다크 팔레트에서는 기존 상수와 동일한 값)
+  const card = makeCard(c)
+  const inputStyle = makeInputStyle(c)
   const {
     accounts, storeTab, visiblePasswords, storeData, savedStoreData,
     storeStatus, editingAccountId,
@@ -77,7 +80,7 @@ export function StoreSettingsPanel(props: Props) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <button type="button" onClick={saveNetworkIps}
-              style={{ ...btn('primary'), padding: '0.5rem 1rem', fontSize: '0.8125rem' }}>IP 저장</button>
+              style={{ ...btn('primary', c), padding: '0.5rem 1rem', fontSize: '0.8125rem' }}>IP 저장</button>
             {networkIpStatus && (
               <span style={{ fontSize: '0.8125rem', color: networkIpStatus.includes('실패') ? c.danger : c.success }}>{networkIpStatus}</span>
             )}
@@ -145,7 +148,7 @@ export function StoreSettingsPanel(props: Props) {
                       setEditingAccountId(null)
                       setStoreData(prev => { const next = { ...prev }; delete next[market.key]; return next })
                     }}
-                    style={{ ...btn('ghost'), padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px' }}
+                    style={{ ...btn('ghost', c), padding: '0.2rem 0.5rem', fontSize: '0.7rem', borderRadius: '4px' }}
                   >취소</button>
                 </>
               )}
@@ -184,7 +187,7 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert('배송정보 조회 실패', 'error')
                         }
                       }}
-                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정보 불러오기</button>
                   )}
                   {market.key === 'ssg' && field.name === '_divider_shipping_code' && (
@@ -222,7 +225,7 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert('배송비/주소 조회 실패', 'error')
                         }
                       }}
-                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송비/주소 불러오기</button>
                   )}
                   {market.key === 'lotteon' && field.name === '_divider_shipping_infra' && (
@@ -249,7 +252,7 @@ export function StoreSettingsPanel(props: Props) {
                           }
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
-                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정책/출고지 불러오기</button>
                   )}
                   {market.key === 'lottehome' && field.name === '_divider_lottehome_shipping' && (
@@ -291,13 +294,13 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert(`배송정책 ${fmtNum(polCount)}건, 추가배송비정책 ${fmtNum(extraCount)}건, 출고지 ${fmtNum(shpCount)}건, 반품지 ${fmtNum(retCount)}건을 불러왔습니다.`, 'success')
                         } catch { showAlert('불러오기 실패', 'error') }
                       }}
-                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >배송정책/출고지 불러오기</button>
                   )}
                   {market.key === 'coupang' && field.name === '_divider_shipping_coupang' && (
                     <button
                       onClick={() => loadCoupangShippingPlaces(editingAccountId || undefined)}
-                      style={{ ...btn('secondary'), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.3rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >출고지/반품지 조회</button>
                   )}
                 </div>
@@ -626,7 +629,7 @@ export function StoreSettingsPanel(props: Props) {
                     <>
                       <button
                         onClick={() => testStoreAuth(market.key)}
-                        style={{ ...btn('secondary'), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        style={{ ...btn('secondary', c), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                       >인증 테스트</button>
                       {market.guideUrl && (
                         <a href={market.guideUrl} target="_blank" rel="noopener noreferrer"
@@ -652,7 +655,7 @@ export function StoreSettingsPanel(props: Props) {
                           }
                         } catch { showAlert('정책 불러오기 실패', 'error') }
                       }}
-                      style={{ ...btn('secondary'), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.375rem 0.875rem', fontSize: '0.8125rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >정책 불러오기</button>
                   )}
                   {/* 11번가 출고지정보 가져오기 버튼 */}
@@ -693,7 +696,7 @@ export function StoreSettingsPanel(props: Props) {
                           showAlert('출고지 정보 조회 실패', 'error')
                         }
                       }}
-                      style={{ ...btn('secondary'), padding: '0.375rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                      style={{ ...btn('secondary', c), padding: '0.375rem 0.75rem', fontSize: '0.75rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                     >출고지정보 가져오기</button>
                   )}
                 </div>
@@ -709,7 +712,7 @@ export function StoreSettingsPanel(props: Props) {
             <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               <button
                 onClick={() => saveStoreSettings(market.key)}
-                style={{ ...btn('primary'), padding: '0.625rem 1.75rem', fontSize: '0.875rem' }}
+                style={{ ...btn('primary', c), padding: '0.625rem 1.75rem', fontSize: '0.875rem' }}
               >설정 저장</button>
             </div>
           </div>
