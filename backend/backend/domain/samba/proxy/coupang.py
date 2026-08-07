@@ -271,6 +271,40 @@ def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
     return details if details else [{"content": detail_html, "detailType": "TEXT"}]
 
 
+def _build_contents_blocks(
+    content_details: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """detailType 연속 구간별로 contentsType 이 일치하는 contents 블록 생성.
+
+    (2026-08-07) 쿠팡이 contentsType↔detailType 짝 검증을 강제하기 시작 —
+    기존처럼 HTML 블록 하나에 TEXT/IMAGE 조각을 섞어 보내면
+    "상세컨텐츠의 세부타입 설정이 잘 못 되었습니다. 컨텐츠타입에 맞는
+    세부타입을 입력해 주세요." 반려(에잇세컨즈 재전송 전량 실사고, 종전
+    등록분은 통과했던 규칙이라 쿠팡 측 검증 강화로 판단).
+
+    TEXT 구간 → contentsType TEXT, IMAGE 구간 → IMAGE_NO_SPACE(상세 이미지를
+    공백 없이 이어붙이는 표준 타입).
+    """
+    blocks: list[dict[str, Any]] = []
+    cur_type: str | None = None
+    cur: list[dict[str, Any]] = []
+    for d in content_details or []:
+        t = "IMAGE_NO_SPACE" if d.get("detailType") == "IMAGE" else "TEXT"
+        if t != cur_type and cur:
+            blocks.append({"contentsType": cur_type, "contentDetails": cur})
+            cur = []
+        cur_type = t
+        cur.append(d)
+    if cur:
+        blocks.append({"contentsType": cur_type, "contentDetails": cur})
+    return blocks or [
+        {
+            "contentsType": "TEXT",
+            "contentDetails": [{"content": "", "detailType": "TEXT"}],
+        }
+    ]
+
+
 _TAG_RE = re.compile(r"<[^>]+>")
 _ENTITY_WS_RE = re.compile(r"&(nbsp|#160|#xa0);", re.IGNORECASE)
 
@@ -1160,12 +1194,9 @@ class CoupangClient:
                 "pccNeeded": False,
                 "offerCondition": "NEW",
                 "attributes": _attrs,
-                "contents": [
-                    {
-                        "contentsType": "HTML",
-                        "contentDetails": content_details,
-                    }
-                ],
+                # contentsType↔detailType 짝 강제(2026-08-07 쿠팡 검증 강화) —
+                # HTML 단일 블록에 TEXT/IMAGE 혼합 금지, 타입별 블록 분리
+                "contents": _build_contents_blocks(content_details),
                 "notices": notices,
                 "images": item_images,
                 "certifications": [
