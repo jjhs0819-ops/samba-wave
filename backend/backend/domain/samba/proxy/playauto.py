@@ -773,8 +773,10 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
       02 구두/신발(12):  1 주소재 · 2 운동화여부(Y/N) · 3 색상 · 4 발길이 · 5 굽높이 ·
                         6 제조자 · 7 수입품여부(Y/N) · 8 수입자 · 9 제조국 ·
                         10 취급시주의 · 11 품질보증기준 · 12 AS전화
-      03 가방(10):       1 종류 · 2 소재 · 3 색상 · 4 크기 · 5 제조자 · 6 수입품여부(Y/N) ·
-                        7 제조국 · 8 취급시주의 · 9 품질보증기준 · 10 AS전화
+      03 가방(11):       1 종류 · 2 소재 · 3 색상 · 4 크기 · 5 제조자 · 6 수입품여부(Y/N) ·
+                        7 수입자 · 8 제조국 · 9 취급시주의 · 10 품질보증기준 · 11 AS전화
+                        (2026-08-07 EMP 웹 재실측 — 수입자 필드 추가로 10→11필드,
+                        구 10필드 전송 시 "품목정보 누락 (03)" 전량 거절되던 실사고)
       04 패션잡화(10):   1 종류 · 2 소재 · 3 치수 · 4 제조자 · 5 수입품여부(Y/N) ·
                         6 수입자 · 7 제조국 · 8 취급시주의 · 9 품질보증기준 · 10 AS전화
 
@@ -879,7 +881,7 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
             11: quality,
             12: as_phone,
         }
-    elif code == "03":  # 가방 (10)
+    elif code == "03":  # 가방 (11) — 2026-08-07 재실측: 수입자 필드 추가
         fields = {
             1: fallback,
             2: material,
@@ -887,10 +889,11 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
             4: fallback,
             5: maker,
             6: is_imported,
-            7: made_country,
-            8: care,
-            9: quality,
-            10: as_phone,
+            7: importer,
+            8: made_country,
+            9: care,
+            10: quality,
+            11: as_phone,
         }
     elif code == "04":  # 패션잡화 (10, 색상 없음·치수 있음)
         fields = {
