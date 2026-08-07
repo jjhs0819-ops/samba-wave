@@ -543,6 +543,22 @@ class SSGPlugin(SourcingPlugin):
                 if _max_price > 0:
                     best_benefit_price = round(_max_price * _card_ratio)
 
+            # [2026-08-07] 원가 상한 — 원가는 판매가를 넘을 수 없다.
+            #
+            # 옵션 가격을 bestAmt 우선으로 바꿨는데도(ssg_sourcing.py) bestAmt 가 비어
+            # 있는 옵션은 sellprc(정가)로 폴백해 같은 증상이 남았다(실측 2026-08-07:
+            # 배포 후 갱신분에서 cost 49,000 = original 49,000 / sale 41,650).
+            # 값 출처가 어디든 "매입가가 판매가보다 비싸다"는 성립할 수 없으므로
+            # 마지막에 한 번 잘라낸다. 이러면 파싱 경로가 늘어나도 재발하지 않는다.
+            if new_sale_price and best_benefit_price > int(new_sale_price):
+                logger.info(
+                    "[SSG] 원가 상한 적용: %s원 → 판매가 %s원 (%s)",
+                    f"{int(best_benefit_price):,}",
+                    f"{int(new_sale_price):,}",
+                    site_product_id,
+                )
+                best_benefit_price = int(new_sale_price)
+
             # 변동/재고변동 정확 판정 — 옵션별 0 경계 전환을 stock_changed로 인정
             from backend.domain.samba.collector.refresher import (
                 count_stock_transitions,
