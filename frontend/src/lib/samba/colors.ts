@@ -21,6 +21,9 @@ export interface Palette {
   textMuted: string    // 흐린 라벨
   headerBg: string     // 테이블 헤더 바 배경
   headerText: string   // 헤더 바 텍스트
+  chipNeutralBg: string     // 중립 액션 칩(비활성 토글 버튼) 배경
+  chipNeutralText: string   // 중립 액션 칩 글자
+  chipNeutralBorder: string // 중립 액션 칩 테두리
   primary: string      // 브랜드 강조(주황)
   link: string         // 링크·파랑
   danger: string       // 빨강
@@ -52,8 +55,11 @@ export const light: Palette = {
   text: '#14181f',
   textSub: '#3a434e',
   textMuted: '#5b646e',
-  headerBg: '#2c3340',
-  headerText: '#e8eaed',
+  headerBg: '#e7eaef',
+  headerText: '#2c3340',
+  chipNeutralBg: '#e4e7eb',
+  chipNeutralText: '#3a434e',
+  chipNeutralBorder: '#c4cad1',
   primary: '#2563eb',
   link: '#1c83e0',
   danger: '#d84444',
@@ -87,6 +93,9 @@ export const dark: Palette = {
   textMuted: '#666666',
   headerBg: '#0D1117',
   headerText: '#94A3B8',
+  chipNeutralBg: '#5a5a5a',
+  chipNeutralText: '#ffffff',
+  chipNeutralBorder: '#5a5a5a',
   primary: '#FF8C00',
   link: '#4C9AFF',
   danger: '#FF6B6B',

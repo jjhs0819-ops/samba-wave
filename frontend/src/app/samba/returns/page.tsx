@@ -317,8 +317,10 @@ export default function ReturnsPage() {
 
   // 주문번호 기준 중복 제거 — 같은 order_number 행은 하나만 남긴다.
   // 우선순위: ① 완료 상태(취소/반품/교환) 행을 우선 보존 — 완료 처리한 행이 사라지지 않도록.
-  //          ② 완료 여부가 같으면(둘 다 완료 또는 둘 다 미완료) 최신 접수건
-  //             (return_request_date, 없으면 created_at)을 남긴다.
+  //          ② 사용자가 손댄 흔적(메모·비용·체크일·물품위치)이 많은 행 우선 —
+  //             수정 내용이 새로고침 후에도 대표로 남아 보이도록.
+  //          ③ 그래도 같으면 최신 접수건(return_request_date, 없으면 created_at).
+  //          ④ 전부 동점이면 id 사전순 — 어떤 경우에도 항상 같은 행이 뽑히게(비결정성 제거).
   // 주문번호가 다르면 별개 건이므로 유지하고, 주문번호가 비어있는 행은 식별 불가하므로
   // 묶지 않고 각각 그대로 둔다.
   const dedupedReturns = useMemo(() => {
@@ -327,11 +329,33 @@ export default function ReturnsPage() {
       const t = new Date(r.return_request_date || r.created_at || 0).getTime()
       return Number.isNaN(t) ? 0 : t
     }
-    // 새 행(cand)이 기존 행(cur)을 대체해야 하는지
+    // 사용자가 손댄 흔적 점수 — memo·고객비용·회사비용·체크일·물품위치 중 값이 있는 필드 수.
+    // 단 memo 가 자동 기입값('취소요청')뿐이면 손댄 것으로 치지 않는다 —
+    // 백엔드가 취소요청 INSERT 시 자동으로 넣는 값이라, 이걸 점수로 치면 사용자가
+    // 메모를 지우거나 고쳐 저장한 행이 자동 기입 행에 다시 밀리는 문제가 재발한다.
+    const editScore = (r: SambaReturn) => {
+      const has = (v: string | undefined | null) => !!(v && String(v).trim())
+      const memoTouched = has(r.memo) && r.memo!.trim() !== '취소요청'
+      return (memoTouched ? 1 : 0)
+        + (has(r.customer_amount) ? 1 : 0)
+        + (has(r.company_amount) ? 1 : 0)
+        + (has(r.check_date) ? 1 : 0)
+        + (has(r.product_location) ? 1 : 0)
+    }
+    // 새 행(cand)이 기존 행(cur)을 대체해야 하는지 — 4단계 모두 결정적 비교라
+    // 서버 정렬 순서가 흔들려도 대표 행이 새로고침마다 바뀌지 않는다.
     const shouldReplace = (cand: SambaReturn, cur: SambaReturn) => {
+      // ① 완료 상태인 쪽 우선 — 완료 처리한 이력이 대기 행에 가려지지 않게
       const candDone = isDone(cand), curDone = isDone(cur)
-      if (candDone !== curDone) return candDone // 완료 상태인 쪽 우선
-      return tsOf(cand) > tsOf(cur)             // 완료 여부 같으면 최신 접수건
+      if (candDone !== curDone) return candDone
+      // ② 손댄 흔적 많은 쪽 우선 — 사용자가 수정한 행이 미수정(자동 기입) 행에 밀리지 않게
+      const candScore = editScore(cand), curScore = editScore(cur)
+      if (candScore !== curScore) return candScore > curScore
+      // ③ 최신 접수건 우선 — 같은 주문의 재접수는 최신 건이 실상태
+      const candTs = tsOf(cand), curTs = tsOf(cur)
+      if (candTs !== curTs) return candTs > curTs
+      // ④ 최종 tie-break: id 사전순(작은 쪽) — 완전 동점이어도 항상 같은 행 선택
+      return cand.id < cur.id
     }
     const seen = new Map<string, number>() // order_number -> result 내 인덱스
     const result: SambaReturn[] = []
@@ -946,7 +970,14 @@ export default function ReturnsPage() {
                         <input
                           id={`ck-${r.id}`}
                           type="date"
-                          value={r.check_date?.slice(0, 10) || ''}
+                          // check_date 는 UTC 저장(KST 자정 = 전날 15:00Z) — 문자열 slice(0,10)는
+                          // 하루 이른 날짜가 되므로 로컬(KST) 기준 YYYY-MM-DD 로 변환해 넣는다.
+                          // 잘못된 날짜 문자열이면 빈 값. ('sv-SE' 로케일 = 로컬 기준 YYYY-MM-DD 포맷)
+                          value={(() => {
+                            if (!r.check_date) return ''
+                            const d = new Date(r.check_date)
+                            return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('sv-SE')
+                          })()}
                           onChange={async (e) => {
                             const val = e.target.value
                             setReturns(prev => prev.map(x => x.id === r.id ? { ...x, check_date: val } : x))

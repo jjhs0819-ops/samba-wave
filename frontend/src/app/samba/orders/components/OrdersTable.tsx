@@ -350,10 +350,11 @@ export default function OrdersTable(props: OrdersTableProps) {
                       }}
                       style={{
                         fontSize: '0.68rem', padding: '0.125rem 0',
-                        // 취소·반품 요청 상태일 때만 빨간색, 그 외 중립 (#300)
-                        background: isCancelRequested ? c.danger : '#5a5a5a',
-                        color: '#fff',
-                        border: isCancelRequested ? `1px solid ${c.danger}` : '1px solid #5a5a5a',
+                        // 취소·반품 요청 상태일 때만 빨간색, 그 외 중립 칩 토큰 (#300)
+                        // — 하드코딩 #5a5a5a 는 라이트모드에서 검게 떠서 chipNeutral 토큰으로 교체
+                        background: isCancelRequested ? c.danger : c.chipNeutralBg,
+                        color: isCancelRequested ? '#fff' : c.chipNeutralText,
+                        border: isCancelRequested ? `1px solid ${c.danger}` : `1px solid ${c.chipNeutralBorder}`,
                         borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
                         fontWeight: 600,
                       }}
@@ -366,8 +367,10 @@ export default function OrdersTable(props: OrdersTableProps) {
                           onClick={() => toggleAction(o.id, actionBtn.key, o.action_tag)}
                           style={{
                             fontSize: '0.68rem', padding: '0.125rem 0',
-                            background: isActive ? actionBtn.activeColor : '#5a5a5a',
-                            color: '#fff', border: isActive ? `1px solid ${actionBtn.activeColor}` : '1px solid #5a5a5a',
+                            // 활성=각 액션 고유색(진한 솔리드라 흰 글씨 유지), 비활성=중립 칩 토큰(라이트/다크 공용)
+                            background: isActive ? actionBtn.activeColor : c.chipNeutralBg,
+                            color: isActive ? '#fff' : c.chipNeutralText,
+                            border: isActive ? `1px solid ${actionBtn.activeColor}` : `1px solid ${c.chipNeutralBorder}`,
                             borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
                           }}
                         >{actionBtn.label}</button>

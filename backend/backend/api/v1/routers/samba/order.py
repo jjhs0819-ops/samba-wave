@@ -3636,6 +3636,192 @@ async def _push_hubnet_tracking(
         return {"updated": 0, "error": str(e)[:80]}
 
 
+# ══════════════════════════════════════════════
+# 주문 상태 → 반품탭 동기화 (요청 #7·#10)
+# ══════════════════════════════════════════════
+
+# 반품탭에서 '완료 확정'으로 치는 completion_detail 값 — 이 값이 박힌 행은
+# 주문탭 조작이 '진행중'으로 되돌리지 못한다 (요청 #10 되돌림 방지).
+_RETURN_FINAL_DETAILS = ("취소", "반품", "교환", "거부")
+
+
+def _return_row_touch_reasons(ret: Any, order: SambaOrder) -> list[str]:
+    """반품행에 남은 '사장님 수기 흔적' 목록을 반환. 비어 있으면 손 안 댄 자동생성 행.
+
+    요청 #7 의 DB 손실 방지 가드 — 자동 백필(_backfill_returns_from_claim_orders)이
+    채우는 값만 허용하고, 그 외 값이 하나라도 있으면 삭제하지 않도록 사유를 담아
+    돌려준다. (product_location·region 은 백필이 주소에서 자동 추출해 채우므로
+    '비어 있음' 대신 '자동 추출값과 동일'까지 허용 — 다르면 수기 수정으로 본다)
+    """
+    # 지연 import — returns 라우터와의 순환 import 방지 (이 코드베이스 관례)
+    from backend.api.v1.routers.samba.returns import _extract_city_district
+
+    reasons: list[str] = []
+
+    detail = (ret.completion_detail or "").strip()
+    if detail not in ("", "진행중"):
+        reasons.append(f"completion_detail={detail}")
+    if ret.status != "requested":
+        reasons.append(f"status={ret.status}")
+    memo = (ret.memo or "").strip()
+    if memo not in ("", "취소요청"):  # '취소요청'은 백필 자동 기입값 (요청 #5)
+        reasons.append("memo(수기)")
+    if (ret.customer_amount or "").strip():
+        reasons.append("customer_amount")
+    if (ret.company_amount or "").strip():
+        reasons.append("company_amount")
+    if ret.check_date is not None:
+        reasons.append("check_date")
+    if ret.completion_date is not None:
+        reasons.append("completion_date")
+    if ret.approval_date is not None:
+        reasons.append("approval_date")
+    if ret.confirmed:
+        reasons.append("confirmed")
+    if ret.settlement_amount:  # None·0 만 허용
+        reasons.append("settlement_amount")
+    if ret.recovery_amount:
+        reasons.append("recovery_amount")
+
+    # 상품위치/지역 — 백필 자동 추출값(주소 기반)과 다르면 수기 수정으로 간주
+    auto_loc = _extract_city_district(order.customer_address) or ""
+    if (ret.product_location or "") not in ("", auto_loc):
+        reasons.append("product_location(수기)")
+    if (ret.region or "") not in ("", auto_loc):
+        reasons.append("region(수기)")
+
+    # 모델의 수기 입력 전용 필드들 — 백필은 채우지 않으므로 값이 있으면 전부 수기
+    for manual_field in (
+        "return_link_manual",
+        "customer_phone_manual",
+        "sourcing_order_no",
+        "reason",
+        "exchange_retrieval_status",
+        "exchange_retrieved_at",
+        "exchange_reship_company",
+        "exchange_reship_tracking",
+        "exchange_delivered_at",
+    ):
+        if getattr(ret, manual_field, None):
+            reasons.append(manual_field)
+
+    if ret.notes:  # 백필은 빈 리스트로 생성 — 내용이 있으면 수기 메모
+        reasons.append("notes")
+
+    return reasons
+
+
+async def _sync_returns_with_order_status(
+    session: AsyncSession, order: SambaOrder
+) -> None:
+    """주문 상태 변경 시 반품/교환탭(samba_return) 동기화.
+
+    - claim 상태가 아니게 되면: 손 안 댄 자동생성 반품행만 삭제 (요청 #7)
+    - claim 상태이면: 연결 반품행의 상태 동기화, 없으면 백필 재사용으로 생성 (요청 #10)
+
+    판정·값 생성은 반품 백필과 동일한 헬퍼를 재사용해 두 경로가 어긋나지 않게 한다.
+    호출부(update_order_status)가 'status 실제 변경 시에만' 호출하고, 여기서도
+    값이 실제로 달라질 때만 UPDATE 해 반품↔주문 상호 동기화의 순환을 끊는다.
+    """
+    # 지연 import — returns 라우터와의 순환 import 방지 (이 코드베이스 관례)
+    from sqlalchemy import or_
+
+    from backend.api.v1.routers.samba.returns import (
+        _backfill_returns_from_claim_orders,
+        _claim_kind_from_order,
+        _claim_status_from_order,
+        _completion_detail,
+    )
+    from backend.domain.samba.returns.model import SambaReturn
+    from backend.utils import now_kst
+
+    claim_type = _claim_kind_from_order(order.status, order.shipping_status)
+
+    # 연결 반품행 조회: order_id 우선 + order_number 보조 (백필이 둘 다 기록)
+    conds = [SambaReturn.order_id == order.id]
+    if order.order_number:
+        conds.append(SambaReturn.order_number == order.order_number)
+    rows = list(
+        (await session.execute(select(SambaReturn).where(or_(*conds))))
+        .scalars()
+        .all()
+    )
+
+    if claim_type is None:
+        # 요청 #7 — claim 철회: 손 안 댄 자동생성 행만 삭제, 수기 흔적 있으면 보존
+        deleted = 0
+        for ret in rows:
+            reasons = _return_row_touch_reasons(ret, order)
+            if reasons:
+                logger.info(
+                    f"[주문→반품동기화] 보존 return={ret.id} order={order.id} "
+                    f"— 수기/확정 흔적: {', '.join(reasons)}"
+                )
+                continue
+            await session.delete(ret)
+            deleted += 1
+            logger.info(
+                f"[주문→반품동기화] 삭제 return={ret.id} order={order.id} "
+                f"status={order.status} — claim 철회로 자동생성 행 제거"
+            )
+        if deleted:
+            await session.commit()
+        return
+
+    if not rows:
+        # 요청 #10 — 연결 반품행 없음: 기존 백필 함수 재사용으로 즉시 생성
+        # (행 생성·필드 채움 로직은 백필 한 곳에만 둔다. 내부에서 commit 수행)
+        # order_ids로 이 주문 1건만 스캔 — 일괄변경(최대 200건 순차 호출)이
+        # 건마다 claim 주문 5,000건 전체 스캔을 돌지 않게 한다
+        created = await _backfill_returns_from_claim_orders(
+            session, tenant_id=order.tenant_id, order_ids=[order.id]
+        )
+        if created:
+            logger.info(
+                f"[주문→반품동기화] 반품행 백필 생성 order={order.id} (+{created}건)"
+            )
+        return
+
+    # 요청 #10 — 연결 반품행 상태 동기화 (백필과 동일 헬퍼로 값 산출)
+    claim_status = _claim_status_from_order(order.status, order.shipping_status)
+    new_detail = _completion_detail(claim_type, claim_status)
+    changed = 0
+    for ret in rows:
+        updates: dict[str, Any] = {}
+        if ret.type != claim_type:
+            updates["type"] = claim_type
+        if order.shipping_status and ret.market_order_status != order.shipping_status:
+            updates["market_order_status"] = order.shipping_status
+
+        finalized = (ret.completion_detail or "") in _RETURN_FINAL_DETAILS
+        if finalized and new_detail == "진행중":
+            # 되돌림 방지 — 반품탭에서 완료 확정(취소/반품/교환/거부)한 행을
+            # 주문탭 조작이 '진행중'으로 뒤엎지 않는다. type·마켓상태만 맞춘다.
+            logger.info(
+                f"[주문→반품동기화] 완료 확정 행 보호 return={ret.id} "
+                f"(completion_detail={ret.completion_detail}·status={ret.status} 유지)"
+            )
+        else:
+            if ret.completion_detail != new_detail:
+                updates["completion_detail"] = new_detail
+            if ret.status != claim_status:
+                updates["status"] = claim_status
+
+        if not updates:
+            # 이미 같은 값 — UPDATE 생략 (불필요 쓰기 방지 + 상호 동기화 순환 종단)
+            continue
+        for key, value in updates.items():
+            setattr(ret, key, value)
+        ret.updated_at = now_kst()
+        session.add(ret)
+        changed += 1
+        logger.info(
+            f"[주문→반품동기화] 갱신 return={ret.id} order={order.id} {updates}"
+        )
+    if changed:
+        await session.commit()
+
+
 @router.put("/{order_id}/status", response_model=SambaOrder)
 async def update_order_status(
     order_id: str,
@@ -3643,9 +3829,28 @@ async def update_order_status(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     svc = _write_service(session)
+    # 순환 차단 1차 관문: status 가 '실제로 바뀐' 경우에만 반품탭 동기화를 돌린다.
+    # (반품탭 PATCH → 주문 status 갱신은 이 라우트를 타지 않지만, 동일값 재호출까지
+    #  무시해 이중 안전장치로 둔다)
+    existing = await svc.get_order(order_id)
+    prev_status = existing.status if existing else None
+
     order = await svc.update_order_status(order_id, body.status)
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+
+    if prev_status != order.status:
+        # 동기화 실패가 주문 상태 변경 자체를 막으면 안 된다
+        # (반품→주문 동기화 _sync_order_status_by_completion 과 동일 방침)
+        try:
+            await _sync_returns_with_order_status(session, order)
+        except Exception as exc:
+            try:
+                # 부분 동기화 잔여 변경 폐기 — 주문 상태 변경은 이미 commit 완료
+                await session.rollback()
+            except Exception:
+                pass
+            logger.warning(f"[주문→반품동기화] 실패(무시) order_id={order_id}: {exc}")
     return order
 
 

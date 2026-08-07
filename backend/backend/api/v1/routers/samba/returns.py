@@ -113,7 +113,11 @@ def _completion_detail(claim_type: str, claim_status: str) -> str:
 async def _backfill_returns_from_claim_orders(
     session: AsyncSession,
     tenant_id: Optional[str] = None,
+    order_ids: Optional[list[str]] = None,
 ) -> int:
+    # order_ids 가 주어지면 해당 주문들로만 스캔을 좁힌다 (주문 상태변경 단건 동기화용
+    # — order.py _sync_returns_with_order_status. 일괄변경이 건마다 5,000건 전체
+    # 스캔을 돌지 않게 함). None(기본)이면 기존과 100% 동일한 전체 백필.
     from datetime import UTC, datetime as _dt
 
     from sqlalchemy import or_
@@ -147,6 +151,9 @@ async def _backfill_returns_from_claim_orders(
             *[SambaOrder.shipping_status.ilike(f"%{word}%") for word in claim_words],
         )
     )
+    if order_ids is not None:
+        # 대상 주문 좁히기 (AND) — claim 판정·tenant 조건·기존행 스킵은 그대로 통과시킨다
+        stmt = stmt.where(col(SambaOrder.id).in_(order_ids))
     if tenant_id is not None:
         stmt = stmt.where(
             or_(
@@ -158,11 +165,12 @@ async def _backfill_returns_from_claim_orders(
     if not orders:
         return 0
 
-    order_ids = [o.id for o in orders]
+    # 파라미터 order_ids(대상 좁히기)와 섀도잉되지 않게 로컬은 found_ 접두
+    found_order_ids = [o.id for o in orders]
     order_numbers = [o.order_number for o in orders if o.order_number]
     existing_stmt = select(SambaReturn.order_id, SambaReturn.order_number).where(
         or_(
-            col(SambaReturn.order_id).in_(order_ids),
+            col(SambaReturn.order_id).in_(found_order_ids),
             col(SambaReturn.order_number).in_(order_numbers),
         )
     )
