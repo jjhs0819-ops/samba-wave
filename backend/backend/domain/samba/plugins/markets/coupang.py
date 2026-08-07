@@ -410,7 +410,17 @@ class CoupangPlugin(MarketPlugin):
             except Exception as _e:
                 logger.warning(f"[쿠팡] 출고지 택배사 코드 조회 실패(무시): {_e}")
         if not outbound_delivery_code:
-            outbound_delivery_code = "CJGLS"  # 최후 폴백
+            # (2026-08-07) CJGLS 무언 폴백 제거 — 실제 출고지 택배사와 다른 코드로
+            # 등록되면 검수 반려가 계정 전체로 번진다(실사고: 승인반려 2,811건,
+            # 롯데택배 출고지 계정이 전량 CJ로 등록됨. 롯데택배의 쿠팡 코드는
+            # HYUNDAI). 코드 미확인은 조용히 CJ로 나가는 대신 명시적 실패로 남겨
+            # 계정 설정(출고지 deliveryCode) 보완을 유도한다.
+            _msg = (
+                f"출고지 택배사 코드 미확인(출고지 {outbound_code or '미설정'}) — "
+                "계정의 출고지 deliveryCode 저장/조회 확인 필요"
+            )
+            logger.error(f"[쿠팡] {_msg}")
+            return {"success": False, "message": _msg}
 
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
         data = CoupangClient.transform_product(
