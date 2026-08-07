@@ -38,8 +38,14 @@ if ($LASTEXITCODE -ne 0) { throw "빌드 실패" }
 #   슬랙 요약이 3시간 넘게 안 나갔다. 대기 30분 / 로그 40분으로 늘린다.
 function Wait-KreamCycle {
   param([int]$MaxSec = 1800)
-  if ($env:SKIP_KREAM_WAIT -eq '1') {
-    Write-Host "크림 사이클 대기 건너뜀(SKIP_KREAM_WAIT=1)" -ForegroundColor Yellow
+  # [2026-08-08] 기본 동작 반전 — 이제 기본은 "기다리지 않음".
+  # 대기 가드가 배포를 30분씩 막아 긴급 수정 반영이 계속 지연됐다. 매번
+  # SKIP_KREAM_WAIT 를 붙이거나 API 컨테이너만 따로 교체하는 우회를 반복하는 것보다
+  # 기본을 바꾸는 게 맞다.
+  # 크림 사이클 보호가 필요한 배포에서만 KREAM_WAIT=1 로 켠다
+  # (등록 실행 중 컨테이너 교체 시 그 회차 등록분이 유실된다 — 2026-08-06 4,206건).
+  if ($env:KREAM_WAIT -ne '1') {
+    Write-Host "크림 사이클 대기 안 함(기본). 보호하려면 KREAM_WAIT=1" -ForegroundColor DarkGray
     return
   }
   $running = docker ps --filter name=local-samba-kream-1 --format "{{.Names}}" 2>$null
