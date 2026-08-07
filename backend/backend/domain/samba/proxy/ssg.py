@@ -1748,32 +1748,14 @@ class SSGClient:
         # 2) 특수문자 제거 (한글·영문·숫자·공백만 허용, 언더스코어도 제거)
         cleaned_name = _re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", cleaned_name)
         cleaned_name = _re.sub(r"\s{2,}", " ", cleaned_name).strip()
-        # 2-5) SEO 키워드를 상품명(itemNm)에 덧붙임 — 검색 노출용.
-        #      seo_keywords 우선, 없으면 tags 상위로 폴백. 상품명에 이미 있는
-        #      단어·내부마커(__ai_tagged__ 등)는 제외하고, 아래 90byte 컷 안에서 추가.
-        _seo_src = product.get("seo_keywords") or product.get("tags") or []
-        if isinstance(_seo_src, list) and _seo_src:
-            # ★2026-08-04 — 단어 단위 dedup 으로 강화. 기존 구절 substring 검사는
-            # 어순이 다르면 놓쳐서("여성 숏 팬츠" vs "스포츠 숏 팬츠") 같은 단어가
-            # 상품명에 재유입됐다(전수조사 8만건 중복의 3층 원인 중 하나).
-            _name_words = {w for w in cleaned_name.lower().split() if w}
-            _seo_add: list[str] = []
-            for _kw in _seo_src:
-                _kw = str(_kw).strip()
-                if not _kw or (_kw.startswith("__") and _kw.endswith("__")):
-                    continue
-                _kw = _re.sub(r"[^가-힣a-zA-Z0-9\s]", " ", _kw).strip()
-                _kw = _re.sub(r"\s{2,}", " ", _kw)
-                _kw_words = [w for w in _kw.split() if w.lower() not in _name_words]
-                if not _kw_words:
-                    continue
-                for _w in _kw_words:
-                    _name_words.add(_w.lower())
-                _seo_add.append(" ".join(_kw_words))
-            if _seo_add:
-                cleaned_name = (cleaned_name + " " + " ".join(_seo_add)).strip()
-                cleaned_name = _re.sub(r"\s{2,}", " ", cleaned_name)
-        # 3) 90byte 제한 (공백 포함) — SEO 덧붙인 뒤 최종 컷
+        # 2-5) ★2026-08-07 — SEO 키워드를 상품명(itemNm)에 덧붙이지 않는다.
+        #      신세계몰 셀러 안내: "상품명, 브랜드, 모델명에 입력한 내용은 자동으로
+        #      검색대상에 포함되므로, 검색어로 중복하여 등록하지 않습니다."
+        #      → 상품명에 SEO 를 넣어봐야 검색 이점이 없고, 90byte 컷에서 단어
+        #      중간이 잘려 "…가벼"(=가벼운운동화) 같은 깨진 꼬리만 남았다(실측).
+        #      SEO 는 아래 itemSrchwdNm(검색어)에 태그와 함께 넣는다.
+        #      (구 동작: 커밋 8f966026a / 단어dedup 027649fec — 둘 다 폐기)
+        # 3) 90byte 제한 (공백 포함)
         encoded = cleaned_name.encode("utf-8")
         if len(encoded) > 90:
             # 90byte 이내로 잘라냄 (멀티바이트 경계 보호)
@@ -1827,15 +1809,25 @@ class SSGClient:
         # stdCtgId는 반드시 표준카테고리여야 함 — 전시카테고리 ID를 넣으면 API 파싱 오류 발생
         effective_std_cat = std_category_id or product.get("_std_category_id", "") or ""
 
-        # ── 검색어 (태그 기반, 최대 10개, 500byte) ──
-        tags = product.get("tags") or product.get("keywords") or []
-        if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        # ── 검색어 (SEO 키워드 + 태그, 최대 10개, 500byte) ──
+        # ★2026-08-07 — 신세계몰은 상품명/브랜드/모델명이 자동으로 검색대상이라
+        # SEO 를 상품명에 넣지 않는다(위 2-5 참조). 대신 SEO 키워드를 검색어의
+        # 맨 앞에 넣어 태그와 함께 태운다. 검색량 상위인 SEO 가 10개 한도에서
+        # 우선권을 갖도록 순서를 SEO → 태그로 둔다.
+        def _as_list(v: object) -> list[str]:
+            if isinstance(v, str):
+                return [t.strip() for t in v.split(",") if t.strip()]
+            return [str(t).strip() for t in v if str(t).strip()] if isinstance(v, list) else []
+
+        _seo_kw = _as_list(product.get("seo_keywords"))
+        _tag_kw = _as_list(product.get("tags") or product.get("keywords"))
+        tags = _seo_kw + _tag_kw
         # 상품명/브랜드/모델명과 중복 제거 후 최대 10개
         name_lower = name.lower()
         brand_lower = (matched_brand_name or brand or "").lower()
         model_lower = style_no.lower()
         filtered_tags: list[str] = []
+        _seen_kw: set[str] = set()
         total_bytes = 0
         for tag in tags:
             tag = tag.strip()
@@ -1845,6 +1837,10 @@ class SSGClient:
             if tag.startswith("__") and tag.endswith("__"):
                 continue
             tag_lower = tag.lower()
+            # SEO·태그 합치면서 생기는 동일 키워드 중복 제거
+            if tag_lower in _seen_kw:
+                continue
+            _seen_kw.add(tag_lower)
             # 상품명/브랜드/모델명에 포함된 키워드는 중복 제외
             if (
                 tag_lower in name_lower
