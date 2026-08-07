@@ -1205,6 +1205,27 @@ const ProductCard = React.memo(function ProductCard({
                                   input.value = ''
                                 }
                               }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
+                              <label style={{ ...btn('secondary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                파일첨부
+                                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                                  const file = e.target.files?.[0]
+                                  e.target.value = ''
+                                  if (!file) return
+                                  try {
+                                    const url = await collectorApi.uploadImage(file)
+                                    const newImgs = [url, ...productImages.slice(1)]
+                                    setProductImages(newImgs)
+                                    const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+                                    if (!(p.tags || []).includes('__img_edited__')) {
+                                      ud.tags = [...(p.tags || []), '__img_edited__']
+                                    }
+                                    await collectorApi.updateProduct(p.id, ud)
+                                    onProductUpdate(p.id, ud)
+                                  } catch (err) {
+                                    setCardAlert({ msg: '이미지 업로드 실패: ' + (err instanceof Error ? err.message : String(err)), type: 'error' })
+                                  }
+                                }} />
+                              </label>
                             </div>
                             <button onClick={() => {
                               const remaining = productImages.slice(1)
@@ -1271,6 +1292,22 @@ const ProductCard = React.memo(function ProductCard({
                               }).catch(() => {})
                               if (input) input.value = ''
                             }} style={{ ...btn('primary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
+                            <label style={{ ...btn('secondary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                              파일첨부
+                              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                                const file = e.target.files?.[0]
+                                e.target.value = ''
+                                if (!file) return
+                                try {
+                                  const url = await collectorApi.uploadImage(file)
+                                  const ud: Partial<SambaCollectedProduct> = { coupang_main_image: url }
+                                  await collectorApi.updateProduct(p.id, ud)
+                                  onProductUpdate(p.id, ud)
+                                } catch (err) {
+                                  setCardAlert({ msg: '이미지 업로드 실패: ' + (err instanceof Error ? err.message : String(err)), type: 'error' })
+                                }
+                              }} />
+                            </label>
                           </div>
                           {coupangMainImg && (
                             <button onClick={() => {
@@ -1336,6 +1373,27 @@ const ProductCard = React.memo(function ProductCard({
                           input.value = ''
                         }
                       }} style={{ ...btn('secondary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>추가</button>
+                      <label style={{ ...btn('secondary'), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                        파일첨부
+                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                          const file = e.target.files?.[0]
+                          e.target.value = ''
+                          if (!file) return
+                          try {
+                            const url = await collectorApi.uploadImage(file)
+                            const newImgs = [...productImages, url]
+                            setProductImages(newImgs)
+                            const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+                            if (!(p.tags || []).includes('__img_edited__')) {
+                              ud.tags = [...(p.tags || []), '__img_edited__']
+                            }
+                            await collectorApi.updateProduct(p.id, ud)
+                            onProductUpdate(p.id, ud)
+                          } catch (err) {
+                            setCardAlert({ msg: '이미지 업로드 실패: ' + (err instanceof Error ? err.message : String(err)), type: 'error' })
+                          }
+                        }} />
+                      </label>
                     </div>
                   </div>
                 )}

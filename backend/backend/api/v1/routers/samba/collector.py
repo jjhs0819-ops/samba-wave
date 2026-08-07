@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import or_
 from sqlmodel import select
@@ -2132,6 +2132,26 @@ async def bulk_create_collected_products(
     # 상품 일괄 생성 시 캐시 무효화
     await cache.clear_pattern("products:*")
     return {"created": created_count}
+
+
+@router.post("/products/images/upload")
+async def upload_product_image(
+    file: UploadFile = File(...),
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """상품 이미지 파일 업로드 → R2 저장 후 URL 반환.
+
+    상품편집 화면의 URL 입력을 대체/보완하는 파일첨부용.
+    """
+    from backend.domain.samba.image.service import ImageTransformService
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "빈 파일입니다")
+
+    svc = ImageTransformService(session)
+    url = await svc._save_image(content, file.filename or "upload.jpg")
+    return {"success": True, "url": url}
 
 
 @router.post("/products/images/bulk-remove")

@@ -5,6 +5,7 @@ import { fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { dark as c } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
+import { collectorApi } from '@/lib/samba/legacy'
 
 interface Props {
   images: string[]
@@ -25,6 +26,8 @@ export default function ImageManagerModal({
   const [details, setDetails] = useState<string[]>(detailImages)
   const [urlInput, setUrlInput] = useState('')
   const [mainInput, setMainInput] = useState(images[0] ?? '')
+  const [uploading, setUploading] = useState(false)
+  const [uploadErr, setUploadErr] = useState('')
 
   const extraImgs = imgs.slice(1)
 
@@ -66,6 +69,20 @@ export default function ImageManagerModal({
     if (to < 0 || to >= arr.length) return
     ;[arr[idx], arr[to]] = [arr[to], arr[idx]]
     setDetails(arr)
+  }
+
+  const handleFileUpload = async (file: File | undefined, onUrl: (url: string) => void) => {
+    if (!file) return
+    setUploading(true)
+    setUploadErr('')
+    try {
+      const url = await collectorApi.uploadImage(file)
+      onUrl(url)
+    } catch (err) {
+      setUploadErr(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+    }
   }
 
   const handleSave = () => {
@@ -131,7 +148,13 @@ export default function ImageManagerModal({
                   >
                     변경
                   </button>
+                  <label style={btn('secondary')} className='px-3 py-1.5 text-xs cursor-pointer whitespace-nowrap'>
+                    {uploading ? '업로드중...' : '파일첨부'}
+                    <input type='file' accept='image/*' className='hidden' disabled={uploading}
+                      onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; handleFileUpload(f, setMainImg) }} />
+                  </label>
                 </div>
+                {uploadErr && <p className={`text-xs text-[${c.danger}] mt-1`}>{uploadErr}</p>}
               </div>
             </div>
           )}
@@ -147,7 +170,13 @@ export default function ImageManagerModal({
                   placeholder='추가이미지 URL 입력'
                 />
                 <button onClick={() => addExtra(urlInput)} style={btn('secondary')} className='px-3 py-1.5 text-xs'>추가</button>
+                <label style={btn('secondary')} className='px-3 py-1.5 text-xs cursor-pointer whitespace-nowrap'>
+                  {uploading ? '업로드중...' : '파일첨부'}
+                  <input type='file' accept='image/*' className='hidden' disabled={uploading}
+                    onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; handleFileUpload(f, addExtra) }} />
+                </label>
               </div>
+              {uploadErr && <p className={`text-xs text-[${c.danger}] mb-2`}>{uploadErr}</p>}
               {extraImgs.length === 0 && (
                 <p className={`text-xs text-[${c.textMuted}] text-center py-4`}>추가이미지가 없습니다.</p>
               )}
@@ -179,7 +208,13 @@ export default function ImageManagerModal({
                   placeholder='상세이미지 URL 입력'
                 />
                 <button onClick={() => addDetail(urlInput)} style={btn('secondary')} className='px-3 py-1.5 text-xs'>추가</button>
+                <label style={btn('secondary')} className='px-3 py-1.5 text-xs cursor-pointer whitespace-nowrap'>
+                  {uploading ? '업로드중...' : '파일첨부'}
+                  <input type='file' accept='image/*' className='hidden' disabled={uploading}
+                    onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; handleFileUpload(f, addDetail) }} />
+                </label>
               </div>
+              {uploadErr && <p className={`text-xs text-[${c.danger}] mb-2`}>{uploadErr}</p>}
               {details.length === 0 && (
                 <p className={`text-xs text-[${c.textMuted}] text-center py-4`}>상세이미지가 없습니다.</p>
               )}

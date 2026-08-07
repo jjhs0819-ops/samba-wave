@@ -219,7 +219,7 @@ class NikeClient:
     PAGE_SIZE = 100
 
     async def search(
-        self, keyword: str, page: int = 1, max_count: int = 500
+        self, keyword: str, page: int = 1, max_count: int = 500, **kwargs: Any
     ) -> dict[str, Any]:
         """키워드 검색 — 1페이지: HTML __NEXT_DATA__ 파싱, 2페이지~: Nike API 호출.
 

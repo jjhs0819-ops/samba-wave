@@ -2744,11 +2744,20 @@ def _live_opt(sizes: dict | None, opt: str) -> dict | None:
     if not isinstance(sizes, dict):
         return None
     od = sizes.get(opt)
-    if od is None:
-        _b = re.match(r"^(\d{3}(?:\.\d)?)", str(opt))
-        if _b:
-            od = sizes.get(_b.group(1))
-    return od
+    if od is not None:
+        return od
+    # [2026-08-07] cm↔mm 양방향. 크림 ask 옵션은 '270'(mm)인데 DB 수집 옵션은
+    # '27cm' 이라 접미 폴백만으로는 못 잡는다. 실측 15073: DB '26cm~28.5cm' vs
+    # 실시간 '260~285' → 전부 매칭 실패로 재고 0 판정(등록 전멸). 크림 옵션 매칭이
+    # 쓰는 _cm_to_mm_variants 를 그대로 써 두 표기를 한쪽으로 모은다.
+    _want = {v.replace(" ", "").upper() for v in _cm_to_mm_variants(str(opt))}
+    for _k, _v in sizes.items():
+        if _want & {x.replace(" ", "").upper() for x in _cm_to_mm_variants(str(_k))}:
+            return _v
+    _b = re.match(r"^(\d{3}(?:\.\d)?)", str(opt))
+    if _b:
+        return sizes.get(_b.group(1))
+    return None
 
 
 async def _fetch_snkr_live_sizes(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
@@ -2759,6 +2768,40 @@ async def _fetch_snkr_live_sizes(cli: httpx.AsyncClient, snkr_id: str) -> dict |
     if str(snkr_id).isdigit():
         return await _fetch_snkr_apparel_sizes(cli, str(snkr_id))
     return await _fetch_snkr_shoe_sizes(cli, str(snkr_id))
+
+
+def _merge_live_into_db_opts(db_opts: dict | None, sizes: dict | None) -> list:
+    """DB 옵션에 실시간 원가·재고를 병합해 write-back 용 options 리스트를 만든다.
+
+    [2026-08-07] 종전 write-back 은 카드(PSA) 전용이라 비카드 DB 옵션이 영영 낡았다.
+    입찰 판정은 실시간을 보게 통일했지만, 검수페이지·데일리리포트·즉시수익은 DB 를
+    읽으므로 재고/원가가 실제와 어긋난 채 남는다. 실시간 조회에 성공한 상품만 되쓴다.
+
+    - 실시간에 있는 옵션 → 실측 price/stock
+    - 실시간에 없는 옵션 → 품절이므로 stock 0, price 는 마지막 값 보존(원가 유실 방지)
+    - PSA·밀봉(個/パック/해외배송) 옵션 → 손대지 않음. 카드 write-back·밀봉 전용 경로 소관이라
+      여기서 stock 0 을 박으면 남의 데이터를 파괴한다.
+    """
+    out: list = []
+    for _n, _d in (db_opts or {}).items():
+        name = str(_n)
+        cur_p = int((_d or {}).get("price") or 0)
+        cur_s = int((_d or {}).get("stock") or 0)
+        if name.upper().startswith("PSA") or _SEALED_OPT_RE.search(name):
+            out.append({"name": name, "price": cur_p, "stock": cur_s})
+            continue
+        lv = _live_opt(sizes, name)
+        if lv is None:
+            out.append({"name": name, "price": cur_p, "stock": 0})
+        else:
+            out.append(
+                {
+                    "name": name,
+                    "price": int(lv.get("price") or 0) or cur_p,
+                    "stock": int(lv.get("stock") or 0),
+                }
+            )
+    return out
 
 
 async def _process_shoe_asks(
@@ -2845,6 +2888,18 @@ async def _process_shoe_asks(
         await asyncio.gather(*[_one_style(k) for k in _mm_round])
         c["live_ok"] = len(live_map)
         c["fetch_round"] = f"{len(_mm_round):,}/{len(_mm_list):,}"
+        # [2026-08-07] 갱신·삭제가 본 실시간값을 DB 에도 되쓴다(종전 write-back 은 카드 전용).
+        # 입찰 보유 상품은 리스톡 루프를 안 타므로 여기서 챙기지 않으면 계속 낡는다.
+        # cost 는 0 = 기존 보존(비카드 DB 원가 원화 오염 이력).
+        c["db_updates"] = [
+            (
+                str(kid_to_snkr[kid]),
+                _merge_live_into_db_opts(kid_to_opts.get(kid) or {}, _sz),
+                0,
+            )
+            for kid, _sz in live_map.items()
+            if kid_to_snkr.get(kid)
+        ]
 
         for a in shoe_asks:
             kid = str(a.get("product_id") or "")
@@ -3990,6 +4045,14 @@ async def run_kream_unified_once() -> dict:
                 if _live_sz is None:
                     _drop("실시간조회실패", kid)
                     return r
+                # 조회 성공 = 이 상품 재고·원가의 진실을 손에 쥔 시점. DB 에도 되쓴다.
+                # cost 는 0 을 넘겨 기존값 보존 — 비카드 DB 원가엔 원화 오염분 이력이 있어
+                # 상품 단위 cost 를 덮으면 위험하다. 옵션별 값만 갱신한다.
+                r["db_update"] = (
+                    snkr_id,
+                    _merge_live_into_db_opts(prod.get("db_opts"), _live_sz),
+                    0,
+                )
                 _kream_opts_cache = None  # 상품당 크림 옵션 1회 조회 캐시
                 for _nm, _d in (prod.get("db_opts") or {}).items():
                     _lv = _live_opt(_live_sz, _nm) or {}
@@ -4869,6 +4932,8 @@ async def run_kream_unified_once() -> dict:
     shoe = await _process_shoe_asks(
         asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr, sized_kids
     )
+    # 갱신·삭제가 조회한 실시간값도 되쓰기 대상에 합친다(5126 _write_back_db_options).
+    db_updates.extend(shoe.get("db_updates") or [])
     logger.info(
         "[크림통합] 신발(mm) %d — 실시간%d 재고%d 갱신%d 삭제%d[재고0:%d 1등불가:%d 국내못이김:%d 가격열위보류:%d] "
         "보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",

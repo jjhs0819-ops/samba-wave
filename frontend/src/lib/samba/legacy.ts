@@ -1055,6 +1055,22 @@ export const collectorApi = {
     request<{ created: number }>(`${SAMBA_PREFIX}/collector/products/bulk`, { method: "POST", body: JSON.stringify({ items }) }),
   updateProduct: (id: string, data: Partial<SambaCollectedProduct>) =>
     request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  uploadImage: async (file: File): Promise<string> => {
+    // FormData 업로드 — Content-Type은 브라우저가 boundary 포함해 자동 설정해야 하므로
+    // request() 공용 헬퍼(JSON 강제)를 안 쓰고 직접 fetch 한다.
+    const fd = new FormData()
+    fd.append('file', file)
+    const headers: Record<string, string> = {}
+    if (API_GATEWAY_KEY) headers['X-Api-Key'] = API_GATEWAY_KEY
+    const token = getAccessToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(`${SAMBA_PREFIX}/collector/products/images/upload`, {
+      method: 'POST', headers, body: fd,
+    })
+    if (!res.ok) throw new Error(`이미지 업로드 실패 (${res.status})`)
+    const data = await res.json()
+    return data.url as string
+  },
   deleteProduct: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
   bulkDeleteProducts: (ids: string[]) =>
