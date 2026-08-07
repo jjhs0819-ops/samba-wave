@@ -1,5 +1,6 @@
 """SambaWave Returns API router."""
 
+import asyncio
 import logging
 import time
 from typing import Any, Optional
@@ -26,6 +27,11 @@ router = APIRouter(prefix="/returns", tags=["samba-returns"])
 # 목록 조회는 read 세션으로 가볍게 끝내고, 백필은 5분에 한 번만 별도 write 세션에서 수행.
 _CLAIM_BACKFILL_INTERVAL = 300.0  # 초
 _last_claim_backfill_ts = 0.0
+# 백필 동시실행 직렬화 락 — 강제 백필(force_backfill)은 스로틀 타임스탬프 선점만으로는
+# 동시요청을 못 막으므로(강제 경로는 타임스탬프를 안 보고 실행), 같은 워커에서 새 탭이
+# 연달아 열려도 백필이 겹쳐 돌며 중복 행을 INSERT 하지 않도록 한 번에 하나만 실행한다.
+# 뒤에 온 요청은 앞 실행이 끝난 뒤 도는데, 백필 내부의 기존행 가드가 중복 생성을 막는다.
+_claim_backfill_lock = asyncio.Lock()
 
 
 def _read_service(session: AsyncSession):
@@ -266,20 +272,38 @@ async def list_returns(
     type: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
+    force_backfill: bool = False,
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
     # claim 주문 자동백필 — 매 호출이 아니라 5분에 한 번만, 별도 write 세션에서 수행.
     # (목록 조회 자체는 가벼운 read 세션으로 처리해 오토튠 write 부하와 분리)
+    #
+    # 예외(요청 #10): force_backfill=True 이고 order_number 가 함께 온 경우에만 스로틀을
+    # 우회해 즉시 백필한다. 주문탭 [반품/교환] → 새 탭 진입 직후, 방금 '취소요청'으로 바꾼
+    # 주문이 아직 samba_return 에 없어 첫 로드 목록에서 빠지는 문제 해소용.
+    # 백필은 최대 5,000건 주문을 스캔하므로 상시 강제는 운영 부하 위험 →
+    # order_number 시드가 있는 저빈도 새 탭 진입 경로에만 허용하고,
+    # order_number 없이 force_backfill=true 만 오면 무시하고 기존 스로틀 경로를 탄다.
     global _last_claim_backfill_ts
     now_ts = time.monotonic()
-    if now_ts - _last_claim_backfill_ts >= _CLAIM_BACKFILL_INTERVAL:
+    force = bool(force_backfill and order_number)
+    if force or now_ts - _last_claim_backfill_ts >= _CLAIM_BACKFILL_INTERVAL:
+        # 강제 실행도 타이머를 갱신한다 — 방금 전체 백필이 돌았으므로 데이터 신선도는
+        # 일반 스로틀 백필과 동일하고, 갱신하지 않으면 직후 일반 진입이 같은 5,000건
+        # 스캔을 또 돌아 부하만 이중으로 든다. (일반 진입 백필이 '밀리는' 게 아니라
+        # 강제 실행이 그 몫까지 이미 수행한 것)
         _last_claim_backfill_ts = now_ts  # 동시요청 중복 실행 방지: 실행 전 선점
         try:
             from backend.db.orm import get_write_session
 
-            async with get_write_session() as wsession:
-                await _backfill_returns_from_claim_orders(wsession, tenant_id=tenant_id)
+            # 락으로 직렬화 — 강제 경로는 타임스탬프 선점을 안 보고 실행하므로,
+            # 동시 강제 요청이 겹쳐 돌며 중복 행을 만들지 않게 한 번에 하나만 수행.
+            async with _claim_backfill_lock:
+                async with get_write_session() as wsession:
+                    await _backfill_returns_from_claim_orders(
+                        wsession, tenant_id=tenant_id
+                    )
         except Exception as e:
             logger.warning(f"[returns] claim 자동백필 실패(무시): {e}")
 

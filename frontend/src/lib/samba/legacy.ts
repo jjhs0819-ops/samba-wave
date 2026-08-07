@@ -2020,7 +2020,9 @@ export interface SambaReturn {
 
 
 export const returnApi = {
-  list: (orderId?: string, status?: string, type?: string, limit = 500, startDate?: string, endDate?: string, orderNumber?: string) => {
+  // 위치 인자가 이미 7개라 8번째 boolean 을 또 위치로 더하면 호출부가 취약해짐 —
+  // 마지막에 옵션 객체(opts)를 두어 기존 호출부(인자 ≤7개)를 깨지 않고 확장한다.
+  list: (orderId?: string, status?: string, type?: string, limit = 500, startDate?: string, endDate?: string, orderNumber?: string, opts?: { forceBackfill?: boolean }) => {
     const p = new URLSearchParams();
     if (orderId) p.set("order_id", orderId);
     // 주문번호 필터 진입 시 날짜 범위는 무시 — 해당 주문 전체 반품/교환을 보여줌
@@ -2029,6 +2031,9 @@ export const returnApi = {
     if (type) p.set("type", type);
     if (startDate) p.set("start_date", startDate);
     if (endDate) p.set("end_date", endDate);
+    // 주문번호 시드 새 탭 진입 시 백엔드 claim 백필 스로틀(5분)을 우회 — 방금 취소요청한
+    // 주문이 반품탭 첫 로드에 바로 뜨게 함 (요청 #10). order_number 없으면 백엔드가 무시.
+    if (opts?.forceBackfill) p.set("force_backfill", "true");
     p.set("limit", String(limit));
     return request<SambaReturn[]>(`${SAMBA_PREFIX}/returns?${p}`);
   },

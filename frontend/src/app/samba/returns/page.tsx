@@ -134,6 +134,9 @@ export default function ReturnsPage() {
       onf ? undefined : (customStart || undefined),
       onf ? undefined : (customEnd || undefined),
       onf || undefined,
+      // 주문번호 시드 진입(주문탭 [반품/교환] 새 탭)일 때만 강제 백필 — 방금 취소요청한
+      // 주문이 재검색 없이 첫 로드에 바로 뜨도록 (요청 #10). 일반 진입은 기존 스로틀 유지.
+      onf ? { forceBackfill: true } : undefined,
     ).catch(() => [])
     const st = await returnApi.getStats().catch(() => ({}))
     setReturns(data)
