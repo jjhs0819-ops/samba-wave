@@ -52,11 +52,11 @@ export default function SmsTemplateEditModal({
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button onClick={() => setTemplate(null)} style={{ ...btn('ghost'), padding: '0.5rem 1rem', fontSize: '0.875rem' }}>취소</button>
+          <button onClick={() => setTemplate(null)} style={{ ...btn('ghost', c), padding: '0.5rem 1rem', fontSize: '0.875rem' }}>취소</button>
           <button
             onClick={onSave}
             disabled={!template.label.trim() || !template.msg.trim()}
-            style={{ ...btn('primary'), ...((!template.label.trim() || !template.msg.trim()) ? btnDisabled : null), padding: '0.5rem 1rem', fontSize: '0.875rem' }}
+            style={{ ...btn('primary', c), ...((!template.label.trim() || !template.msg.trim()) ? btnDisabled : null), padding: '0.5rem 1rem', fontSize: '0.875rem' }}
           >저장</button>
         </div>
       </div>

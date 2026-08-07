@@ -7,7 +7,7 @@ import {
 } from '@/lib/samba/api/commerce'
 import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
-import { inputStyle, fmtNum } from '@/lib/samba/styles'
+import { makeInputStyle, fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
 import { STATUS_MAP, SHIPPING_COMPANIES, OVERSEAS_SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
 import { parseActionTags } from '../utils/actionTag'
@@ -183,7 +183,8 @@ export default function OrdersTable(props: OrdersTableProps) {
             }
 
             return (
-              <tr key={o.id} style={rowStyle}>
+              // 행 hover 강조 — 전역 .samba-row-hover (layout.tsx)
+              <tr key={o.id} className="samba-row-hover" style={rowStyle}>
                 {/* 체크박스 */}
                 <td style={{ padding: '0.75rem 0.5rem', textAlign: 'center', borderRight: `1px solid ${c.borderStrong}` }}>
                   <div style={{ fontSize: '0.65rem', color: c.text, fontWeight: 'bold', marginBottom: '2px' }}>{(currentPage - 1) * pageSize + index + 1}</div>
@@ -286,7 +287,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                               }
                             }}
                             style={{
-                              ...btn('primary'),
+                              ...btn('primary', c),
                               flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
                             }}
                           >취소 승인</button>
@@ -295,7 +296,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                               onClick={runCompletedShipment}
                               title="실제로 이미 발송한 건 — 반품 전환(왕복 배송비 판매자 부담)"
                               style={{
-                                ...btn('accent'),
+                                ...btn('accent', c),
                                 flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
                               }}
                             >이미출고</button>
@@ -313,7 +314,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                               }
                             }}
                             style={{
-                              ...btn('danger'),
+                              ...btn('danger', c),
                               flex: 1, fontSize: '0.65rem', padding: '0.2rem 0',
                             }}
                           >취소 거부</button>
@@ -381,12 +382,12 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'stretch' }}>
                       <select value={o.status} onChange={e => handleStatusChange(o.id, e.target.value)}
                         style={{
-                          ...inputStyle,
+                          ...makeInputStyle(c),
                           flex: 1,
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           cursor: 'pointer',
-                          color: o.status === 'ship_failed' ? c.danger : inputStyle.color,
+                          color: o.status === 'ship_failed' ? c.danger : c.text, // c.text = makeInputStyle(c)의 글자색
                         }}
                       >
                         {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: c.danger } : {}}>{v.label}</option>)}
@@ -423,7 +424,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                           }
                         }}
                         style={{
-                          ...inputStyle,
+                          ...makeInputStyle(c),
                           flex: 1,
                           fontSize: '0.75rem',
                           opacity: o.sourcing_account_id ? 1 : 0.5,
@@ -447,7 +448,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                             showAlert(`주문계정 저장 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`, 'error')
                           }
                         }}
-                        style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer' }}
                       >
                         <option value="">주문계정</option>
                         {(() => {
@@ -478,7 +479,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
                       <input
                         type="text"
-                        style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
                         value={costDisplay}
                         placeholder="실구매가 (식 가능: 30000*.973+2300)"
                         onChange={e => {
@@ -496,7 +497,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                       />
                       <input
                         type="text"
-                        style={{ ...inputStyle, flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem', textAlign: 'right' }}
                         value={shipFeeDisplay}
                         placeholder="배송비 (식 가능)"
                         onChange={e => {
@@ -518,7 +519,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                       <select
                         key={`${o.id}-${o.shipping_company}-${o.status}`}
                         id={`ship-co-${o.id}`}
-                        style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.72rem' }}
                         defaultValue={o.shipping_company || ''}
                         onChange={async e => {
                           const co = e.target.value
@@ -562,7 +563,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                       </select>
                       <input
                         id={`ship-tn-${o.id}`}
-                        style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.72rem' }}
                         value={editingTrackings[o.id] ?? o.tracking_number ?? ''}
                         placeholder="송장번호"
                         onChange={e => setEditingTrackings(prev => ({ ...prev, [o.id]: e.target.value }))}
@@ -635,7 +636,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                             setTimeout(() => _shippingInFlight.delete(o.id), 1500)
                           }
                         }}
-                        style={{ ...btn(o.status === 'ship_failed' ? 'dangerSolid' : 'send'), padding: '0.18rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        style={{ ...btn(o.status === 'ship_failed' ? 'dangerSolid' : 'send', c), padding: '0.18rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                         title="택배사+송장번호를 마켓에 전송 (재전송 가능)"
                       >{o.status === 'ship_failed' ? '재전송' : '마켓전송'}</button>
                     </div>
@@ -646,7 +647,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                         <input
                           id={`ov-co-${o.id}`}
                           list={`ov-list-${o.id}`}
-                          style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                          style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.72rem' }}
                           defaultValue={o.overseas_shipping_company || ''}
                           placeholder="해외택배사(일본/직접입력)"
                           onBlur={async () => {
@@ -667,7 +668,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                         </datalist>
                         <input
                           id={`ov-tn-${o.id}`}
-                          style={{ ...inputStyle, flex: 1, fontSize: '0.72rem' }}
+                          style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.72rem' }}
                           defaultValue={o.overseas_tracking_number || ''}
                           placeholder="해외송장번호"
                           onBlur={async () => {
@@ -688,7 +689,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                         <button
                           type="button"
                           title="SNKRDUNK 발송송장 자동조회"
-                          style={{ ...btn('send'), padding: '0.18rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
+                          style={{ ...btn('send', c), padding: '0.18rem 0.5rem', fontSize: '0.7rem', whiteSpace: 'nowrap', flexShrink: 0 }}
                           onClick={async () => {
                             if (!o.sourcing_order_number) { showAlert('소싱주문번호(취引ID)가 없습니다', 'error'); return }
                             try {
@@ -713,7 +714,7 @@ export default function OrdersTable(props: OrdersTableProps) {
 
                     {/* 간단메모 */}
                     <textarea
-                      style={{ ...inputStyle, fontSize: '0.72rem', resize: 'none', flex: 1, height: 0, minHeight: '1.5rem', overflowY: 'hidden' }}
+                      style={{ ...makeInputStyle(c), fontSize: '0.72rem', resize: 'none', flex: 1, height: 0, minHeight: '1.5rem', overflowY: 'hidden' }}
                       placeholder="간단메모"
                       value={editingNotes[o.id] ?? o.notes ?? ''}
                       onChange={e => setEditingNotes(prev => ({ ...prev, [o.id]: e.target.value }))}

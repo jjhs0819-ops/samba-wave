@@ -6,7 +6,7 @@ import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { orderApi } from '@/lib/samba/legacy'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
 import { MARKETS } from '@/lib/samba/markets'
-import { inputStyle, fmtNum } from '@/lib/samba/styles'
+import { makeInputStyle, fmtNum } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { formatDateInput, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
@@ -154,14 +154,14 @@ export default function OrdersFilterBar(props: Props) {
                 {pb.label}
               </button>
             ))}
-            <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: c.danger, color: c.text } : {}) }} />
+            <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} style={{ ...makeInputStyle(c), width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(startLocked ? { borderColor: c.danger, color: c.text } : {}) }} />
             <button onClick={() => setStartLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: startLocked ? c.danger : c.btnBg, border: startLocked ? `1px solid ${c.danger}` : `1px solid ${c.btnBorder}`, color: startLocked ? '#fff' : c.btnText }}>시작고정</button>
             <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>~</span>
-            <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...inputStyle, width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
+            <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} style={{ ...makeInputStyle(c), width: '160px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} />
             <button onClick={() => setDateLocked(prev => !prev)} style={{ padding: '0.22rem 0.5rem', fontSize: '0.72rem', borderRadius: '4px', cursor: 'pointer', background: dateLocked ? c.danger : c.btnBg, border: dateLocked ? `1px solid ${c.danger}` : `1px solid ${c.btnBorder}`, color: dateLocked ? '#fff' : c.btnText }}>날짜고정</button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap' }}>
-            <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...inputStyle, width: '200px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
+            <select value={syncAccountId} onChange={e => setSyncAccountId(e.target.value)} style={{ ...makeInputStyle(c), width: '200px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '200px' }}>
               <option value="">전체마켓보기</option>
               {(() => {
                 // 크림을 최상단 고정(전체 다음) + 나머지는 MARKETS 정식 순서
@@ -179,8 +179,8 @@ export default function OrdersFilterBar(props: Props) {
                 ])
               })()}
             </select>
-            <button onClick={handleFetch} disabled={syncing} style={{ ...btn('secondary'), ...(syncing ? btnDisabled : null), padding: '0.22rem 0.65rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
-            <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...inputStyle, width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '130px' }}>
+            <button onClick={handleFetch} disabled={syncing} style={{ ...btn('secondary', c), ...(syncing ? btnDisabled : null), padding: '0.22rem 0.65rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{syncing ? '주문수집 중...' : '가져오기'}</button>
+            <select value={bulkStatus} onChange={e => setBulkStatus(e.target.value)} style={{ ...makeInputStyle(c), width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.72rem', minWidth: '130px' }}>
               <option value="">일괄 작업 선택</option>
               <option value="pending">주문접수</option>
               <option value="wait_ship">배송대기중</option>
@@ -206,7 +206,7 @@ export default function OrdersFilterBar(props: Props) {
           <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
           <span style={{ color: c.text, fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}원</span>
         </span>
-        <select style={{ ...inputStyle, width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select style={{ ...makeInputStyle(c), width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품명</option>
           <option value="customer">고객명</option>
           <option value="product_id">상품ID</option>
@@ -214,10 +214,10 @@ export default function OrdersFilterBar(props: Props) {
           <option value="sourcing_order_number">소싱주문번호</option>
           <option value="tracking_number">송장번호</option>
         </select>
-        <input style={{ ...inputStyle, width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
-        <button onClick={loadOrders} style={{ ...btn('primary'), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
+        <input style={{ ...makeInputStyle(c), width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
+        <button onClick={loadOrders} style={{ ...btn('primary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
-          <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체 마켓</option>
             {(() => {
               // 크림을 최상단 고정(전체 다음) + 나머지는 MARKETS 정식 순서
@@ -235,11 +235,11 @@ export default function OrdersFilterBar(props: Props) {
               ])
             })()}
           </select>
-          <select style={{ ...inputStyle, width: '97px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '97px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={siteFilter} onChange={e => setSiteFilter(e.target.value)}>
             <option value="">전체 소싱처</option>
             {siteOptions.map(site => <option key={site.value} value={site.value}>{site.label}</option>)}
           </select>
-          <select style={{ ...inputStyle, width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '112px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={accountFilter} onChange={e => setAccountFilter(e.target.value)}>
             <option value="">소싱계정</option>
             <option value="etc">기타(미매핑)</option>
             {[...new Set(sourcingAccounts.map(sa => sa.site_name))].sort().map(site => (
@@ -250,7 +250,7 @@ export default function OrdersFilterBar(props: Props) {
               </optgroup>
             ))}
           </select>
-          <select style={{ ...inputStyle, width: '77px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '77px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketStatus} onChange={e => setMarketStatus(e.target.value)}>
             <option value="">배송상태</option>
             <option value="결제완료">주문접수</option>
             <option value="배송대기중">배송대기중</option>
@@ -262,12 +262,12 @@ export default function OrdersFilterBar(props: Props) {
             <option value="교환요청">교환요청</option>
             <option value="교환완료">교환완료</option>
           </select>
-          <select style={{ ...inputStyle, width: '77px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '77px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={registrationFilter} onChange={e => setRegistrationFilter(e.target.value)}>
             <option value="">등록필터</option>
             <option value="registered">등록상품</option>
             <option value="unregistered">미등록상품</option>
           </select>
-          <select style={{ ...inputStyle, width: '84px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '84px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={inputFilter} onChange={e => setInputFilter(e.target.value)}>
             <option value="">입력필터</option>
             <option value="has_order">주문번호O</option>
             <option value="no_order">주문번호X</option>
@@ -279,19 +279,19 @@ export default function OrdersFilterBar(props: Props) {
             <option value="staff_a">직원A</option>
             <option value="staff_b">직원B</option>
           </select>
-          <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value)}>
             <option value="">송장필터</option>
             <option value="has_invoice">송장입력</option>
             <option value="no_invoice">송장미입력</option>
           </select>
-          <select style={{ ...inputStyle, width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          <select style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
             <option value="">전체 주문상태</option>
             <option value="cancel_return_excluded">취소/반품/교환/배송 제외</option>
             {Object.entries(STATUS_MAP)
               .filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k))
               .map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
-          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, width: '63px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...makeInputStyle(c), width: '63px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
             <option value="date_desc">최신순</option>
             <option value="date_asc">오래된순</option>
             <option value="profit_desc">마진높음</option>
@@ -299,7 +299,7 @@ export default function OrdersFilterBar(props: Props) {
             <option value="price_desc">매출높음</option>
             <option value="price_asc">매출낮음</option>
           </select>
-          <select style={{ ...inputStyle, width: '66px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
+          <select style={{ ...makeInputStyle(c), width: '66px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={pageSize} onChange={e => setPageSize(Number(e.target.value))}>
             <option value={20}>20개</option>
             <option value={50}>50개</option>
             <option value={100}>100개</option>

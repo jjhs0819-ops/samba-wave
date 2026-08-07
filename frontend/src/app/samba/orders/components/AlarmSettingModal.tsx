@@ -135,10 +135,10 @@ export default function AlarmSettingModal(props: Props) {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
+          <button onClick={onClose} style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
           <button
             onClick={handleSave}
-            style={{ ...btn('primary'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
+            style={{ ...btn('primary', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}
           >저장</button>
         </div>
       </div>

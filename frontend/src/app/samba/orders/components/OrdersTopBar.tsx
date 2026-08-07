@@ -4,7 +4,7 @@ import React, { Dispatch, SetStateAction } from 'react'
 import { fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import type { Palette } from '@/lib/samba/colors'
 import { btn } from '@/lib/samba/buttons'
 
 interface Notification {
@@ -37,7 +37,8 @@ interface Props {
   setLogMessages: (v: string[] | ((prev: string[]) => string[])) => void
 }
 
-function renderLogMessage(message: string) {
+// 훅을 못 쓰는 모듈 스코프 함수 — 호출 컴포넌트가 테마 팔레트(c)를 넘긴다
+function renderLogMessage(message: string, c: Palette) {
   const formatted = fmtTextNumbers(message)
   const savedLabel = '\uAC74 \uC2E0\uADDC \uC800\uC7A5'
   const parts = formatted.split(new RegExp(`(\\d[\\d,]*)(${savedLabel})`, 'g'))
@@ -101,7 +102,7 @@ export default function OrdersTopBar(props: Props) {
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 onClick={() => setNotifications([])}
-                style={{ ...btn('ghost'), flex: 1, padding: '0.75rem', fontSize: '0.9375rem', fontWeight: 600 }}
+                style={{ ...btn('ghost', c), flex: 1, padding: '0.75rem', fontSize: '0.9375rem', fontWeight: 600 }}
               >
                 나중에
               </button>
@@ -114,7 +115,7 @@ export default function OrdersTopBar(props: Props) {
                   setCustomEnd(formatDateInput(getKstTodayDate()))
                   setPeriod('')
                 }}
-                style={{ ...btn('dangerSolid'), flex: 2, padding: '0.75rem', fontSize: '0.9375rem' }}
+                style={{ ...btn('dangerSolid', c), flex: 2, padding: '0.75rem', fontSize: '0.9375rem' }}
               >
                 지금 확인하기
               </button>
@@ -174,7 +175,7 @@ export default function OrdersTopBar(props: Props) {
           </div>
         </div>
         <div ref={el => { if (el) el.scrollTop = el.scrollHeight }} style={{ height: '144px', overflowY: 'auto', padding: '8px 14px', fontFamily: "'Courier New', monospace", fontSize: '0.788rem', color: c.textMuted, background: c.surfaceAlt, lineHeight: 1.8 }}>
-          {logMessages.map((msg, i) => <p key={i} style={{ color: c.textMuted, fontSize: 'inherit', margin: 0 }}>{renderLogMessage(msg)}</p>)}
+          {logMessages.map((msg, i) => <p key={i} style={{ color: c.textMuted, fontSize: 'inherit', margin: 0 }}>{renderLogMessage(msg, c)}</p>)}
         </div>
       </div>
     </>

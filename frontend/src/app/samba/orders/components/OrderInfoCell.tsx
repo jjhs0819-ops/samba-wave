@@ -196,7 +196,7 @@ export default function OrderInfoCell(props: Props) {
         )}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <span style={{ fontSize: '0.72rem', color: c.textMuted }}>{fmtDate(o.created_at, '.')}</span>
-          <button onClick={() => handleDelete(o.id)} style={{ ...btn('danger'), padding: '0.125rem 0.5rem', fontSize: '0.7rem' }}>삭제</button>
+          <button onClick={() => handleDelete(o.id)} style={{ ...btn('danger', c), padding: '0.125rem 0.5rem', fontSize: '0.7rem' }}>삭제</button>
         </div>
         <span style={{ fontSize: '0.95rem', fontWeight: 700, color: o.quantity > 1 ? c.warn : c.textMuted }}>수량: <span style={{ color: o.quantity > 1 ? c.warn : c.textMuted }}>{fmtNum(o.quantity)}</span></span>
       </div>
@@ -248,7 +248,7 @@ export default function OrderInfoCell(props: Props) {
                 {showOrderBtns && (
                   <>
                     <button onClick={() => triggerPlaceOrder('direct')}
-                      style={{ ...btn('accent'), fontSize: '0.7rem', padding: '0.125rem 0.375rem' }}>직배주문</button>
+                      style={{ ...btn('accent', c), fontSize: '0.7rem', padding: '0.125rem 0.375rem' }}>직배주문</button>
                     <button onClick={() => triggerPlaceOrder('kkadaegi')}
                       style={{ fontSize: '0.7rem', padding: '0.125rem 0.375rem', background: 'transparent', border: `1px solid ${c.warn}`, borderRadius: '4px', color: c.warn, cursor: 'pointer' }}>까대기주문</button>
                     {showGiftBtn && (

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { orderApi, type SambaOrder, type TrackingInfo } from '@/lib/samba/api/commerce'
 import { DELIVERY_TRACKING_URLS } from '@/lib/samba/constants'
 import { useTheme } from '@/lib/samba/useTheme'
-import { dark as c } from '@/lib/samba/colors'
+import type { Palette } from '@/lib/samba/colors'
 
 interface Props {
   open: boolean
@@ -27,8 +27,8 @@ const fmtTime = (iso: string | null): string => {
   }
 }
 
-// 진행 상태별 색상 (마지막 이벤트 강조용)
-const statusColor = (code: string | null): string => {
+// 진행 상태별 색상 (마지막 이벤트 강조용) — 호출 컴포넌트가 테마 팔레트(c)를 넘긴다
+const statusColor = (code: string | null, c: Palette): string => {
   if (!code) return c.textSub
   if (code === 'delivered') return c.success
   if (code === 'out_for_delivery') return c.primary
@@ -121,7 +121,7 @@ export default function TrackingModal({
             {data?.state && (
               <>
                 <span style={{ color: c.textSub }}>현재 상태</span>
-                <span style={{ color: statusColor(data.events[data.events.length - 1]?.status_code || null), fontWeight: 600 }}>{data.state}</span>
+                <span style={{ color: statusColor(data.events[data.events.length - 1]?.status_code || null, c), fontWeight: 600 }}>{data.state}</span>
               </>
             )}
           </div>
@@ -158,7 +158,7 @@ export default function TrackingModal({
             <div style={{ padding: '14px 20px' }}>
               {[...data.events].reverse().map((ev, i) => {
                 const isLast = i === 0
-                const dotColor = isLast ? statusColor(ev.status_code) : c.border
+                const dotColor = isLast ? statusColor(ev.status_code, c) : c.border
                 const lineColor = c.border
                 return (
                   <div key={i} style={{ display: 'grid', gridTemplateColumns: '20px 1fr', columnGap: '12px', position: 'relative', paddingBottom: i === data.events.length - 1 ? '0' : '14px' }}>

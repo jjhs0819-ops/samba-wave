@@ -83,7 +83,7 @@ export default function MessageModal(props: Props) {
                 disabled={msgPhoneSaving}
                 title="수정한 전화번호를 주문에 저장"
                 style={{
-                  ...btn('secondary'),
+                  ...btn('secondary', c),
                   ...(msgPhoneSaving ? btnDisabled : null),
                   padding: '0.25rem 0.625rem',
                   fontSize: '0.75rem',
@@ -192,12 +192,12 @@ export default function MessageModal(props: Props) {
         </div>
 
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button onClick={() => setMsgModal(null)} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
+          <button onClick={() => setMsgModal(null)} style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
           <button
             onClick={handleSendMsg}
             disabled={msgSending}
             style={{
-              ...btn('send'),
+              ...btn('send', c),
               ...(msgSending ? btnDisabled : null),
               padding: '0.625rem 1.25rem',
               fontSize: '0.875rem',

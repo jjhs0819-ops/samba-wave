@@ -902,7 +902,7 @@ export default function OrdersPage() {
         <button
           onClick={() => { setTrackingBatchIds([]); setTrackingStatusOpen(true) }}
           style={{
-            ...btn('secondary'),
+            ...btn('secondary', c),
             marginLeft: 'auto',
             padding: '6px 14px',
             fontSize: 13,
@@ -914,7 +914,7 @@ export default function OrdersPage() {
           onClick={handleTrackingSyncBulk}
           disabled={trackingSyncing}
           style={{
-            ...btn('primary'),
+            ...btn('primary', c),
             ...(trackingSyncing ? btnDisabled : null),
             padding: '6px 14px',
             fontSize: 13,
@@ -933,7 +933,7 @@ export default function OrdersPage() {
               }
             }}
             style={{
-              ...btn('secondary'),
+              ...btn('secondary', c),
               padding: '6px 14px',
               fontSize: 13,
             }}
@@ -981,7 +981,7 @@ export default function OrdersPage() {
         calcFeeRate={calcFeeRate}
         getRevenue={getRevenue}
         splitCustomerAddress={splitCustomerAddress}
-        renderCopyableText={renderCopyableText}
+        renderCopyableText={(value, label, style) => renderCopyableText(c, value, label, style)}
         handleDelete={handleDelete}
         handleImageClick={handleImageClick}
         handleCopyOrderNumber={handleCopyOrderNumber}
@@ -1133,7 +1133,7 @@ export default function OrdersPage() {
                       setLogMessages(prev => [...prev, `[송장] 중단 실패: ${(err as Error).message}`])
                     }
                   }}
-                  style={{ ...btn('danger'), padding: '4px 10px', fontSize: 12 }}
+                  style={{ ...btn('danger', c), padding: '4px 10px', fontSize: 12 }}
                   title="진행 중인 송장수집 즉시 중단 (확인 다이얼로그 후)"
                 >⏹ 중단</button>
                 <button
@@ -1151,16 +1151,16 @@ export default function OrdersPage() {
                       setLogMessages(prev => [...prev, `[마켓 재전송] 오류: ${(err as Error).message}`])
                     }
                   }}
-                  style={{ ...btn('secondary'), padding: '4px 10px', fontSize: 12 }}
+                  style={{ ...btn('secondary', c), padding: '4px 10px', fontSize: 12 }}
                   title="자동 dispatch가 실패한 SCRAPED/송장전송실패 잡 일괄 재시도 (자동 dispatch는 SCRAPED 직후 1회 시도, 실패 시 이 버튼으로 수동 재시도)"
                 >마켓전송 재시도</button>
                 <button
                   onClick={refreshTrackingStatus}
-                  style={{ ...btn('secondary'), padding: '4px 10px', fontSize: 12 }}
+                  style={{ ...btn('secondary', c), padding: '4px 10px', fontSize: 12 }}
                 >새로고침</button>
                 <button
                   onClick={() => setTrackingStatusOpen(false)}
-                  style={{ ...btn('ghost'), padding: '4px 10px', fontSize: 12 }}
+                  style={{ ...btn('ghost', c), padding: '4px 10px', fontSize: 12 }}
                   title="모달만 닫기 (백그라운드 처리는 계속)"
                 >닫기</button>
               </div>
@@ -1291,7 +1291,7 @@ export default function OrdersPage() {
                         }}
                         disabled={!sourcingUrl}
                         style={{
-                          ...btn('secondary'),
+                          ...btn('secondary', c),
                           ...(!sourcingUrl ? btnDisabled : null),
                           padding: '2px 6px', fontSize: 10,
                           whiteSpace: 'nowrap', flexShrink: 0,

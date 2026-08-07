@@ -2,15 +2,16 @@
 
 import React from 'react'
 import { showAlert } from '@/components/samba/Modal'
-import { dark as c } from '@/lib/samba/colors'
+import type { Palette } from '@/lib/samba/colors'
 
-const copyableTextStyle: React.CSSProperties = {
+// 팔레트를 받아 복사가능 텍스트 스타일 생성 — 모듈 스코프 다크 고정이던 것을 테마 반응형으로 전환
+const makeCopyableTextStyle = (c: Palette): React.CSSProperties => ({
   color: c.text,
   cursor: 'copy',
   textDecoration: 'underline',
   textDecorationColor: c.textMuted,
   textUnderlineOffset: '2px',
-}
+})
 
 const handleCopyText = async (value: string | null | undefined) => {
   let text = (value || '').trim()
@@ -26,7 +27,9 @@ const handleCopyText = async (value: string | null | undefined) => {
   }
 }
 
+// 훅을 못 쓰는 유틸이므로 호출 컴포넌트가 자기 테마 팔레트(c)를 넘긴다
 export const renderCopyableText = (
+  c: Palette,
   value: string | null | undefined,
   _label?: string,
   style?: React.CSSProperties,
@@ -44,7 +47,7 @@ export const renderCopyableText = (
           handleCopyText(value)
         }
       }}
-      style={{ ...copyableTextStyle, ...style }}
+      style={{ ...makeCopyableTextStyle(c), ...style }}
     >
       {text}
     </span>

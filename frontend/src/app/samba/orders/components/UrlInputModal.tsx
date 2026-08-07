@@ -1,7 +1,7 @@
 'use client'
 
 import React, { Dispatch, SetStateAction } from 'react'
-import { inputStyle } from '@/lib/samba/styles'
+import { makeInputStyle } from '@/lib/samba/styles'
 import { useTheme } from '@/lib/samba/useTheme'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 
@@ -37,7 +37,7 @@ export default function UrlInputModal({
           <input
             type="text"
             placeholder="https://www.musinsa.com/app/goods/12345"
-            style={{ ...inputStyle, width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}
+            style={{ ...makeInputStyle(c), width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}
             value={urlInput}
             onChange={e => setUrlInput(e.target.value)}
             autoFocus
@@ -48,15 +48,15 @@ export default function UrlInputModal({
           <input
             type="text"
             placeholder="https://image.musinsa.com/images/goods_img/..."
-            style={{ ...inputStyle, width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}
+            style={{ ...makeInputStyle(c), width: '100%', padding: '0.625rem 0.75rem', fontSize: '0.875rem' }}
             value={imageInput}
             onChange={e => setImageInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') onSubmit() }}
           />
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-          <button onClick={onClose} style={{ ...btn('ghost'), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
-          <button onClick={onSubmit} disabled={saving} style={{ ...btn('primary'), ...(saving ? btnDisabled : null), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>
+          <button onClick={onClose} style={{ ...btn('ghost', c), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>취소</button>
+          <button onClick={onSubmit} disabled={saving} style={{ ...btn('primary', c), ...(saving ? btnDisabled : null), padding: '0.625rem 1.25rem', fontSize: '0.875rem' }}>
             {saving ? '저장중...' : '등록'}
           </button>
         </div>
