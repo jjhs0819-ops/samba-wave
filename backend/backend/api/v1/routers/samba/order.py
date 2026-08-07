@@ -708,13 +708,41 @@ async def _build_order_filters(
             filters.append(SambaOrder.product_id.ilike(lower_q, escape="\\"))
         elif search_category == "order_number":
             # 상품주문번호(order_number) + 묶음주문번호(shipment_id) + 외부주문번호(ext_order_number) 모두 매칭
-            filters.append(
-                or_(
-                    SambaOrder.order_number.ilike(lower_q, escape="\\"),
-                    SambaOrder.shipment_id.ilike(lower_q, escape="\\"),
-                    SambaOrder.ext_order_number.ilike(lower_q, escape="\\"),
+            # 다중 조회(#9): '주문번호' 카테고리에서만 개행·쉼표·공백 구분 여러 건 동시 조회.
+            # 구분자가 없으면 토큰이 정확히 1개(= normalized_search 그대로) → 기존 단건 검색과 동일 (하위호환).
+            # 고객명 등 다른 카테고리는 공백 포함 값("김 철수") 오분리 방지를 위해 분리하지 않는다.
+            tokens: list[str] = []
+            for raw_token in re.split(r"[\s,]+", normalized_search):
+                token = raw_token.strip()
+                if token and token not in tokens:  # 빈 토큰 제거 + 중복 제거 (입력 순서 유지)
+                    tokens.append(token)
+            if len(tokens) > 200:
+                # 상한 200개 — 400 에러 대신 앞 200개만 조회 (붙여넣기 실패보다 부분 조회가 낫다)
+                logger.warning(
+                    f"[주문검색] 다중 주문번호 {len(tokens)}개 입력 — 상한 200개 초과분 무시"
                 )
-            )
+                tokens = tokens[:200]
+            token_conditions: list[Any] = []
+            for token in tokens:
+                token_q = f"%{escape_like(token.lower())}%"  # 토큰마다 외부 입력 escape 필수
+                token_conditions.extend(
+                    [
+                        SambaOrder.order_number.ilike(token_q, escape="\\"),
+                        SambaOrder.shipment_id.ilike(token_q, escape="\\"),
+                        SambaOrder.ext_order_number.ilike(token_q, escape="\\"),
+                    ]
+                )
+            if token_conditions:
+                filters.append(or_(*token_conditions))
+            else:
+                # 구분자만 입력된 극단 케이스(예: ",") — 빈 or_() 방지, 기존처럼 통째 문자열 검색
+                filters.append(
+                    or_(
+                        SambaOrder.order_number.ilike(lower_q, escape="\\"),
+                        SambaOrder.shipment_id.ilike(lower_q, escape="\\"),
+                        SambaOrder.ext_order_number.ilike(lower_q, escape="\\"),
+                    )
+                )
         elif search_category == "sourcing_order_number":
             filters.append(SambaOrder.sourcing_order_number.ilike(lower_q, escape="\\"))
         elif search_category == "tracking_number":

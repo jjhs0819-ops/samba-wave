@@ -85,8 +85,46 @@ export default function ReturnsPage() {
 
   // 전체보기 — 주문번호 필터 해제 + URL 에서 ?order_number 제거 (새로고침 시 재적용 방지)
   const clearOrderNumberFilter = () => {
+    multiAppliedRef.current = false
     setOrderNumberFilter('')
     window.history.replaceState(null, '', window.location.pathname)
+  }
+
+  // ── 다중 주문번호 조회 (요청 #9) ──
+  // [다중] 토글 ON 시 검색 input 이 textarea 로 스왑되고, [검색]이 클라이언트 필터가 아니라
+  // 서버 조회(orderNumberFilter)로 여러 주문번호를 한 번에 보낸다.
+  const [multiMode, setMultiMode] = useState(false)
+  const [multiText, setMultiText] = useState('')
+  // 현재 orderNumberFilter 가 다중 검색으로 걸린 것인지 추적 — 토글 OFF 시 이것만 해제
+  // (URL ?order_number= 시드로 들어온 단건 필터는 토글과 무관하므로 건드리지 않음)
+  const multiAppliedRef = useRef(false)
+
+  const toggleMultiMode = () => {
+    if (multiMode) {
+      // OFF: 다중 검색으로 걸어둔 서버 필터를 해제하고 기존(클라이언트 필터) 동작으로 복귀
+      setMultiMode(false)
+      if (multiAppliedRef.current) clearOrderNumberFilter()
+    } else {
+      setMultiMode(true)
+    }
+  }
+
+  const applyMultiSearch = () => {
+    // 개행·쉼표·공백으로 토큰화 + 빈 토큰 제거 + 중복 제거 (백엔드 토큰화 규칙과 동일)
+    const tokens = [...new Set(multiText.split(/[\s,]+/).filter(Boolean))]
+    if (tokens.length === 0) {
+      showAlert('조회할 주문번호를 입력해주세요', 'info')
+      return
+    }
+    let limited = tokens
+    if (tokens.length > 200) {
+      // 상한 초과는 막지 않고 앞 200건만 조회 (백엔드 상한 200과 동일)
+      showAlert(`주문번호는 한 번에 최대 200건까지 조회됩니다. 입력 ${fmtNum(tokens.length)}건 중 앞 200건만 조회합니다.`, 'info')
+      limited = tokens.slice(0, 200)
+    }
+    multiAppliedRef.current = true
+    // 쉼표로 합쳐 서버 조회 경로로 전달 — 백엔드 list_filtered 가 다시 토큰화해 IN 조회
+    setOrderNumberFilter(limited.join(','))
   }
 
   useEffect(() => { accountApi.listActiveCached(setAccounts) }, [])
@@ -126,11 +164,13 @@ export default function ReturnsPage() {
     setLoading(true)
     // 주문번호 필터 진입 시 날짜 범위는 보내지 않음 — 해당 주문 전체 반품/교환을 잡기 위함
     const onf = orderNumberFilter.trim()
+    // 다중 주문번호(요청 #9)면 pageSize(기본 50)로는 잘릴 수 있어 라우트 상한(1000)까지 확장
+    const onfCount = onf ? onf.split(/[\s,]+/).filter(Boolean).length : 0
     const data = await returnApi.list(
       undefined,
       filterStatus || undefined,
       filterType || undefined,
-      pageSize,
+      onfCount > 1 ? 1000 : pageSize,
       onf ? undefined : (customStart || undefined),
       onf ? undefined : (customEnd || undefined),
       onf || undefined,
@@ -324,7 +364,10 @@ export default function ReturnsPage() {
       }
     }
     // 검색어 필터 (카테고리별 필드 기준, 대소문자 무시)
-    const q = searchText.trim().toLowerCase()
+    // 다중 모드(요청 #9)에서는 건너뜀 — 검색 input 이 textarea 로 스왑돼 searchText 가
+    // 화면에서 보이지 않는데 필터만 살아 있으면 서버가 내려준 다건 결과를 조용히 걸러냄.
+    // state 는 지우지 않아 토글 OFF 시 원래 검색어 필터가 되살아난다.
+    const q = multiMode ? '' : searchText.trim().toLowerCase()
     if (q) {
       const field =
         searchCategory === 'customer' ? r.customer_name :
@@ -380,7 +423,13 @@ export default function ReturnsPage() {
       {orderNumberFilter && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', background: 'rgba(255,140,0,0.08)', border: '1px solid rgba(255,140,0,0.3)', borderRadius: '8px', padding: '0.6rem 1rem', marginBottom: '1rem' }}>
           <span style={{ fontSize: '0.85rem', color: c.text }}>
-            주문 <strong style={{ color: c.text }}>{orderNumberFilter}</strong> 관련 반품/교환만 표시
+            {(() => {
+              // 다중 조회(요청 #9)면 번호 나열 대신 건수로 표시
+              const n = orderNumberFilter.split(/[\s,]+/).filter(Boolean).length
+              return n > 1
+                ? <>주문 <strong style={{ color: c.text }}>{fmtNum(n)}건</strong> 관련 반품/교환만 표시</>
+                : <>주문 <strong style={{ color: c.text }}>{orderNumberFilter}</strong> 관련 반품/교환만 표시</>
+            })()}
           </span>
           <button
             onClick={clearOrderNumberFilter}
@@ -465,13 +514,31 @@ export default function ReturnsPage() {
 
       {/* 필터 바 */}
       <div style={{ background: c.surface, border: `1px solid ${c.border}`, borderRadius: '10px', padding: '0.75rem 1rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
-        <select style={{ ...makeInputStyle(c), width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        {/* 다중 모드에서는 카테고리를 '주문번호'로 고정 + 비활성화 (주문탭과 동일 UX) */}
+        <select style={{ ...makeInputStyle(c), width: '80px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', opacity: multiMode ? 0.6 : 1 }} value={multiMode ? 'order_number' : searchCategory} onChange={e => setSearchCategory(e.target.value)} disabled={multiMode}>
           <option value="product">상품</option>
           <option value="customer">고객</option>
           <option value="order_number">주문번호</option>
         </select>
-        <input style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="검색어 입력" />
-        <button onClick={() => { /* 검색은 입력 즉시 목록에 반영됨 */ }} style={{ ...btn('secondary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
+        {multiMode ? (
+          // 다중 모드: 같은 자리에서 input → textarea 스왑, Enter=줄바꿈 · Ctrl/Cmd+Enter=조회
+          <textarea
+            rows={4}
+            value={multiText}
+            onChange={e => setMultiText(e.target.value)}
+            onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyMultiSearch() }}
+            placeholder={'주문번호 여러 건 입력 (줄바꿈·쉼표로 구분, 최대 200건)\n조회: [검색] 또는 Ctrl+Enter'}
+            style={{ ...makeInputStyle(c), width: '240px', padding: '0.3rem 0.4rem', fontSize: '0.75rem', lineHeight: 1.5, resize: 'vertical' }}
+          />
+        ) : (
+          <input style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="검색어 입력" />
+        )}
+        <button
+          onClick={toggleMultiMode}
+          title="여러 주문번호를 한 번에 조회 (줄바꿈·쉼표로 구분, 최대 200건)"
+          style={{ ...(multiMode ? btn('primary', c) : btn('ghost', c)), padding: '0.22rem 0.6rem', fontSize: '0.75rem' }}
+        >다중</button>
+        <button onClick={() => { if (multiMode) applyMultiSearch() /* 일반 모드 검색은 입력 즉시 목록에 반영됨 */ }} style={{ ...btn('secondary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
         <button
           onClick={handleBatchDelete}
           style={{ ...btn('danger', c), padding: '0.22rem 0.6rem', fontSize: '0.75rem' }}

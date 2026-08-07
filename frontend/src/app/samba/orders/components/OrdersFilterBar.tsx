@@ -88,6 +88,24 @@ export default function OrdersFilterBar(props: Props) {
 
   const [excelDownloading, setExcelDownloading] = useState(false)
   const [excelMenuOpen, setExcelMenuOpen] = useState(false)
+
+  // 다중 주문번호 조회(#9) — [다중] 토글 ON 시 검색 input이 같은 자리에서 textarea로 전환
+  const [multiSearchMode, setMultiSearchMode] = useState(false)
+  const toggleMultiSearch = () => {
+    const next = !multiSearchMode
+    setMultiSearchMode(next)
+    if (next) setSearchCategory('order_number') // 다중 모드는 '주문번호' 카테고리 고정 (고객명 등 오분리 방지)
+  }
+  // 조회 실행 — 다중 모드에서 200건 초과 시 안내만 하고 조회는 막지 않음 (백엔드가 앞 200건만 사용)
+  const handleSearch = () => {
+    if (multiSearchMode) {
+      const tokens = [...new Set(searchText.split(/[\s,]+/).filter(Boolean))]
+      if (tokens.length > 200) {
+        showAlert(`주문번호 ${fmtNum(tokens.length)}건 입력 — 최대 200건까지만 조회됩니다 (앞 200건)`, 'info')
+      }
+    }
+    loadOrders()
+  }
   const handleExcelDownload = async (format: 'ub1' | 'lotte' = 'ub1') => {
     if (excelDownloading) return
     setExcelDownloading(true)
@@ -206,7 +224,7 @@ export default function OrdersFilterBar(props: Props) {
           <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
           <span style={{ color: c.text, fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}원</span>
         </span>
-        <select style={{ ...makeInputStyle(c), width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
+        <select disabled={multiSearchMode} title={multiSearchMode ? '다중 모드는 주문번호 카테고리 고정' : undefined} style={{ ...makeInputStyle(c), width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(multiSearchMode ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품명</option>
           <option value="customer">고객명</option>
           <option value="product_id">상품ID</option>
@@ -214,8 +232,28 @@ export default function OrdersFilterBar(props: Props) {
           <option value="sourcing_order_number">소싱주문번호</option>
           <option value="tracking_number">송장번호</option>
         </select>
-        <input style={{ ...makeInputStyle(c), width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') loadOrders() }} />
-        <button onClick={loadOrders} style={{ ...btn('primary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
+        {multiSearchMode ? (
+          // 같은 자리에서 input↔textarea 스왑 — 다중 모드만 200px(주문번호 13자리 확인용), 세로 rows=4
+          <textarea
+            rows={4}
+            style={{ ...makeInputStyle(c), width: '200px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', lineHeight: 1.35, resize: 'vertical', verticalAlign: 'middle' }}
+            value={searchText}
+            onChange={e => setSearchText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) handleSearch() }}
+            placeholder={'주문번호 여러 건 붙여넣기\n(줄바꿈·쉼표로 구분, 최대 200건)'}
+            title={'Enter=줄바꿈 · Ctrl/Cmd+Enter=조회'}
+          />
+        ) : (
+          <input style={{ ...makeInputStyle(c), width: '86px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleSearch() }} />
+        )}
+        <button
+          onClick={toggleMultiSearch}
+          title="여러 주문번호를 한 번에 조회 (줄바꿈·쉼표·공백 구분)"
+          style={{ ...btn(multiSearchMode ? 'accent' : 'secondary', c), padding: '0.22rem 0.5rem', fontSize: '0.72rem' }}
+        >
+          다중
+        </button>
+        <button onClick={handleSearch} style={{ ...btn('primary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
           <select style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체 마켓</option>
