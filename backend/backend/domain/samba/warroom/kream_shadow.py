@@ -2733,6 +2733,34 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
         await asyncio.gather(*[_one_upd(*x) for x in upds])
 
 
+def _live_opt(sizes: dict | None, opt: str) -> dict | None:
+    """실시간 사이즈맵에서 옵션 하나를 꺼낸다 — 크림 접미('240(US 5.5)'·'230(4Y)') 흡수.
+
+    [2026-08-07] 갱신·삭제와 리스톡이 **같은 매처**를 쓰게 통일한다.
+    종전엔 갱신·삭제만 이 규칙을 갖고 리스톡은 DB 옵션을 그대로 읽어,
+    같은 옵션을 한쪽은 '있다'(DB 재고1) 다른쪽은 '없다'(실시간 품절)로 봐
+    등록↔삭제 왕복이 매 사이클 돌았다(실측 30h: 143건 반복, 최다 11회).
+    """
+    if not isinstance(sizes, dict):
+        return None
+    od = sizes.get(opt)
+    if od is None:
+        _b = re.match(r"^(\d{3}(?:\.\d)?)", str(opt))
+        if _b:
+            od = sizes.get(_b.group(1))
+    return od
+
+
+async def _fetch_snkr_live_sizes(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
+    """비카드 실시간 사이즈별 원가·재고 — 숫자 id는 의류/잡화, 스타일코드는 mm 품목.
+
+    갱신·삭제(_process_shoe_asks._one_style)와 리스톡이 같은 소스를 보게 하는 진입점.
+    """
+    if str(snkr_id).isdigit():
+        return await _fetch_snkr_apparel_sizes(cli, str(snkr_id))
+    return await _fetch_snkr_shoe_sizes(cli, str(snkr_id))
+
+
 async def _process_shoe_asks(
     asks: list,
     kid_to_opts: dict,
@@ -2796,11 +2824,9 @@ async def _process_shoe_asks(
                 return
             async with _sem:
                 # [2026-08-04] 카테고리 무관 처리 — 스니덩크 id 가 숫자면 의류·잡화라
-                # /v1/apparels/{id}/sizes, 스타일코드면 신발이라 상품 HTML 을 쓴다.
-                if str(style).isdigit():
-                    live = await _fetch_snkr_apparel_sizes(cli, str(style))
-                else:
-                    live = await _fetch_snkr_shoe_sizes(cli, style)
+                # /v1/apparels/{id}/sizes, 스타일코드면 상품 HTML 을 쓴다.
+                # [2026-08-07] 분기를 _fetch_snkr_live_sizes 로 빼 리스톡과 공유한다.
+                live = await _fetch_snkr_live_sizes(cli, str(style))
             if live is not None:
                 live_map[kid] = live
 
@@ -2828,13 +2854,8 @@ async def _process_shoe_asks(
                 # [2026-08-04] 크림 키즈·여성 사이즈는 '240(US 5.5)'·'230(4Y)' 처럼 접미가
                 # 붙는다. 스니덩크 시세는 '240' 키라 그대로 조회하면 전부 빗나가
                 # 재고·원가를 0 으로 보고 갱신이 통째로 스킵됐다(2,153건 방치).
-                _lm = live_map[kid]
-                od = _lm.get(opt)
-                if od is None:
-                    _base = re.match(r"^(\d{3}(?:\.\d)?)", opt)
-                    if _base:
-                        od = _lm.get(_base.group(1))
-                od = od or {"price": 0, "stock": 0}
+                # [2026-08-07] 접미 흡수 규칙을 _live_opt 로 빼 리스톡과 공유한다.
+                od = _live_opt(live_map[kid], opt) or {"price": 0, "stock": 0}
             else:
                 # [2026-08-01 통화사고] DB 폴백 금지 — 신발 DB 원가에 원화(KRW)로 저장된 오염분이
                 # 2만개 있어 엔화로 오인하면 9배 부풀린 조정이 나간다. 실시간(JP native, 엔화)
@@ -3954,9 +3975,25 @@ async def run_kream_unified_once() -> dict:
                     _g_unjudged.add(kid)  # 판정 못 함 — 스캔목록에서 제외
                     return r
                 _noncard_probe_used += 1
+                # [2026-08-07] 리스톡 원가·재고를 **갱신·삭제와 같은 실시간 소스**로 통일.
+                # 종전엔 이 루프만 DB 옵션(db_opts)을 읽었다. DB 는 비카드 실시간 결과를
+                # 되쓰지 않아(write-back 은 카드 전용) 낡은 채 남고, 삭제는 실시간을 보니
+                # 같은 옵션을 등록쪽 '재고1' / 삭제쪽 '품절' 로 정반대 판정 → 매 사이클 왕복.
+                #   실측(2026-08-07, 30h): 반복 등록 143건, 최다 11회.
+                #   예) kid 22830 opt 295 — 실시간 255~285(295 없음) 인데 DB 재고1.
+                # 조회 실패는 DB 폴백 금지(통화사고 이력) — 이번 회차 건너뛰고 다음에 재시도.
+                try:
+                    _live_sz = await _fetch_snkr_live_sizes(scli, str(snkr_id))
+                except Exception as _e:
+                    _live_sz = None
+                    _trace(kid, "", f"리스톡 실시간조회 예외: {type(_e).__name__}")
+                if _live_sz is None:
+                    _drop("실시간조회실패", kid)
+                    return r
                 _kream_opts_cache = None  # 상품당 크림 옵션 1회 조회 캐시
                 for _nm, _d in (prod.get("db_opts") or {}).items():
-                    _st, _pr = int(_d.get("stock") or 0), int(_d.get("price") or 0)
+                    _lv = _live_opt(_live_sz, _nm) or {}
+                    _st, _pr = int(_lv.get("stock") or 0), int(_lv.get("price") or 0)
                     if _st <= 0 or _pr <= 0:
                         _drop("재고0또는원가0", kid, _nm, f"st={_st} pr={_pr}")
                         continue
