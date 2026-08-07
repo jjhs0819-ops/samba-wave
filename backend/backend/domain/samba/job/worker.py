@@ -2362,6 +2362,9 @@ class JobWorker:
 
         BATCH_SIZE = 1
         all_indices = list(range(start_from, total))
+        # [펜싱] 클레임 시점 스냅샷 — 배치마다 DB의 (status, started_at)와 대조해
+        # 리퍼 재큐잉→타 인스턴스 재클레임된 낡은 실행을 감지한다.
+        _claim_started_at = getattr(job, "started_at", None)
         for batch_start in range(0, len(all_indices), BATCH_SIZE):
             batch = all_indices[batch_start : batch_start + BATCH_SIZE]
             i_first = batch[0]
@@ -2375,6 +2378,31 @@ class JobWorker:
             except Exception as exc:
                 logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
                 _is_cancelled = False
+
+            # [펜싱] 이중 실행 차단 (2026-08-07 플토 데상트 EMP 중복 120건 사고) —
+            # 다른 인스턴스의 리퍼가 이 잡을 '죽었다' 오판해 pending 재큐잉하고
+            # 새 워커가 재클레임하면 status/started_at 이 바뀐다. 낡은 실행은
+            # 여기서 조용히 종료한다(진행 마킹·완료 처리 없이 — 새 실행이 이어감).
+            # 마켓 등록은 비멱등이라, 이 감지가 없으면 겹친 구간이 전부 이중 등록된다.
+            _fence = await repo.get_job_claim(job.id)
+            if _fence is not None:
+                _f_status, _f_started = _fence
+                # 취소(cancelled)는 아래 기존 분기가 로그·플래그 정리와 함께 처리
+                # 하므로 펜싱에서 건드리지 않는다. 펜싱은 '리퍼 재큐잉(pending)'과
+                # '타 워커 재클레임(started_at 변경)'만 잡는다.
+                _requeued = str(_f_status) == "pending"
+                _reclaimed = (
+                    _claim_started_at is not None
+                    and _f_started is not None
+                    and _f_started != _claim_started_at
+                )
+                if _requeued or _reclaimed:
+                    logger.warning(
+                        f"[잡워커] 펜싱 — 잡 소유권 상실 감지, 낡은 실행 중단: "
+                        f"{job.id} ({i_first}/{total} 지점, status={_f_status}, "
+                        f"reclaimed={_reclaimed})"
+                    )
+                    return
 
             # 배포 종료 감지 — progress 저장 + 즉시 pending 전환 후 탈출
             if self._shutting_down:

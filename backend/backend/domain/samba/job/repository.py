@@ -438,6 +438,32 @@ class SambaJobRepository(BaseRepository[SambaJob]):
         except (asyncio.TimeoutError, Exception):
             return False
 
+    async def get_job_claim(self, job_id: str) -> Optional[tuple]:
+        """펜싱용 — 잡의 (status, started_at) 현재값을 새 세션으로 조회.
+
+        다른 인스턴스의 리퍼가 이 잡을 재큐잉(recover_stuck_running)하고
+        제3의 워커가 재클레임하면 started_at 이 바뀐다. 실행 중인 워커가
+        배치 경계마다 이 값을 대조해 낡은 실행을 스스로 중단한다
+        (2026-08-07 플토 데상트 EMP 중복 120건 — 동일 잡 이중 실행 사고).
+        조회 실패 시 None 반환 (판정 불가 — 호출측은 계속 진행)."""
+        import asyncio
+        from sqlalchemy import text
+        from backend.db.orm import get_write_session
+
+        try:
+            async with get_write_session() as fresh_session:
+                result = await asyncio.wait_for(
+                    fresh_session.execute(
+                        text("SELECT status, started_at FROM samba_jobs WHERE id = :id"),
+                        {"id": job_id},
+                    ),
+                    timeout=5,
+                )
+                row = result.first()
+                return (row[0], row[1]) if row else None
+        except (asyncio.TimeoutError, Exception):
+            return None
+
     async def recover_stuck_running(
         self,
         exclude_ids: set[str] | None = None,
