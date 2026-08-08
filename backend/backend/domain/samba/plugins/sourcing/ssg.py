@@ -559,6 +559,26 @@ class SSGPlugin(SourcingPlugin):
                 )
                 best_benefit_price = int(new_sale_price)
 
+            # [2026-08-08] 혜택가를 못 구한 경우(=0/None)도 상한 대상이다.
+            #
+            # new_cost 는 best_benefit_price 가 falsy 면 None 이 되고, 그러면 DB 의
+            # 기존 cost 가 그대로 남는다. 그 사이 판매가만 내려가면 "옛 원가 >
+            # 새 판매가" 가 된다 — 상한 코드는 best_benefit_price 만 봐서 이 경우를
+            # 못 잡았다(실측 2026-08-08: 상한 배포 후에도 128건 중 28건 발생,
+            # 상한 적용 로그는 0건).
+            # 기존 원가가 새 판매가보다 비싸면 판매가로 낮춰 쓴다. 낮추는 방향이라
+            # 역마진 위험은 없다.
+            if not best_benefit_price and new_sale_price:
+                _old_cost = int(getattr(product, "cost", 0) or 0)
+                if _old_cost > int(new_sale_price):
+                    logger.info(
+                        "[SSG] 기존 원가 상한 적용: %s원 → 판매가 %s원 (%s, 혜택가 미수집)",
+                        f"{_old_cost:,}",
+                        f"{int(new_sale_price):,}",
+                        site_product_id,
+                    )
+                    best_benefit_price = int(new_sale_price)
+
             # 변동/재고변동 정확 판정 — 옵션별 0 경계 전환을 stock_changed로 인정
             from backend.domain.samba.collector.refresher import (
                 count_stock_transitions,
