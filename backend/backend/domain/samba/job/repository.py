@@ -454,7 +454,9 @@ class SambaJobRepository(BaseRepository[SambaJob]):
             async with get_write_session() as fresh_session:
                 result = await asyncio.wait_for(
                     fresh_session.execute(
-                        text("SELECT status, started_at FROM samba_jobs WHERE id = :id"),
+                        text(
+                            "SELECT status, started_at FROM samba_jobs WHERE id = :id"
+                        ),
                         {"id": job_id},
                     ),
                     timeout=5,

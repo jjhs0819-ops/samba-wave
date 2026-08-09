@@ -2018,6 +2018,10 @@ class SambaShipmentService:
                     "lottehome",
                     "gsshop",
                 ):
+                    # 환경설정 미비(카테고리 매핑 부재)는 신규등록 실패가 아니라 skip —
+                    # "failed" 로 두면 removable_failed 에 잡혀 등록 연결(market_product_nos)이
+                    # 삭제된다 (이슈 #721)
+                    res["status"] = "skipped"
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
                         f"[전송] 상품 {product_id} → {market_type} 카테고리 매핑 없음 (스킵)"
