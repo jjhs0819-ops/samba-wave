@@ -178,23 +178,13 @@ async def main():
             continue
         consec_rl = 0
 
-        # 포이즌 recommend_price 실제 응답엔 minPrice/averagePrice/maxPrice 키가 없음.
-        # 시세는 data.globalMinPrice/asiaMinPrice(시장 최저) + data.priceRangeItems(백분위)에 들어있음.
+        # 시세 폴백(30일 거래가 누락 시 시장 최저 호가·백분위 사용)은
+        # PoisonClient.parse_recommend_payload 가 처리한다.
         min_price = avg_price = max_price = None
         if status == "ok":
-            payload = res.get("data") or {}
-            prices = sorted(
-                int(it["price"])
-                for it in (payload.get("priceRangeItems") or [])
-                if it.get("price") is not None
-            )
-            min_price = (
-                payload.get("globalMinPrice")
-                or payload.get("asiaMinPrice")
-                or (prices[0] if prices else None)
-            )
-            avg_price = prices[len(prices) // 2] if prices else None  # 중간값(≈50%)
-            max_price = prices[-1] if prices else None  # 상위(≈90%)
+            min_price = res.get("minPrice")
+            avg_price = res.get("averagePrice")
+            max_price = res.get("maxPrice")
 
         if min_price is not None or avg_price is not None:
             recommend = {

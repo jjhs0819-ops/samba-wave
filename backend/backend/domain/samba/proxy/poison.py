@@ -379,6 +379,53 @@ class PoisonClient:
             "lastOffsetId": int(d.get("lastOffsetId") or 0),
         }
 
+    @staticmethod
+    def parse_recommend_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        """추천가 응답(data)에서 시세를 뽑는다.
+
+        문서상 minPrice/averagePrice/maxPrice 는 '최근 30일 거래가'라 거래 이력이
+        없는 SKU 에서는 응답에서 통째로 빠진다(대부분의 신상/비인기 상품). 그때는
+        시장 최저 호가(global/asia/local)와 백분위 구간(priceRangeItems)으로 대체해야
+        None 이 되지 않는다.
+
+        경쟁 입찰 기준가는 '실거래가'가 아니라 '내가 이겨야 할 호가'이므로
+        globalMinPrice → asiaMinPrice → localMinPrice → 백분위 최저 순으로 채운다.
+        """
+        prices = sorted(
+            int(it["price"])
+            for it in (payload.get("priceRangeItems") or [])
+            if it.get("price") is not None
+        )
+        min_price = (
+            payload.get("globalMinPrice")
+            or payload.get("asiaMinPrice")
+            or payload.get("localMinPrice")
+            or (prices[0] if prices else None)
+        )
+        avg_price = payload.get("averagePrice") or (
+            prices[len(prices) // 2] if prices else None  # 중간값(≈50% 구간)
+        )
+        max_price = payload.get("maxPrice") or (
+            prices[-1] if prices else None  # 상위(≈90% 구간)
+        )
+        return {
+            "minPrice": min_price,
+            "averagePrice": avg_price,
+            "maxPrice": max_price,
+            # 원본 스펙 필드 — 정책에서 시장별로 골라 쓸 수 있게 그대로 노출
+            "globalMinPrice": payload.get("globalMinPrice"),
+            "asiaMinPrice": payload.get("asiaMinPrice"),
+            "localMinPrice": payload.get("localMinPrice"),
+            # 이 가격 이하라야 노출된다는 플랫폼 기준가
+            "effectiveExposurePrice": payload.get("effectiveExposurePrice"),
+            # {백분위: 가격} — 예: {10: 65000, 50: 92000, 90: 144000}
+            "priceRanges": {
+                int(it["percentValue"]): int(it["price"])
+                for it in (payload.get("priceRangeItems") or [])
+                if it.get("price") is not None and it.get("percentValue") is not None
+            },
+        }
+
     async def recommend_price(
         self,
         *,
@@ -389,8 +436,11 @@ class PoisonClient:
     ) -> dict[str, Any]:
         """추천 입찰가(최저/평균/최고) 조회 — 경쟁가 정책용.
 
-        Returns: {success, minPrice, averagePrice, maxPrice, data}
+        Returns: {success, minPrice, averagePrice, maxPrice, globalMinPrice,
+                  asiaMinPrice, localMinPrice, effectiveExposurePrice,
+                  priceRanges, data}
         biddingType: 20(일반판매/예약판매), 27(직배송), 25(보관판매).
+        가격 단위는 통화 최소단위 정수 (KRW/JPY=원·엔 그대로, 그 외는 1/100).
         """
         business: dict[str, Any] = {
             "globalSkuId": int(global_sku_id),
@@ -406,13 +456,7 @@ class PoisonClient:
             )
             return {"success": False, "data": data}
         payload = data.get("data") or {}
-        return {
-            "success": True,
-            "minPrice": payload.get("minPrice"),
-            "averagePrice": payload.get("averagePrice"),
-            "maxPrice": payload.get("maxPrice"),
-            "data": payload,
-        }
+        return {"success": True, **self.parse_recommend_payload(payload), "data": payload}
 
     # ------------------------------------------------------------------
     # 주문 조회 (Order List — 삼바 주문 수집용)
