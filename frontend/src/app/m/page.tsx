@@ -306,12 +306,13 @@ export default function SambaMobileOrdersPage() {
   const shownSale = shown.reduce((s, o) => s + (amountOf(o) || 0), 0)
   // 정산금 합계 — 취소/반품류는 정산 대상이 아니라 제외
   const shownSettle = shown.reduce((s, o) => s + (isCancelled(o) ? 0 : getRevenue(o) || 0), 0)
-  // 실수익/수익률 합계 — 카드별 계산과 동일 공식(getRevenue - cost - shipping_fee), 취소/반품류 제외
-  const shownProfit = shown.reduce(
-    (s, o) => s + (isCancelled(o) ? 0 : calcProfit(o, getRevenue(o))),
-    0,
-  )
-  const shownProfitRate = shownSale > 0 ? ((shownProfit / shownSale) * 100).toFixed(1) : '0'
+  // 실수익/수익률 — 발주 미입력 건은 원가(cost)가 실구매가로 확정되지 않은 예상값이라
+  // 수익 계산에서 제외 (발주 입력 + 취소/반품 아닌 건만 합산)
+  const profitEligible = shown.filter((o) => hasOrderNo(o) && !isCancelled(o))
+  const shownProfit = profitEligible.reduce((s, o) => s + calcProfit(o, getRevenue(o)), 0)
+  const profitEligibleSale = profitEligible.reduce((s, o) => s + (amountOf(o) || 0), 0)
+  const shownProfitRate =
+    profitEligibleSale > 0 ? ((shownProfit / profitEligibleSale) * 100).toFixed(1) : '0'
 
   // ── 로딩 게이트 ──
   if (!ready) {
@@ -596,9 +597,11 @@ export default function SambaMobileOrdersPage() {
           <div style={{ fontWeight: 700, color: c.text }}>
             정산 {fmtNum(Math.round(shownSettle))}원
           </div>
-          <div style={{ marginTop: 2, color: shownProfit >= 0 ? c.success : c.danger }}>
-            {shownProfit >= 0 ? '+' : ''}{fmtNum(Math.round(shownProfit))}원 ({shownProfitRate}%)
-          </div>
+          {profitEligible.length > 0 && (
+            <div style={{ marginTop: 2, color: shownProfit >= 0 ? c.success : c.danger }}>
+              {shownProfit >= 0 ? '+' : ''}{fmtNum(Math.round(shownProfit))}원 ({shownProfitRate}%)
+            </div>
+          )}
         </div>
       </div>
 
@@ -759,9 +762,12 @@ export default function SambaMobileOrdersPage() {
                         <div style={{ fontSize: 12, color: c.textSub, marginTop: 1 }}>
                           정산 {fmtNum(Math.round(revenue))}원
                         </div>
-                        <div style={{ fontSize: 12, color: profit >= 0 ? c.success : c.danger, marginTop: 1 }}>
-                          {profit >= 0 ? '+' : ''}{fmtNum(Math.round(profit))}원 ({profitRate}%)
-                        </div>
+                        {/* 발주 미입력 — 원가 미확정 예상값이라 수익 표시 생략 */}
+                        {hasOrderNo(o) && (
+                          <div style={{ fontSize: 12, color: profit >= 0 ? c.success : c.danger, marginTop: 1 }}>
+                            {profit >= 0 ? '+' : ''}{fmtNum(Math.round(profit))}원 ({profitRate}%)
+                          </div>
+                        )}
                       </>
                     )
                   })()}
