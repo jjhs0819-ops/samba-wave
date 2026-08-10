@@ -306,6 +306,12 @@ export default function SambaMobileOrdersPage() {
   const shownSale = shown.reduce((s, o) => s + (amountOf(o) || 0), 0)
   // 정산금 합계 — 취소/반품류는 정산 대상이 아니라 제외
   const shownSettle = shown.reduce((s, o) => s + (isCancelled(o) ? 0 : getRevenue(o) || 0), 0)
+  // 실수익/수익률 합계 — 카드별 계산과 동일 공식(getRevenue - cost - shipping_fee), 취소/반품류 제외
+  const shownProfit = shown.reduce(
+    (s, o) => s + (isCancelled(o) ? 0 : calcProfit(o, getRevenue(o))),
+    0,
+  )
+  const shownProfitRate = shownSale > 0 ? ((shownProfit / shownSale) * 100).toFixed(1) : '0'
 
   // ── 로딩 게이트 ──
   if (!ready) {
@@ -571,25 +577,29 @@ export default function SambaMobileOrdersPage() {
       </div>
 
       {/* 요약 */}
-      {/* 한 줄 유지 — 좌: 건수·매출 / 우: 정산금 합계 (2행 줄바꿈 방지 nowrap) */}
+      {/* 좌: 건수·매출 / 우: 정산금 + 실수익·수익률 (우측 2줄 스택, 좌우 각 줄 nowrap) */}
       <div
         style={{
           padding: '0.6rem 0.85rem',
           display: 'flex',
-          alignItems: 'center',
+          alignItems: 'flex-start',
           justifyContent: 'space-between',
           gap: 8,
           fontSize: 12,
           color: c.textSub,
-          whiteSpace: 'nowrap',
         }}
       >
-        <span>
+        <span style={{ whiteSpace: 'nowrap' }}>
           표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원
         </span>
-        <span style={{ fontWeight: 700, color: c.text }}>
-          정산 {fmtNum(Math.round(shownSettle))}원
-        </span>
+        <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+          <div style={{ fontWeight: 700, color: c.text }}>
+            정산 {fmtNum(Math.round(shownSettle))}원
+          </div>
+          <div style={{ marginTop: 2, color: shownProfit >= 0 ? c.success : c.danger }}>
+            {shownProfit >= 0 ? '+' : ''}{fmtNum(Math.round(shownProfit))}원 ({shownProfitRate}%)
+          </div>
+        </div>
       </div>
 
       {/* 상태 메시지 */}
