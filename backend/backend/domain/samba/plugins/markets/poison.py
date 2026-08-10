@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
+from backend.domain.samba.proxy.poison import POISON_MIN_PROFIT, decide_bid_price
 from backend.utils.logger import logger
 
 
@@ -186,6 +187,26 @@ class PoisonPlugin(MarketPlugin):
         results: list[dict[str, Any]] = []
         new_sizes: dict[str, Any] = {}
 
+        # 시세 게이트용 사이즈별 시장가 — 재고 있는 사이즈만 일괄 조회(상품당 1~2회)
+        min_profit = await self._load_min_profit(session, product)
+        gate_ids: list[int] = []
+        for opt in options:
+            if self._safe_int(opt.get("stock"), default=0) <= 0:
+                continue
+            norm = _normalize_size((opt.get("name") or opt.get("size") or "").strip())
+            sku = size_index.get(norm)
+            gid = (sku or {}).get("globalSkuId")
+            if gid:
+                gate_ids.append(int(gid))
+        market_map: dict[int, dict[str, Any]] = {}
+        if gate_ids:
+            try:
+                market_map = await client.recommend_price_batch(
+                    global_sku_ids=gate_ids
+                )
+            except Exception as e:  # 시세 조회 실패는 등록을 막지 않는다(하한만 방어)
+                logger.warning(f"[POIZON] 시세 일괄조회 실패 — 게이트 우회: {e}")
+
         for opt in options:
             opt_name = (opt.get("name") or opt.get("size") or "").strip()
             stock = self._safe_int(opt.get("stock"), default=0)
@@ -212,14 +233,33 @@ class PoisonPlugin(MarketPlugin):
                     results.append(r)
                 continue
 
-            price = await self._compute_bid_price(
+            target = await self._compute_bid_price(
                 session, product, cost, fee_rate, min_fee, ignore_common
             )
-            if price <= 0:
+            if target <= 0:
                 continue
-            # POIZON 은 등록가가 통화 최소단위 배수여야 함(KRW=1000원). 배수가 아니면
-            # "Invalid value. Must be a multiple of" 로 거부 → 1000원 단위 올림(마진 보존).
-            price = -(-int(price) // 1000) * 1000
+
+            # 시세 게이트 — 시장가보다 비싸면 노출조차 안 되므로 시장가까지 내려서 등록하고,
+            # 시장가로 팔아도 순이익 하한에 못 미치면 등록하지 않는다.
+            # 등록가는 KRW 최소단위(1000원) 배수여야 하므로 unit 보정도 여기서 처리한다.
+            decision = decide_bid_price(
+                cost=cost,
+                target=target,
+                market=(market_map.get(int(global_sku_id)) or {}).get("minPrice"),
+                min_profit=min_profit,
+                unit=1000,
+            )
+            if decision.skipped:
+                results.append(
+                    {
+                        "size": opt_name,
+                        "success": False,
+                        "skip": True,
+                        "message": f"시세 게이트: {decision.reason}",
+                    }
+                )
+                continue
+            price = decision.price
 
             if bidding_no:
                 # 기존 입찰 → 가격/재고 수정
@@ -277,6 +317,23 @@ class PoisonPlugin(MarketPlugin):
             "product_no": first_no,
             "data": results,
         }
+
+    async def _load_min_profit(self, session, product: dict) -> int:
+        """정책에서 건당 최소 순이익(원) 로드. 미설정이면 기본값."""
+        policy_id = product.get("applied_policy_id")
+        if not policy_id:
+            return POISON_MIN_PROFIT
+        from backend.domain.samba.policy.repository import SambaPolicyRepository
+
+        try:
+            policy = await SambaPolicyRepository(session).get_async(policy_id)
+        except Exception:
+            return POISON_MIN_PROFIT
+        if not policy or not policy.market_policies:
+            return POISON_MIN_PROFIT
+        mp = policy.market_policies.get(self.policy_key) or {}
+        val = mp.get("minProfitAmount")
+        return int(val) if val not in (None, "") else POISON_MIN_PROFIT
 
     async def _load_poison_policy(
         self, session, product: dict

@@ -133,6 +133,7 @@ interface MarketPolicyForm {
   // 포이즌(리셀) 전용
   minFeeAmount?: number        // 최소 수수료 (원) — POIZON 건당 최소 15,000원
   ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
+  minProfitAmount?: number     // 시세 게이트 — 건당 최소 순이익 (원, 기본 10,000)
   // KREAM(리셀) 전용
   kreamMinMarginAmount?: number       // 최소마진금액 (원)
   kreamCompetitiveMarginRate?: number // 경쟁 최소마진율 (%)
@@ -1606,6 +1607,11 @@ export default function PoliciesPage() {
                       정책 공통 마진 설정 무시
                     </label>
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>체크 시 위 공통 마진율/범위마진 대신 포이즌 자체 가격(최소 수수료 기준)만 적용</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소 순이익</span>
+                    <NumInput value={mp.minProfitAmount ?? 10000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, minProfitAmount: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>시세 게이트 — 시장가보다 비싸면 시장가까지 내려서 등록하되, 수수료 제외 순이익이 이 금액 미만이면 등록하지 않음</span>
                   </div>
                 </>
               )}

@@ -14,8 +14,10 @@ POIZON은 KREAM과 동일한 카탈로그형 리셀 마켓이다.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import uuid
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote_plus
 
@@ -29,6 +31,114 @@ from backend.utils.logger import logger
 # (order_sync·주문폴러)는 창이 지난 주문만 받는다. 시계 오차·경계 대비 여유
 # 10분을 더한 70분이 기본값.
 POISON_CANCEL_WINDOW_MIN = int(os.environ.get("POISON_CANCEL_WINDOW_MIN", "70"))
+
+# 포이즌 한국 판매수수료 (신발·의류 기준: 요율 10%, 건당 최저 15,000 / 최대 45,000)
+# 가방·시계·주얼리는 14%·최저 18,000 이므로 해당 품목을 올릴 땐 정책에서 덮어써야 한다.
+POISON_FEE_RATE = float(os.environ.get("POISON_FEE_RATE", "0.10"))
+POISON_FEE_MIN = int(os.environ.get("POISON_FEE_MIN", "15000"))
+POISON_FEE_MAX = int(os.environ.get("POISON_FEE_MAX", "45000"))
+# 건당 순이익 하한(원) — 이 금액을 못 넘기면 등록하지 않는다
+POISON_MIN_PROFIT = int(os.environ.get("POISON_MIN_PROFIT", "10000"))
+
+
+def poizon_fee(
+    price: float,
+    rate: float = POISON_FEE_RATE,
+    fee_min: int = POISON_FEE_MIN,
+    fee_max: int = POISON_FEE_MAX,
+) -> float:
+    """포이즌이 떼는 실제 판매수수료. 정률이지만 최저·최대가 걸린다."""
+    return min(max(price * rate, fee_min), fee_max)
+
+
+@dataclass
+class BidDecision:
+    """게이트 판정 결과."""
+
+    price: int = 0
+    skipped: bool = False
+    reason: str = ""
+    lowered: bool = False  # 시장가에 맞춰 목표가를 내렸는지
+
+
+def _min_price_for_profit(
+    cost: float,
+    min_profit: int,
+    rate: float = POISON_FEE_RATE,
+    fee_min: int = POISON_FEE_MIN,
+    fee_max: int = POISON_FEE_MAX,
+) -> int:
+    """순이익 min_profit 을 확보하는 최소 판매가.
+
+    수수료가 구간함수(최저/정률/최대)라 구간별로 후보를 구해 실제로 성립하는 값을 쓴다.
+    """
+    # ① 최저수수료 구간: p - fee_min - cost = min_profit
+    cand = cost + fee_min + min_profit
+    if cand * rate <= fee_min:
+        return math.ceil(cand)
+    # ② 정률 구간: p - p*rate - cost = min_profit
+    cand = (cost + min_profit) / (1 - rate)
+    if cand * rate <= fee_max:
+        return math.ceil(cand)
+    # ③ 최대수수료 구간: p - fee_max - cost = min_profit
+    return math.ceil(cost + fee_max + min_profit)
+
+
+def decide_bid_price(
+    *,
+    cost: float,
+    target: float,
+    market: float | None,
+    min_profit: int = POISON_MIN_PROFIT,
+    rate: float = POISON_FEE_RATE,
+    fee_min: int = POISON_FEE_MIN,
+    fee_max: int = POISON_FEE_MAX,
+    unit: int = 1,
+) -> BidDecision:
+    """등록가 결정 — 노출 우선, 순이익 하한 방어.
+
+    포이즌은 입찰 경쟁이라 시장 최저가보다 비싸면 노출조차 되지 않는다. 그래서
+    정책이 계산한 목표가가 시장가보다 높으면 **시장가까지 내려서라도 등록**한다
+    (마진율이 낮아지는 것은 감수 — 노출이 우선). 다만 시장가로 팔아도 순이익이
+    하한에 못 미치면 팔수록 손해이므로 그때는 등록하지 않는다.
+
+    시세가 없으면(입찰 경쟁자 없음) 목표가를 그대로 쓰되 하한은 지킨다.
+
+    unit: 등록가 배수 단위(KRW=1000). 하한은 올림, 상한은 내림해서 단위 보정 뒤에도
+    "시장가 이하 + 최소이익 이상"이 동시에 성립하게 한다.
+    """
+    cost = float(cost or 0)
+    if cost <= 0:
+        return BidDecision(skipped=True, reason="원가 없음")
+
+    unit = max(int(unit or 1), 1)
+    floor = _min_price_for_profit(cost, min_profit, rate, fee_min, fee_max)
+    floor = -(-floor // unit) * unit  # 올림 — 보정 후에도 최소이익 유지
+
+    if not market or market <= 0:
+        price = max(-(-int(math.ceil(target)) // unit) * unit, floor)
+        return BidDecision(price=price, reason="시세 없음(경쟁자 없음) — 목표가 적용")
+
+    cap = (int(market) // unit) * unit  # 내림 — 보정 후에도 시장가 이하 유지
+    if floor > cap:
+        return BidDecision(
+            skipped=True,
+            reason=(
+                f"시장가({cap:,})로 팔아도 최소이익 {min_profit:,}원 미달 "
+                f"(필요 {floor:,})"
+            ),
+        )
+
+    target_u = -(-int(math.ceil(target)) // unit) * unit
+    price = min(target_u, cap)
+    lowered = price < target_u
+    if price < floor:
+        price = floor
+    return BidDecision(
+        price=price,
+        lowered=lowered,
+        reason="시장가 맞춤" if lowered else "목표가 적용",
+    )
 
 # 취소/거래실패 상태 코드 하한 — 7000/8000/8010/8080 (order.py 상태맵과 동일 기준)
 _CANCELED_STATUS_MIN = 7000
@@ -87,6 +197,8 @@ class PoisonClient:
     PATH_CANCEL_LISTING = "/dop/api/v1/pop/api/v1/cancel-bid/cancel-bidding"
     # 추천 입찰가(최저가) 조회
     PATH_RECOMMEND_PRICE = "/dop/api/v1/pop/api/v1/recommend-bid/price"
+    # 일괄 조회 — 사이즈별 시세를 상품당 1회로 받는다 (rate limit 절약)
+    PATH_RECOMMEND_BATCH = "/dop/api/v1/pop/api/v1/recommend-bid/batchPrice"
     # 주문 목록 조회 (Order List — generic_list, create_time 범위 최대 7일)
     PATH_ORDER_LIST = "/dop/api/v1/pop/api/v2/order/generic_list"
     # 내 입찰(listing) 목록 조회 (Query Listing List — offset 페이징)
@@ -378,6 +490,46 @@ class PoisonClient:
             "list": d.get("list") or [],
             "lastOffsetId": int(d.get("lastOffsetId") or 0),
         }
+
+    async def recommend_price_batch(
+        self,
+        *,
+        global_sku_ids: list[int],
+        bidding_type: int = 20,
+        currency: str | None = None,
+        region: str | None = None,
+        chunk: int = 20,
+    ) -> dict[int, dict[str, Any]]:
+        """추천가 일괄 조회 — {globalSkuId: 파싱결과}.
+
+        사이즈(SKU)마다 시세가 다르므로 등록 전 게이트는 사이즈별 시세가 필요하다.
+        단건으로 돌면 상품당 옵션 수만큼 호출이 나가 rate limit(일 20,000)을 넘기므로
+        일괄 조회로 상품당 1~2회에 끝낸다.
+        """
+        out: dict[int, dict[str, Any]] = {}
+        ids = [int(i) for i in global_sku_ids if i]
+        for i in range(0, len(ids), chunk):
+            part = ids[i : i + chunk]
+            data = await self._post(
+                self.PATH_RECOMMEND_BATCH,
+                {
+                    "globalSkuIdList": part,
+                    "biddingType": int(bidding_type),
+                    "currency": currency or self.currency,
+                    "region": region or self.region,
+                },
+            )
+            if data.get("code") != 200:
+                logger.warning(
+                    f"[POIZON] 추천가 일괄조회 실패 code={data.get('code')} "
+                    f"msg={data.get('msg') or data.get('message')} n={len(part)}"
+                )
+                continue
+            for row in data.get("data") or []:
+                gid = row.get("globalSkuId")
+                if gid:
+                    out[int(gid)] = self.parse_recommend_payload(row)
+        return out
 
     @staticmethod
     def parse_recommend_payload(payload: dict[str, Any]) -> dict[str, Any]:
