@@ -863,6 +863,19 @@ class SSGClient:
             params["itemNm"] = keyword
         return await self._call_api("GET", "/item/0.1/getItemList.ssg", params=params)
 
+    async def find_stopped_item_id_by_spl_ven(self, spl_ven_item_id: str) -> str:
+        """splVenItemId 로 **판매중지(90)** 등록 이력을 찾는다 — 재등록 차단용.
+
+        find_live_item_id_by_spl_ven 은 90 을 제외하므로, 우리가 의도적으로 내린
+        상품은 "등록 이력 없음"으로 보여 insertItem(신규등록)으로 빠진다.
+        insertItem 은 비멱등이라 호출할 때마다 새 itemId 가 생기고, 마커는 비어 있으니
+        다음 사이클에 또 신규등록 — **삭제 → 재등록 무한루프**가 된다.
+        (2026-08-10 실측: 에잇세컨즈 08-05 철수 후 닷새간 1,832건 재등록, 원가0 주문 2건)
+
+        반환: 판매중지 상태로 존재하는 itemId (없으면 빈 문자열).
+        """
+        return await self._find_item_id_by_spl_ven(spl_ven_item_id, want_stopped=True)
+
     async def find_live_item_id_by_spl_ven(self, spl_ven_item_id: str) -> str:
         """splVenItemId(공급업체상품ID=수집상품 id)로 기존 live 등록 itemId 검색 (#321).
 
@@ -874,6 +887,16 @@ class SSGClient:
           splVenItemId 정확일치만 채택.
         - sellStatCd=90(삭제) 은 제외, 살아있는 등록만 채택.
         반환: 매칭 itemId (없으면 빈 문자열).
+        """
+        return await self._find_item_id_by_spl_ven(spl_ven_item_id, want_stopped=False)
+
+    async def _find_item_id_by_spl_ven(
+        self, spl_ven_item_id: str, *, want_stopped: bool = False
+    ) -> str:
+        """splVenItemId 로 등록 itemId 검색 (공통 구현).
+
+        want_stopped=False → 살아있는 등록만(기존 동작)
+        want_stopped=True  → 판매중지(90) 된 것만
         """
         if not spl_ven_item_id:
             return ""
@@ -910,7 +933,8 @@ class SSGClient:
             # 정확일치 방어 (param 무시 시 오adopt 차단)
             if str(it.get("splVenItemId") or "") != str(spl_ven_item_id):
                 continue
-            if str(it.get("sellStatCd") or "") == "90":  # 삭제 제외
+            _stopped = str(it.get("sellStatCd") or "") == "90"
+            if _stopped != want_stopped:  # live 검색이면 90 제외, 중지검색이면 90 만
                 continue
             iid = it.get("itemId")
             if iid:

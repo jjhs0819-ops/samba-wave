@@ -545,6 +545,36 @@ class SSGPlugin(MarketPlugin):
                             f"update 전환: itemId={_found}"
                         )
                         existing_no = _found
+                    else:
+                        # ★live 에 없으면 **판매중지(90) 이력**을 확인한다.
+                        # 우리가 의도적으로 내린 상품(브랜드 철수·MD 미오픈 등)은
+                        # live 검색에 안 잡혀 "미등록"으로 보이고, insertItem 은 비멱등이라
+                        # 호출할 때마다 새 itemId 가 생긴다. 마커는 비어 있으니 다음
+                        # 사이클에 또 신규등록 → **삭제 → 재등록 무한루프**.
+                        # (2026-08-10 실측: 에잇세컨즈 철수 후 닷새간 1,832건 재등록,
+                        #  그중 2건에서 원가 0 허수주문 발생)
+                        # 판매중지 이력이 있으면 재등록하지 않고 스킵한다.
+                        try:
+                            _stopped = await client.find_stopped_item_id_by_spl_ven(
+                                _spl_id
+                            )
+                        except Exception:
+                            _stopped = ""
+                        if _stopped:
+                            logger.warning(
+                                f"[SSG] 재등록 차단 — 판매중지 이력 있음"
+                                f"(itemId={_stopped}) product={_spl_id}. "
+                                f"의도적으로 내린 상품이므로 신규등록하지 않는다."
+                            )
+                            return {
+                                "success": False,
+                                "message": (
+                                    "SSG 재등록 차단: 판매중지된 상품입니다"
+                                    f"(itemId={_stopped}). 다시 팔려면 신세계몰에서 "
+                                    "판매재개 처리하세요."
+                                ),
+                                "_skip_retry": True,
+                            }
                 except Exception as e:
                     logger.warning(f"[SSG] splVenItemId 선제검색 실패(무시): {e}")
 
