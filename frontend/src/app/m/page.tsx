@@ -78,6 +78,15 @@ const sourceSiteFromUrl = (url?: string | null): string => {
 const hasOrderNo = (o: SambaOrder): boolean =>
   !!(o.sourcing_order_number && o.sourcing_order_number.trim())
 
+// 실수익/수익률 — PC 주문화면 calcProfit/calcProfitRate(useOrderActions.ts)와 동일 공식.
+// 폰 화면엔 인라인 편집 중인 원가가 없으므로 o.cost/o.shipping_fee 그대로 사용.
+const calcProfit = (o: SambaOrder, revenue: number): number =>
+  revenue - (o.cost ?? 0) - (o.shipping_fee ?? 0)
+const calcProfitRate = (o: SambaOrder, profit: number): string => {
+  const paymentAmount = o.total_payment_amount ?? o.sale_price
+  return paymentAmount > 0 ? ((profit / paymentAmount) * 100).toFixed(1) : '0'
+}
+
 // 발송/미발송/취소 판정 — 백엔드 기준(order.py EXCLUDED_ORDER_STATUSES)과 완전히 일치
 // status 컬럼만 기준 — shipping_status/tracking_number는 일절 관여 금지(PC와 동일 규칙)
 // 크림 등 배송중(delivering) 주문은 status='pending' 유지 + tracking_number 선반영되므로
@@ -731,11 +740,21 @@ export default function SambaMobileOrdersPage() {
                   <div style={{ fontSize: 15, fontWeight: 700 }}>
                     {fmtNum(Math.round(amountOf(o)))}원
                   </div>
-                  {getRevenue(o) > 0 && (
-                    <div style={{ fontSize: 12, color: c.textSub, marginTop: 1 }}>
-                      정산 {fmtNum(Math.round(getRevenue(o)))}원
-                    </div>
-                  )}
+                  {getRevenue(o) > 0 && (() => {
+                    const revenue = getRevenue(o)
+                    const profit = calcProfit(o, revenue)
+                    const profitRate = calcProfitRate(o, profit)
+                    return (
+                      <>
+                        <div style={{ fontSize: 12, color: c.textSub, marginTop: 1 }}>
+                          정산 {fmtNum(Math.round(revenue))}원
+                        </div>
+                        <div style={{ fontSize: 12, color: profit >= 0 ? c.success : c.danger, marginTop: 1 }}>
+                          {profit >= 0 ? '+' : ''}{fmtNum(Math.round(profit))}원 ({profitRate}%)
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
               </div>
 
