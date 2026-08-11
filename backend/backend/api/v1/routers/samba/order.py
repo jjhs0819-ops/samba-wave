@@ -11158,6 +11158,36 @@ async def sync_orders_from_markets(
                             f"취소요청 → {new_ship_status} (마켓 종결 신호)"
                         )
                         new_ship_status = None  # 아래 분기 스킵
+                    # ★2026-08-11 — 운영자가 수동 지정한 클레임 상태를 마켓의 '정상 진행'
+                    # 값으로 덮어쓰지 않는다.
+                    # 신세계몰처럼 판매자가 임의 취소를 못 하는 마켓에서는, 소싱처 품절이
+                    # 나도 고객이 취소를 누를 때까지 기다려야 한다. 그동안 운영자는
+                    # 상태를 '취소요청'으로 바꿔 반품/교환 탭에서 관리하는데, 마켓은 여전히
+                    # '주문접수'를 주므로 매 동기화(1시간 주기)마다 되돌아가 관리가 불가능했다.
+                    # 기존 보호 로직은 "마켓이 취소를 보낼 때" 방향만 있었고 그 반대가 없었다.
+                    # 마켓이 종결 신호(배송완료/구매확정)를 주면 위 Recovery 가 해제하므로
+                    # 좀비 상태로 굳지 않는다.
+                    _MANUAL_CLAIM_KEEP = {"취소요청", "반품요청", "교환요청"}
+                    _MARKET_NORMAL_FLOW = {
+                        "주문접수",
+                        "출고대기",
+                        "상품준비중",
+                        "결제완료",
+                        "신규주문",
+                        "출고지시",
+                        "배송준비중",
+                    }
+                    if (
+                        new_ship_status
+                        and existing.shipping_status in _MANUAL_CLAIM_KEEP
+                        and new_ship_status in _MARKET_NORMAL_FLOW
+                    ):
+                        logger.info(
+                            f"[주문동기화] 운영자 클레임 상태 보호: "
+                            f"{order_data.get('order_number')} "
+                            f"{existing.shipping_status} 유지 (마켓={new_ship_status})"
+                        )
+                        new_ship_status = None
                     if new_ship_status:
                         cancel_statuses = {"취소요청", "취소처리중", "취소완료"}
                         exchange_statuses = {
