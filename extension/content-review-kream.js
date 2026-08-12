@@ -34,6 +34,22 @@
     })
   }
 
+  // 헤더의 '리뷰 쓰기 16' 숫자 — 제출이 실제로 됐는지 판정하는 기준.
+  function getPendingCount() {
+    const m = (document.body.innerText || '').match(/리뷰\s*쓰기\s*(\d+)/)
+    return m ? Number(m[1]) : null
+  }
+
+  // 조건이 참이 될 때까지 폴링(waitFor 는 DOM 변경 기준이라 숫자 변화에 약하다).
+  async function waitUntil(fn, timeout = 8000, step = 400) {
+    const end = Date.now() + timeout
+    while (Date.now() < end) {
+      try { if (fn()) return true } catch (_) {}
+      await sleep(step)
+    }
+    return false
+  }
+
   function getReviewItems() {
     return Array.from(document.querySelectorAll('.product_list_info_summary')).filter(
       it => !it.closest('[class*="review-write"]') && !it.closest('[class*="layer"]') && !it.dataset.sambaReviewed
@@ -46,12 +62,44 @@
     return parent.querySelector('[class*="rating"]') || null
   }
 
+  // el.click() 만으로는 안 먹는 위젯이 있다(별점처럼 포인터 이벤트를 직접 듣는 경우).
+  // 실제 마우스처럼 좌표를 실은 이벤트를 순서대로 보낸다.
+  function realClick(el, x, y) {
+    if (!el) return false
+    const r = el.getBoundingClientRect()
+    if (!r.width || !r.height) return false
+    const cx = x == null ? r.left + r.width / 2 : x
+    const cy = y == null ? r.top + r.height / 2 : y
+    const opt = { bubbles: true, cancelable: true, composed: true, clientX: cx, clientY: cy, button: 0 }
+    for (const type of ['pointerover', 'pointerenter', 'pointermove', 'pointerdown',
+                        'mousedown', 'pointerup', 'mouseup', 'click']) {
+      const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent
+      try { el.dispatchEvent(new Ctor(type, opt)) } catch (_) {
+        el.dispatchEvent(new MouseEvent(type.replace('pointer', 'mouse'), opt))
+      }
+    }
+    return true
+  }
+
   function clickStar(starArea, count) {
-    const stars = starArea.querySelectorAll('.rating-element')
+    let stars = starArea.querySelectorAll('.rating-element')
+    if (stars.length === 0) {
+      // 클래스명이 바뀌어도 별 개수(5개)로 잡아낸다.
+      const kids = Array.from(starArea.children)
+      if (kids.length >= 5) stars = kids
+    }
     if (stars.length >= count) {
       const t = stars[count - 1]
-      const inner = t.querySelector('[class*="image-element"]') || t
-      click(inner); return
+      const inner = t.querySelector && (t.querySelector('[class*="image-element"]') || t.querySelector('svg, img')) || t
+      realClick(inner)
+      click(inner)
+      return
+    }
+    // 별 요소를 못 나누면 영역 안에서 위치로 누른다(왼쪽부터 count/5 지점).
+    const r = starArea.getBoundingClientRect()
+    if (r.width) {
+      realClick(starArea, r.left + (r.width * (count - 0.5)) / 5, r.top + r.height / 2)
+      return
     }
     click(starArea)
   }
@@ -63,7 +111,26 @@
       if (d.textContent.includes(text) && d.querySelector('button')
           && d.children.length <= 10 && d.offsetWidth > 200 && d.offsetWidth < 600) return d
     }
+    // 너비·자식수 조건에 안 걸리는 모달이 있다(크림이 구조를 바꾸면 바로 못 찾음).
+    // 마지막 수단 — 문구를 담은 가장 작은 요소부터 버튼 있는 조상까지 거슬러 올라간다.
+    const holder = Array.from(document.querySelectorAll('div, section, dialog'))
+      .filter(d => d.textContent.includes(text) && d.textContent.length < 300)
+      .sort((a, b) => a.textContent.length - b.textContent.length)[0]
+    for (let el = holder; el; el = el.parentElement) {
+      if (el.querySelector && el.querySelector('button')) return el
+    }
     return null
+  }
+
+  // 팝업 탐지가 실패해도 버튼 글자만 맞으면 누른다 — 화면 구조 변경에 가장 강하다.
+  function clickButtonByText(...labels) {
+    const btn = Array.from(document.querySelectorAll('button, [role="button"], a'))
+      .find(b => {
+        const t = (b.textContent || '').trim()
+        return labels.some(l => t === l) && b.offsetParent !== null
+      })
+    if (btn) { click(btn); return true }
+    return false
   }
 
   function findQuestionText(box) {
@@ -147,19 +214,37 @@
     for (let att = 0; att < 3; att++) {
       clickStar(starArea, starCount)
       const r = await waitFor(() =>
-        findPopupByText('자동 구매 확정') || document.querySelector('[class*="review-write_content"]'),
+        (document.body.textContent.includes('자동 구매 확정') ? document.body : null)
+        || findPopupByText('자동 구매 확정')
+        || document.querySelector('[class*="review-write_content"]'),
         5000
       )
       if (r) { opened = true; break }
       await sleep(1300)
     }
-    if (!opened) return { success: false, error: '별점 클릭 3회 실패' }
+    if (!opened) {
+      // 다음에 원인을 바로 알 수 있게 별점 영역 상태를 남긴다.
+      const stars = starArea.querySelectorAll('.rating-element')
+      const rect = starArea.getBoundingClientRect()
+      console.warn('[적립금-리뷰] 별점 클릭 실패 진단:', {
+        cls: starArea.className, ratingEl: stars.length, kids: starArea.children.length,
+        w: Math.round(rect.width), h: Math.round(rect.height), want: starCount,
+      })
+      return { success: false, error: '별점 클릭 3회 실패' }
+    }
 
-    // 자동 구매 확정 팝업
+    // 자동 구매 확정 팝업 — '취소 / 리뷰 작성' 중 '리뷰 작성' 을 눌러야 넘어간다.
     const alertPopup = findPopupByText('자동 구매 확정')
     if (alertPopup) {
-      const c = getLastButton(alertPopup)
+      // 글자로 먼저 찾는다 — 팝업 대신 조상 요소를 잡았을 때 '취소' 를 누르지 않도록.
+      const byText = Array.from(alertPopup.querySelectorAll('button'))
+        .find(b => ['리뷰 작성', '확인'].includes((b.textContent || '').trim()))
+      const c = byText || getLastButton(alertPopup)
       if (c) { await sleep(rand(500, 1300)); click(c); await sleep(rand(1500, 2800)) }
+    } else if (document.body.textContent.includes('자동 구매 확정')) {
+      // 팝업 요소를 못 잡아도 버튼 글자로 진행한다(여기서 멈춰 서 있던 원인).
+      await sleep(rand(500, 1300))
+      if (clickButtonByText('리뷰 작성', '확인')) await sleep(rand(1500, 2800))
     }
 
     const modal = await waitFor(() => document.querySelector('[class*="review-write_content"]'), 10000)
@@ -170,15 +255,33 @@
 
     const submit = findSubmitButton()
     if (!submit) return { success: false, error: '제출 버튼 못 찾음' }
+    const before = getPendingCount()
+    realClick(submit)
     click(submit)
 
     const confirm = await waitFor(() => findPopupByText('제출 후에는'), 5000)
     if (confirm) {
-      const f = getLastButton(confirm)
-      if (f) { await sleep(rand(400, 1200)); click(f) }
+      // 마지막 버튼을 누르면 '취소' 를 누를 수 있다 — 글자를 먼저 본다.
+      const byText = Array.from(confirm.querySelectorAll('button'))
+        .find(b => ['확인', '제출', '제출하기', '리뷰 제출하기'].includes((b.textContent || '').trim()))
+      const f = byText || getLastButton(confirm)
+      if (f) { await sleep(rand(400, 1200)); realClick(f); click(f) }
     }
     await sleep(rand(1800, 3500))
     await closeAllModals()
+
+    // 실제로 등록됐는지 확인 — 안 하면 클릭이 씹혀도 '완료' 로 보고된다.
+    // 헤더의 '리뷰 쓰기 N' 이 줄어드는 것이 가장 확실한 신호다.
+    if (before != null) {
+      const ok = await waitUntil(() => {
+        const now = getPendingCount()
+        return now != null && now < before
+      }, 8000)
+      if (!ok) return { success: false, error: `제출 확인 안 됨(리뷰 쓰기 ${before}건 그대로)` }
+    } else if (document.querySelector('[class*="review-write_content"]')) {
+      // 개수를 못 읽으면 최소한 작성 모달이 닫혔는지로 판단한다.
+      return { success: false, error: '제출 확인 안 됨(작성 모달이 그대로 열려 있음)' }
+    }
     return { success: true, starCount }
   }
 
