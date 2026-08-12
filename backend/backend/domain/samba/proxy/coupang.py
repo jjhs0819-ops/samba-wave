@@ -1027,7 +1027,8 @@ class CoupangClient:
             CoupangClient.search_brand_id() 결과를 호출자가 전달. 비어있으면 brand 문자열만 사용.
 
         required_attribute_types: 카테고리별 필수 구매옵션 attributeTypeName 목록.
-            2026-08-01 필수 구매옵션 의무화 대응. 누락된 type만 "상세페이지 참조"로 자동 보충.
+            2026-08-01 필수 구매옵션 의무화 대응. 누락된 type만 required_attribute_fill_value()로
+            자료형에 맞게(NUMBER는 단위 부착 등) 자동 보충.
         """
         from datetime import datetime as dt, timezone as tz
 
@@ -1166,15 +1167,21 @@ class CoupangClient:
                     }
                 )
 
-            # 카테고리별 필수 구매옵션 누락분 자동 보충 ("상세페이지 참조")
+            # 카테고리별 필수 구매옵션 누락분 자동 보충 — 자료형별 값(NUMBER는 단위 부착 등)
             if _required_attr_types:
+                from backend.domain.samba.proxy.notice_utils import (  # noqa: F811
+                    required_attribute_fill_value,
+                )
+
                 _present = {a["attributeTypeName"] for a in _attrs}
                 for _req in _required_attr_types:
                     if _req and _req not in _present:
                         _attrs.append(
                             {
                                 "attributeTypeName": _req[:25],
-                                "attributeValueName": "상세페이지 참조",
+                                "attributeValueName": required_attribute_fill_value(
+                                    notice_meta, _req
+                                ),
                             }
                         )
 

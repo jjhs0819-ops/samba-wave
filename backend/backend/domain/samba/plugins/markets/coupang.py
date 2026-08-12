@@ -281,8 +281,52 @@ class CoupangPlugin(MarketPlugin):
                 }
 
             except Exception as e:
-                # 재시도 소진 후 도달. 깨진 전체수정 PUT(404)으로 폴백하지 않음 —
-                # 재시도가능 실패 반환 → 잡큐가 다음 사이클에 재시도.
+                # 마켓에서 이미 삭제된 상품(영구 실패) — 재시도가능으로 분류하면 잡큐가
+                # 영원히 재시도한다(이슈 #724: 옵션 3개가 7일간 18,860회 재시도 실측).
+                # lock_stock=True로 다음 오토튠 사이클부터 전송 대상에서 제외
+                # (재고잠금 체크는 collector_autotune.py:3494/4356 이미 존재).
+                _msg = str(e)
+                from backend.domain.samba.shipment.dispatcher import _is_delete_ghost
+
+                if _is_delete_ghost(_msg):
+                    _pid = product.get("id")
+                    if _pid:
+                        try:
+                            from sqlalchemy import update as _sa_update
+                            from backend.domain.samba.collector.model import (
+                                SambaCollectedProduct as _CP,
+                            )
+
+                            await session.execute(
+                                _sa_update(_CP)
+                                .where(_CP.id == _pid)
+                                .values(lock_stock=True)
+                            )
+                            await session.commit()
+                        except Exception as _lock_e:
+                            # commit 실패 시 rollback으로 SessionTransaction PREPARED
+                            # 고착 차단 (idle in transaction 누적 방지, 이슈#276 동일 패턴)
+                            logger.warning(
+                                f"[쿠팡] 삭제상품 재고잠금 처리 실패(무시): {_lock_e}"
+                            )
+                            try:
+                                await session.rollback()
+                            except Exception:
+                                pass
+                    logger.warning(
+                        f"[쿠팡] 경량 업데이트 실패(마켓에서 이미 삭제됨, 재시도 중단 — "
+                        f"재고잠금 처리): {existing_no} — {e}"
+                    )
+                    return {
+                        "success": False,
+                        "product_no": existing_no,
+                        "permanent_failure": True,
+                        "message": f"쿠팡에서 이미 삭제된 상품(재시도 중단): {str(e)[:200]}",
+                        "data": {"sellerProductId": existing_no},
+                    }
+
+                # 그 외(타임아웃 등)는 재시도 소진 후 도달. 깨진 전체수정 PUT(404)으로
+                # 폴백하지 않음 — 재시도가능 실패 반환 → 잡큐가 다음 사이클에 재시도.
                 logger.warning(
                     f"[쿠팡] 경량 업데이트 실패(전체수정 폴백 안 함, 재시도 대기): "
                     f"{existing_no} — {e}"

@@ -689,16 +689,8 @@ def build_coupang_notices_with_meta(
     return notices or None
 
 
-def extract_required_attribute_types(meta: Any) -> list[str]:
-    """쿠팡 카테고리 메타 응답에서 카테고리별 필수 구매옵션(attributeTypeName) 추출.
-
-    2026-08-01 쿠팡 정책: 카테고리별 필수 구매옵션이 누락되면 등록 실패/노출 제한.
-    응답 구조가 공식 문서상 명확치 않아 알려진 키를 광범위하게 탐색 (없으면 빈 리스트).
-
-    탐색 키(우선순위):
-      data.attributes / data.attributeTypes / data.requiredAttributes / data.mandatoryAttributes
-    각 항목에서 attributeTypeName(또는 typeName/name) 추출, dataType/required 가 MANDATORY/true 인 것만.
-    """
+def _iter_attribute_entries(meta: Any) -> list[dict[str, Any]]:
+    """쿠팡 카테고리 메타 응답에서 attribute 후보 항목 목록 추출 (내부 공용)."""
     if meta is None:
         return []
     raw = meta.get("data") if isinstance(meta, dict) else meta
@@ -716,29 +708,42 @@ def extract_required_attribute_types(meta: Any) -> list[str]:
         v = raw.get(key)
         if isinstance(v, list):
             candidates.extend(v)
+    return [e for e in candidates if isinstance(e, dict)]
 
-    if not candidates:
-        return []
 
+def _is_mandatory_entry(entry: dict[str, Any]) -> bool:
+    """쿠팡 attribute 항목이 필수(MANDATORY)인지 판정.
+
+    실응답(2026-08 실측): {"dataType":"STRING","required":"MANDATORY",...} — required 는
+    boolean 이 아니라 문자열 "MANDATORY"/"OPTIONAL". dataType 은 STRING/NUMBER 등 자료형이라
+    MANDATORY 판정에는 쓸 수 없다(예전 코드가 dataType 을 판정에 쓴 건 죽은 조건이었음).
+    mandatory/usageType 필드로 오는 계정·카테고리 대비 하위호환도 함께 인정한다.
+    """
+    required_raw = str(entry.get("required", ""))
+    mandatory_raw = str(entry.get("mandatory", ""))
+    usage_type_raw = str(entry.get("usageType", ""))
+    return (
+        "MANDATORY" in required_raw.upper()
+        or "MANDATORY" in mandatory_raw.upper()
+        or "MANDATORY" in usage_type_raw.upper()
+        or required_raw.lower() == "true"
+        or mandatory_raw.lower() == "true"
+    )
+
+
+def extract_required_attribute_types(meta: Any) -> list[str]:
+    """쿠팡 카테고리 메타 응답에서 카테고리별 필수 구매옵션(attributeTypeName) 추출.
+
+    2026-08-01 쿠팡 정책: 카테고리별 필수 구매옵션이 누락되면 등록 실패/노출 제한.
+    응답 구조가 공식 문서상 명확치 않아 알려진 키를 광범위하게 탐색 (없으면 빈 리스트).
+
+    탐색 키(우선순위):
+      data.attributes / data.attributeTypes / data.requiredAttributes / data.mandatoryAttributes
+    """
     required: list[str] = []
     seen: set[str] = set()
-    for entry in candidates:
-        if not isinstance(entry, dict):
-            continue
-        # MANDATORY 표기 다양: dataType=MANDATORY / required=true / mandatory=true / usageType=MANDATORY
-        flags = (
-            str(entry.get("dataType", "")).upper(),
-            str(entry.get("usageType", "")).upper(),
-            str(entry.get("mandatory", "")).lower(),
-            str(entry.get("required", "")).lower(),
-        )
-        is_required = (
-            "MANDATORY" in flags[0]
-            or "MANDATORY" in flags[1]
-            or flags[2] == "true"
-            or flags[3] == "true"
-        )
-        if not is_required:
+    for entry in _iter_attribute_entries(meta):
+        if not _is_mandatory_entry(entry):
             continue
         name = (
             entry.get("attributeTypeName")
@@ -751,6 +756,41 @@ def extract_required_attribute_types(meta: Any) -> list[str]:
             seen.add(name)
             required.append(name)
     return required
+
+
+def required_attribute_fill_value(meta: Any, type_name: str) -> str:
+    """필수 구매옵션 누락분 자동 보충값을 자료형에 맞게 생성.
+
+    2026-08-09 실등록으로 확정: NUMBER 타입("수량" 등)에 자유문자열 "상세페이지 참조"를 보내면
+    쿠팡이 "유효하지 않은 구매 옵션 값 혹은 단위" 로 거부한다. dataType 별로 분기한다.
+      - NUMBER → "1" + basicUnit(있으면, 예: "개" → "1개")
+      - SELECT/그 외 inputValues 보유 → 허용값(inputValues) 첫 값
+      - 그 외 / 메타 미발견 → "상세페이지 참조" (기존 동작 폴백)
+    """
+    fallback = "상세페이지 참조"
+    target = str(type_name).strip()
+    if not target:
+        return fallback
+    for entry in _iter_attribute_entries(meta):
+        name = str(
+            entry.get("attributeTypeName")
+            or entry.get("typeName")
+            or entry.get("name")
+            or ""
+        ).strip()
+        if name != target:
+            continue
+        data_type = str(entry.get("dataType", "")).upper()
+        if data_type == "NUMBER":
+            unit = str(entry.get("basicUnit", "") or "").strip()
+            return f"1{unit}" if unit and unit != "없음" else "1"
+        input_values = entry.get("inputValues")
+        if isinstance(input_values, list) and input_values:
+            first = str(input_values[0]).strip()
+            if first:
+                return first
+        return fallback
+    return fallback
 
 
 def build_coupang_notices(product: dict[str, Any]) -> list[dict[str, str]]:
