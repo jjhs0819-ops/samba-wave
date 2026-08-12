@@ -456,7 +456,10 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                     )
                 ).label("tag_applied_count"),
             )
-            .where(_CP.search_filter_id.in_(filter_ids))
+            .where(
+                _CP.search_filter_id.in_(filter_ids),
+                _CP.deleted_at.is_(None),
+            )
             .group_by(_CP.search_filter_id)
         )
         count_result = await session.execute(count_stmt)
@@ -471,6 +474,56 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
                 "tag_applied_count": row[6],
             }
 
+        from backend.domain.samba.order.model import (
+            SambaOrder as _ORD,
+            CANCEL_BLOCKED_STATUSES,
+        )
+
+        # 휴지통 개수 — count_stmt는 활성 상품만 대상으로 하므로(위 where절의
+        # deleted_at IS NULL) 별도 쿼리로, deleted_at 필터 없이 전체 상품을 대상으로
+        # 트래시(soft-delete)된 상품만 센다.
+        trashed_stmt = (
+            select(
+                _CP.search_filter_id,
+                func.count(case((_CP.deleted_at.isnot(None), literal(1)))).label(
+                    "trashed_count"
+                ),
+            )
+            .where(_CP.search_filter_id.in_(filter_ids))
+            .group_by(_CP.search_filter_id)
+        )
+        trashed_result = await session.execute(trashed_stmt)
+        trashed_map = {row[0]: row[1] for row in trashed_result.all()}
+
+        # 누적매출 — SambaCollectedProduct.search_filter_id로 그룹핑된 상품들에
+        # 연결된 SambaOrder(collected_product_id 조인)의 sale_price 합계. 취소계열
+        # 상태(CANCEL_BLOCKED_STATUSES)는 제외. 상품:주문이 1:N이므로 이 조인은
+        # trashed_count 쿼리와 분리해 중복 카운트를 피한다(상품 1건에 주문이 여러
+        # 건이면 조인 결과가 그만큼 늘어나 product-level 집계가 부풀 수 있음).
+        revenue_stmt = (
+            select(
+                _CP.search_filter_id,
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                _ORD.status.notin_(CANCEL_BLOCKED_STATUSES),
+                                _ORD.sale_price,
+                            ),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("revenue_sum"),
+            )
+            .select_from(_CP)
+            .join(_ORD, _ORD.collected_product_id == _CP.id)
+            .where(_CP.search_filter_id.in_(filter_ids))
+            .group_by(_CP.search_filter_id)
+        )
+        revenue_result = await session.execute(revenue_stmt)
+        revenue_map = {row[0]: float(row[1]) for row in revenue_result.all()}
+
         result = []
         for f in filters:
             data = {c.key: getattr(f, c.key) for c in f.__table__.columns}
@@ -481,10 +534,12 @@ async def list_filters(session: AsyncSession = Depends(get_write_session_depende
             data["ai_tagged_count"] = counts.get("ai_tagged_count", 0)
             data["ai_image_count"] = counts.get("ai_image_count", 0)
             data["tag_applied_count"] = counts.get("tag_applied_count", 0)
+            data["trashed_count"] = trashed_map.get(f.id, 0)
+            data["revenue_sum"] = revenue_map.get(f.id, 0.0)
             result.append(data)
         return result
 
-    return await cache.get_or_compute("collector:filters:v1", _factory, ttl=60)
+    return await cache.get_or_compute("collector:filters:v2", _factory, ttl=60)
 
 
 @router.post("/filters", status_code=201)
@@ -499,6 +554,7 @@ async def create_filter(
     result = await svc.create_filter(data)
     await cache.delete("filters:tree:v3")
     await cache.clear_pattern("filters:tree:counts:*")
+    await cache.delete("collector:filters:v2")
     return result
 
 
@@ -514,6 +570,7 @@ async def update_filter(
     if not result:
         raise HTTPException(404, "필터를 찾을 수 없습니다")
     await cache.delete("filters:tree:v3")
+    await cache.delete("collector:filters:v2")
 
     # 정책 적용 시 해당 그룹 상품에 백그라운드 전파 (즉시 응답)
     if "applied_policy_id" in data and data["applied_policy_id"]:
@@ -582,6 +639,7 @@ async def bulk_apply_policy(
     result = await session.exec(stmt)  # type: ignore[arg-type]
     await session.commit()
     applied_count = result.rowcount
+    await cache.delete("collector:filters:v2")
 
     # 단일 백그라운드 태스크로 상품 전파 (개별 호출 시 풀 고갈 방지)
     policy_id = body.policy_id
@@ -639,7 +697,7 @@ async def delete_filter(
     async def _invalidate_filter_caches() -> None:
         # /filters (60s), /filters/tree (300s), /filters/tree/counts:* (300s) 모두 invalidate —
         # 누락 시 UI 가 삭제 직후 몇 분간 stale 그룹 잔존.
-        await cache.delete("collector:filters:v1")
+        await cache.delete("collector:filters:v2")
         await cache.delete("filters:tree:v3")
         await cache.clear_pattern("filters:tree:counts:*")
 
@@ -818,10 +876,9 @@ async def get_filter_tree_counts(
         return cached
 
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
-    from sqlalchemy import func as _func, case, and_, literal, text as _text
-
-    _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
-    _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
+    from backend.api.v1.routers.samba.collector_common import (
+        build_filter_tree_counts_stmt,
+    )
 
     svc = _get_services(session)
     all_filters = await svc.list_filters(limit=10000)
@@ -837,48 +894,7 @@ async def get_filter_tree_counts(
     if not leaf_ids:
         return {}
 
-    count_stmt = (
-        select(
-            _CP.search_filter_id,
-            _func.count().label("cnt"),
-            _func.count(case((has_registered_accounts(_CP), literal(1)))).label(
-                "market_registered"
-            ),
-            _func.count(
-                case(
-                    (
-                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
-                        literal(1),
-                    )
-                )
-            ).label("ai_tagged"),
-            _func.count(
-                case(
-                    (
-                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
-                        literal(1),
-                    )
-                )
-            ).label("ai_image"),
-            _func.count(
-                case(
-                    (
-                        and_(
-                            _CP.tags.isnot(None),
-                            _func.jsonb_typeof(_CP.tags) == "array",
-                            _func.jsonb_array_length(_CP.tags) > 0,
-                        ),
-                        literal(1),
-                    )
-                )
-            ).label("tag_applied"),
-            _func.count(case((_CP.applied_policy_id != None, literal(1)))).label(  # noqa: E711
-                "policy_applied"
-            ),
-        )
-        .where(_CP.search_filter_id.in_(leaf_ids))
-        .group_by(_CP.search_filter_id)
-    )
+    count_stmt = build_filter_tree_counts_stmt(_CP, leaf_ids)
     count_result = await session.execute(count_stmt)
     counts: dict[str, dict] = {}
     for row in count_result.all():
@@ -974,6 +990,7 @@ async def scroll_products(
 
     # 기본 조건 — 테넌트 격리 강제 (projection/count 쿼리는 ORM 자동 필터 우회됨)
     conditions = []
+    conditions.append(_CP.deleted_at.is_(None))
     if tenant_id is not None:
         conditions.append(_CP.tenant_id == tenant_id)
 
@@ -1269,7 +1286,9 @@ async def scroll_products(
     sites_stmt = None
     if not sites:
         sites_stmt = (
-            select(_CP.source_site).distinct().where(_CP.source_site.isnot(None))
+            select(_CP.source_site)
+            .distinct()
+            .where(_CP.source_site.isnot(None), _CP.deleted_at.is_(None))
         )
         if tenant_id is not None:
             sites_stmt = sites_stmt.where(_CP.tenant_id == tenant_id)
@@ -1281,18 +1300,22 @@ async def scroll_products(
     if not counts:
         from sqlalchemy import case, literal
 
-        counts_stmt = select(
-            func.count().label("total"),
-            func.count(case((has_registered_accounts(_CP), literal(1)))).label(
-                "registered"
-            ),
-            func.count(case((_CP.applied_policy_id != None, literal(1)))).label(  # noqa: E711
-                "policy_applied"
-            ),
-            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
-                "sold_out"
-            ),
-        ).select_from(_CP)
+        counts_stmt = (
+            select(
+                func.count().label("total"),
+                func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+                    "registered"
+                ),
+                func.count(case((_CP.applied_policy_id != None, literal(1)))).label(  # noqa: E711
+                    "policy_applied"
+                ),
+                func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
+                    "sold_out"
+                ),
+            )
+            .select_from(_CP)
+            .where(_CP.deleted_at.is_(None))
+        )
         if tenant_id is not None:
             counts_stmt = counts_stmt.where(_CP.tenant_id == tenant_id)
 
@@ -1521,16 +1544,22 @@ async def product_counts(
     from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
     from sqlalchemy import func, case, literal
 
-    stmt = select(
-        func.count().label("total"),
-        func.count(case((has_registered_accounts(_CP), literal(1)))).label(
-            "registered"
-        ),
-        func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
-            "policy_applied"
-        ),
-        func.count(case((_CP.sale_status == "sold_out", literal(1)))).label("sold_out"),
-    ).select_from(_CP)
+    stmt = (
+        select(
+            func.count().label("total"),
+            func.count(case((has_registered_accounts(_CP), literal(1)))).label(
+                "registered"
+            ),
+            func.count(case((_CP.applied_policy_id != None, literal(1)))).label(
+                "policy_applied"
+            ),
+            func.count(case((_CP.sale_status == "sold_out", literal(1)))).label(
+                "sold_out"
+            ),
+        )
+        .select_from(_CP)
+        .where(_CP.deleted_at.is_(None))
+    )
     row = (await session.execute(stmt)).one()
     result = {
         "total": row.total,
@@ -1621,6 +1650,7 @@ async def product_dashboard_stats(
                        ) AS sold_out
                 FROM samba_collected_product
                 WHERE source_site IS NOT NULL AND source_site != ''
+                  AND deleted_at IS NULL
                   AND (:tid IS NULL OR tenant_id = :tid)
                 GROUP BY source_site, COALESCE(NULLIF(TRIM(brand), ''), '기타')
                 ORDER BY source_site, total DESC
@@ -1644,6 +1674,7 @@ async def product_dashboard_stats(
                         WHERE registered_accounts IS NOT NULL
                           AND registered_accounts != '[]'::jsonb
                           AND jsonb_typeof(registered_accounts) = 'array'
+                          AND deleted_at IS NULL
                           AND (:tid IS NULL OR tenant_id = :tid)
                     ) safe_rows
                 ) sub
@@ -1918,6 +1949,7 @@ async def product_category_tree(
             _CP.category != "",
             # fallback 카테고리 제외 (category가 source_site와 동일한 경우)
             _CP.category != _CP.source_site,
+            _CP.deleted_at.is_(None),
         )
         .group_by(_CP.source_site, _CP.category)
         .order_by(_CP.source_site, _CP.category)
@@ -2007,6 +2039,47 @@ async def search_collected_products(
 ):
     svc = _get_services(session)
     return await svc.search_collected_products(q, limit)
+
+
+@router.get("/products/trash")
+async def list_trashed_products(
+    search_filter_id: Optional[str] = None,
+    limit: int = Query(200, le=1000),
+    skip: int = Query(0, ge=0),
+    session: AsyncSession = Depends(get_read_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """휴지통에 있는 상품 목록.
+
+    /products/{product_id} 보다 먼저 등록해야 함 — Starlette는 라우트를 등록 순서대로
+    매칭하므로, 뒤에 두면 "trash"가 product_id로 흡수되어 404가 난다.
+
+    다른 목록 엔드포인트(scroll_products, get_products_by_ids 등)와 동일하게
+    _HEAVY_FIELDS를 제외하고 limit/skip으로 페이지네이션한다(I6) — 이전엔
+    무제한 select(_CP)라 휴지통이 커지면 무거운 필드까지 전부 실어 보내는
+    유일한 목록 엔드포인트였다.
+    """
+    from sqlalchemy import inspect as _sa_inspect
+    from sqlmodel import col as _col_lt, select as _sel_lt, and_ as _and_lt
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP_lt
+
+    conditions = [_col_lt(_CP_lt.deleted_at).isnot(None)]
+    if tenant_id is not None:
+        conditions.append(_CP_lt.tenant_id == tenant_id)
+    if search_filter_id:
+        conditions.append(_CP_lt.search_filter_id == search_filter_id)
+
+    mapper = _sa_inspect(_CP_lt)
+    light_cols = [c for c in mapper.columns if c.key not in _HEAVY_FIELDS]
+    _stmt = (
+        _sel_lt(*light_cols)
+        .where(_and_lt(*conditions))
+        .order_by(_col_lt(_CP_lt.deleted_at).desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    _rows = (await session.execute(_stmt)).mappings().all()
+    return [dict(r) for r in _rows]
 
 
 @router.get("/products/{product_id}")
@@ -2497,6 +2570,87 @@ async def bulk_delete_products(
     if _protected:
         _resp["resell_protected"] = _protected
     return _resp
+
+
+@router.post("/products/bulk-trash")
+async def bulk_trash_products(
+    body: BulkProductIdsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """수집상품 휴지통 이동 — 소프트 삭제. 마켓등록 상품은 먼저 마켓에서 삭제(하드삭제와 동일 가드)."""
+    from sqlmodel import col as _col_tr, select as _sel_tr
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP_tr
+    from backend.domain.samba.shipment.repository import (
+        SambaShipmentRepository as _SR_tr,
+    )
+    from backend.domain.samba.shipment.service import SambaShipmentService as _SS_tr
+
+    _stmt = _sel_tr(_CP_tr).where(_col_tr(_CP_tr.id).in_(body.ids))
+    _rows = (await session.execute(_stmt)).scalars().all()
+
+    _market_pids: list[str] = []
+    _all_accs: list[str] = []
+    _seen_accs: set[str] = set()
+    for _p in _rows:
+        _reg = list(getattr(_p, "registered_accounts", None) or [])
+        if _reg:
+            _market_pids.append(_p.id)
+            for _a in _reg:
+                if _a not in _seen_accs:
+                    _seen_accs.add(_a)
+                    _all_accs.append(_a)
+
+    _failed_pids: set[str] = set()
+    if _market_pids and _all_accs:
+        _ship_svc = _SS_tr(_SR_tr(session), session)
+        _del_r = await _ship_svc.delete_from_markets(_market_pids, _all_accs)
+        for _entry in _del_r.get("results") or []:
+            _dr = _entry.get("delete_results") or {}
+            if _dr and _entry.get("success_count", 0) < len(_dr):
+                _failed_pids.add(_entry.get("product_id", ""))
+                logger.warning(
+                    "[휴지통이동] 마켓삭제 실패 — 휴지통이동 보류 pid=%s (issue #557과 동일 가드)",
+                    _entry.get("product_id"),
+                )
+
+    now = datetime.now(timezone.utc)
+    trashed = 0
+    for _p in _rows:
+        if _p.id in _failed_pids:
+            continue
+        _p.deleted_at = now
+        session.add(_p)
+        trashed += 1
+    await session.commit()
+    await cache.delete("collector:filters:v2")
+    await cache.clear_pattern("products:*")
+
+    _resp: dict[str, Any] = {"trashed": trashed}
+    if _failed_pids:
+        _resp["market_delete_failed"] = list(_failed_pids)
+    return _resp
+
+
+@router.post("/products/bulk-restore")
+async def bulk_restore_products(
+    body: BulkProductIdsRequest,
+    session: AsyncSession = Depends(get_write_session_dependency),
+):
+    """휴지통 상품 복구."""
+    from sqlmodel import col as _col_re, select as _sel_re
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP_re
+
+    _stmt = _sel_re(_CP_re).where(_col_re(_CP_re.id).in_(body.ids))
+    _rows = (await session.execute(_stmt)).scalars().all()
+    restored = 0
+    for _p in _rows:
+        _p.deleted_at = None
+        session.add(_p)
+        restored += 1
+    await session.commit()
+    await cache.delete("collector:filters:v2")
+    await cache.clear_pattern("products:*")
+    return {"restored": restored}
 
 
 @router.post("/products/block-and-delete")

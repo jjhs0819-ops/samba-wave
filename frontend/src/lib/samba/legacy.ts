@@ -735,6 +735,8 @@ export interface SambaSearchFilter {
   parent_id?: string | null;
   is_folder?: boolean;
   collected_count?: number;
+  trashed_count?: number;
+  revenue_sum?: number;
   children?: SambaSearchFilter[];
 }
 
@@ -1074,7 +1076,35 @@ export const collectorApi = {
   deleteProduct: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
   bulkDeleteProducts: (ids: string[]) =>
-    request<{ deleted: number }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
+    request<{ deleted: number; market_delete_failed?: string[] }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
+  bulkTrashProducts: (ids: string[]) =>
+    request<{ trashed: number; market_delete_failed?: string[] }>(`${SAMBA_PREFIX}/collector/products/bulk-trash`, { method: "POST", body: JSON.stringify({ ids }) }),
+  bulkRestoreProducts: (ids: string[]) =>
+    request<{ restored: number }>(`${SAMBA_PREFIX}/collector/products/bulk-restore`, { method: "POST", body: JSON.stringify({ ids }) }),
+  listTrashedProducts: (searchFilterId?: string, limit?: number, skip?: number) => {
+    const params = new URLSearchParams()
+    if (searchFilterId) params.set('search_filter_id', searchFilterId)
+    if (limit !== undefined) params.set('limit', String(limit))
+    if (skip !== undefined) params.set('skip', String(skip))
+    const qs = params.toString()
+    return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/trash${qs ? `?${qs}` : ''}`)
+  },
+  duplicateFilter: (filter: SambaSearchFilter) =>
+    request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters`, {
+      method: "POST",
+      body: JSON.stringify({
+        source_site: filter.source_site,
+        name: `${filter.name} (복사)`,
+        keyword: filter.keyword,
+        category_filter: filter.category_filter,
+        min_price: filter.min_price,
+        max_price: filter.max_price,
+        exclude_sold_out: filter.exclude_sold_out,
+        requested_count: filter.requested_count,
+        parent_id: filter.parent_id,
+        is_folder: false,
+      }),
+    }),
   blockAndDelete: (productIds: string[]) =>
     request<{ ok: boolean; blocked: number; deleted: number }>(
       `${SAMBA_PREFIX}/collector/products/block-and-delete`, { method: "POST", body: JSON.stringify({ product_ids: productIds }) }),

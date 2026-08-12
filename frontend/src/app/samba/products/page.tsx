@@ -358,6 +358,47 @@ export default function ProductsPage() {
     await loadProducts(currentPage)
   }, [loadProducts, currentPage])
 
+  // 휴지통 보기
+  const [showTrash, setShowTrash] = useState(false)
+  const [trashedProducts, setTrashedProducts] = useState<SambaCollectedProduct[]>([])
+
+  const loadTrash = useCallback(async () => {
+    try {
+      const rows = await collectorApi.listTrashedProducts()
+      setTrashedProducts(rows)
+    } catch { /* 무시 — 빈 목록으로 유지 */ }
+  }, [])
+
+  useEffect(() => {
+    if (showTrash) loadTrash()
+  }, [showTrash, loadTrash])
+
+  const handleRestore = async (id: string) => {
+    try {
+      await collectorApi.bulkRestoreProducts([id])
+      showAlert('복구되었습니다.', 'success')
+      loadTrash()
+      reloadProducts()
+    } catch (e) {
+      showAlert(`복구 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  };
+
+  const handlePermanentDelete = async (id: string) => {
+    if (!await showConfirm('완전히 삭제하면 복구할 수 없습니다. 계속하시겠습니까?')) return;
+    try {
+      const res = await collectorApi.bulkDeleteProducts([id])
+      if (res.market_delete_failed && res.market_delete_failed.length > 0) {
+        showAlert('마켓 삭제에 실패하여 완전 삭제하지 못했습니다. 마켓 등록 상태를 확인해주세요.', 'error')
+      } else {
+        showAlert('완전 삭제되었습니다.', 'success')
+      }
+      loadTrash()
+    } catch (e) {
+      showAlert(`삭제 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  };
+
   // 메타데이터 + 상품 로드 — 2-phase
   // Phase 1: scrollProducts만 먼저 → 상품 즉시 표시
   // Phase 2: 메타데이터 8개 백그라운드 → 정책/계정 정보 채움
@@ -537,6 +578,26 @@ export default function ProductsPage() {
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
   };
 
+  const handleTrash = async (id: string) => {
+    const p = allProducts.find((x) => x.id === id);
+    if (p?.lock_delete) {
+      showAlert('삭제잠금이 설정된 상품입니다. 잠금을 해제한 후 휴지통으로 이동하세요.')
+      return;
+    }
+    if (!await showConfirm(`"${p?.name.slice(0, 30) || '이 상품'}"을(를) 휴지통으로 이동하시겠습니까? (나중에 복구 가능)`)) return;
+    try {
+      const res = await collectorApi.bulkTrashProducts([id])
+      if (res.market_delete_failed && res.market_delete_failed.length > 0) {
+        showAlert('마켓 삭제에 실패하여 휴지통으로 이동하지 못했습니다. 마켓 등록 상태를 확인해주세요.', 'error')
+      } else {
+        showAlert('휴지통으로 이동했습니다.', 'success')
+      }
+      reloadProducts()
+    } catch (e) {
+      showAlert(`휴지통 이동 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  };
+
   const fetchProductsByIds = useCallback(async (ids: string[]) => {
     const result: SambaCollectedProduct[] = []
     for (let i = 0; i < ids.length; i += 500) {
@@ -575,6 +636,39 @@ export default function ProductsPage() {
     ].filter(Boolean)
     const excludeMsg = excludes.length > 0 ? ` (${excludes.join(', ')} 제외)` : ''
     setDeleteConfirm({ ids: deletableIds, label: `${fmt(deletableIds.length)}개 상품${excludeMsg}` });
+  };
+
+  const handleBulkTrash = async () => {
+    if (selectedIds.size === 0) return;
+    let selected = allProducts.filter(p => selectedIds.has(p.id))
+    if (selected.length < selectedIds.size) {
+      try {
+        selected = await fetchProductsByIds([...selectedIds])
+      } catch { /* 폴백: 현재 페이지만 */ }
+    }
+    const deletableIds = selected.filter(p => !p.lock_delete).map(p => p.id)
+    if (deletableIds.length === 0) {
+      showAlert('휴지통으로 이동 가능한 상품이 없습니다 (삭제잠금)')
+      return;
+    }
+    if (!await showConfirm(`${fmt(deletableIds.length)}개 상품을 휴지통으로 이동하시겠습니까?`)) return;
+    try {
+      const res = await collectorApi.bulkTrashProducts(deletableIds)
+      const failedCount = res.market_delete_failed?.length ?? 0
+      if (failedCount > 0) {
+        showAlert(
+          `${fmt(res.trashed)}건 휴지통 이동 완료 (${fmt(failedCount)}건은 마켓 삭제 실패로 휴지통 이동에서 제외됨)`,
+          'error'
+        )
+      } else {
+        showAlert(`${fmt(res.trashed)}건 휴지통 이동 완료`, 'success')
+      }
+      setSelectedIds(new Set())
+      setSelectAll(false)
+      reloadProducts()
+    } catch (e) {
+      showAlert(`휴지통 이동 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
   };
 
   const handleLockToggle = async (productId: string, field: 'lock_delete' | 'lock_stock', value: boolean) => {
@@ -2727,6 +2821,13 @@ export default function ProductsPage() {
               color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}
           >상품삭제</button>
+          <button onClick={handleBulkTrash} style={{ ...btn('secondary'), padding: '5px 12px', fontSize: '0.8rem' }}>
+            🗑 휴지통으로 이동
+          </button>
+          <button
+            onClick={() => setShowTrash(v => !v)}
+            style={{ ...btn(showTrash ? 'primary' : 'secondary'), padding: '5px 12px', fontSize: '0.8rem' }}
+          >{showTrash ? '전체상품 보기' : `🗑 휴지통 보기 (${fmt(trashedProducts.length)})`}</button>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -2948,7 +3049,21 @@ export default function ProductsPage() {
       )}
 
       {/* Product list */}
-      {loading && products.length === 0 ? (
+      {showTrash ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {trashedProducts.length === 0 ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>휴지통이 비어있습니다.</div>
+          ) : trashedProducts.map(p => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', border: '1px solid #eee', borderRadius: '8px' }}>
+              <span>{p.name}</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button onClick={() => handleRestore(p.id)} style={{ ...btn('secondary'), fontSize: '0.75rem', padding: '4px 10px' }}>복구</button>
+                <button onClick={() => handlePermanentDelete(p.id)} style={{ ...btn('danger'), fontSize: '0.75rem', padding: '4px 10px' }}>영구삭제</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : loading && products.length === 0 ? (
         /* 스켈레톤 — 빈 화면 대신 카드 형태 placeholder (체감 속도 향상) */
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: viewMode === 'compact' ? '4px' : '8px' }}>
           {Array.from({ length: Math.min(pageSize, 10) }).map((_, i) => (
@@ -3041,6 +3156,7 @@ export default function ProductsPage() {
                 deletionWords={deletionWords}
                 onCheckboxToggle={handleCheckboxToggle}
                 onDelete={handleDelete}
+                onTrash={handleTrash}
                 onPolicyChange={handlePolicyChange}
                 onToggleMarket={handleToggleMarket}
                 onEnrich={handleEnrich}
@@ -3062,7 +3178,7 @@ export default function ProductsPage() {
       )}
 
       {/* 페이지네이션 */}
-      {serverTotal > 0 && (
+      {!showTrash && serverTotal > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem', padding: '1rem 0', flexWrap: 'wrap' }}>
           <button onClick={() => goToPage(1)} disabled={currentPage === 1}
             style={{ padding: '4px 8px', fontSize: '0.75rem', border: `1px solid ${c.border}`, borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? c.textMuted : c.text, cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<<'}</button>

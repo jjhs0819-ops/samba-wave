@@ -187,6 +187,7 @@ class SambaTetrisService:
                 WHERE (tenant_id IS NULL AND :tid_is_null OR tenant_id = :tid)
                   AND source_site = :site
                   AND BTRIM(brand) = :brand
+                  AND deleted_at IS NULL
                   AND (
                     registered_accounts IS NULL
                     OR NOT (registered_accounts::jsonb ? :account_id)

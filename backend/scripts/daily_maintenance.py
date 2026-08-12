@@ -391,6 +391,7 @@ async def task_ai_tags(conn: asyncpg.Connection) -> dict:
         FROM samba_search_filter sf
         JOIN samba_collected_product cp ON cp.search_filter_id = sf.id
         WHERE sf.is_folder = false
+          AND cp.deleted_at IS NULL
           AND (cp.tags IS NULL OR cp.tags::text NOT LIKE '%__ai_tagged__%')
         ORDER BY sf.name
     """)
@@ -503,7 +504,8 @@ async def task_ai_tags(conn: asyncpg.Connection) -> dict:
 
         # 그룹 전체 상품 적용
         products = await conn.fetch(
-            "SELECT id, tags FROM samba_collected_product WHERE search_filter_id=$1",
+            "SELECT id, tags FROM samba_collected_product "
+            "WHERE search_filter_id=$1 AND deleted_at IS NULL",
             filter_id,
         )
         for p in products:
@@ -597,6 +599,7 @@ async def task_apply_default_policy(conn: asyncpg.Connection) -> dict:
             WHERE cp.search_filter_id = sf.id
               AND sf.is_folder = false
               AND sf.applied_policy_id = $1
+              AND cp.deleted_at IS NULL
               AND (cp.applied_policy_id IS NULL OR cp.applied_policy_id != $1)
             """,
             policy_id,
@@ -618,6 +621,7 @@ async def task_soldout_cleanup(conn: asyncpg.Connection) -> dict:
     no_market_ids = await conn.fetch("""
         SELECT id FROM samba_collected_product
         WHERE sale_status = 'sold_out'
+          AND deleted_at IS NULL
           AND (
             registered_accounts IS NULL
             OR registered_accounts::text = 'null'
@@ -645,6 +649,7 @@ async def task_soldout_cleanup(conn: asyncpg.Connection) -> dict:
         FROM samba_collected_product
         WHERE sale_status = 'sold_out'
           AND COALESCE(price_locked, FALSE) = FALSE
+          AND deleted_at IS NULL
           AND registered_accounts IS NOT NULL
           AND registered_accounts::text NOT IN ('null', '[]', '')
           AND jsonb_typeof(registered_accounts::jsonb) = 'array'

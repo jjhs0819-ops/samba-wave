@@ -407,6 +407,7 @@ interface ProductCardProps {
   deletionWords: string[]
   onCheckboxToggle: (id: string, checked: boolean) => void
   onDelete: (id: string) => void
+  onTrash: (id: string) => void
   onPolicyChange: (productId: string, policyId: string) => void
   onToggleMarket: (productId: string, marketId: string) => void
   onEnrich: (productId: string) => void
@@ -428,7 +429,7 @@ interface ProductCardProps {
 
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
-  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
+  onCheckboxToggle, onDelete, onTrash, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
   catMappingMap, filters, detailTemplates, usdRate = 1400, jpyRate = 9.5, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const accMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts])
@@ -1599,6 +1600,11 @@ const ProductCard = React.memo(function ProductCard({
             onClick={() => onDelete(p.id)}
             style={{ ...btn('danger'), fontSize: '0.7rem', padding: '3px 10px' }}
           >삭제</button>
+          <button
+            onClick={() => onTrash(p.id)}
+            title="휴지통으로 이동 (복구 가능)"
+            style={{ ...btn('secondary'), fontSize: '0.7rem', padding: '3px 10px' }}
+          >🗑 휴지통</button>
         </div>
       </div>
 

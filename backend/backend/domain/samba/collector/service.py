@@ -343,6 +343,22 @@ class SambaCollectorService:
                 .first()
             )
             if existing:
+                # 휴지통(deleted_at IS NOT NULL) 상품은 재수집으로 자동 갱신하지 않는다.
+                # 휴지통 이동은 사용자의 명시적 행동이고, 복구는 명시적 복구 액션으로만
+                # 이뤄져야 한다(I4) — 자동 재수집이 트래시 로우를 조용히 되살리거나
+                # 그 내용을 조용히 덮어쓰면 "복구는 명시적 액션으로만" 원칙이 깨진다.
+                # (source_site, site_product_id) 유니크 제약 때문에 새 row도 만들 수
+                # 없으므로 그냥 skip — 호출부는 None을 "저장 안 됨"으로 이미 취급한다.
+                if existing.deleted_at is not None:
+                    logger.info(
+                        "[재수집 스킵] 휴지통 상품 — source_site=%s site_product_id=%s "
+                        "id=%s (deleted_at=%s)",
+                        data.get("source_site"),
+                        data.get("site_product_id"),
+                        existing.id,
+                        existing.deleted_at,
+                    )
+                    return None
                 # 시스템 태그(__로 시작) 보존 — AI 이미지 변환/편집 흔적 유실 방지 (#227, #233)
                 prev_tags = list(existing.tags or [])
                 for k, v in data.items():

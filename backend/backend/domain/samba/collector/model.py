@@ -298,6 +298,13 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
     )
 
+    # 소프트 삭제(휴지통) — null이면 살아있는 상품, 값이 있으면 휴지통행 시각.
+    # 하드 삭제(완전삭제)와는 별개 — 하드 삭제는 지금처럼 행 자체를 지운다.
+    deleted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+
     # 태그
     tags: Optional[List[str]] = Field(
         default=None, sa_column=Column(JSONB, nullable=True)

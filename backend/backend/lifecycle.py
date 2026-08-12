@@ -879,11 +879,7 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
     실패해도 무시 — 사용자 클릭 시 정상 동작함.
     """
     try:
-        from sqlalchemy import func, case, and_, literal, text as _text
         from sqlmodel import select
-
-        _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
-        _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
         from backend.db.orm import get_read_session
         from backend.domain.samba.cache import cache
@@ -920,51 +916,10 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
 
                     _CP = SambaCollectedProduct
                     from backend.api.v1.routers.samba.collector_common import (  # noqa: F811
-                        has_registered_accounts as _has_reg,
+                        build_filter_tree_counts_stmt,
                     )
 
-                    count_stmt = (
-                        select(
-                            _CP.search_filter_id,
-                            func.count().label("cnt"),
-                            func.count(case((_has_reg(_CP), literal(1)))).label(
-                                "market_registered"
-                            ),
-                            func.count(
-                                case(
-                                    (
-                                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
-                                        literal(1),
-                                    )
-                                )
-                            ).label("ai_tagged"),
-                            func.count(
-                                case(
-                                    (
-                                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
-                                        literal(1),
-                                    )
-                                )
-                            ).label("ai_image"),
-                            func.count(
-                                case(
-                                    (
-                                        and_(
-                                            _CP.tags.isnot(None),
-                                            func.jsonb_typeof(_CP.tags) == "array",
-                                            func.jsonb_array_length(_CP.tags) > 0,
-                                        ),
-                                        literal(1),
-                                    )
-                                )
-                            ).label("tag_applied"),
-                            func.count(
-                                case((_CP.applied_policy_id.isnot(None), literal(1)))
-                            ).label("policy_applied"),
-                        )
-                        .where(_CP.search_filter_id.in_(leaf_ids))
-                        .group_by(_CP.search_filter_id)
-                    )
+                    count_stmt = build_filter_tree_counts_stmt(_CP, leaf_ids)
                     count_result = await session.execute(count_stmt)
                     counts: dict[str, dict] = {}
                     for row in count_result.all():

@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 from sqlalchemy import cast, func, String as _StrType
 from sqlalchemy.dialects.postgresql import JSONB as _JSONB  # noqa: F401
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 from backend.domain.samba.collector.grouping import (
     generate_group_key,
@@ -444,6 +445,67 @@ def no_registered_accounts(model_class: Any):
         model_class.registered_accounts.is_(None),
         func.jsonb_typeof(model_class.registered_accounts) != "array",
         model_class.registered_accounts.op("=")(cast("[]", _JSONB)),
+    )
+
+
+def build_filter_tree_counts_stmt(model_class: Any, leaf_ids: list[str]):
+    """`/filters/tree/counts` 집계 쿼리 빌더 — leaf 필터별 카운트(전체/마켓등록/AI태그/
+    AI이미지/태그적용/정책적용).
+
+    `collector.py`의 `/filters/tree/counts` 엔드포인트와 `lifecycle.py`의 서버시작
+    캐시 워머가 동일 캐시 키(`filters:tree:counts:{source_site}`)에 쓰는 동일 집계를
+    각자 따로 구현하다 워머 쪽이 `deleted_at IS NULL` 을 빠뜨려 휴지통 상품이 카운트에
+    다시 섞여드는 사고(I1)가 있었다 — 하나의 함수로 합쳐 재발을 구조적으로 차단.
+    """
+    from sqlalchemy import and_, case, func as _func, literal, text as _text
+
+    _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
+    _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
+
+    return (
+        select(
+            model_class.search_filter_id,
+            _func.count().label("cnt"),
+            _func.count(case((has_registered_accounts(model_class), literal(1)))).label(
+                "market_registered"
+            ),
+            _func.count(
+                case(
+                    (
+                        model_class.tags.op("@>")(_AI_TAGGED_JSONB),
+                        literal(1),
+                    )
+                )
+            ).label("ai_tagged"),
+            _func.count(
+                case(
+                    (
+                        model_class.tags.op("@>")(_AI_IMAGE_JSONB),
+                        literal(1),
+                    )
+                )
+            ).label("ai_image"),
+            _func.count(
+                case(
+                    (
+                        and_(
+                            model_class.tags.isnot(None),
+                            _func.jsonb_typeof(model_class.tags) == "array",
+                            _func.jsonb_array_length(model_class.tags) > 0,
+                        ),
+                        literal(1),
+                    )
+                )
+            ).label("tag_applied"),
+            _func.count(
+                case((model_class.applied_policy_id.isnot(None), literal(1)))
+            ).label("policy_applied"),
+        )
+        .where(
+            model_class.search_filter_id.in_(leaf_ids),
+            model_class.deleted_at.is_(None),
+        )
+        .group_by(model_class.search_filter_id)
     )
 
 
