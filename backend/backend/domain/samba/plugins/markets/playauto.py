@@ -22,6 +22,24 @@ from backend.utils.logger import logger
 # boto3 S3 클라이언트는 인증정보가 동일하면 재사용 — TCP 커넥션 풀 유지로 R2 업로드 오버헤드 감소
 _r2_client_cache: dict[str, tuple] = {}
 
+# 이미지 매직 헤더 (JPEG/PNG/GIF/WebP·BMP) — 이 목록에 없으면 이미지가 아니다
+_IMAGE_MAGIC_PREFIXES = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF", b"BM")
+
+
+def _looks_like_image(head: bytes) -> bool:
+    """응답 첫 바이트가 실제 이미지인지 판정.
+
+    소싱처가 원본 이미지를 삭제하면 S3/CDN이 404 에러 XML을 반환하는데,
+    이를 검증 없이 넘기면 에러 문서가 .jpg로 위장한 채 EMP까지 전파된다
+    (2026-08-12 데상트 391건 — GS이숍 채널등록 '이미지헤더체크:xml' 전량 거절).
+    XML/HTML 에러 문서는 '<'로 시작하므로 매직 헤더로만 판정한다.
+    """
+    if not head:
+        return False
+    if head.lstrip()[:1] == b"<":  # XML/HTML 에러 문서
+        return False
+    return any(head.startswith(m) for m in _IMAGE_MAGIC_PREFIXES)
+
 
 class PlayAutoPlugin(MarketPlugin):
     """플레이오토 EMP 마켓 플러그인."""
@@ -100,6 +118,17 @@ class PlayAutoPlugin(MarketPlugin):
         # 이미지를 R2에 업로드 후 공개 URL로 교체 (소싱처 URL은 외부 접근 불가)
         if not product.get("_skip_image_upload"):
             product = await self._upload_images_to_r2(session, product)
+            # [가드] 유효 이미지 0장 — 소싱처가 원본을 전부 삭제한 상태.
+            # 그대로 진행하면 이미지 없는 등록/수정으로 상품이 훼손되므로
+            # 명시적으로 실패시켜 재수집 후 재전송을 유도한다 (2026-08-12 데상트).
+            if product.pop("_all_images_dead", False):
+                return {
+                    "success": False,
+                    "message": (
+                        "유효한 상품 이미지가 0장 — 소싱처 원본 소실(404/에러XML). "
+                        "이미지 재수집 후 재전송이 필요합니다."
+                    ),
+                }
 
         client = PlayAutoClient(api_key)
 
@@ -337,6 +366,9 @@ class PlayAutoPlugin(MarketPlugin):
                 timeout=30, follow_redirects=True, proxy=proxy if proxy else None
             ) as dl_client:
 
+                # [가드] 최종 URL 생존 검증 캐시 (동일 URL 중복 프로브 방지)
+                _alive_cache: dict[str, bool] = {}
+
                 async def _upload_one(img_entry):
                     url = (
                         img_entry
@@ -346,15 +378,38 @@ class PlayAutoPlugin(MarketPlugin):
                     if not url:
                         return None
                     try:
-                        return await _cached_ensure(dl_client, url)
+                        final = await _cached_ensure(dl_client, url)
                     except Exception as e:
                         logger.warning(f"[플레이오토] 이미지 처리 실패: {e}")
-                        return url
+                        final = url
+                    # [가드] EMP에 넘기기 전에 최종 URL이 실제 이미지인지 검증.
+                    # 무신사 등 화이트리스트 밖 도메인은 원본 URL을 그대로 넘기는데,
+                    # 소싱처가 원본을 삭제했으면 404 에러 XML이 .jpg로 위장한 채
+                    # EMP에 저장된다 (2026-08-12 데상트 391건 — EMP 등록은 통과하고
+                    # GS이숍 채널등록의 이미지 헤더 체크에서 전량 거절). 죽은 이미지는
+                    # 여기서 걸러 EMP 전파를 차단한다.
+                    if final not in _alive_cache:
+                        _alive_cache[final] = await self._probe_image_alive(
+                            dl_client, final
+                        )
+                    if not _alive_cache[final]:
+                        logger.warning(
+                            f"[플레이오토] 죽은 이미지 제외(원본 소실/에러문서): "
+                            f"{str(final)[:100]}"
+                        )
+                        return None
+                    return final
 
                 results = await asyncio.gather(
                     *[_upload_one(img) for img in images[:10]]
                 )
-            product["images"] = [r for r in results if r]
+            valid_images = [r for r in results if r]
+            if not valid_images:
+                # 전 이미지 소실 — 이미지 없는 등록/수정은 상품 훼손이므로 명시적 실패
+                product["images"] = []
+                product["_all_images_dead"] = True
+            else:
+                product["images"] = valid_images
 
         # detail_html 보강: detail_images 리스트가 detail_html의 <img>보다 많으면 재구성.
         # ABC마트/롯데ON 등 lazy-load 사이트는 detail_html에 placeholder src 1개만 들어있어
@@ -478,6 +533,45 @@ class PlayAutoPlugin(MarketPlugin):
             dl_client, s3_client, bucket_name, public_url, image_url, r2_key, r2_pub_url
         )
 
+    @staticmethod
+    def _download_headers(image_url: str) -> dict[str, str]:
+        """이미지 다운로드용 헤더 (소싱처별 Referer 설정)."""
+        parsed = urlparse(image_url)
+        referer = f"{parsed.scheme}://{parsed.netloc}/"
+        if "msscdn.net" in (parsed.netloc or "") or "musinsa" in (parsed.netloc or ""):
+            referer = "https://www.musinsa.com/"
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": referer,
+            "Accept": "image/jpeg,image/png,image/gif,*/*",
+        }
+
+    async def _probe_image_alive(
+        self, dl_client: httpx.AsyncClient, image_url: str
+    ) -> bool:
+        """URL이 실제 이미지를 서빙하는지 경량 검증 (Range 32바이트 + 매직 헤더).
+
+        소싱처가 원본을 삭제하면 404 또는 '200인데 본문은 에러 XML'이 온다 —
+        상태코드만으로는 못 거르므로 첫 바이트의 매직 헤더로 판정한다.
+        일시 네트워크 오류로 정상 이미지를 죽었다고 오판하지 않도록 1회 재시도.
+        """
+        if not str(image_url).lower().startswith(("http://", "https://")):
+            return True  # 프로브 불가 스킴은 기존 동작 유지
+        headers = {**self._download_headers(image_url), "Range": "bytes=0-31"}
+        for attempt in range(2):
+            try:
+                resp = await dl_client.get(image_url, headers=headers)
+                if resp.status_code in (200, 206):
+                    return _looks_like_image(resp.content[:32])
+                if resp.status_code in (404, 410):
+                    return False
+                # 403/5xx 등 애매한 상태 — 재시도 후에도 애매하면 살아있다고 간주
+                # (Range 미지원·핫링크 차단 등 서버 특성일 수 있어 오차단 방지)
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        return True
+
     async def _upload_single_image(
         self,
         dl_client: httpx.AsyncClient,
@@ -490,17 +584,7 @@ class PlayAutoPlugin(MarketPlugin):
     ) -> str:
         """이미지 1장 다운로드 → R2 업로드 → 공개 URL 반환."""
 
-        # 다운로드 (소싱처별 Referer 설정)
-        parsed = urlparse(image_url)
-        referer = f"{parsed.scheme}://{parsed.netloc}/"
-        if "msscdn.net" in (parsed.netloc or "") or "musinsa" in (parsed.netloc or ""):
-            referer = "https://www.musinsa.com/"
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": referer,
-            "Accept": "image/jpeg,image/png,image/gif,*/*",
-        }
+        headers = self._download_headers(image_url)
         resp = await dl_client.get(image_url, headers=headers)
         resp.raise_for_status()
         image_bytes = resp.content
