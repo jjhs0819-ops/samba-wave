@@ -23,15 +23,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/samba/collector", label: "상품수집" },
   { href: "/samba/products", label: "상품관리" },
-  { href: "/samba/manual-products", label: "수동등록" },
-  {
-    href: "/samba/policies",
-    label: "정책관리",
-    children: [
-      { href: "/samba/policies/collection-conditions", label: "상품수집조건 관리 및 정책적용" },
-      { href: "/samba/policies", label: "브랜드/계정 배정" },
-    ],
-  },
+  { href: "/samba/policies", label: "정책관리" },
   { href: "/samba/categories", label: "카테고리매핑" },
   { href: "/samba/shipments", label: "상품전송" },
   { href: "/samba/warroom", label: "오토튠" },

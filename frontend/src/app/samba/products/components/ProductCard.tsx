@@ -52,10 +52,10 @@ export const MARKETS = [
   { id: 'playauto', name: '플레이오토', url: '', searchUrl: '' },
 ]
 
-// 리셀 판매처(KREAM/POIZON/StockX) — resellRows 에서 매칭·정책계산으로 별도 표시하므로
+// 리셀 판매처(KREAM/POIZON) — resellRows 에서 매칭·정책계산으로 별도 표시하므로
 // 일반 마켓가격 행/이름편집 행에서는 제외(중복 방지). 키=정책 market_policies 키(마켓명).
-const RESELL_MARKET_KEYS = new Set(['KREAM', 'POIZON', '포이즌', 'StockX'])
-const RESELL_MARKET_IDS = new Set(['kream', 'poison', 'stockx'])
+const RESELL_MARKET_KEYS = new Set(['KREAM', 'POIZON', '포이즌'])
+const RESELL_MARKET_IDS = new Set(['kream', 'poison'])
 
 // 마켓별 상품명 글자수 제한
 const MARKET_NAME_LIMITS: Record<string, number> = {
@@ -698,7 +698,7 @@ const ProductCard = React.memo(function ProductCard({
       })
   }, [regAccIds, accounts, p.name, marketProductNos]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
+  // 리셀 판매처(KREAM/POIZON) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
     const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string; name_ko?: string; anomaly_ok?: boolean; anomaly_flagged?: boolean; anomaly_reason?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
@@ -713,7 +713,6 @@ const ProductCard = React.memo(function ProductCard({
         name: 'POIZON',
         url: (id) => `https://kr.poizon.com/search?keyword=${encodeURIComponent(id)}`,
       },
-      { key: 'stockx', name: 'StockX' },
     ]
     // 크림(리셀) 전용 정책 — 원가는 스니덩크 엔화라 환율 적용 필수. 일반 마켓 calcPrice(환율 없음)로
     // 계산하면 엔 원가에 원 마진을 그냥 더해 값이 틀리고 통화도 ¥로 오표기됨. 크림 정책(경쟁/무경쟁
@@ -2106,7 +2105,7 @@ const ProductCard = React.memo(function ProductCard({
                   </td>
                 </tr>
               )}
-              {/* 리셀 판매처 (KREAM/POIZON/StockX) — 판매가 계산 + 매칭 상품번호 */}
+              {/* 리셀 판매처 (KREAM/POIZON) — 판매가 계산 + 매칭 상품번호 */}
               {resellRows.map(rr => (
                 <tr key={`resell-${rr.key}`} style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>{rr.name}</td>

@@ -423,9 +423,9 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
-    # 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 상품번호 매칭
+    # 리셀 플랫폼(KREAM/POIZON) 카탈로그 상품번호 매칭
     # { "kream":  {"product_id":"942002","confidence":99,"matched_by":["name","pnum"],"matched_at":"..."},
-    #   "poizon": {...}, "stockx": {...} }
+    #   "poizon": {...} }
     # 등록(매도입찰) 시 해당 플랫폼 product_id 로 사용. 미매칭 플랫폼은 키 없음/빈값.
     resell_matches: Optional[Any] = Field(
         default=None, sa_column=Column(JSONB, nullable=True)

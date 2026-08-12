@@ -11,6 +11,7 @@ import {
   type SambaPolicy,
   type SambaMarketAccount,
   type SambaCollectedProduct,
+  type SambaSearchFilter,
 } from "@/lib/samba/api/commerce"
 import {
   detailTemplateApi,
@@ -29,6 +30,7 @@ import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
 import TetrisBoard from './tetris/TetrisBoard'
+import FilterConditionsTable from './collection-conditions/FilterConditionsTable'
 
 interface RangeMargin {
   min: number
@@ -264,6 +266,19 @@ export default function PoliciesPage() {
   const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [, setLoading] = useState(true)
+
+  // 상품수집조건 관리 탭 — collectorApi.listFilters 를 이 탭 진입 시에만 로드
+  const [collectionFilters, setCollectionFilters] = useState<SambaSearchFilter[]>([])
+  const [collectionFiltersLoading, setCollectionFiltersLoading] = useState(true)
+  const loadCollectionFilters = useCallback(async () => {
+    setCollectionFiltersLoading(true)
+    try {
+      const f = await collectorApi.listFilters()
+      setCollectionFilters(f.filter(x => !x.is_folder))
+    } finally {
+      setCollectionFiltersLoading(false)
+    }
+  }, [])
   const [showForm, setShowForm] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [name, setName] = useState("새 정책")
@@ -277,8 +292,9 @@ export default function PoliciesPage() {
   // 소싱처별 추가 마진 UI 토글
   const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
 
-  // 메인 탭 (정책관리 vs 테트리스 매칭)
-  const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('테트리스 매칭')
+  // 메인 탭 (상품수집조건 관리 vs 정책관리 vs 테트리스 매칭)
+  const [mainTab, setMainTab] = useState<'상품수집조건 관리' | '정책관리' | '테트리스 매칭'>('정책관리')
+  useEffect(() => { loadCollectionFilters() }, [loadCollectionFilters])
   const [tetrisMatchingEnabled, setTetrisMatchingEnabled] = useState(false)
   const [tetrisMatchingSaving, setTetrisMatchingSaving] = useState(false)
   const [syncIntervalInput, setSyncIntervalInput] = useState<number>(1)
@@ -863,6 +879,21 @@ export default function PoliciesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
+            onClick={() => setMainTab('상품수집조건 관리')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '상품수집조건 관리' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+              background: mainTab === '상품수집조건 관리' ? '#e3f4f0' : 'transparent',
+              color: mainTab === '상품수집조건 관리' ? '#0f6a5b' : c.textMuted,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            상품수집조건 관리
+          </button>
+          <button
             onClick={() => setMainTab('테트리스 매칭')}
             style={{
               padding: '0.375rem 0.75rem',
@@ -898,6 +929,21 @@ export default function PoliciesPage() {
           <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>상품전송 →</a>
         </div>
       </div>
+
+      {/* 상품수집조건 관리 탭 */}
+      {mainTab === '상품수집조건 관리' && (
+        <div style={{ padding: '1rem 0' }}>
+          {collectionFiltersLoading ? (
+            <div style={{ padding: '2rem' }}>로딩 중...</div>
+          ) : (
+            <FilterConditionsTable
+              filters={collectionFilters}
+              policies={policies}
+              onReload={loadCollectionFilters}
+            />
+          )}
+        </div>
+      )}
 
       {/* 정책관리 탭 내용 */}
       <div style={{ display: mainTab === '정책관리' ? 'block' : 'none' }}>
