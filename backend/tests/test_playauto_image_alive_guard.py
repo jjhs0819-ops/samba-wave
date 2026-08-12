@@ -30,4 +30,4 @@ def test_html_error_page_rejected() -> None:
 def test_empty_and_garbage_rejected() -> None:
     assert not _looks_like_image(b"")
     assert not _looks_like_image(b"Not Found")
-    assert not _looks_like_image(b"{\"error\": \"gone\"}")
+    assert not _looks_like_image(b'{"error": "gone"}')

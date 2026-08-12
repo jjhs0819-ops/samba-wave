@@ -365,7 +365,6 @@ class PlayAutoPlugin(MarketPlugin):
             async with httpx.AsyncClient(
                 timeout=30, follow_redirects=True, proxy=proxy if proxy else None
             ) as dl_client:
-
                 # [가드] 최종 URL 생존 검증 캐시 (동일 URL 중복 프로브 방지)
                 _alive_cache: dict[str, bool] = {}
 
