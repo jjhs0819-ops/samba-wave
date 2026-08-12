@@ -134,6 +134,10 @@ COURIER_NAME_ALIASES: dict[str, str] = {
     "cls": "쿠팡로지스틱스",
     "쿠팡로지스틱스": "쿠팡로지스틱스",
     "agility": "Agility",
+    # GS샵 택배사코드 DH를 스크래퍼가 DHL로 오매핑하던 보정 — 국내 소싱배송에 DHL 없음,
+    # 실체는 CJ대한통운 (GS샵 공식 명세 _GS_COURIER_MAP도 "CJ대한통운": "DH")
+    "dhl": "CJ대한통운",
+    "dh": "CJ대한통운",
 }
 
 
