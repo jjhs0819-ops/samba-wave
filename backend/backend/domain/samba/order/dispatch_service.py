@@ -490,9 +490,10 @@ async def _send_coupang(order, account, courier, tracking, session):
         for _sh in sheets if isinstance(sheets, list) else [sheets]:
             if not isinstance(_sh, dict):
                 continue
-            if str(_sh.get("shipmentBoxId") or "") == str(shipment_box_id) and str(
-                _sh.get("invoiceNumber") or ""
-            ).strip() == str(tracking).strip():
+            if (
+                str(_sh.get("shipmentBoxId") or "") == str(shipment_box_id)
+                and str(_sh.get("invoiceNumber") or "").strip() == str(tracking).strip()
+            ):
                 return True, "쿠팡에 동일 송장 이미 등록됨 — 성공 처리"
     except Exception:
         pass
@@ -636,7 +637,10 @@ async def _send_ssg(order, account, courier, tracking, session):
                         if isinstance(it, dict)
                     )
                     if _ok:
-                        return True, "SSG 운송장 등록 완료 (출고 이미 반영 — 출고처리 생략)"
+                        return (
+                            True,
+                            "SSG 운송장 등록 완료 (출고 이미 반영 — 출고처리 생략)",
+                        )
                 except Exception:
                     pass
             raise
