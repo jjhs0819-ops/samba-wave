@@ -618,10 +618,15 @@ async def task_soldout_cleanup(conn: asyncpg.Connection) -> dict:
     print("\n[TASK 4] 품절 상품 처리 시작")
 
     # 마켓 미등록 품절 → DB 직접 삭제
+    # price_locked/lock_delete 제외 [2026-08-12] — 2번 갈래(마켓등록 품절)만 막혀있고
+    # 이 갈래(미등록 품절)엔 가드가 아예 없어서 고정가/삭제잠금 상품도 그냥 하드삭제됨
+    # (방탄 응원봉 건 — registered_accounts 비어있는 상태로 sold_out 찍혀 통째로 소실).
     no_market_ids = await conn.fetch("""
         SELECT id FROM samba_collected_product
         WHERE sale_status = 'sold_out'
           AND deleted_at IS NULL
+          AND COALESCE(price_locked, FALSE) = FALSE
+          AND COALESCE(lock_delete, FALSE) = FALSE
           AND (
             registered_accounts IS NULL
             OR registered_accounts::text = 'null'
