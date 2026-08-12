@@ -3054,6 +3054,29 @@ def _cm_to_mm_variants(name: str) -> set[str]:
     # 반대 방향도 — 크림이 'JP S' 이고 DB 가 'S' 인 경우
     if raw and not re.match(r"^(?:JP|US|EU|UK|KR|FR|IT)\s", raw, re.I):
         out.add(("JP" + raw).replace(" ", "").upper())
+    # [2026-08-08] 옵션매칭 실패 전수조사(재고보유 매칭상품 표본 600, 실패율 2.7%) 결과 반영.
+    # ① 단일 사이즈 표기 — 스니덩크 'FREE' vs 크림 'ONE SIZE'. 명품 잡화가 대부분 여기 걸려
+    #    등록 시도조차 못 했다(실측: 구찌 재고보유 12건 전량 '크림옵션없음' 탈락).
+    # ② XL 반복 표기 — 스니덩크 '2XL'/'JP 4XL' vs 크림 'XXL'/'XXXX L'. 숫자형↔반복형 양방향.
+    base = {v for v in out}
+    for v in base:
+        if v in (
+            "FREE",
+            "F",
+            "ONESIZE",
+            "ONE SIZE",
+            "フリー",
+            "프리",
+            "원사이즈",
+            "JPFREE",
+        ):
+            out |= {"FREE", "F", "ONESIZE", "프리", "원사이즈"}
+        mx = re.fullmatch(r"(\d)XL", v)  # 2XL → XXL
+        if mx:
+            out.add("X" * int(mx.group(1)) + "L")
+        mr = re.fullmatch(r"(X{2,6})L", v)  # XXL → 2XL
+        if mr:
+            out.add("{}XL".format(len(mr.group(1))))
     return out
 
 
