@@ -458,7 +458,8 @@ async def _brand_reg_rates(
                         "SELECT m.br,"
                         "       COUNT(*) FILTER (WHERE m.stk > 0"
                         "         AND m.pr BETWEEN 5000 AND :maxc) tot,"
-                        "       COALESCE(MAX(bid.n), 0) reg "
+                        "       COALESCE(MAX(bid.n), 0) reg,"
+                        "       COUNT(*) matched "
                         "FROM m LEFT JOIN bid ON bid.br = m.br "
                         "GROUP BY m.br HAVING COUNT(*) >= 10 ORDER BY 2 DESC LIMIT :n"
                     ),
@@ -469,7 +470,7 @@ async def _brand_reg_rates(
             ).all()
         if not rows:
             return "", ""
-        live = [(str(r[0]), int(r[1]), int(r[2])) for r in rows]
+        live = [(str(r[0]), int(r[1]), int(r[2]), int(r[3])) for r in rows]
 
         # [2026-08-13] 1순위 수를 같이 낸다 — '입찰이 걸렸다'와 '1등이다'는 다르다.
         # kream_live_asks 에는 시세 컬럼이 없어 DB 만으론 순위를 못 구한다.
@@ -510,14 +511,17 @@ async def _brand_reg_rates(
                         r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
 
         # 표 형태 — 슬랙 코드블록 안이라야 자릿수가 맞는다(가변폭에선 정렬이 깨진다).
-        _rows = ["```", f"{'브랜드':<16}{'1등':>8}{'입찰':>8}{'재고':>8}{'1등률':>8}"]
-        for br, tot, reg in live:
+        _rows = [
+            "```",
+            f"{'브랜드':<16}{'1등':>8}{'입찰':>8}{'재고':>8}{'매칭':>9}{'1등률':>7}",
+        ]
+        for br, tot, reg, mat in live:
             r1 = r1_by_br.get(br, 0) if asks else 0
             _rate = f"{100.0 * r1 / reg:.0f}%" if reg else "—"
-            _rows.append(f"{br[:15]:<16}{r1:>8,}{reg:>8,}{tot:>8,}{_rate:>8}")
+            _rows.append(f"{br[:15]:<16}{r1:>8,}{reg:>8,}{tot:>8,}{mat:>9,}{_rate:>7}")
         _rows.append("```")
         head = "\n" + "\n".join(_rows)
-        zero = [f"{br} 0/{tot:,}" for br, tot, reg in live if reg == 0]
+        zero = [f"{br} 0/{tot:,}" for br, tot, reg, _m in live if reg == 0]
         return head, (" · ".join(zero) if zero else "")
     except Exception as exc:
         logger.info("[크림통합] 브랜드 등록률 집계 실패(무시): %s", str(exc)[:60])
