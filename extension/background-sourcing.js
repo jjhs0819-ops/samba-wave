@@ -1552,13 +1552,33 @@ async function handleRewardJob(job) {
 
   // 자동 로그인: 잡의 sourcingAccountId 로 ensureLoggedIn 시도 (현재 다른 계정이면 스왑)
   const autoKey = _REWARD_ACTION_AUTO_LOGIN[action]
+  let autoLoginOk = null // null = 시도 안 함(계정ID 없음 등)
   if (autoKey && typeof globalThis.ensureLoggedIn === 'function' && sourcingAccountId) {
     try {
-      const ok = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId })
-      if (!ok) console.warn(`[적립금] 자동 로그인 실패 — 그대로 진행 (site=${site})`)
+      autoLoginOk = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId })
+      if (!autoLoginOk) console.warn(`[적립금] 자동 로그인 실패 (site=${site} action=${action})`)
     } catch (e) {
+      autoLoginOk = false
       console.warn(`[적립금] 자동 로그인 예외: ${e?.message || e}`)
     }
+  }
+
+  // [2026-08-13] 로그인 실패면 진행하지 않는다.
+  // 예전엔 실패해도 '그대로 진행' 이라 비로그인 상태로 출첵/미션 탭만 열렸다 닫혀서
+  // (ABC캠프 실측) 원인이 안 보인 채 실패만 쌓였다. 이제 로그인 실패 자체를 사유로 보고한다.
+  if (autoLoginOk === false && !action.endsWith('_review')) {
+    const loginErr = globalThis._lastEnsureLoginError?.message
+      || `로그인 실패(${site} 자동로그인 실패 — acc=${sourcingAccountId || '기본'})`
+    await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
+      request_id: requestId,
+      account_id: sourcingAccountId || '',
+      site_name: site,
+      action,
+      success: false,
+      error: loginErr,
+    })
+    console.warn(`[적립금] 로그인 실패로 잡 중단 — ${loginErr}`)
+    return
   }
 
   // 리뷰 액션은 멀티페이지 orchestrator 사용
@@ -1613,6 +1633,25 @@ async function handleRewardJob(job) {
       }, timeoutMs)
       _rewardPending.set(tabId, { resolve, timeoutId, tabId, action, requestId })
     })
+
+    // [2026-08-13] 잡 계정의 로그인 아이디를 페이지에 먼저 심는다.
+    // 출첵 스크립트가 '지금 이 화면에 로그인된 계정이 잡 계정 맞는지' 대조해서,
+    // 다른 계정이 로그인돼 있으면 그 계정으로 출석해버리는 사고를 막는다.
+    // (content script 는 isolated world 라 앞뒤 executeScript 가 같은 window 를 공유한다)
+    if (sourcingAccountId && typeof globalThis.alFetchLoginCredential === 'function') {
+      try {
+        const cred = await globalThis.alFetchLoginCredential(autoKey || '', sourcingAccountId)
+        if (cred?.username) {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (u) => { window.__sambaRewardExpectedUser__ = u },
+            args: [cred.username],
+          })
+        }
+      } catch (e) {
+        console.log(`[적립금] 기대 계정 주입 실패 (무시): ${e?.message || e}`)
+      }
+    }
 
     // content script 주입
     try {

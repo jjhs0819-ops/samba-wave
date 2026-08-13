@@ -149,6 +149,10 @@ const _AL_SITE_NAME_MAP = {
   kream: 'KREAM',
   gs: 'GSShop',
   '11st': '11ST',
+  // [2026-08-13] ABC-CAMP 멤버십(member.a-rt.com)은 ABC마트와 같은 통합회원 계정을 쓴다.
+  // 이 매핑이 없어 site_name 이 undefined → 자격증명 조회 null → 출석체크 자동로그인이
+  // 시도조차 안 되고 비로그인 탭만 열렸다 닫혔다(계정ID 없이 오는 라디오 기본계정 모드).
+  member: 'ABCmart',
 }
 
 // 백엔드 fetch — 자격증명 조회.
@@ -181,9 +185,14 @@ async function _fetchLoginCredential(siteKey, accountId) {
 // 계정 전환 실패 → 로그인폼 미표시 → 송장 timeout. 데몬 v1.4.29 와 동일하게 쿠키를 직접
 // 비워 강제 로그아웃한다. (getAll({domain:'ssg.com'})은 ssg.com + 모든 서브도메인 포함)
 async function _clearSsgCookies() {
+  return await _clearCookiesByDomain('ssg.com')
+}
+
+// 도메인(+서브도메인) 쿠키 전체 삭제 — 로그아웃 URL 이 없거나 안 먹는 사이트의 강제 로그아웃.
+async function _clearCookiesByDomain(domain) {
   let n = 0
   try {
-    const cookies = await chrome.cookies.getAll({ domain: 'ssg.com' })
+    const cookies = await chrome.cookies.getAll({ domain })
     for (const ck of cookies) {
       const host = ck.domain.replace(/^\./, '')
       const proto = ck.secure ? 'https' : 'http'
@@ -193,7 +202,7 @@ async function _clearSsgCookies() {
       } catch {}
     }
   } catch (e) {
-    console.warn(`[자동로그인][SPA] SSG 쿠키 클리어 실패: ${e?.message || e}`)
+    console.warn(`[자동로그인][SPA] ${domain} 쿠키 클리어 실패: ${e?.message || e}`)
   }
   return n
 }
@@ -363,6 +372,15 @@ async function _spaDirectLogin(siteKey, username, password) {
     const _cleared = await _clearSsgCookies()
     await wait(800)
     console.log(`[자동로그인][SPA] SSG 쿠키 클리어 강제 로그아웃 (${_cleared}개, logout URL 에러 회피)`)
+  } else if (siteKey === 'member') {
+    // [2026-08-13] ABC-CAMP(member.a-rt.com)는 로그아웃 URL 이 확인된 게 없다.
+    // 다른 계정 세션이 살아있으면 /p/login 이 폼을 안 그리고 튕겨서(통합회원) 로그인 폼 미발견
+    // → 자동로그인 실패 → 비로그인으로 출첵창만 열렸다 닫힘. a-rt.com 쿠키를 통째로 비워
+    // 확실히 로그아웃한 뒤 잡 계정으로 새로 로그인한다.
+    // (abcmart.a-rt.com 세션도 같이 끊기지만, ABC마트 잡은 자체 ensureLoggedIn 으로 복구된다)
+    const _cleared = await _clearCookiesByDomain('a-rt.com')
+    await wait(800)
+    console.log(`[자동로그인][SPA] ABC캠프 a-rt.com 쿠키 클리어 강제 로그아웃 (${_cleared}개)`)
   } else {
     const _logoutUrl = _LOGOUT_URLS[siteKey]
     if (_logoutUrl) {
@@ -1572,4 +1590,6 @@ async function _alTripleClick(tabId, x, y) {
 // 외부 모듈에서 사용 가능하도록 globalThis에 노출
 globalThis.ensureLoggedIn = ensureLoggedIn
 globalThis.alExternalSiteToKey = alExternalSiteToKey
+// 잡 계정의 로그인 아이디 조회용 — 적립금 잡이 '지금 로그인된 계정이 잡 계정 맞는지' 검증할 때 쓴다.
+globalThis.alFetchLoginCredential = _fetchLoginCredential
 globalThis.AUTO_LOGIN_SITES = AUTO_LOGIN_SITES
