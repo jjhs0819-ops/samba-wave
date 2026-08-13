@@ -91,6 +91,25 @@ def real_market_no(value):
     return value
 
 
+def available_stock(options: list | None) -> int:
+    """옵션 리스트의 가용재고 합 — 품절(isSoldOut/is_sold_out/sold_out) 옵션 제외.
+
+    수집 표준 키는 isSoldOut(camelCase)이나 일부 경로가 snake_case 를 쓰므로 모두 인식.
+    stock 이 문자열("5")·실수("5.0")로 저장된 레거시 행도 안전 변환.
+    """
+    total = 0
+    for o in options or []:
+        if not isinstance(o, dict):
+            continue
+        if o.get("isSoldOut") or o.get("is_sold_out") or o.get("sold_out"):
+            continue
+        try:
+            total += int(float(o.get("stock") or 0))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def _resolve_margin_rate(cost: float, pricing: dict) -> float:
     """원가 기반 범위 마진율 반환. useRangeMargin이면 해당 구간 rate 사용."""
     if pricing.get("useRangeMargin") and pricing.get("rangeMargins"):
@@ -2436,6 +2455,23 @@ class SambaShipmentService:
                     logger.info(
                         f"[전송] 기존 상품번호 발견 → 수정 모드: {market_type} #{existing_product_no}"
                     )
+                else:
+                    # [가드] 전량품절 신규등록 보류 — 재고변동 자동전송이 품절 이벤트를
+                    # 미등록 상품의 신규등록으로 둔갑시켜 재고 0짜리 상품이 마켓에
+                    # 깔리던 문제(2026-08-13 쿠팡 에잇세컨즈 실측). 갱신(existing_no
+                    # 있음)은 통과 — 기존 등록의 품절 전파는 오버셀 방지에 필수.
+                    # 옵션 0건은 별도 가드(#690, 옵션 미갱신 보류)가 담당하므로
+                    # 여기서는 옵션이 있는데 가용재고가 0인 경우만 막는다.
+                    # 입고 전환도 재고변동 이벤트로 재전송되므로 영구 누락은 없다.
+                    _guard_opts = product_dict.get("options") or []
+                    if _guard_opts and available_stock(_guard_opts) <= 0:
+                        res["status"] = "skipped"
+                        res["error"] = "신규등록 보류: 전 옵션 품절(가용재고 0)"
+                        logger.info(
+                            f"[전송] {market_type} 신규등록 보류 — 전 옵션 품절: "
+                            f"{(product_row.name or '')[:30]}"
+                        )
+                        return res
 
                 # 마켓에 실제 등록된 상품번호가 있는 경우에만 skip_unchanged 적용
                 # existing_product_no 없으면 미등록 상품 → 반드시 신규 등록 시도
