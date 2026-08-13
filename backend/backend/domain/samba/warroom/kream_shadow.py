@@ -112,15 +112,17 @@ _SET_GUARD = "kream_price_guard"
 # 비용 실측: 건당 100ms, 동시 16 기준 1,000건에 약 6초.
 _g_live_rank: dict = {}  # ask_id -> live_rank(int). 사이클 내에서만 유효
 _RANK_CONCURRENCY = int(os.environ.get("KREAM_RANK_CONCURRENCY") or 16)
-# [2026-08-04] 실순위 단건조회 상한 — 0 이면 조회 자체를 건너뛴다.
-# [2026-08-13] 기본값 0 → 12,000. 위 주석의 "lowest_* 로 정확히 판정된다"는 **틀렸다**.
-# 크림은 같은 가격이면 먼저 넣은 쪽이 1등이라, 동가 경합에서는 내 가격 == lowest 인데도
-# 2등이다. lowest_* 에 내 입찰이 섞여 있어 시세만으론 이걸 구분할 방법이 아예 없다.
-#   실측(판매자센터): 555088-103|300 판매입찰 260,000원이 2건 — 내 것은 '일반 입찰 순번 2'.
-#   그런데 코드는 cur <= market_low 라 1등으로 보고 그대로 유지했다.
-# 조회를 꺼둔 탓에 '1순위 27,876' 집계도 동가 2등을 전부 1등으로 세고 있었다.
-# 12,000/사이클이면 라이브 입찰 3만 건을 로테이션 3사이클에 전량 커버한다.
-_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 12000)
+# 실순위 단건조회 **사전 일괄** 상한 — 0 이면 앞단 조회를 건너뛴다(기본값).
+# 순위 판정 자체가 필요없다는 뜻이 아니다. 판정하는 자리에서 _rank_of 로 그때그때
+# 조회하므로(전량 커버) 앞단에서 미리 몰아 받을 이유가 없다는 뜻이다.
+#   왜 순위가 필요한가: 크림은 같은 가격이면 먼저 넣은 쪽이 1등이다. 동가 경합에서는
+#   내 가격 == lowest 인데도 2등인데, lowest_* 에 내 입찰이 섞여 있어 시세만으로는
+#   구분할 방법이 아예 없다(실측 555088-103|300: 260,000원 2건 중 내 것이 순번 2).
+#   실측 2회 모두 조회분의 13.7% / 15.1% 가 2등 이하였다.
+# 앞단 일괄 조회는 그 단계만 1,718~1,755초(29분)가 들고, 상한 때문에 나머지는
+# 순위를 모른 채 추정으로 떨어졌다 — 같은 입찰을 두 번 훑으며 절반은 답을 못 받았다.
+# 되살리려면 KREAM_RANK_SCAN_MAX 에 양수를 준다(진단용).
+_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 0)
 _rank_scan_offset = 0
 
 
@@ -154,6 +156,34 @@ async def _fetch_live_ranks(h: dict, ask_ids: list) -> dict:
     return out
 
 
+async def _rank_of(h: dict, ask_id) -> int | None:
+    """판정하는 그 자리에서 실순위를 조회한다(사이클 캐시 겸용). 실패 시 None.
+
+    [2026-08-13] 종전엔 사이클 앞단에서 3만 건을 몰아 조회했다(_load_live_ranks).
+    그 단계만 29분이 들고, 상한(12,000) 때문에 나머지는 순위를 모른 채 시세 추정으로
+    떨어졌다 — 같은 입찰을 두 번 훑으면서 절반은 답을 못 받은 셈이다.
+    판정 루프는 이미 상품마다 스니덩크에 원가·재고를 물어보며 대기하므로, 그 대기에
+    크림 순위 조회를 얹으면 별도 단계가 통째로 사라지고 전량 순위를 확보한다.
+    실패해도 무해하다 — None 이면 호출부가 기존 시세 추정으로 폴백한다.
+    """
+    if not ask_id:
+        return None
+    k = str(ask_id)
+    v = _g_live_rank.get(k)
+    if v is not None:
+        return v
+    try:
+        r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/asks/{k}", headers=h, tries=2)
+        if r.status_code == 200:
+            lr = (r.json() or {}).get("live_rank")
+            if lr is not None:
+                _g_live_rank[k] = int(lr)
+                return int(lr)
+    except Exception:
+        pass
+    return None
+
+
 async def _load_live_ranks(
     h: dict, asks: list, priority_ids: list | None = None
 ) -> None:
@@ -178,13 +208,12 @@ async def _load_live_ranks(
         rest = []
     target = pri + rest
     if not target:
-        # [2026-08-07] 조용히 건너뛰던 자리. KREAM_RANK_SCAN_MAX 미설정(기본 0) + 우선분
-        # 미지정이면 target 이 비어 실순위를 **한 건도 안 받는다**. 그러면 판정은 전부
-        # cur <= market_low 추정으로 떨어지는데, market_low 에는 내 입찰이 섞여 있어
-        # 동가 경합에서 내가 몇 등인지 알 수 없다. 꺼져 있다는 사실이라도 남긴다.
+        # [2026-08-13] 기본 경로다(경고 아님). 순위는 판정하는 자리에서 _rank_of 가
+        # 건별로 조회한다 — 앞단 일괄 조회(29분·상한 12,000)를 대체한 것이라
+        # 커버리지는 오히려 전량으로 넓어졌다.
         logger.info(
-            "[크림통합] 실순위 조회 건너뜀 — 대상0건 (KREAM_RANK_SCAN_MAX=%d). "
-            "순위는 시세 추정으로 판정",
+            "[크림통합] 실순위 사전조회 없음(정상) — 판정 시점 조회로 대체 "
+            "(KREAM_RANK_SCAN_MAX=%d)",
             _RANK_SCAN_MAX,
         )
         return
@@ -3042,7 +3071,7 @@ async def _process_shoe_asks(
                 is_box=True,
                 surcharge_rate=_sur,
                 fee_kind="item",  # 신발·의류·시계 = 2,750 + 6.16%
-                live_rank=_g_live_rank.get(str(a.get("id"))),
+                live_rank=await _rank_of(h, a.get("id")),
                 low_keep=_lk,
             )
             if act in ("국내못이김삭제", "1등불가삭제"):
@@ -3550,7 +3579,7 @@ async def _process_box_asks(
                     tariff,
                     is_box=True,
                     fee_kind="overseas",  # 박스·카드팩 갱신
-                    live_rank=_g_live_rank.get(str(a.get("id"))),
+                    live_rank=await _rank_of(h, a.get("id")),
                     low_keep=int(a.get("lowest_100_price") or 0),
                 )
                 if act in ("국내못이김삭제", "1등불가삭제"):
@@ -4401,7 +4430,7 @@ async def run_kream_unified_once() -> dict:
                         prod["fixed"].get(nm, 0),
                         rate,
                         tariff_threshold,
-                        live_rank=_g_live_rank.get(str(ask.get("id"))) if ask else None,
+                        live_rank=(await _rank_of(h, ask.get("id")) if ask else None),
                         low_keep=low_keep,
                     )
                     # 가격열위(국내 못이김/1등불가) 삭제, 아니면 갱신
@@ -4663,7 +4692,7 @@ async def run_kream_unified_once() -> dict:
                         prod["fixed"].get(nm, 0),
                         rate,
                         tariff_threshold,
-                        live_rank=_g_live_rank.get(str(ask.get("id"))) if ask else None,
+                        live_rank=(await _rank_of(h, ask.get("id")) if ask else None),
                         low_keep=low_keep,
                     )
                     # 가격열위(국내 못이김/1등불가) 삭제, 아니면 갱신
