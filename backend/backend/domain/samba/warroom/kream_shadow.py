@@ -486,28 +486,33 @@ async def _brand_reg_rates(
                 ).all():
                     if _k:
                         kid_br[str(_k)] = str(_b)
-            _seen: set = set()
+            # [2026-08-13] **상품 단위**로 센다. 종전엔 (상품,옵션) 그룹을 세서
+            # 1등(옵션수)이 입찰(상품수)보다 커지는 모순이 나왔다
+            # (실측: Nike 1등11,642 / 입찰5,356 — 한 상품에 사이즈가 여럿이라).
+            # 그 상품의 옵션 중 하나라도 1등이면 '1등 상품'으로 본다.
+            _r1_kids: set = set()
             for a in asks:
                 _kid = str(a.get("product_id") or "")
-                _key = (_kid, str(a.get("option") or ""))
-                if _key in _seen:
+                if not _kid or _kid in _r1_kids:
                     continue
-                _seen.add(_key)
                 _our = int(a.get("price") or 0)
                 _ov = int(a.get("lowest_overseas_price") or 0)
                 _dom = int(a.get("lowest_normal_price") or 0)
                 if _ov > 0 and 0 < _our <= _ov and (_dom <= 0 or _our <= _dom):
-                    _b = kid_br.get(_kid)
-                    if _b:
-                        r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
+                    _r1_kids.add(_kid)
+            for _kid in _r1_kids:
+                _b = kid_br.get(_kid)
+                if _b:
+                    r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
 
-        def _cell(br: str, tot: int, reg: int) -> str:
-            if not asks:
-                return f"{br} {reg:,}/{tot:,}({round(100.0 * reg / max(1, tot), 1)}%)"
-            r1 = r1_by_br.get(br, 0)
-            return f"{br} 1등{r1:,}/입찰{reg:,}/재고{tot:,}"
-
-        head = " · ".join(_cell(br, tot, reg) for br, tot, reg in live)
+        # 표 형태 — 슬랙 코드블록 안이라야 자릿수가 맞는다(가변폭에선 정렬이 깨진다).
+        _rows = ["```", f"{'브랜드':<16}{'1등':>8}{'입찰':>8}{'재고':>8}{'1등률':>8}"]
+        for br, tot, reg in live:
+            r1 = r1_by_br.get(br, 0) if asks else 0
+            _rate = f"{100.0 * r1 / reg:.0f}%" if reg else "—"
+            _rows.append(f"{br[:15]:<16}{r1:>8,}{reg:>8,}{tot:>8,}{_rate:>8}")
+        _rows.append("```")
+        head = "\n" + "\n".join(_rows)
         zero = [f"{br} 0/{tot:,}" for br, tot, reg in live if reg == 0]
         return head, (" · ".join(zero) if zero else "")
     except Exception as exc:
