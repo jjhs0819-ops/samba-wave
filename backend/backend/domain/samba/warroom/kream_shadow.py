@@ -5062,48 +5062,39 @@ async def run_kream_unified_once() -> dict:
             logger.info("[크림통합] STAGE 실행-삭제 %d건 시작", len(pend_delete))
             # [2026-08-02] 순차+0.1s sleep 이라 건당 ~0.8s → 병렬 8(rate limit 여유).
             # 삭제 65건이 48초 걸리던 것 ~8초로. 사이클 완주 시간의 주 병목이었다.
-            _dsem = asyncio.Semaphore(
-                int(os.environ.get("KREAM_EXEC_CONCURRENCY") or 8)
-            )
+            # [2026-08-13] 카드 경로도 공용 실행기(_exec_pending)를 쓴다.
+            # 종전엔 신발·박스만 _exec_pending 이고 카드만 _do_del/_do_renew 를 따로
+            # 정의해, 같은 삭제·갱신을 두 벌로 굴렸다. 어느 경로가 실제 실행됐는지
+            # 로그로 구분이 안 돼 오늘 "판정은 358,000인데 값이 그대로"인 건이
+            # 신발인지 박스인지 카드인지 한참 헤맸다.
+            # 큐는 (kid, opt) 로 쌓이므로 여기서 ask_id 를 붙여 공용 형식으로 바꾼다.
+            _ec: dict = {}
+            _dels: list = []
+            _miss_del = 0
+            for _k, _n in pend_delete:
+                _a = ask_index.get((_k, _n))
+                if _a:
+                    _dels.append((_a.get("id"), _k, _n))
+                else:
+                    _miss_del += 1  # 기존 _do_del 과 동일하게 실패로 센다
+            _upds: list = []
+            for _k, _n, _tg, _cur, _nc in pend_renew:
+                _a = ask_index.get((_k, _n))
+                if _a:  # 기존 _do_renew 는 ask 없으면 조용히 건너뛴다 — 동작 유지
+                    _upds.append((_a.get("id"), _tg, _cur, _nc, _k, _n))
 
-            async def _do_del(_kid, _nm):
-                nonlocal exec_del, exec_fail
-                async with _dsem:
-                    _ask = ask_index.get((_kid, _nm))
-                    if _ask and await _exec_delete_ask(
-                        ecli, h, _ask.get("id"), _kid, _nm
-                    ):
-                        exec_del += 1
-                    else:
-                        exec_fail += 1
-
-            await asyncio.gather(*[_do_del(k2, n2) for k2, n2 in pend_delete])
+            await _exec_pending(ecli, h, _dels, [], _ec)
             await _flush_logs_to_db()
             logger.info(
                 "[크림통합] STAGE 실행-갱신 %d건 시작 (%.0f초경과)",
                 len(pend_renew),
                 _stage_t.time() - _t_stage,
             )
-
-            async def _do_renew(_kid, _nm, _tg, _cur, _nc):
-                nonlocal exec_patch, exec_revert, exec_fail
-                async with _dsem:
-                    _ask = ask_index.get((_kid, _nm))
-                    if not _ask:
-                        return
-                    _res, _r2 = await _execute_update(
-                        ecli, h, _ask.get("id"), _tg, _cur, _nc, _kid, _nm
-                    )
-                    if _res == "ok":
-                        exec_patch += 1
-                    elif _res == "reverted":
-                        exec_revert += 1
-                    else:
-                        exec_fail += 1
-
-            await asyncio.gather(
-                *[_do_renew(a1, a2, a3, a4, a5) for a1, a2, a3, a4, a5 in pend_renew]
-            )
+            await _exec_pending(ecli, h, [], _upds, _ec)
+            exec_del = _ec.get("del", 0)
+            exec_patch = _ec.get("patch", 0)
+            exec_revert = _ec.get("revert", 0)
+            exec_fail = _ec.get("fail", 0) + _miss_del
             await _flush_logs_to_db()
             logger.info(
                 "[크림통합] STAGE 실행-등록 %d건 시작 (%.0f초경과)",
