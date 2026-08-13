@@ -10805,6 +10805,10 @@ async def sync_orders_from_markets(
                     # 마켓 상품번호 보충 (기존 주문에 없으면 채움)
                     if order_data.get("product_id") and not existing.product_id:
                         update_fields["product_id"] = order_data["product_id"]
+                    # 상품이미지 보충 (기존 주문에 없으면 채움) — 사용자/외부 도구가
+                    # 넣은 값은 덮지 않는다. 현재 마켓 파서 중 POIZON만 값을 준다.
+                    if order_data.get("product_image") and not existing.product_image:
+                        update_fields["product_image"] = order_data["product_image"]
                     # quantity 자기치유 (issue #213 롯데ON → 전 소싱처 확대):
                     # 재동기화 수량 > 1 이고 기존이 known-bad(=1) 일 때만 교정.
                     # 쿠팡 orderQuantity→shippingCount 키 교정(4a7ccda2) 이전에 들어와
@@ -12427,6 +12431,10 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         "shipment_id": str(item.get("seller_bidding_no", "") or ""),
         "product_id": str(item.get("spu_id", "") or item.get("sku_id", "") or ""),
         "product_name": item.get("title", "") or "",
+        # 포이즌 대표이미지(CDN URL) — 주문 화면 썸네일. 그동안 오토비더의
+        # 사후 보강(PUT)에 의존해 반영까지 시차가 있었는데, generic_list 응답에
+        # 이미 있는 값이라 수집 시점에 바로 채운다.
+        "product_image": str(item.get("logo_url", "") or ""),
         "product_option": item.get("properties", "") or "",
         "quantity": quantity,
         "sale_price": product_price,
