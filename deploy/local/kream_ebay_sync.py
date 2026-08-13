@@ -1,0 +1,237 @@
+# -*- coding: utf-8 -*-
+"""
+크림 매칭 시트 자동 동기화.
+
+1) 크림 "구매 내역"(진행중+종료) CDP로 읽기
+2) 배송완료 신규건 -> 이베이 A:I 테이블 맨 아래 도착순으로 추가(할인율/원가 계산)
+3) 아직 배송완료 안 된 건들 -> K:N 섹션 전체 새로 작성(덮어쓰기)
+
+실행: python kream_ebay_sync.py
+"""
+import sys
+import time
+import re
+import json
+
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cdp_sheet_helpers import CDPConn  # noqa: E402
+
+import gspread  # noqa: E402
+
+SHEET_ID = "1FM3smmTlsbxhN03CFCoK_Pp5byA9wTfpiQ66jOG0ohM"
+TAB_NAME = "크림매칭"
+CREDS_PATH = "C:/Users/canno/.claude/google-credentials.json"
+
+CDP_HOST, CDP_PORT = "localhost", 9223
+
+STATUS_ORDER = {
+    "배송 중": 0,
+    "입고완료": 1,
+    "입고 대기": 1,
+    "검수합격": 2,
+    "발송완료": 3,
+    "대기 중": 4,
+}
+
+
+def find_kream_tab(url_contains):
+    import urllib.request
+
+    resp = urllib.request.urlopen(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=10)
+    tabs = json.loads(resp.read())
+    for t in tabs:
+        if t.get("type") == "page" and url_contains in t.get("url", ""):
+            return t["id"]
+    return None
+
+
+def find_any_kream_tabs(n=3):
+    """kream.co.kr 탭 아무거나 n개 — 이전 실행에서 /my/order/xxx로 옮겨져있어도 상관없음."""
+    import urllib.request
+
+    resp = urllib.request.urlopen(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=10)
+    tabs = json.loads(resp.read())
+    ids = [t["id"] for t in tabs if t.get("type") == "page" and "kream.co.kr" in t.get("url", "")
+           and "partner.kream.co.kr" not in t.get("url", "")]
+    return ids[:n]
+
+
+def _scroll_to_load_all(c, max_wheel=60, settle_checks=4):
+    """실제 마우스 휠 이벤트로 무한스크롤 끝까지 로드.
+
+    핵심: Page.bringToFront 필수 — 탭이 백그라운드면 휠 이벤트가 현재 활성 탭
+    (다른 사이트일 수 있음)으로 새거나 응답이 아예 안 온다(2026-08-13 확인).
+    """
+    c.call("Page.bringToFront")
+    time.sleep(1)
+    prev_len = -1
+    stable = 0
+    for _ in range(max_wheel):
+        c.call(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseWheel", "x": 400, "y": 400, "deltaX": 0, "deltaY": 2500},
+        )
+        time.sleep(0.4)
+        r = c.call(
+            "Runtime.evaluate",
+            {"expression": "document.body.innerText.length", "returnByValue": True},
+        )
+        cur_len = r.get("result", {}).get("result", {}).get("value", 0) or 0
+        if cur_len == prev_len:
+            stable += 1
+            if stable >= settle_checks:
+                break
+        else:
+            stable = 0
+        prev_len = cur_len
+
+
+def fetch_kream_orders():
+    """진행중+종료 탭 전체를 실제 휠스크롤(무한로딩 끝까지)로 읽어옴.
+
+    반환: {order_no: {"date": "26/08/13 14:51", "status": "..."}}
+    """
+    kream_tabs = find_any_kream_tabs(2)
+    if len(kream_tabs) < 2:
+        raise RuntimeError("KREAM 탭이 2개 이상 안 열려있음 — 웨일에서 kream.co.kr 탭 2개 열어두세요")
+    pending_tab, finished_tab = kream_tabs[0], kream_tabs[1]
+
+    all_orders = {}
+
+    for tab_id, label, url in [
+        (pending_tab, "pending", "https://kream.co.kr/my/buying?tab=pending"),
+        (finished_tab, "finished", "https://kream.co.kr/my/buying?tab=finished"),
+    ]:
+        c = CDPConn(tab_id)
+        c.call("Runtime.enable")
+        c.call("Page.enable")
+        c.call("Input.enable")
+        c.send("Page.navigate", {"url": url})
+        time.sleep(3)
+        _scroll_to_load_all(c)
+        r = c.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
+        text = r.get("result", {}).get("result", {}).get("value", "") or ""
+        c.close()
+
+        blocks = re.split(r"결제번호\s*\n+", text)[1:]
+        for b in blocks:
+            m_no = re.match(r"\s*(O-OR\d+)", b)
+            if not m_no:
+                continue
+            order_no = m_no.group(1)
+            if "잉어킹" not in b and "Magikarp" not in b:
+                continue
+            m_date = re.search(r"(\d{2}/\d{2}/\d{2} \d{2}:\d{2})", b)
+            m_status = re.search(r"(발송완료|대기 중|검수합격|입고완료|입고 대기|배송 중|배송완료|취소완료)", b)
+            all_orders[order_no] = {
+                "date": m_date.group(1) if m_date else "",
+                "status": m_status.group(1) if m_status else "",
+            }
+        print(f"    [{label}] 로드 완료")
+    return all_orders
+
+
+def fetch_price(conn, order_id_numeric):
+    """상세페이지에서 최초 결제금액 뽑기. order_id_numeric = 'O-OR' 뒤 숫자.
+
+    conn: 이미 열려있는 CDPConn (탭 하나를 계속 재사용 — 매번 새로 탭 찾으면
+    직전 fetch_price가 이미 그 탭을 /my/order/xxx로 옮겨놔서 URL 매칭이 깨짐).
+    """
+    conn.send("Page.navigate", {"url": f"https://kream.co.kr/my/order/{order_id_numeric}"})
+    time.sleep(1.8)
+    r = conn.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
+    text = r.get("result", {}).get("result", {}).get("value", "") or ""
+    m = re.search(r"최초 결제금액\s*\n+\s*([\d,]+)원", text)
+    return m.group(1) if m else None
+
+
+MIN_EXPECTED_ORDERS = 20  # 이보다 적게 읽히면 크림 탭/스크롤이 제대로 안 된 걸로 보고 중단(K:N 보호)
+
+
+def main():
+    print("[1] 크림 주문 읽는 중...")
+    orders = fetch_kream_orders()
+    print(f"    총 {len(orders)}건")
+
+    if len(orders) < MIN_EXPECTED_ORDERS:
+        print(f"    [경고] {MIN_EXPECTED_ORDERS}건 미만 — 크림 탭을 못 읽은 것으로 판단, "
+              f"K:N 안 건드리고 중단")
+        return
+
+    gc = gspread.service_account(filename=CREDS_PATH)
+    sh = gc.open_by_key(SHEET_ID)
+    ws = sh.worksheet(TAB_NAME)
+
+    # A:I 에 이미 매칭 확정된 크림주문번호 (D열) — 여기 있는 건 신규 배송완료로 다시 잡으면 안 됨
+    ai_kream_orders = {v for v in ws.col_values(4) if v.startswith("O-OR")}
+
+    # 배송완료 판정 — 크림 상태에 "배송완료" 텍스트가 오는 경우는 buying list 자체에선
+    # "발송완료"(판매자->크림) 다음 최종 도착 시 "배송완료"로 바뀜. finished 탭 상태값을 그대로 사용.
+    newly_delivered = []
+    still_pending = []
+    for order_no, info in orders.items():
+        status = info["status"]
+        if order_no in ai_kream_orders:
+            continue  # 이미 이베이 테이블에 매칭 완료된 건 — 재처리 금지
+        if status in ("배송완료",):
+            newly_delivered.append((order_no, info))
+        elif status == "취소완료":
+            continue  # 취소된건 무시
+        else:
+            still_pending.append((order_no, info))
+
+    print(f"[2] 신규 배송완료 {len(newly_delivered)}건, 미배송 {len(still_pending)}건 "
+          f"(A:I 기존 매칭 {len(ai_kream_orders)}건 제외)")
+
+    price_tab = find_kream_tab("kream.co.kr/my/buying")
+    price_conn = CDPConn(price_tab) if price_tab else None
+    if price_conn:
+        price_conn.call("Page.enable")
+        price_conn.call("Runtime.enable")
+
+    # 배송완료건 -> 이베이 테이블 뒤에 붙이기 (도착순 = date 오름차순)
+    if newly_delivered and price_conn:
+        newly_delivered.sort(key=lambda x: x[1]["date"])
+        print("[3] 가격 조회 중 (상세페이지)...")
+        append_rows = []
+        for order_no, info in newly_delivered:
+            oid = order_no.replace("O-OR", "")
+            price = fetch_price(price_conn, oid)
+            append_rows.append([order_no, price or "", info["date"]])
+            print(f"    {order_no}: {price}")
+
+        # NOTE: 실제 이베이 주문번호/갯수 매칭은 to-ship 리스트와 대조해 사람이 채움(자동 매칭 다음 단계).
+        with open("C:/tmp/newly_delivered.tsv", "w", encoding="utf-8") as f:
+            for row in append_rows:
+                f.write("\t".join(row) + "\n")
+        print("    -> C:/tmp/newly_delivered.tsv 저장 (이베이 매칭은 수동 확인 후 반영)")
+
+    # K:N 전체 새로 작성 (구매가 포함)
+    print("[4] K:N 섹션 재작성 (가격 포함)...")
+    still_pending.sort(key=lambda x: STATUS_ORDER.get(x[1]["status"], 9))
+    kn_rows = []
+    if price_conn:
+        for order_no, info in still_pending:
+            d = info["date"].split(" ")[0]  # 26/08/13
+            y, m, dd = d.split("/")
+            kdate = f"20{y}. {int(m)}. {int(dd)}"
+            oid = order_no.replace("O-OR", "")
+            price = fetch_price(price_conn, oid)
+            kn_rows.append([kdate, order_no, price or "", info["status"]])
+            print(f"    {order_no}: {price}")
+
+    if price_conn:
+        price_conn.close()
+
+    ws.batch_clear(["K2:N1000"])
+    if kn_rows:
+        ws.update(range_name="K2", values=kn_rows, value_input_option="USER_ENTERED")
+    print(f"    {len(kn_rows)}행 반영")
+
+    print("DONE")
+
+
+if __name__ == "__main__":
+    main()

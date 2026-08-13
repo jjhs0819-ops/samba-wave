@@ -3004,7 +3004,20 @@ async def _process_shoe_asks(
             if kid_to_snkr.get(kid)
         ]
 
+        # [2026-08-13] 진행 로그 — 이 루프는 2만 건대인데 시작/끝만 찍어서, 안에서
+        # 느려지거나 멈춰도 밖에서 구분할 방법이 없었다(실측: 3시간 무진행을
+        # '행'인지 '느린 것'인지 판별 못 함). 2,000건마다 남긴다.
+        _sh_n = 0
+        _sh_t0 = _time_mod.time()
         for a in shoe_asks:
+            _sh_n += 1
+            if _sh_n % 2000 == 0:
+                logger.info(
+                    "[크림통합] 신발갱신 진행 %d/%d (%.0f초경과)",
+                    _sh_n,
+                    len(shoe_asks),
+                    _time_mod.time() - _sh_t0,
+                )
             kid = str(a.get("product_id") or "")
             opt = str(a.get("option") or "").strip()
             # 실시간 우선: 조회 성공한 상품은 그 값이 진실(매물 없으면 재고0=삭제 후보)
@@ -3071,7 +3084,12 @@ async def _process_shoe_asks(
                 is_box=True,
                 surcharge_rate=_sur,
                 fee_kind="item",  # 신발·의류·시계 = 2,750 + 6.16%
-                live_rank=await _rank_of(h, a.get("id")),
+                # [2026-08-13] 여기서 _rank_of 를 await 하면 안 된다 — 이 루프는
+                # gather 가 아니라 **순차**라, 입찰 21,000건에 API 왕복이 직렬로 붙어
+                # 신발갱신이 3시간 넘게 진행 로그 한 줄 없이 멈춘 것처럼 보였다.
+                # (카드·박스는 gather 안이라 같은 호출이 병렬로 흡수된다.)
+                # 신발은 사전 수집 캐시만 쓰고, 없으면 시세 추정으로 폴백한다.
+                live_rank=_g_live_rank.get(str(a.get("id"))),
                 low_keep=_lk,
             )
             if act in ("국내못이김삭제", "1등불가삭제"):
