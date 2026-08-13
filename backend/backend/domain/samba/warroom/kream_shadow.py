@@ -2900,6 +2900,7 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
 
     async def _one_del(_aid, _kid=None, _opt=None):
         async with sem:
+            _progress()  # 워치독 — 실행도 '진행'이다
             if await _exec_delete_ask(cli, h, _aid, _kid, _opt):
                 c["del"] = c.get("del", 0) + 1
             else:
@@ -2907,6 +2908,7 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
 
     async def _one_upd(_aid, _tg, _cur, _nc, _kid, _opt):
         async with sem:
+            _progress()  # 워치독 — 실행도 '진행'이다
             _res, _r = await _execute_update(cli, h, _aid, _tg, _cur, _nc, _kid, _opt)
             if _res == "ok":
                 c["patch"] = c.get("patch", 0) + 1
@@ -3079,6 +3081,7 @@ async def _process_shoe_asks(
             if not style:
                 return
             async with _sem:
+                _progress()  # 워치독
                 # [2026-08-04] 카테고리 무관 처리 — 스니덩크 id 가 숫자면 의류·잡화라
                 # /v1/apparels/{id}/sizes, 스타일코드면 상품 HTML 을 쓴다.
                 # [2026-08-07] 분기를 _fetch_snkr_live_sizes 로 빼 리스톡과 공유한다.
@@ -3582,11 +3585,13 @@ async def _process_box_restock(
             c["cand"] += 1
             posted += 1
             if _EXEC_BOX_RESTOCK:
+                _progress()  # 워치독 — 등록도 '진행'이다
                 ok, reason = await _exec_create_ask(cli, h, kid, int(target), opt)
                 if (not ok) and ("announcement" in reason or "고시" in reason):
                     # 고시 미등록이면 **먼저 등록**하고 재시도. 등록 없이 같은 요청을
                     # 다시 보내던 종전 코드는 100% 재실패했다.
                     if await _register_announcement(kid):
+                        _progress()  # 워치독 — 등록도 '진행'이다
                         ok, reason = await _exec_create_ask(
                             cli, h, kid, int(target), opt
                         )
@@ -3666,6 +3671,7 @@ async def _process_box_asks(
 
         async def _one(a):
             async with sem:
+                _progress()  # 워치독
                 kid = str(a.get("product_id") or "")
                 opt = str(a.get("option") or "")  # 실제 옵션(해외배송 / 해외배송(N개))
                 snkr_id = kid_to_snkr.get(kid)
@@ -3970,9 +3976,11 @@ async def _process_expired_asks(
             )
             if not gate:
                 continue
+            _progress()  # 워치독 — 등록도 '진행'이다
             ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
             if (not ok) and ("announcement" in reason or "고시" in reason):
                 if await _register_announcement(kid):
+                    _progress()  # 워치독 — 등록도 '진행'이다
                     ok, reason = await _exec_create_ask(cli, h, kid, target, opt)
             if ok:
                 c["post"] += 1
@@ -5299,9 +5307,11 @@ async def run_kream_unified_once() -> dict:
             async def _do_post(_kid, _nm, _tg, _pn):
                 nonlocal exec_post, exec_fail
                 async with _psem:
+                    _progress()  # 워치독 — 등록도 '진행'이다
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
                         if await _register_announcement(_kid):
+                            _progress()  # 워치독 — 등록도 '진행'이다
                             _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if _ok:
                         exec_post += 1
