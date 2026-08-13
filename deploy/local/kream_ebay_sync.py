@@ -28,9 +28,9 @@ CDP_HOST, CDP_PORT = "localhost", 9223
 
 STATUS_ORDER = {
     "배송 중": 0,
-    "입고완료": 1,
-    "입고 대기": 1,
-    "검수합격": 2,
+    "검수합격": 1,
+    "입고완료": 2,
+    "입고 대기": 2,
     "발송완료": 3,
     "대기 중": 4,
 }
@@ -148,6 +148,112 @@ def fetch_price(conn, order_id_numeric):
 
 
 MIN_EXPECTED_ORDERS = 20  # 이보다 적게 읽히면 크림 탭/스크롤이 제대로 안 된 걸로 보고 중단(K:N 보호)
+
+# 자동매칭 대상 최소 날짜 — 이보다 오래된 크림 배송완료건은 이 시트 추적범위(8/8~) 밖이라
+# 이미 다른 경로로 처리됐을 가능성이 높음(2026-08-13 7월건 오매칭 사고). 자동매칭 제외,
+# 사람이 직접 확인해야 함.
+AUTO_MATCH_MIN_DATE = "26/08/01"
+
+
+def fetch_new_ebay_orders():
+    """DB에서 미발송(발주확인) 잉어킹 이베이 주문 목록 — docker exec로 조회."""
+    import subprocess
+
+    query_script = r"""
+import asyncio, asyncpg, json
+async def main():
+    conn = await asyncpg.connect(host='postgres', port=5432, user='samba',
+        password='09aac90f3fb8c4394ad2d6062b1a5910', database='samba', ssl=False)
+    rows = await conn.fetch('''
+        SELECT order_number, quantity, created_at, ship_by_at
+        FROM samba_order
+        WHERE source='ebay' AND product_name ILIKE '%Magikarp%'
+          AND status NOT IN ('cancelled','cancel_requested','refunded')
+          AND status != 'shipping'
+        ORDER BY created_at ASC
+    ''')
+    out = [{"order_number": r["order_number"], "quantity": r["quantity"],
+            "ship_by_at": r["ship_by_at"].strftime("%Y. %-m. %-d") if r["ship_by_at"] else ""}
+           for r in rows]
+    print(json.dumps(out, ensure_ascii=False))
+asyncio.run(main())
+"""
+    tmp_local = "C:/tmp/_ebay_orders_query.py"
+    with open(tmp_local, "w", encoding="utf-8") as f:
+        f.write(query_script)
+    subprocess.run(["docker", "cp", tmp_local, "local-samba-api-1:/tmp/_ebay_orders_query.py"], check=True)
+    result = subprocess.run(
+        ["docker", "exec", "local-samba-api-1", "/app/backend/.venv/bin/python", "/tmp/_ebay_orders_query.py"],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+    return json.loads(result.stdout.strip())
+
+
+def append_new_ebay_orders(ws):
+    """DB에 있는데 시트 B열에 없는 이베이 주문 -> 맨 아래 수량만큼 행 추가."""
+    existing_b = {v for v in ws.col_values(2) if v.strip()}
+    db_orders = fetch_new_ebay_orders()
+    new_orders = [o for o in db_orders if o["order_number"] not in existing_b]
+    if not new_orders:
+        print("[0] 신규 이베이 주문 없음")
+        return
+    a_col = ws.col_values(1)
+    last_row = len(a_col)
+    order_date = time.strftime("%Y. %-m. %-d")
+    rows = []
+    for o in new_orders:
+        for seq in range(1, o["quantity"] + 1):
+            rows.append([order_date, o["order_number"], str(seq), "", "", "97.30%", "0", "", o["ship_by_at"]])
+    ws.update(range_name=f"A{last_row + 1}", values=rows, value_input_option="USER_ENTERED")
+    print(f"[0] 신규 이베이 주문 {len(new_orders)}건({len(rows)}행) 추가: "
+          f"{', '.join(o['order_number'] for o in new_orders)}")
+
+
+def match_delivered_to_ai(ws, newly_delivered):
+    """배송완료건을 A:I 빈 슬롯(D열 공백)에 도착순으로 채움. D열에 값 있는 행은 무조건 건너뜀."""
+    eligible = [(no, info) for no, info in newly_delivered if info["date"] >= AUTO_MATCH_MIN_DATE]
+    skipped_old = len(newly_delivered) - len(eligible)
+    if skipped_old:
+        print(f"    [주의] {skipped_old}건은 {AUTO_MATCH_MIN_DATE} 이전 주문이라 자동매칭 제외(수동확인 필요)")
+    if not eligible:
+        return
+
+    ai = ws.get("A2:I1000")
+    empty_slots = []
+    for i, r in enumerate(ai):
+        row = i + 2
+        b = r[1] if len(r) > 1 else ""
+        d = r[3] if len(r) > 3 else ""
+        if b.strip() and not d.strip():
+            empty_slots.append(row)
+
+    if not empty_slots:
+        print("    빈 슬롯 없음 — 매칭 건너뜀")
+        return
+
+    eligible.sort(key=lambda x: x[1]["date"])
+    price_tab = find_kream_tab("kream.co.kr/my/buying")
+    price_conn = CDPConn(price_tab) if price_tab else None
+    if not price_conn:
+        print("    가격조회용 탭 없음 — 매칭 건너뜀")
+        return
+    price_conn.call("Page.enable")
+    price_conn.call("Runtime.enable")
+
+    n = min(len(eligible), len(empty_slots))
+    updates = []
+    for i in range(n):
+        order_no, info = eligible[i]
+        row = empty_slots[i]
+        oid = order_no.replace("O-OR", "")
+        price = fetch_price(price_conn, oid)
+        today = time.strftime("%Y. %-m. %-d")
+        updates.append({"range": f"D{row}:E{row}", "values": [[order_no, price or ""]]})
+        updates.append({"range": f"H{row}", "values": [[today]]})
+        print(f"    row{row} <- {order_no} ({price})")
+    price_conn.close()
+    ws.batch_update(updates, value_input_option="USER_ENTERED")
+    print(f"[3] A:I 매칭 {n}건 완료 (빈슬롯 {len(empty_slots)}개 중)")
 
 
 def main():

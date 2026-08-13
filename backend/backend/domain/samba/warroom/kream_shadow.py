@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import re
+import threading as _threading
 import time as _time_mod
 
 import httpx
@@ -154,6 +155,48 @@ async def _fetch_live_ranks(h: dict, ask_ids: list) -> dict:
     for _i in range(0, len(ask_ids), _CH):
         await asyncio.gather(*[_one(a) for a in ask_ids[_i : _i + _CH]])
     return out
+
+
+# ── 사이클 행(hang) 워치독 [2026-08-13] ─────────────────────────────────────
+# KREAM_WATCHDOG_STALL_SEC 는 compose 에 설정돼 있었지만 **읽는 코드가 없었다**.
+# 로컬 스크립트에 있던 워치독을 백엔드로 이식할 때 환경변수만 따라오고 구현이 빠져,
+# "워치독이 있다"고 믿은 채 조용한 정지를 3시간 방치했다(신발갱신 순차 루프 정지).
+# 진행 신호(_progress)가 STALL 초 넘게 끊기면 프로세스를 죽인다 →
+# docker restart=unless-stopped 가 재기동하고 다음 사이클이 처음부터 돈다.
+_WATCHDOG_STALL_SEC = int(os.environ.get("KREAM_WATCHDOG_STALL_SEC") or 0)
+_g_last_progress = 0.0
+_g_watchdog_on = False
+
+
+def _progress() -> None:
+    """살아 있다는 신호. 판정·실행 루프 안에서 촘촘히 부른다(대입뿐이라 비용 없음)."""
+    global _g_last_progress
+    _g_last_progress = _time_mod.time()
+
+
+def _start_watchdog() -> None:
+    """사이클 진입 시 1회. 데몬 스레드라 프로세스 종료를 막지 않는다."""
+    global _g_watchdog_on
+    if _g_watchdog_on or _WATCHDOG_STALL_SEC <= 0:
+        return
+    _g_watchdog_on = True
+
+    def _run() -> None:
+        while True:
+            _time_mod.sleep(30)
+            if _g_last_progress <= 0:
+                continue
+            gap = _time_mod.time() - _g_last_progress
+            if gap > _WATCHDOG_STALL_SEC:
+                logger.error(
+                    "[크림통합] 워치독 — %.0f초 무진행(임계 %d초). 프로세스 재기동",
+                    gap,
+                    _WATCHDOG_STALL_SEC,
+                )
+                os._exit(1)
+
+    _threading.Thread(target=_run, daemon=True, name="kream-watchdog").start()
+    logger.info("[크림통합] 워치독 가동 — %d초 무진행 시 재기동", _WATCHDOG_STALL_SEC)
 
 
 async def _rank_of(h: dict, ask_id) -> int | None:
@@ -3036,6 +3079,7 @@ async def _process_shoe_asks(
         _sh_t0 = _time_mod.time()
         for a in shoe_asks:
             _sh_n += 1
+            _progress()  # 워치독 — 이 루프가 오늘 3시간 조용히 멈춘 자리다
             if _sh_n % 2000 == 0:
                 logger.info(
                     "[크림통합] 신발갱신 진행 %d/%d (%.0f초경과)",
@@ -3907,6 +3951,8 @@ async def run_kream_unified_once() -> dict:
     import time as _tstart  # noqa: F811
 
     _cycle_t0 = _tstart.time()  # 사이클 처리속도(avg_sec) 계산용
+    _start_watchdog()  # 행 감시 가동(1회) — 진행 신호가 끊기면 프로세스 재기동
+    _progress()
 
     if not await _kream_autotune_enabled():
         logger.info("[크림통합] 오토튠 UI서 스니덩크/크림 체크해제 — 이번 사이클 스킵")
@@ -4996,6 +5042,7 @@ async def run_kream_unified_once() -> dict:
             return await _process(_p, _cli)
         finally:
             _done_n += 1
+            _progress()  # 워치독 — 상품 하나 끝날 때마다 살아있음 표시
             if _done_n % _prog_every == 0:
                 logger.info(
                     "[크림통합] 판정 진행 %d/%d (%.0f%%) %.0f초경과",
