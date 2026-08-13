@@ -709,7 +709,9 @@ class PlayAutoClient:
         # 옵션 변환
         options = product.get("options") or []
         if options and isinstance(options, list):
-            emp_opts = _build_options(options, stock_qty)
+            emp_opts = _build_options(
+                options, stock_qty, source_site=str(product.get("source_site") or "")
+            )
             if emp_opts:
                 data["Opts"] = emp_opts
                 # 옵션 타입 결정 (옵션축 개수에 따라)
@@ -927,15 +929,24 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
     return entry
 
 
-def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
+def _build_options(
+    options: list[dict], default_stock: int = 999, source_site: str = ""
+) -> list[dict]:
     """삼바웨이브 옵션 → EMP 옵션 변환.
 
     삼바웨이브 옵션 형식:
+        구조화 형식: [{name: "펄 그레이(W7)/S", optionName1: "펄 그레이(W7)",
+                      optionName2: "S", ...}, ...]  (SSG 등 — 축이 필드로 분리됨)
         소싱처 형식: [{name: "WHITE / M", ...}, ...]  (value 필드 없음)
         명시적 형식: [{option_name: "색상/사이즈", option_value: "빨강/M", ...}, ...]
+
+    축 판정 우선순위: optionName1/2/3 > option_value > " / " 분리.
+    optionName 필드를 무시하고 name만 파싱하면 SSG 상품이
+    "펄 그레이(W7)/S" 통짜 단일옵션으로 등록된다(다이나핏 1,261건 실측).
     """
     emp_opts: list[dict] = []
     seen_keys: set[tuple] = set()
+    _is_ssg = source_site.upper().startswith("SSG")
 
     for opt in options:
         emp_opt: dict[str, str] = {"type": "SELECT"}
@@ -944,7 +955,19 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         opt_name = opt.get("option_name", "") or opt.get("name", "")
         opt_value = opt.get("option_value", "") or opt.get("value", "")
 
-        if opt_value:
+        # 구조화 축 필드 (optionName1/2/3) — 있으면 최우선
+        axis_values = []
+        for _ax in (1, 2, 3):
+            _v = str(opt.get(f"optionName{_ax}") or "").strip()
+            if not _v:
+                break
+            axis_values.append(_v)
+
+        if axis_values:
+            for i, p in enumerate(axis_values, 1):
+                emp_opt[f"title{i}"] = f"옵션{i}" if len(axis_values) > 1 else "옵션"
+                emp_opt[f"opt{i}"] = p
+        elif opt_value:
             # 명시적 형식: option_name=제목, option_value=값 (cafe24 등)
             names = opt_name.split("/") if "/" in opt_name else [opt_name]
             values = opt_value.split("/") if "/" in opt_value else [opt_value]
@@ -959,6 +982,12 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
                 if " / " in opt_name
                 else [opt_name.strip()]
             )
+            if len(parts) == 1 and _is_ssg and "/" in opt_name:
+                # SSG 레거시 행 — optionName1/2가 없던 시절 수집분. SSG 수집기 자체가
+                # 공백 없는 '/'를 축 구분자로 추론(ssg_sourcing._parse_raw_uitem_blocks)
+                # 하므로 동일 규칙 적용. 타 소싱처는 투톤 색상("블랙/화이트") 등
+                # 단일 값 내 '/' 가능성이 있어 SSG로 한정한다.
+                parts = [p.strip() for p in opt_name.split("/") if p.strip()][:3]
             for i, p in enumerate(parts[:3], 1):
                 emp_opt[f"title{i}"] = f"옵션{i}" if len(parts) > 1 else "옵션"
                 emp_opt[f"opt{i}"] = p
@@ -984,7 +1013,8 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         opt_stock = opt.get("stock", opt.get("quantity", default_stock))
         if default_stock > 0:
             opt_stock = min(int(opt_stock), default_stock)
-        if opt.get("is_sold_out") or opt.get("sold_out"):
+        # isSoldOut(camelCase)가 수집 저장 표준 키 — snake_case만 보면 품절을 놓친다
+        if opt.get("isSoldOut") or opt.get("is_sold_out") or opt.get("sold_out"):
             emp_opt["soldout"] = "1"
             emp_opt["stock"] = "0"
         else:

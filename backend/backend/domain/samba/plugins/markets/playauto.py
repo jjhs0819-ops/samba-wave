@@ -161,7 +161,11 @@ class PlayAutoPlugin(MarketPlugin):
                     "Count": str(stock_qty),
                 }
                 if options and isinstance(options, list):
-                    emp_opts = _build_options(options, stock_qty)
+                    emp_opts = _build_options(
+                        options,
+                        stock_qty,
+                        source_site=str(product.get("source_site") or ""),
+                    )
                     if emp_opts:
                         minimal["Opts"] = emp_opts
                         has_two_axes = any(o.get("title2") for o in emp_opts)

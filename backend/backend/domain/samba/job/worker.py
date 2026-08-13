@@ -1608,7 +1608,7 @@ class JobWorker:
             _rows = (
                 await _ps.execute(
                     _text(
-                        "SELECT id, sale_price, options, market_product_nos, last_sent_data"
+                        "SELECT id, sale_price, options, market_product_nos, last_sent_data, source_site"
                         " FROM samba_collected_product"
                         " WHERE id = ANY(CAST(:pids AS text[]))"
                     ),
@@ -1675,7 +1675,9 @@ class JobWorker:
                 "Count": str(stock_qty),
             }
             if options and isinstance(options, list):
-                emp_opts = _build_options(options, stock_qty)
+                emp_opts = _build_options(
+                    options, stock_qty, source_site=str(prod.source_site or "")
+                )
                 if emp_opts:
                     minimal["Opts"] = emp_opts
                     has_two_axes = any(o.get("title2") for o in emp_opts)
