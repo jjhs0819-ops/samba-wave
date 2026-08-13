@@ -879,6 +879,21 @@ export default function PoliciesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
+            onClick={() => setMainTab('정책관리')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '정책관리' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+              background: mainTab === '정책관리' ? '#e3f4f0' : 'transparent',
+              color: mainTab === '정책관리' ? '#0f6a5b' : c.textMuted,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            정책관리
+          </button>
+          <button
             onClick={() => setMainTab('상품수집조건 관리')}
             style={{
               padding: '0.375rem 0.75rem',
@@ -907,21 +922,6 @@ export default function PoliciesPage() {
             }}
           >
             테트리스 매칭
-          </button>
-          <button
-            onClick={() => setMainTab('정책관리')}
-            style={{
-              padding: '0.375rem 0.75rem',
-              fontSize: '0.75rem',
-              borderRadius: '6px',
-              border: mainTab === '정책관리' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
-              background: mainTab === '정책관리' ? '#e3f4f0' : 'transparent',
-              color: mainTab === '정책관리' ? '#0f6a5b' : c.textMuted,
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            정책관리
           </button>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>

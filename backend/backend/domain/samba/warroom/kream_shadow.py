@@ -113,9 +113,14 @@ _SET_GUARD = "kream_price_guard"
 _g_live_rank: dict = {}  # ask_id -> live_rank(int). 사이클 내에서만 유효
 _RANK_CONCURRENCY = int(os.environ.get("KREAM_RANK_CONCURRENCY") or 16)
 # [2026-08-04] 실순위 단건조회 상한 — 0 이면 조회 자체를 건너뛴다.
-# 1등 여부만 필요하면 목록의 lowest_* 로 정확히 판정된다(내가 최저면 그 값이 내 가격).
-# 단건 조회는 "몇 등인지"를 알려주지만 건당 1회 호출이라 1,500건에 272초가 든다.
-_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 0)
+# [2026-08-13] 기본값 0 → 12,000. 위 주석의 "lowest_* 로 정확히 판정된다"는 **틀렸다**.
+# 크림은 같은 가격이면 먼저 넣은 쪽이 1등이라, 동가 경합에서는 내 가격 == lowest 인데도
+# 2등이다. lowest_* 에 내 입찰이 섞여 있어 시세만으론 이걸 구분할 방법이 아예 없다.
+#   실측(판매자센터): 555088-103|300 판매입찰 260,000원이 2건 — 내 것은 '일반 입찰 순번 2'.
+#   그런데 코드는 cur <= market_low 라 1등으로 보고 그대로 유지했다.
+# 조회를 꺼둔 탓에 '1순위 27,876' 집계도 동가 2등을 전부 1등으로 세고 있었다.
+# 12,000/사이클이면 라이브 입찰 3만 건을 로테이션 3사이클에 전량 커버한다.
+_RANK_SCAN_MAX = int(os.environ.get("KREAM_RANK_SCAN_MAX") or 12000)
 _rank_scan_offset = 0
 
 
@@ -155,9 +160,14 @@ async def _load_live_ranks(
     rest = [x for x in ids_all if x not in pri_set]
     room = max(0, _RANK_SCAN_MAX - len(pri))
     if rest and room:
-        st = _rank_scan_offset % len(rest)
+        # [2026-08-13] 오프셋을 **슬라이스한 뒤** 길이(=room)로 나누고 있었다.
+        # (st + room) % room == st % room 이라 오프셋이 room 범위에 갇혀
+        # 매 사이클 같은 앞부분만 다시 스캔했다 — 로테이션이 전량을 못 돌았다.
+        # 원본 길이로 나눠야 다음 사이클이 이어서 스캔한다.
+        _total = len(rest)
+        st = _rank_scan_offset % _total
         rest = (rest[st:] + rest[:st])[:room]
-        _rank_scan_offset = (st + room) % max(1, len(rest) or 1)
+        _rank_scan_offset = (st + room) % _total
     else:
         rest = []
     target = pri + rest
@@ -328,47 +338,61 @@ async def _unfulfilled_count() -> int:
         return 0
 
 
-async def _brand_reg_rates(limit: int = 6) -> str:
-    """브랜드별 등록률 한 줄 — 재고 있는 옵션 대비 라이브 입찰 비율. [2026-08-06]
+async def _brand_reg_rates(limit: int = 14) -> tuple[str, str]:
+    """브랜드별 '입찰상품수/재고매칭상품수' 두 줄. [2026-08-13 상품 단위로 전환]
 
-    저조 브랜드(Adidas·New Balance 등)가 처리에서 밀리는 걸 슬랙에서 바로 보려고 넣었다.
-    크림 접미 표기('240(US 5.5)')를 흡수해 DB 옵션명과 맞춘다.
+    종전에는 '옵션' 단위 비율(퍼센트)만 찍어서, 브랜드가 통째로 입찰 0건이어도
+    다른 브랜드 퍼센트에 묻혀 안 보였다. 실측에서 Supreme(재고 56)·Mihara(52)·
+    Play CDG(73) 가 전부 입찰 0인 게 이렇게 가려져 있었다. 그래서
+      1) 분자/분모를 상품 수로 그대로 노출하고(브랜드별 규모를 눈으로 비교),
+      2) 재고가 있는데 입찰이 0인 브랜드는 따로 경고 줄로 뽑는다.
+
+    분모는 '재고 있는 매칭 상품'이다. 재고 0이면 애초에 입찰 대상이 아니라
+    전체 매칭수를 분모로 쓰면 등록률이 실제보다 낮게 보인다(구찌 1,899 vs 302).
+
+    반환: (등록률 줄, 입찰0 브랜드 경고 줄) — 각각 비면 "".
     """
     try:
         async with get_read_session() as s:
             rows = (
                 await s.execute(
                     _text(
-                        "WITH c AS ("
-                        "  SELECT cp.resell_matches->'kream'->>'product_id' kid,"
-                        "         TRIM(cp.brand) br, x->>'name' nm"
+                        "WITH m AS ("
+                        "  SELECT cp.id, TRIM(cp.brand) br,"
+                        "         cp.resell_matches->'kream'->>'product_id' kid"
                         "  FROM samba_collected_product cp"
-                        "  CROSS JOIN LATERAL jsonb_array_elements(cp.options::jsonb) x"
-                        "  WHERE cp.source_site='SNKRDUNK'"
+                        "  WHERE cp.source_site IN ('SNKRDUNK','ONITSUKA')"
                         "    AND COALESCE(cp.resell_matches->'kream'->>'product_id','')<>''"
-                        "    AND jsonb_typeof(cp.options::jsonb)='array'"
                         "    AND (cp.resell_matches->'kream'->>'verified')='true'"
-                        "    AND COALESCE((x->>'stock')::int,0) > 0"
-                        "    AND COALESCE((x->>'price')::int,0) BETWEEN 5000 AND 250000)"
-                        "SELECT c.br, COUNT(*) tot,"
+                        "    AND jsonb_typeof(cp.options::jsonb)='array'"
+                        "    AND EXISTS (SELECT 1"
+                        "        FROM jsonb_array_elements(cp.options::jsonb) x"
+                        "        WHERE COALESCE((x->>'stock')::int,0) > 0"
+                        "          AND COALESCE((x->>'price')::int,0)"
+                        "              BETWEEN 5000 AND :maxc))"
+                        "SELECT m.br, COUNT(*) tot,"
                         "       COUNT(*) FILTER (WHERE a.product_id IS NOT NULL) reg "
-                        "FROM c LEFT JOIN kream_live_asks a"
-                        "  ON a.product_id=c.kid"
-                        " AND (a.option=c.nm OR SPLIT_PART(REPLACE(a.option,' ',''),'(',1)"
-                        "      = REPLACE(c.nm,' ','')) "
-                        "GROUP BY c.br HAVING COUNT(*) >= 1000 ORDER BY 2 DESC LIMIT :n"
+                        "FROM m LEFT JOIN (SELECT DISTINCT product_id FROM kream_live_asks) a"
+                        "  ON a.product_id = m.kid "
+                        "GROUP BY m.br HAVING COUNT(*) >= 10 ORDER BY 2 DESC LIMIT :n"
                     ),
-                    {"n": limit},
+                    # 원가 상한은 정책값(kreamMaxCostJpy). 25만엔 하드코딩이면 정책이
+                    # 35만이어도 25만~35만 구간이 집계에서 빠져 등록률이 왜곡된다.
+                    {"n": limit, "maxc": int(POLICY["max_cost_jpy"])},
                 )
             ).all()
         if not rows:
-            return ""
-        return " · ".join(
-            f"{r[0]} {round(100.0 * int(r[2]) / max(1, int(r[1])), 1)}%" for r in rows
+            return "", ""
+        live = [(str(r[0]), int(r[1]), int(r[2])) for r in rows]
+        head = " · ".join(
+            f"{br} {reg:,}/{tot:,}({round(100.0 * reg / max(1, tot), 1)}%)"
+            for br, tot, reg in live
         )
+        zero = [f"{br} 0/{tot:,}" for br, tot, reg in live if reg == 0]
+        return head, (" · ".join(zero) if zero else "")
     except Exception as exc:
         logger.info("[크림통합] 브랜드 등록률 집계 실패(무시): %s", str(exc)[:60])
-        return ""
+        return "", ""
 
 
 async def _count_cat1_verified_unreg() -> int:
@@ -1753,7 +1777,11 @@ def _decide_price_action(
         # rank1 분기는 이미 market_low 기준인데 이 비1등 분기만 빠져 있었다.
         # 틱은 기존과 동일 — 해외 기준 1,000 / 일반 기준 5,000.
         if market_low > 0:
-            _step = 1000 if (low_over > 0 and market_low == low_over) else 5000
+            # [2026-08-13] 틱을 1,000원으로 통일. 종전엔 국내 최저가 기준일 때만 5,000원을
+            # 뺐는데, 그러면 1등을 잡는 데 필요한 것보다 4,000원을 더 깎아 마진을 버리고,
+            # 5,000원을 뺀 값이 마진 하한 아래로 내려가면 '1등불가삭제'로 지워졌다.
+            # 1등은 1,000원만 낮으면 잡힌다(크림 최소 호가 단위 = 1,000원).
+            _step = 1000
             market_target = market_low - _step
         else:
             market_target = 0
@@ -1786,7 +1814,17 @@ def _decide_price_action(
     if fixed:  # 지정가(사용자 확정가)
         target, act = fixed, ("지정가" if fixed != cur else "유지")
     adjusting = act not in ("유지", "유지(동률)", "무경쟁인상(쿨다운보류)")
-    if adjusting and target < cur:  # 하향 20% 캡
+    # 하향 20% 캡 — 단, **1순위를 잡는 조정은 면제**한다. [2026-08-13]
+    # 판정은 1등 가격(market_low - 틱)을 정확히 내는데 캡이 그걸 도로 끌어올려
+    # 2등을 확정시키고 있었다. 예: 내 100,000 / 시장최저 70,000 → target 65,000 인데
+    # 캡이 80,000 으로 올려 2등 유지 → 다음 사이클에나 65,000 도달(사이클 74분).
+    # 시장가와 25% 이상 벌어지면 한 사이클로는 1등이 구조적으로 불가능했고,
+    # 그 사이 시장가가 더 내려가면 영원히 못 따라잡는다(의류/잡화 비1순위 적체).
+    # 아래 데드밴드에는 같은 1순위 예외가 이미 있는데(_gains_rank1) 이 층만 빠져 있었다.
+    # 헐값 방어는 바로 다음 줄 _ANOMALY_FLOOR(시장최저의 70% 미만 차단)가 그대로 맡고,
+    # 마진 하한(min_price) 이상만 면제하므로 손실 위험은 없다.
+    _r1_now = market_low > 0 and 0 < target <= market_low and not rank1
+    if adjusting and target < cur and not (_r1_now and target >= min_price):
         target = max(target, int(cur * (1 - _DROP_CAP)))
     if adjusting and market_low > 0 and target < market_low * _ANOMALY_FLOOR:
         act, target, adjusting = "이상감지차단", cur, False
@@ -2953,12 +2991,21 @@ async def _process_shoe_asks(
             price = int(od.get("price") or 0)
             stock = int(od.get("stock") or 0)
             # 오염 가드 — 신발 원가 상식범위 밖이면 조정/삭제 모두 보류(수집 파싱오류 방어)
-            if price and not (5000 <= price <= 300000):
+            # [2026-08-13] 상한을 300,000 으로 박아둬 정책(kreamMaxCostJpy=350,000)보다
+            # 낮았다. 30만~35만엔 원가는 정책상 정상인데 여기서 먼저 hold 로 막혀
+            # 갱신도 삭제도 안 됐다. 정책값과 300,000 중 큰 쪽을 쓴다.
+            if price and not (5000 <= price <= max(300000, POLICY["max_cost_jpy"])):
                 c["hold"] += 1
                 continue
-            # 입찰 최고 원가 초과 — 갱신 제외(체결 시 그 값으로 소싱해야 해 치명적)
+            # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
+            # [2026-08-13] 종전엔 continue 로 갱신 대상에서 빼기만 해서, 원가가 오른 뒤
+            # 상한을 넘긴 입찰이 영구 방치됐다(실측: 구찌 696883 이 4,152,000원으로 생존).
+            # 체결되면 상한 초과 원가로 소싱해야 하므로 방치가 제일 위험한 처리다.
             if price > POLICY["max_cost_jpy"]:
                 c["overcost"] = c.get("overcost", 0) + 1
+                if _EXEC_SHOE and a.get("id"):
+                    _pend_del.append((a.get("id"), kid, opt))
+                    c["del_overcost"] = c.get("del_overcost", 0) + 1
                 continue
             price = _guard_jpy(kid, opt, price)
             if stock <= 0 or price <= 0:
@@ -3527,7 +3574,13 @@ async def _process_box_asks(
             _bact = row[4] if len(row) > 4 else ""
             _bjpy = row[5] if len(row) > 5 else 0
             if kind == "overcost":
+                # [2026-08-13] 상한 초과는 카운트만 하고 방치했다 → 원가가 오른 뒤
+                # 상한을 넘긴 입찰이 그대로 살아남는다. 체결되면 상한 초과 원가로
+                # 소싱해야 하므로 삭제로 보낸다(신규 등록 차단과 같은 판정).
                 c["overcost"] = c.get("overcost", 0) + 1
+                if _EXEC_BOX:
+                    c["del_overcost"] = c.get("del_overcost", 0) + 1
+                    _bx_del.append((a.get("id"), a.get("product_id"), a.get("option")))
             elif kind == "nocost":
                 c["nocost"] += 1
             elif kind == "hold":
@@ -4288,18 +4341,20 @@ async def run_kream_unified_once() -> dict:
                 stock = int(d.get("stock") or 0)
                 ask = ask_index.get((kid, nm))
                 has_ask = ask is not None
-                # 입찰 최고 원가 초과 — 갱신·리스톡 모두 제외(로컬 25만엔 원칙).
-                # 체결되면 그 원가로 소싱해야 해 초고가 카드는 애초에 다루지 않는다.
+                # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
+                # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
+                # 원가가 오른 뒤 상한을 넘긴 입찰이 영구 방치됐다. 체결되면 상한 초과
+                # 원가로 소싱해야 하므로 등록 차단과 삭제를 한 판정으로 묶는다.
                 if price > POLICY["max_cost_jpy"]:
                     r["rows"].append(
                         (
-                            "overcost",
-                            "원가상한초과",
+                            "delete" if has_ask else "overcost",
+                            "원가상한초과삭제" if has_ask else "원가상한초과",
                             kid,
                             nm,
+                            int(ask.get("price") or 0) if has_ask else 0,
                             0,
-                            0,
-                            False,
+                            bool(has_ask),
                             prod["name"],
                             False,
                         )
@@ -4548,18 +4603,20 @@ async def run_kream_unified_once() -> dict:
                 stock = int(d.get("stock") or 0)
                 ask = ask_index.get((kid, nm))
                 has_ask = ask is not None
-                # 입찰 최고 원가 초과 — 갱신·리스톡 모두 제외(로컬 25만엔 원칙).
-                # 체결되면 그 원가로 소싱해야 해 초고가 카드는 애초에 다루지 않는다.
+                # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
+                # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
+                # 원가가 오른 뒤 상한을 넘긴 입찰이 영구 방치됐다. 체결되면 상한 초과
+                # 원가로 소싱해야 하므로 등록 차단과 삭제를 한 판정으로 묶는다.
                 if price > POLICY["max_cost_jpy"]:
                     r["rows"].append(
                         (
-                            "overcost",
-                            "원가상한초과",
+                            "delete" if has_ask else "overcost",
+                            "원가상한초과삭제" if has_ask else "원가상한초과",
                             kid,
                             nm,
+                            int(ask.get("price") or 0) if has_ask else 0,
                             0,
-                            0,
-                            False,
+                            bool(has_ask),
                             prod["name"],
                             False,
                         )
@@ -5329,7 +5386,7 @@ async def run_kream_unified_once() -> dict:
     _drop_top = " · ".join(
         f"{k} {v:,}" for k, v in sorted(_g_drop.items(), key=lambda kv: -kv[1])[:4]
     )
-    _brand_rates = await _brand_reg_rates()
+    _brand_rates, _brand_zero = await _brand_reg_rates()
     _restock_sec = (
         f"━━ 리스톡  스캔 {min(_unified_offset, rest_total):,}/{rest_total:,}"
         f" (이번 {len(rest_slice):,} · 재고보유 우선)\n"
@@ -5339,7 +5396,10 @@ async def run_kream_unified_once() -> dict:
     if _drop_top:
         _restock_sec += f"\n   제외  {_drop_top}"
     if _brand_rates:
-        _restock_sec += f"\n━━ 브랜드 등록률  {_brand_rates}"
+        _restock_sec += f"\n━━ 브랜드 입찰/재고매칭 상품수  {_brand_rates}"
+    # 재고가 있는데 입찰이 통째로 0인 브랜드 — 퍼센트 줄에 묻히면 며칠씩 방치된다.
+    if _brand_zero:
+        _restock_sec += f"\n   ⚠️ 입찰 0건  {_brand_zero}"
     # [2026-08-06] 개별 등록 상품 나열 제거 — 슬랙에서 건별 확인은 하지 않는데
     # 10줄 + '외 N건' 이 메시지의 절반을 먹었다. 총계만 남긴다.
     # 박스/카드팩 신규등록 — 카드 리스톡과 경로가 달라 별도 줄로 노출(누락 감시).
