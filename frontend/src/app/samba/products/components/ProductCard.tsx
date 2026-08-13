@@ -557,7 +557,7 @@ const ProductCard = React.memo(function ProductCard({
   const no = String(idx + 1).padStart(6, '0')
 
   // 마켓별 개별 가격 계산 (useMemo 캐싱)
-  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; minMarginUsd?: number; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
+  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; minMarginUsd?: number; adRate?: number; adEnabled?: boolean; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
   // 리셀 판매처(KREAM/POIZON)는 아래 resellRows 에서 별도 표시(매칭·정책계산) → 일반 마켓행 중복 제거.
   const marketPriceList = useMemo(() => Object.entries(mp)
     .filter(([marketName, v]) => v.accountId && !RESELL_MARKET_KEYS.has(marketName))
@@ -577,7 +577,10 @@ const ProductCard = React.memo(function ProductCard({
       // 이베이: 배송비($)는 환율 안 곱히고 USD 그대로 수수료만 그로스업해서 최종가에 더함
       // (backend shipment/service.py + plugins/markets/ebay.py 와 동일 — 실제 등록되는 값).
       if (marketName === 'eBay') {
-        const feeR = Number(v.feeRate ?? feeRate ?? 0)
+        // 광고(General Ad) 사용 시 adRate도 수수료와 함께 그로스업 — 안 그러면 광고비만큼
+        // 마진이 그냥 깎여나간다(backend shipment/service.py:calc_market_price 와 동일 로직).
+        const adR = v.adEnabled ? Number(v.adRate || 0) : 0
+        const feeR = Number(v.feeRate ?? feeRate ?? 0) + adR
         const shipUsd = Number(v.shippingCost || 0)
         const base = calcPrice(cost, marginRate, 0, feeR, extraCharge, minMarginAmount, ssMRate, ssMAmount, '₩')
         const baseUsd = usdRate > 0 ? base.price / usdRate : 0
