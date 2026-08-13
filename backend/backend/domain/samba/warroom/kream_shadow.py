@@ -2836,6 +2836,31 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
         await asyncio.gather(*[_one_upd(*x) for x in upds])
 
 
+def _opt_keys(name) -> set[str]:
+    """옵션명 → 비교용 키 집합. **모든 옵션 매칭의 단일 출처**. [2026-08-13]
+
+    종전엔 같은 일을 하는 매처가 세 벌이었다(_live_opt / _match_kream_option /
+    _resolve_box_option). 규칙이 조금씩 달라, 어느 쪽으로 테스트하느냐에 따라
+    같은 옵션이 '매칭됨'도 되고 '실패'도 됐다(실측: 845563 을 _match_kream_option
+    으로 재현해 '매칭 실패'로 오진했으나 실제 경로인 박스 매처는 정상 매칭).
+    비교 규칙을 여기 하나로 모으고 각 매처는 이 키 집합만 쓴다.
+
+    흡수 대상: cm↔mm('24.5cm'↔'245'), 지역접두('JP S'↔'S'),
+              크림 접미('260(US 5.5)'↔'260'), FREE↔ONE SIZE, 2XL↔XXL.
+    """
+    out = {v.replace(" ", "").upper() for v in _cm_to_mm_variants(str(name))}
+    for v in list(out):
+        base = v.split("(")[0]
+        if base:
+            out.add(base)
+    return out
+
+
+def _opt_same(a, b) -> bool:
+    """두 옵션명이 같은 옵션인가 — 표기 차이 흡수 후 비교."""
+    return bool(_opt_keys(a) & _opt_keys(b))
+
+
 def _live_opt(sizes: dict | None, opt: str) -> dict | None:
     """실시간 사이즈맵에서 옵션 하나를 꺼낸다 — 크림 접미('240(US 5.5)'·'230(4Y)') 흡수.
 
@@ -2853,9 +2878,9 @@ def _live_opt(sizes: dict | None, opt: str) -> dict | None:
     # '27cm' 이라 접미 폴백만으로는 못 잡는다. 실측 15073: DB '26cm~28.5cm' vs
     # 실시간 '260~285' → 전부 매칭 실패로 재고 0 판정(등록 전멸). 크림 옵션 매칭이
     # 쓰는 _cm_to_mm_variants 를 그대로 써 두 표기를 한쪽으로 모은다.
-    _want = {v.replace(" ", "").upper() for v in _cm_to_mm_variants(str(opt))}
+    # [2026-08-13] 비교 규칙은 _opt_keys 하나로 — 매처마다 따로 쓰던 것을 합쳤다.
     for _k, _v in sizes.items():
-        if _want & {x.replace(" ", "").upper() for x in _cm_to_mm_variants(str(_k))}:
+        if _opt_same(opt, _k):
             return _v
     _b = re.match(r"^(\d{3}(?:\.\d)?)", str(opt))
     if _b:
@@ -3222,15 +3247,10 @@ def _match_kream_option(nm: str, opts: list) -> dict | None:
     opts = [o for o in opts if not is_bundle_option(o.get("name"))]
     if not opts:
         return None
-    want = {v.replace(" ", "").upper() for v in _cm_to_mm_variants(str(nm))}
-    norm = [(str(o.get("name") or "").replace(" ", "").upper(), o) for o in opts]
-    for n, o in norm:
-        if n and n in want:
-            return o
-    # 크림 접미 표기 — '260(US5.5)' 의 괄호 앞부분으로 한 번 더 본다.
-    for n, o in norm:
-        base = n.split("(")[0]
-        if base and base in want:
+    # [2026-08-13] 비교 규칙은 _opt_keys 하나로 — 크림 접미('260(US5.5)') 처리도
+    # 거기 들어가 있어 여기서 따로 두 번 돌 필요가 없다.
+    for o in opts:
+        if _opt_same(nm, o.get("name")):
             return o
     return None
 
