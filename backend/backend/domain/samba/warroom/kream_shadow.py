@@ -416,7 +416,9 @@ async def _unfulfilled_count() -> int:
         return 0
 
 
-async def _brand_reg_rates(limit: int = 14) -> tuple[str, str]:
+async def _brand_reg_rates(
+    asks: list | None = None, limit: int = 14
+) -> tuple[str, str]:
     """브랜드별 '입찰상품수/재고매칭상품수' 두 줄. [2026-08-13 상품 단위로 전환]
 
     종전에는 '옵션' 단위 비율(퍼센트)만 찍어서, 브랜드가 통째로 입찰 0건이어도
@@ -462,10 +464,50 @@ async def _brand_reg_rates(limit: int = 14) -> tuple[str, str]:
         if not rows:
             return "", ""
         live = [(str(r[0]), int(r[1]), int(r[2])) for r in rows]
-        head = " · ".join(
-            f"{br} {reg:,}/{tot:,}({round(100.0 * reg / max(1, tot), 1)}%)"
-            for br, tot, reg in live
-        )
+
+        # [2026-08-13] 1순위 수를 같이 낸다 — '입찰이 걸렸다'와 '1등이다'는 다르다.
+        # kream_live_asks 에는 시세 컬럼이 없어 DB 만으론 순위를 못 구한다.
+        # 사이클의 asks(lowest_* 포함)를 받아 _rank_summary 와 같은 기준으로 센다:
+        #   진짜 1위 = 해외 최저이면서 국내배송 최저까지 이긴 것.
+        r1_by_br: dict[str, int] = {}
+        if asks:
+            kid_br: dict[str, str] = {}
+            async with get_read_session() as s2:
+                for _k, _b in (
+                    await s2.execute(
+                        _text(
+                            "SELECT resell_matches->'kream'->>'product_id',"
+                            " COALESCE(NULLIF(TRIM(brand),''),'(브랜드없음)')"
+                            " FROM samba_collected_product"
+                            " WHERE source_site IN ('SNKRDUNK','ONITSUKA')"
+                            "   AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
+                        )
+                    )
+                ).all():
+                    if _k:
+                        kid_br[str(_k)] = str(_b)
+            _seen: set = set()
+            for a in asks:
+                _kid = str(a.get("product_id") or "")
+                _key = (_kid, str(a.get("option") or ""))
+                if _key in _seen:
+                    continue
+                _seen.add(_key)
+                _our = int(a.get("price") or 0)
+                _ov = int(a.get("lowest_overseas_price") or 0)
+                _dom = int(a.get("lowest_normal_price") or 0)
+                if _ov > 0 and 0 < _our <= _ov and (_dom <= 0 or _our <= _dom):
+                    _b = kid_br.get(_kid)
+                    if _b:
+                        r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
+
+        def _cell(br: str, tot: int, reg: int) -> str:
+            if not asks:
+                return f"{br} {reg:,}/{tot:,}({round(100.0 * reg / max(1, tot), 1)}%)"
+            r1 = r1_by_br.get(br, 0)
+            return f"{br} 1등{r1:,}/입찰{reg:,}/재고{tot:,}"
+
+        head = " · ".join(_cell(br, tot, reg) for br, tot, reg in live)
         zero = [f"{br} 0/{tot:,}" for br, tot, reg in live if reg == 0]
         return head, (" · ".join(zero) if zero else "")
     except Exception as exc:
@@ -5634,7 +5676,7 @@ async def run_kream_unified_once() -> dict:
     _drop_top = " · ".join(
         f"{k} {v:,}" for k, v in sorted(_g_drop.items(), key=lambda kv: -kv[1])[:4]
     )
-    _brand_rates, _brand_zero = await _brand_reg_rates()
+    _brand_rates, _brand_zero = await _brand_reg_rates(asks)
     _restock_sec = (
         f"━━ 리스톡  스캔 {min(_unified_offset, rest_total):,}/{rest_total:,}"
         f" (이번 {len(rest_slice):,} · 재고보유 우선)\n"
@@ -5644,7 +5686,7 @@ async def run_kream_unified_once() -> dict:
     if _drop_top:
         _restock_sec += f"\n   제외  {_drop_top}"
     if _brand_rates:
-        _restock_sec += f"\n━━ 브랜드 입찰/재고매칭 상품수  {_brand_rates}"
+        _restock_sec += f"\n━━ 브랜드 1등/입찰/재고 상품수  {_brand_rates}"
     # 재고가 있는데 입찰이 통째로 0인 브랜드 — 퍼센트 줄에 묻히면 며칠씩 방치된다.
     if _brand_zero:
         _restock_sec += f"\n   ⚠️ 입찰 0건  {_brand_zero}"
