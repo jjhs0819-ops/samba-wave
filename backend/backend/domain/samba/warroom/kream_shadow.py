@@ -437,23 +437,29 @@ async def _brand_reg_rates(
             rows = (
                 await s.execute(
                     _text(
+                        # [2026-08-13] 단위는 **옵션**(상품×사이즈). 크림 입찰도
+                        # 옵션마다 하나씩 걸리므로 상품으로 세면 규모가 절반 이하로
+                        # 축소돼 보인다.
                         "WITH m AS ("
-                        "  SELECT cp.id, TRIM(cp.brand) br,"
-                        "         cp.resell_matches->'kream'->>'product_id' kid"
+                        "  SELECT TRIM(cp.brand) br,"
+                        "         cp.resell_matches->'kream'->>'product_id' kid,"
+                        "         COALESCE((x->>'stock')::int,0) stk,"
+                        "         COALESCE((x->>'price')::int,0) pr"
                         "  FROM samba_collected_product cp"
+                        "  CROSS JOIN LATERAL jsonb_array_elements(cp.options::jsonb) x"
                         "  WHERE cp.source_site IN ('SNKRDUNK','ONITSUKA')"
                         "    AND COALESCE(cp.resell_matches->'kream'->>'product_id','')<>''"
                         "    AND (cp.resell_matches->'kream'->>'verified')='true'"
-                        "    AND jsonb_typeof(cp.options::jsonb)='array'"
-                        "    AND EXISTS (SELECT 1"
-                        "        FROM jsonb_array_elements(cp.options::jsonb) x"
-                        "        WHERE COALESCE((x->>'stock')::int,0) > 0"
-                        "          AND COALESCE((x->>'price')::int,0)"
-                        "              BETWEEN 5000 AND :maxc))"
-                        "SELECT m.br, COUNT(*) tot,"
-                        "       COUNT(*) FILTER (WHERE a.product_id IS NOT NULL) reg "
-                        "FROM m LEFT JOIN (SELECT DISTINCT product_id FROM kream_live_asks) a"
-                        "  ON a.product_id = m.kid "
+                        "    AND jsonb_typeof(cp.options::jsonb)='array'),"
+                        "kb AS (SELECT DISTINCT kid, br FROM m),"
+                        "bid AS ("
+                        "  SELECT kb.br, COUNT(*) n FROM kream_live_asks a"
+                        "  JOIN kb ON kb.kid = a.product_id GROUP BY kb.br)"
+                        "SELECT m.br,"
+                        "       COUNT(*) FILTER (WHERE m.stk > 0"
+                        "         AND m.pr BETWEEN 5000 AND :maxc) tot,"
+                        "       COALESCE(MAX(bid.n), 0) reg "
+                        "FROM m LEFT JOIN bid ON bid.br = m.br "
                         "GROUP BY m.br HAVING COUNT(*) >= 10 ORDER BY 2 DESC LIMIT :n"
                     ),
                     # 원가 상한은 정책값(kreamMaxCostJpy). 25만엔 하드코딩이면 정책이
@@ -486,24 +492,22 @@ async def _brand_reg_rates(
                 ).all():
                     if _k:
                         kid_br[str(_k)] = str(_b)
-            # [2026-08-13] **상품 단위**로 센다. 종전엔 (상품,옵션) 그룹을 세서
-            # 1등(옵션수)이 입찰(상품수)보다 커지는 모순이 나왔다
-            # (실측: Nike 1등11,642 / 입찰5,356 — 한 상품에 사이즈가 여럿이라).
-            # 그 상품의 옵션 중 하나라도 1등이면 '1등 상품'으로 본다.
-            _r1_kids: set = set()
+            # 1등도 **옵션 단위** — 입찰·재고와 같은 단위여야 비교가 된다.
+            # (상품,옵션) 그룹당 1회만 센다(중복입찰 대비).
+            _seen: set = set()
             for a in asks:
                 _kid = str(a.get("product_id") or "")
-                if not _kid or _kid in _r1_kids:
+                _key = (_kid, str(a.get("option") or ""))
+                if not _kid or _key in _seen:
                     continue
+                _seen.add(_key)
                 _our = int(a.get("price") or 0)
                 _ov = int(a.get("lowest_overseas_price") or 0)
                 _dom = int(a.get("lowest_normal_price") or 0)
                 if _ov > 0 and 0 < _our <= _ov and (_dom <= 0 or _our <= _dom):
-                    _r1_kids.add(_kid)
-            for _kid in _r1_kids:
-                _b = kid_br.get(_kid)
-                if _b:
-                    r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
+                    _b = kid_br.get(_kid)
+                    if _b:
+                        r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
 
         # 표 형태 — 슬랙 코드블록 안이라야 자릿수가 맞는다(가변폭에선 정렬이 깨진다).
         _rows = ["```", f"{'브랜드':<16}{'1등':>8}{'입찰':>8}{'재고':>8}{'1등률':>8}"]
