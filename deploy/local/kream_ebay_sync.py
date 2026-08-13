@@ -168,7 +168,7 @@ async def main():
         SELECT order_number, quantity, created_at, ship_by_at
         FROM samba_order
         WHERE source='ebay' AND product_name ILIKE '%Magikarp%'
-          AND status NOT IN ('cancelled','cancel_requested','refunded')
+          AND status NOT IN ('cancelled','cancel_requested','refunded','returned')
           AND status != 'shipping'
         ORDER BY created_at ASC
     ''')
@@ -199,7 +199,8 @@ def append_new_ebay_orders(ws):
         return
     a_col = ws.col_values(1)
     last_row = len(a_col)
-    order_date = time.strftime("%Y. %-m. %-d")
+    _now = time.localtime()
+    order_date = f"{_now.tm_year}. {_now.tm_mon}. {_now.tm_mday}"
     rows = []
     for o in new_orders:
         for seq in range(1, o["quantity"] + 1):
@@ -247,7 +248,8 @@ def match_delivered_to_ai(ws, newly_delivered):
         row = empty_slots[i]
         oid = order_no.replace("O-OR", "")
         price = fetch_price(price_conn, oid)
-        today = time.strftime("%Y. %-m. %-d")
+        _now = time.localtime()
+        today = f"{_now.tm_year}. {_now.tm_mon}. {_now.tm_mday}"
         updates.append({"range": f"D{row}:E{row}", "values": [[order_no, price or ""]]})
         updates.append({"range": f"H{row}", "values": [[today]]})
         print(f"    row{row} <- {order_no} ({price})")
@@ -257,6 +259,16 @@ def match_delivered_to_ai(ws, newly_delivered):
 
 
 def main():
+    gc = gspread.service_account(filename=CREDS_PATH)
+    sh = gc.open_by_key(SHEET_ID)
+    ws = sh.worksheet(TAB_NAME)
+
+    print("[0] 이베이 신규주문 확인...")
+    try:
+        append_new_ebay_orders(ws)
+    except Exception as e:
+        print(f"    [경고] 이베이 신규주문 조회 실패(건너뜀): {e}")
+
     print("[1] 크림 주문 읽는 중...")
     orders = fetch_kream_orders()
     print(f"    총 {len(orders)}건")
@@ -265,10 +277,6 @@ def main():
         print(f"    [경고] {MIN_EXPECTED_ORDERS}건 미만 — 크림 탭을 못 읽은 것으로 판단, "
               f"K:N 안 건드리고 중단")
         return
-
-    gc = gspread.service_account(filename=CREDS_PATH)
-    sh = gc.open_by_key(SHEET_ID)
-    ws = sh.worksheet(TAB_NAME)
 
     # A:I 에 이미 매칭 확정된 크림주문번호 (D열) — 여기 있는 건 신규 배송완료로 다시 잡으면 안 됨
     ai_kream_orders = {v for v in ws.col_values(4) if v.startswith("O-OR")}
@@ -291,30 +299,20 @@ def main():
     print(f"[2] 신규 배송완료 {len(newly_delivered)}건, 미배송 {len(still_pending)}건 "
           f"(A:I 기존 매칭 {len(ai_kream_orders)}건 제외)")
 
+    if newly_delivered:
+        print("[3] A:I 빈 슬롯에 매칭 중...")
+        try:
+            match_delivered_to_ai(ws, newly_delivered)
+        except Exception as e:
+            print(f"    [경고] A:I 매칭 실패(건너뜀): {e}")
+
     price_tab = find_kream_tab("kream.co.kr/my/buying")
     price_conn = CDPConn(price_tab) if price_tab else None
     if price_conn:
         price_conn.call("Page.enable")
         price_conn.call("Runtime.enable")
 
-    # 배송완료건 -> 이베이 테이블 뒤에 붙이기 (도착순 = date 오름차순)
-    if newly_delivered and price_conn:
-        newly_delivered.sort(key=lambda x: x[1]["date"])
-        print("[3] 가격 조회 중 (상세페이지)...")
-        append_rows = []
-        for order_no, info in newly_delivered:
-            oid = order_no.replace("O-OR", "")
-            price = fetch_price(price_conn, oid)
-            append_rows.append([order_no, price or "", info["date"]])
-            print(f"    {order_no}: {price}")
-
-        # NOTE: 실제 이베이 주문번호/갯수 매칭은 to-ship 리스트와 대조해 사람이 채움(자동 매칭 다음 단계).
-        with open("C:/tmp/newly_delivered.tsv", "w", encoding="utf-8") as f:
-            for row in append_rows:
-                f.write("\t".join(row) + "\n")
-        print("    -> C:/tmp/newly_delivered.tsv 저장 (이베이 매칭은 수동 확인 후 반영)")
-
-    # K:N 전체 새로 작성 (구매가 포함)
+    # K:N 전체 새로 작성 (가격 포함)
     print("[4] K:N 섹션 재작성 (가격 포함)...")
     still_pending.sort(key=lambda x: STATUS_ORDER.get(x[1]["status"], 9))
     kn_rows = []

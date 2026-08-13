@@ -5214,15 +5214,19 @@ async def run_kream_unified_once() -> dict:
             _ec: dict = {}
             _dels: list = []
             _miss_del = 0
+            # [2026-08-13] ask 조회는 반드시 _get_live_ask — ask_index 정확일치만 쓰면
+            # DB 옵션명('27cm')으로 쌓인 큐가 크림 옵션명('270') 인덱스에서 안 잡힌다.
+            # 실측: 통합 첫 사이클에서 삭제 3,065건 중 2,080건이 이 때문에 실패했다
+            # (판정 루프는 _get_live_ask 로 흡수해 찾았는데 실행 변환만 빠뜨렸다).
             for _k, _n in pend_delete:
-                _a = ask_index.get((_k, _n))
+                _a = _get_live_ask(_k, _n)
                 if _a:
                     _dels.append((_a.get("id"), _k, _n))
                 else:
                     _miss_del += 1  # 기존 _do_del 과 동일하게 실패로 센다
             _upds: list = []
             for _k, _n, _tg, _cur, _nc in pend_renew:
-                _a = ask_index.get((_k, _n))
+                _a = _get_live_ask(_k, _n)
                 if _a:  # 기존 _do_renew 는 ask 없으면 조용히 건너뛴다 — 동작 유지
                     _upds.append((_a.get("id"), _tg, _cur, _nc, _k, _n))
 
