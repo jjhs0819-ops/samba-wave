@@ -1505,32 +1505,55 @@ _rate_cache: dict[str, float] = {}
 
 
 async def _frankfurter_rate(frm: str, to: str, fallback: float) -> float:
+    """환율 조회. [2026-08-13] 3회 재시도 — 한 번의 일시 실패로 사이클을 쉬지 않도록.
+
+    캐시는 프로세스 메모리라 배포마다 빈다. 재기동 직후 첫 조회가 실패하면 곧바로
+    폴백으로 떨어지는 구조였고, 그게 원가를 6.6% 부풀려 대량 오삭제를 냈다.
+    """
     pair = f"{frm}/{to}"
-    try:
-        async with httpx.AsyncClient(
-            mounts=_mounts(), timeout=10, follow_redirects=True
-        ) as cli:
-            r = await cli.get(
-                f"https://api.frankfurter.app/latest?from={frm}&to={to}",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            r.raise_for_status()
-            v = float((r.json().get("rates") or {}).get(to) or 0)
-        if v > 0:
-            _rate_cache[pair] = v
-            return v
-    except Exception as exc:
-        logger.warning("[크림] 환율 %s 조회 실패: %s", pair, str(exc)[:60])
+    _last = ""
+    for _try in range(3):
+        try:
+            async with httpx.AsyncClient(
+                mounts=_mounts(), timeout=10, follow_redirects=True
+            ) as cli:
+                r = await cli.get(
+                    f"https://api.frankfurter.app/latest?from={frm}&to={to}",
+                    headers={"User-Agent": "Mozilla/5.0"},
+                )
+                r.raise_for_status()
+                v = float((r.json().get("rates") or {}).get(to) or 0)
+            if v > 0:
+                _rate_cache[pair] = v
+                return v
+            _last = "rates 비어있음"
+        except Exception as exc:
+            _last = str(exc)[:60]
+        if _try < 2:
+            await asyncio.sleep(1.5)
+    logger.warning("[크림] 환율 %s 조회 실패(3회): %s", pair, _last)
     return _rate_cache.get(pair, fallback)
 
 
 async def _jpy_krw_rate() -> float:
-    """JPY/KRW — 로컬 get_rate_cached('JPY/KRW', 9.5021) 동일 소스."""
-    return await _frankfurter_rate("JPY", "KRW", 9.5021)
+    """JPY/KRW. **모르면 0을 돌린다** — 호출부가 사이클을 스킵한다. [2026-08-13]
+
+    종전엔 조회 실패 시 하드코딩 폴백(9.5021)로 조용히 진행했다. 실제값은 8.9142라
+    원가가 6.6% 부풀고, 최소가가 그만큼 올라 시장최저를 못 이기는 건들이 전부
+    '1등불가삭제'로 떨어진다(직전 사이클 삭제 3,065건이 이 영향권).
+    캐시는 프로세스 메모리라 배포마다 비는데, 재기동 직후 첫 조회가 실패하면
+    그대로 폴백으로 한 사이클을 돈다 — 오늘만 배포가 여덟 번이었다.
+    환율은 전 판정의 기준값이다. 모르는 채 도는 것보다 한 사이클 쉬는 게 낫다
+    (통화 오기록으로 5,595만원 오입찰이 났던 자리다).
+    """
+    return await _frankfurter_rate("JPY", "KRW", 0.0)
 
 
 async def _usd_krw_rate() -> float:
-    """USD/KRW — 로컬 get_rate_cached('USD/KRW', 1531.0) 동일 소스(관세 면세한도용)."""
+    """USD/KRW — 관세 면세한도(150달러) 환산용. 실패 시 1,531 폴백 유지.
+
+    이건 '150달러 넘는가' 임계 판정에만 쓰여 오차가 가격에 직접 안 들어간다.
+    """
     return await _frankfurter_rate("USD", "KRW", 1531.0)
 
 
@@ -4050,6 +4073,15 @@ async def run_kream_unified_once() -> dict:
     except Exception as _e:
         logger.warning("[크림통합] 실순위 조회 실패(기존 로직 진행): %s", str(_e)[:80])
     rate = await _jpy_krw_rate()
+    if rate <= 0:
+        # 환율을 모르면 판정 전체가 틀린다 — 폴백으로 진행하지 않고 이번 사이클을 쉰다.
+        logger.error(
+            "[크림통합] 환율(JPY/KRW) 조회 실패 + 캐시 없음 — 이번 사이클 스킵. "
+            "폴백값으로 돌면 원가가 어긋나 대량 오삭제·오입찰이 난다"
+        )
+        _emit_autotune_log("KREAM", "", "[통합] 환율 조회 실패 — 사이클 스킵")
+        await _flush_logs_to_db()
+        return {"ok": False, "reason": "no_fx_rate"}
     tariff_threshold = int(150 * await _usd_krw_rate())
 
     # ── 중복입찰 정리 [로컬 이식] — (상품,옵션)당 내 입찰이 2개↑면 최고가 1개만 남기고 삭제.
