@@ -3263,6 +3263,13 @@ def _match_kream_option(nm: str, opts: list) -> dict | None:
 # 박스/카드팩 신규 자동등록 사이클당 상한 — 첫등록 폭주 방지.
 # 박스 신규 자동등록 실행 게이트 — 갱신/삭제(_EXEC_BOX)와 별도. 후보 검증 후 1.
 _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
+# [2026-08-13] 비카드(신발/의류/시계) 갱신·삭제를 통합 루프 안에서 처리한다.
+# 지금은 _process 가 비카드 '리스톡만' 하고, 갱신·삭제는 _process_shoe_asks 라는
+# 별도 단계가 맡는다. 그래서 (1) 같은 상품 실시간 시세를 두 번 조회하고,
+# (2) 그 단계가 순차 루프라 오늘 API 호출을 넣자 3시간 정지했으며,
+# (3) 단계가 뒤에 있어 앞이 길어지면 통째로 잘렸다.
+# 1 이면 이 루프가 갱신·삭제까지 판정하고 _process_shoe_asks 를 건너뛴다.
+_UNIFIED_NONCARD = os.environ.get("KREAM_UNIFIED_NONCARD") == "1"
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
 # 기존 이름 정규식(박스|카드 ?팩|팩 \()은 '베이스 팩'·'프로모 카드팩' 같은 낱장 카드를
 # 386건 오탐하고, 반대로 이름에 팩/박스가 없는 실제 밀봉품은 못 잡았다.
@@ -4027,6 +4034,13 @@ async def run_kream_unified_once() -> dict:
             return True
         return (_kid, str(_opt).strip().replace(" ", "")) in ask_base_index
 
+    def _get_live_ask(_kid: str, _opt: str):
+        """DB 옵션명으로 라이브 입찰 객체를 꺼낸다 — _has_live_ask 와 같은 흡수 규칙."""
+        a = ask_index.get((_kid, _opt))
+        if a is not None:
+            return a
+        return ask_base_index.get((_kid, str(_opt).strip().replace(" ", "")))
+
     products = await _load_matched_products()
     # 박스 pass용 kid→snkr_id 맵 (배치 슬라이스 전 전체 — 박스 ask는 카탈로그 전역, 로테이션 안 함)
     kid_to_snkr = {
@@ -4267,10 +4281,92 @@ async def run_kream_unified_once() -> dict:
                 for _nm, _d in (prod.get("db_opts") or {}).items():
                     _lv = _live_opt(_live_sz, _nm) or {}
                     _st, _pr = int(_lv.get("stock") or 0), int(_lv.get("price") or 0)
+                    # [2026-08-13] 입찰이 이미 있으면 **갱신·삭제도 여기서 판정**한다
+                    # (게이트 on). 종전엔 리스톡만 하고 갱신은 _process_shoe_asks 라는
+                    # 별도 단계로 나가 있어, 같은 상품 시세를 두 번 조회하고 그 단계가
+                    # 잘리면 갱신이 통째로 누락됐다.
+                    _ask_nc = _get_live_ask(kid, _nm)
+                    if _UNIFIED_NONCARD and _ask_nc is not None:
+                        _cur_nc = int(_ask_nc.get("price") or 0)
+                        if _st <= 0 or _pr <= 0:
+                            r["rows"].append(
+                                (
+                                    "delete",
+                                    "삭제(무재고)",
+                                    kid,
+                                    _nm,
+                                    _cur_nc,
+                                    0,
+                                    True,
+                                    prod["name"],
+                                    False,
+                                )
+                            )
+                            continue
+                        if _pr > POLICY["max_cost_jpy"]:
+                            r["rows"].append(
+                                (
+                                    "delete",
+                                    "원가상한초과삭제",
+                                    kid,
+                                    _nm,
+                                    _cur_nc,
+                                    0,
+                                    True,
+                                    prod["name"],
+                                    False,
+                                )
+                            )
+                            continue
+                        _a_nc, _t_nc, _adj_nc, _isnc_nc = _decide_price_action(
+                            _cur_nc,
+                            _nm,
+                            _pr,
+                            int(_ask_nc.get("lowest_overseas_price") or 0),
+                            int(_ask_nc.get("lowest_normal_price") or 0),
+                            (kid, _nm) in cooldown,
+                            prod["fixed"].get(_nm, 0),
+                            rate,
+                            tariff_threshold,
+                            is_box=True,
+                            surcharge_rate=POLICY["non_card_margin_rate"],
+                            fee_kind="item",
+                            live_rank=_g_live_rank.get(str(_ask_nc.get("id"))),
+                            low_keep=int(_ask_nc.get("lowest_100_price") or 0),
+                        )
+                        if "삭제" in _a_nc:
+                            r["rows"].append(
+                                (
+                                    "delete",
+                                    _a_nc,
+                                    kid,
+                                    _nm,
+                                    _cur_nc,
+                                    0,
+                                    True,
+                                    prod["name"],
+                                    False,
+                                )
+                            )
+                        elif _adj_nc and _t_nc != _cur_nc:
+                            r["rows"].append(
+                                (
+                                    "renew",
+                                    _a_nc,
+                                    kid,
+                                    _nm,
+                                    _cur_nc,
+                                    _t_nc,
+                                    _adj_nc,
+                                    prod["name"],
+                                    _isnc_nc,
+                                )
+                            )
+                        continue
                     if _st <= 0 or _pr <= 0:
                         _drop("재고0또는원가0", kid, _nm, f"st={_st} pr={_pr}")
                         continue
-                    if _has_live_ask(kid, _nm):
+                    if _ask_nc is not None:
                         _trace(kid, _nm, "이미 입찰 있음 — 리스톡 대상 아님")
                         continue
                     # [2026-08-01 오염가드] DB 원가가 상식범위 밖이면 등록 금지.
@@ -5178,10 +5274,47 @@ async def run_kream_unified_once() -> dict:
         )
 
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
-    logger.info("[크림통합] STAGE 신발갱신 시작 %.0f초경과", _stage_t.time() - _t_stage)
-    shoe = await _process_shoe_asks(
-        asks, kid_to_opts, cooldown, rate, tariff_threshold, h, kid_to_snkr, sized_kids
-    )
+    if _UNIFIED_NONCARD:
+        # 통합 모드 — 비카드 갱신·삭제를 위 통합 루프가 이미 처리했다. 이 단계는 건너뛴다.
+        logger.info(
+            "[크림통합] STAGE 신발갱신 생략(통합 루프가 처리) — KREAM_UNIFIED_NONCARD=1"
+        )
+        shoe = {
+            k: 0
+            for k in (
+                "total",
+                "renew",
+                "delete",
+                "hold",
+                "nocost",
+                "patch",
+                "del",
+                "revert",
+                "fail",
+                "live",
+                "stock",
+                "del_nostock",
+                "del_rank",
+                "del_dom",
+                "price_del_skip",
+                "del_floor",
+            )
+        }
+        shoe["db_updates"] = []
+    else:
+        logger.info(
+            "[크림통합] STAGE 신발갱신 시작 %.0f초경과", _stage_t.time() - _t_stage
+        )
+        shoe = await _process_shoe_asks(
+            asks,
+            kid_to_opts,
+            cooldown,
+            rate,
+            tariff_threshold,
+            h,
+            kid_to_snkr,
+            sized_kids,
+        )
     # 갱신·삭제가 조회한 실시간값도 되쓰기 대상에 합친다(5126 _write_back_db_options).
     db_updates.extend(shoe.get("db_updates") or [])
     logger.info(
