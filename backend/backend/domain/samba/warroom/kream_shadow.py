@@ -5138,6 +5138,34 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(_SET_LIMIT, _g_limit_cd)  # 입찰제한 쿨다운 유지
     await _save_setting_map(_SET_GUARD, _g_price_guard)  # 급락 가드 직전가 유지
 
+    # ── [A] 박스(해외배송) 갱신/삭제 — 전역 ask 대상(배치 무관). _EXEC_BOX 게이트.
+    logger.info("[크림통합] STAGE 박스갱신 시작 %.0f초경과", _stage_t.time() - _t_stage)
+    _sealed_kids = await _load_sealed_kids()
+    box = await _process_box_asks(
+        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h, _sealed_kids
+    )
+    logger.info(
+        "[크림통합] 박스(해외배송) %d — 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
+        box["total"],
+        box["renew"],
+        box["delete"],
+        box["hold"],
+        box["nocost"],
+        box["patch"],
+        box["del"],
+        box["revert"],
+        box["fail"],
+        "실행ON" if _EXEC_BOX else "섀도",
+    )
+    if box["total"]:
+        _emit_autotune_log(
+            "KREAM",
+            "",
+            f"[박스] 해외배송 {box['total']:,} — 갱신{box['renew']:,} 삭제{box['delete']:,} "
+            f"보류{box['hold']:,} / 실행 갱신{box['patch']:,} 삭제{box['del']:,} 복귀{box['revert']:,}"
+            f"{_fail_tag(box['fail'])} ({'실행ON' if _EXEC_BOX else '섀도'})",
+        )
+
     # ── [B] 신발(mm) 갱신/삭제 — 전역 ask 대상. DB 옵션(사이즈별) 원가. _EXEC_SHOE 게이트.
     logger.info("[크림통합] STAGE 신발갱신 시작 %.0f초경과", _stage_t.time() - _t_stage)
     shoe = await _process_shoe_asks(
@@ -5176,34 +5204,6 @@ async def run_kream_unified_once() -> dict:
             f"보류{shoe['hold']:,} / 실행 갱신{shoe['patch']:,} 삭제{shoe['del']:,} "
             f"복귀{shoe['revert']:,}{_fail_tag(shoe['fail'])} "
             f"({'실행ON' if _EXEC_SHOE else '섀도'})",
-        )
-
-    # ── [A] 박스(해외배송) 갱신/삭제 — 전역 ask 대상(배치 무관). _EXEC_BOX 게이트.
-    logger.info("[크림통합] STAGE 박스갱신 시작 %.0f초경과", _stage_t.time() - _t_stage)
-    _sealed_kids = await _load_sealed_kids()
-    box = await _process_box_asks(
-        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h, _sealed_kids
-    )
-    logger.info(
-        "[크림통합] 박스(해외배송) %d — 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
-        box["total"],
-        box["renew"],
-        box["delete"],
-        box["hold"],
-        box["nocost"],
-        box["patch"],
-        box["del"],
-        box["revert"],
-        box["fail"],
-        "실행ON" if _EXEC_BOX else "섀도",
-    )
-    if box["total"]:
-        _emit_autotune_log(
-            "KREAM",
-            "",
-            f"[박스] 해외배송 {box['total']:,} — 갱신{box['renew']:,} 삭제{box['delete']:,} "
-            f"보류{box['hold']:,} / 실행 갱신{box['patch']:,} 삭제{box['del']:,} 복귀{box['revert']:,}"
-            f"{_fail_tag(box['fail'])} ({'실행ON' if _EXEC_BOX else '섀도'})",
         )
 
     # ── [B-2/B-3 제거·2026-08-01] 신발/의류/박스 신규등록은 별도 전량조회 경로였다 →
