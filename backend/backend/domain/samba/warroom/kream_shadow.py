@@ -2336,21 +2336,33 @@ async def _partner_token() -> str:
         return str(_ann_token_cache[1])
     tok = ""
     try:
-        from sqlmodel import select
-
-        from backend.domain.samba.forbidden.model import SambaSettings
+        from sqlalchemy import text as _sql_text  # noqa: F811
 
         async with get_read_session() as s:
-            val = (
+            row = (
                 await s.execute(
-                    select(SambaSettings.value).where(
-                        SambaSettings.key == _ANN_TOKEN_KEY
-                    )
+                    _sql_text(
+                        "SELECT value, EXTRACT(EPOCH FROM (now() - updated_at))/3600 AS hrs "
+                        "FROM samba_settings WHERE key = :k"
+                    ),
+                    {"k": _ANN_TOKEN_KEY},
                 )
-            ).scalar_one_or_none()
+            ).first()
+        val, _hrs = (row[0], float(row[1] or 0)) if row else (None, 0.0)
         if isinstance(val, str):
             val = _json.loads(val)
         tok = str((val or {}).get("v") or "")
+        # [2026-08-13] 토큰이 오래되면 경고. 이 값은 로컬 _partner_token_sync.py 가
+        # 20분마다 넣어주는데, 그 루프가 죽으면 조용히 만료된다 — 실측 사고: 8/6 파일정리로
+        # 스크립트가 _archive 로 치워져 159시간 정지 → 고시등록 401 → 신규 상품 입찰이
+        # 통째로 거부(product_announcement_required)됐고 15시간 동안 아무도 몰랐다.
+        # 수명이 8h 라 2h 를 넘기면 루프가 멎었다고 보고 사이클 로그에 남긴다.
+        if _hrs > 2:
+            logger.warning(
+                "[크림통합] 파트너토큰이 %.1f시간째 갱신 안 됨 — "
+                "_partner_token_sync.py 루프 확인 필요(고시등록 401 → 신규 입찰 전면 차단)",
+                _hrs,
+            )
     except Exception as e:
         logger.info("[크림통합] 파트너토큰 조회 실패: %s", str(e)[:80])
     _ann_token_cache[0], _ann_token_cache[1] = _t.time(), tok
