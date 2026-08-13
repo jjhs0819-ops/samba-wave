@@ -144,7 +144,13 @@ async def _fetch_live_ranks(h: dict, ask_ids: list) -> dict:
             except Exception:
                 pass
 
-    await asyncio.gather(*[_one(a) for a in ask_ids])
+    # [2026-08-13] 12,000건을 gather 로 한꺼번에 띄우면 세마포어가 동시 실행을 16으로
+    # 묶어도 **대기 코루틴 수천 개**가 이벤트루프에 얹힌다.
+    #   실측: 활성 task 2,207 / [loop-lag] 이벤트루프 1.25초 블로킹 반복.
+    # 청크로 끊어 대기열 자체를 작게 유지한다(동시 실행 수는 세마포어가 그대로 결정).
+    _CH = 500
+    for _i in range(0, len(ask_ids), _CH):
+        await asyncio.gather(*[_one(a) for a in ask_ids[_i : _i + _CH]])
     return out
 
 
