@@ -7961,6 +7961,39 @@ async def sync_orders_from_markets(
                         cur["gross"] += gross
                         cur["fee"] += fee
 
+                    # NON_SALE_CHARGE(광고비 등) — SALE 거래엔 안 잡힘, references[].ORDER_ID로
+                    # 주문 매칭. General 광고(adEnabled) 사용 계정은 주문마다 별도 청구되는데
+                    # 이걸 안 더하면 정산 메모(gross-fee=net)에서 광고비만큼 net이 과대평가됨
+                    # (2026-08-13 사용자 확인 — "Ad Fee General"이 메모 계산에서 누락).
+                    try:
+                        nsc_list = await ebay_client.get_transactions(
+                            days=body.days, transaction_type="NON_SALE_CHARGE"
+                        )
+                        for tx in nsc_list:
+                            oid = next(
+                                (
+                                    r.get("referenceId", "")
+                                    for r in (tx.get("references") or [])
+                                    if r.get("referenceType") == "ORDER_ID"
+                                ),
+                                "",
+                            )
+                            if not oid:
+                                continue
+                            amt = float((tx.get("amount") or {}).get("value", 0) or 0)
+                            if tx.get("bookingEntry", "DEBIT") == "DEBIT":
+                                amt = -amt
+                            cur = tx_map.setdefault(
+                                oid, {"net": 0.0, "gross": 0.0, "fee": 0.0}
+                            )
+                            cur["net"] += amt
+                            cur["fee"] -= amt  # DEBIT(음수)만큼 fee 증가
+                    except Exception as e:
+                        logger.warning(
+                            f"[주문동기화] {label}: NON_SALE_CHARGE 조회 실패 "
+                            f"(광고비 미반영) — {e}"
+                        )
+
                     matched = 0
                     for od in orders_data:
                         oid = od.get("ext_order_number") or ""
