@@ -5561,6 +5561,13 @@ async def run_kream_unified_once() -> dict:
                     if _kind == "delete":
                         _dels_now.append((_a.get("id"), str(_row[2]), str(_row[3])))
                     elif _kind == "renew":
+                        # [2026-08-14] **바뀔 때만 보낸다.** 종전엔 조건 없이 전부 PATCH 해
+                        # "유지"(가격 그대로) 판정까지 크림에 요청이 나갔다. 결과는 같지만
+                        # 로그의 '조정 N건'이 부풀고 API 호출 한도를 헛되이 쓴다.
+                        # Step5(전량 일괄)에는 원래 이 조건이 있었는데 청크에만 빠져 있었다.
+                        _adj_row = bool(_row[6])
+                        if not (_adj_row and int(_row[5] or 0) != int(_row[4] or 0)):
+                            continue
                         # (ask_id, target, cur, is_nc, kid, opt)
                         _upds_now.append(
                             (
