@@ -3471,6 +3471,8 @@ _UNIFIED_SEALED = os.environ.get("KREAM_UNIFIED_SEALED", "1") != "0"
 _g_early_deleted: set = set()
 # 판정 중 이미 조정한 (kid|opt) — 뒤 실행 단계에서 중복 PATCH 를 막는다.
 _g_early_renewed: set = set()
+# 판정 중 이미 등록한 (kid|opt) — 뒤 실행 단계에서 중복 POST 를 막는다.
+_g_early_posted: set = set()
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
 # 기존 이름 정규식(박스|카드 ?팩|팩 \()은 '베이스 팩'·'프로모 카드팩' 같은 낱장 카드를
 # 386건 오탐하고, 반대로 이름에 팩/박스가 없는 실제 밀봉품은 못 잡았다.
@@ -4117,6 +4119,7 @@ async def run_kream_unified_once() -> dict:
     _progress()
     _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
     _g_early_renewed.clear()
+    _g_early_posted.clear()
 
     if not await _kream_autotune_enabled():
         logger.info("[크림통합] 오토튠 UI서 스니덩크/크림 체크해제 — 이번 사이클 스킵")
@@ -5242,6 +5245,7 @@ async def run_kream_unified_once() -> dict:
     results: list = []
     _early_del = 0
     _early_upd = 0
+    _early_post = 0
     async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
         for _ci in range(0, len(products), _CH_JUDGE):
             _part = await asyncio.gather(
@@ -5258,19 +5262,34 @@ async def run_kream_unified_once() -> dict:
             # 등록(restock)은 고시 토큰·rate limit 때문에 종전대로 끝에 모아서 낸다.
             _dels_now: list = []
             _upds_now: list = []
+            _posts_now: list = []
             for _r in _part:
                 if not isinstance(_r, dict):
                     continue
                 for _row in _r.get("rows") or []:
                     _kind = _row[0]
-                    if _kind not in ("delete", "renew"):
+                    if _kind not in ("delete", "renew", "restock"):
+                        continue
+                    # [2026-08-14] 리스톡은 아직 입찰이 없으니 ask 조회 대상이 아니다.
+                    # 스니덩크 재고·원가를 보고 등록 가능하다고 판정된 그 자리에서
+                    # 바로 등록한다 — 판정 전량(70분)을 기다리면 그 사이 시세가
+                    # 움직여 등록하자마자 2등이 된다(실측 840375: 15분 만에 밀림).
+                    if _kind == "restock":
+                        _posts_now.append(
+                            (
+                                str(_row[2]),
+                                str(_row[3]),
+                                int(_row[5] or 0),
+                                str(_row[7] or ""),
+                            )
+                        )
                         continue
                     _a = _get_live_ask(str(_row[2]), str(_row[3]))
                     if not _a:
                         continue
                     if _kind == "delete":
                         _dels_now.append((_a.get("id"), str(_row[2]), str(_row[3])))
-                    else:
+                    elif _kind == "renew":
                         # (ask_id, target, cur, is_nc, kid, opt)
                         _upds_now.append(
                             (
@@ -5282,20 +5301,67 @@ async def run_kream_unified_once() -> dict:
                                 str(_row[3]),
                             )
                         )
-            if _dels_now or _upds_now:
+            # 리스톡 가드 — 소비 루프와 같은 순서(실패쿨다운 → 거래이력 → 이행대기).
+            # 가드 없이 등록하면 실패가 반복되거나 팔 수 없는 건이 걸린다.
+            _ready: list = []
+            for _kid_p, _nm_p, _tg_p, _pn_p in _posts_now:
+                _key_p = f"{_kid_p}|{_nm_p}"
+                if _key_p in _g_early_posted:
+                    continue
+                if _key_p in _g_failed_posts:
+                    continue
+                if not _trade_ok(_kid_p, _pn_p):
+                    continue
+                if (str(_kid_p), _nm_p.replace(" ", "")) in _g_unfulfilled:
+                    continue
+                if _tg_p <= 0:
+                    continue
+                _ready.append((_kid_p, _nm_p, _tg_p, _pn_p))
+
+            if _dels_now or _upds_now or _ready:
                 _c_now: dict = {}
                 async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as _ecli:
                     await _exec_pending(_ecli, h, _dels_now, _upds_now, _c_now)
+                    if _ready:
+                        _psem_now = asyncio.Semaphore(
+                            int(os.environ.get("KREAM_POST_CONCURRENCY") or 4)
+                        )
+
+                        async def _post_now(_k, _n, _t, _p):
+                            nonlocal _early_post
+                            async with _psem_now:
+                                _progress()
+                                _ok, _rs = await _exec_create_ask(_ecli, h, _k, _t, _n)
+                                if (not _ok) and (
+                                    "announcement" in _rs or "고시" in _rs
+                                ):
+                                    if await _register_announcement(_k):
+                                        _progress()
+                                        _ok, _rs = await _exec_create_ask(
+                                            _ecli, h, _k, _t, _n
+                                        )
+                                if _ok:
+                                    _early_post += 1
+                                    _g_early_posted.add(f"{_k}|{_n}")
+                                else:
+                                    _g_failed_posts[f"{_k}|{_n}"] = _now_ts()
+
+                        await asyncio.gather(
+                            *[_post_now(*x) for x in _ready], return_exceptions=True
+                        )
                 _early_del += int(_c_now.get("del", 0))
                 _early_upd += int(_c_now.get("patch", 0))
                 _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
                 _g_early_renewed.update(f"{k}|{o}" for _, _t, _c, _n, k, o in _upds_now)
                 logger.info(
-                    "[크림통합] 판정중 실행 삭제%d 조정%d (누적 삭제%d 조정%d · %.0f초경과)",
+                    "[크림통합] 판정중 실행 삭제%d 조정%d 등록%d "
+                    "(누적 삭제%d 조정%d 등록%d · %.0f초경과)",
                     int(_c_now.get("del", 0)),
                     int(_c_now.get("patch", 0)),
+                    len(_ready),
                     _early_del,
                     _early_upd,
+                    _early_post,
                     _stage_t.time() - _t_stage,
                 )
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
@@ -5504,61 +5570,6 @@ async def run_kream_unified_once() -> dict:
                 nonlocal exec_post, exec_fail
                 async with _psem:
                     _progress()  # 워치독 — 등록도 '진행'이다
-                    # [2026-08-14] 등록 직전 시세 재확인.
-                    # 목표가는 판정 때 받은 시세로 계산되는데, 등록 POST 는 판정 전량이
-                    # 끝난 뒤에 나간다(고시 토큰·rate limit 때문). 사이클이 70분이라
-                    # 그 사이 시장최저가 내려가면 **등록하자마자 2등**이 된다.
-                    #   실측 840375|310: 407,000 으로 등록(그때 최저 408,000) →
-                    #   15분 뒤 해외최저 406,000, 순번 2.
-                    # 여기서 다시 보고, 목표가가 더 이상 1등이 아니면 한 틱 아래로 맞춘다.
-                    try:
-                        _pr = await _rq(
-                            "GET",
-                            f"{KREAM_OPENAPI_BASE}/products/{_kid}",
-                            headers=h,
-                            tries=2,
-                        )
-                        if _pr.status_code == 200:
-                            _po = _match_kream_option(
-                                _nm, (_pr.json() or {}).get("options") or []
-                            )
-                            if _po:
-                                _cands = [
-                                    int(_po.get(k) or 0)
-                                    for k in (
-                                        "lowest_overseas_price",
-                                        "lowest_normal_price",
-                                        "lowest_100_price",
-                                    )
-                                ]
-                                _cands = [c for c in _cands if c > 0]
-                                _ml = min(_cands) if _cands else 0
-                                _floor = int(
-                                    _floor_map.get((str(_kid), str(_nm)), 0) or 0
-                                )
-                                if _ml and _tg >= _ml:
-                                    _new = _ml - 1000
-                                    if _floor and _new < _floor:
-                                        # 마진 하한 아래면 등록 자체가 무의미하다.
-                                        _drop(
-                                            "등록직전1등불가",
-                                            _kid,
-                                            _nm,
-                                            f"{_tg:,}→{_new:,} < 하한{_floor:,}",
-                                        )
-                                        return
-                                    logger.info(
-                                        "[크림통합] 등록직전 재계산 %s %s %d→%d "
-                                        "(시장최저 %d)",
-                                        _kid,
-                                        _nm,
-                                        _tg,
-                                        _new,
-                                        _ml,
-                                    )
-                                    _tg = _new
-                    except Exception:
-                        pass
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
                         if await _register_announcement(_kid):
