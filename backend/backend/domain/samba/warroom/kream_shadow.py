@@ -5504,6 +5504,61 @@ async def run_kream_unified_once() -> dict:
                 nonlocal exec_post, exec_fail
                 async with _psem:
                     _progress()  # 워치독 — 등록도 '진행'이다
+                    # [2026-08-14] 등록 직전 시세 재확인.
+                    # 목표가는 판정 때 받은 시세로 계산되는데, 등록 POST 는 판정 전량이
+                    # 끝난 뒤에 나간다(고시 토큰·rate limit 때문). 사이클이 70분이라
+                    # 그 사이 시장최저가 내려가면 **등록하자마자 2등**이 된다.
+                    #   실측 840375|310: 407,000 으로 등록(그때 최저 408,000) →
+                    #   15분 뒤 해외최저 406,000, 순번 2.
+                    # 여기서 다시 보고, 목표가가 더 이상 1등이 아니면 한 틱 아래로 맞춘다.
+                    try:
+                        _pr = await _rq(
+                            "GET",
+                            f"{KREAM_OPENAPI_BASE}/products/{_kid}",
+                            headers=h,
+                            tries=2,
+                        )
+                        if _pr.status_code == 200:
+                            _po = _match_kream_option(
+                                _nm, (_pr.json() or {}).get("options") or []
+                            )
+                            if _po:
+                                _cands = [
+                                    int(_po.get(k) or 0)
+                                    for k in (
+                                        "lowest_overseas_price",
+                                        "lowest_normal_price",
+                                        "lowest_100_price",
+                                    )
+                                ]
+                                _cands = [c for c in _cands if c > 0]
+                                _ml = min(_cands) if _cands else 0
+                                _floor = int(
+                                    _floor_map.get((str(_kid), str(_nm)), 0) or 0
+                                )
+                                if _ml and _tg >= _ml:
+                                    _new = _ml - 1000
+                                    if _floor and _new < _floor:
+                                        # 마진 하한 아래면 등록 자체가 무의미하다.
+                                        _drop(
+                                            "등록직전1등불가",
+                                            _kid,
+                                            _nm,
+                                            f"{_tg:,}→{_new:,} < 하한{_floor:,}",
+                                        )
+                                        return
+                                    logger.info(
+                                        "[크림통합] 등록직전 재계산 %s %s %d→%d "
+                                        "(시장최저 %d)",
+                                        _kid,
+                                        _nm,
+                                        _tg,
+                                        _new,
+                                        _ml,
+                                    )
+                                    _tg = _new
+                    except Exception:
+                        pass
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
                         if await _register_announcement(_kid):
