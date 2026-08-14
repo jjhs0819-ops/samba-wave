@@ -514,9 +514,25 @@ async def _brand_reg_rates(
                         r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
 
         # 표 형태 — 슬랙 코드블록 안이라야 자릿수가 맞는다(가변폭에선 정렬이 깨진다).
+        # [2026-08-14] 한글은 표시 폭이 2칸인데 파이썬 포맷은 글자 수로 센다 —
+        # 그대로 두면 헤더가 컬럼과 어긋난다. 동아시아 문자를 2로 세어 보정한다.
+        def _w(t: str) -> int:
+            import unicodedata as _ud
+
+            return sum(2 if _ud.east_asian_width(c) in "WF" else 1 for c in str(t))
+
+        def _pad(t: str, n: int, right: bool = False) -> str:
+            gap = max(0, n - _w(t))
+            return (" " * gap + str(t)) if right else (str(t) + " " * gap)
+
         _rows = [
             "```",
-            f"{'브랜드':<16}{'1등':>8}{'입찰':>8}{'재고':>8}{'매칭':>9}{'입찰률':>7}",
+            _pad("브랜드", 16)
+            + _pad("1등", 8, True)
+            + _pad("입찰", 8, True)
+            + _pad("재고", 8, True)
+            + _pad("매칭", 9, True)
+            + _pad("입찰률", 8, True),
         ]
         for br, tot, reg, mat in live:
             r1 = r1_by_br.get(br, 0) if asks else 0
@@ -525,7 +541,14 @@ async def _brand_reg_rates(
             # 104% 같은 값이 나왔다(Pokemon TCG 1등2,383/입찰2,297).
             # 알고 싶은 건 '건 것 중 몇 등'이 아니라 **재고가 있는데 얼마나 걸었나** 다.
             _rate = f"{100.0 * reg / tot:.0f}%" if tot else "—"
-            _rows.append(f"{br[:15]:<16}{r1:>8,}{reg:>8,}{tot:>8,}{mat:>9,}{_rate:>7}")
+            _rows.append(
+                _pad(br[:15], 16)
+                + _pad(f"{r1:,}", 8, True)
+                + _pad(f"{reg:,}", 8, True)
+                + _pad(f"{tot:,}", 8, True)
+                + _pad(f"{mat:,}", 9, True)
+                + _pad(_rate, 8, True)
+            )
         _rows.append("```")
         head = "\n" + "\n".join(_rows)
         zero = [f"{br} 0/{tot:,}" for br, tot, reg, _m in live if reg == 0]
