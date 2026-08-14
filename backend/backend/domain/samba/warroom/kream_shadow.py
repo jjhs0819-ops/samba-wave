@@ -5597,6 +5597,18 @@ async def run_kream_unified_once() -> dict:
                         }
                     )
 
+    # [2026-08-14] 판정 사유 분포 — 종전엔 acts 를 집계만 하고 **아무 데도 찍지 않았다**
+    # (죽은 집계). 등록이 갑자기 줄거나 삭제가 안 나갈 때 "왜"를 볼 수단이 없어 매번
+    # 코드를 거슬러 올라가야 했다. 상위 12개만 한 줄로 남긴다.
+    if acts:
+        logger.info(
+            "[크림통합] 판정사유 %s",
+            " · ".join(
+                f"{_k} {_v:,}"
+                for _k, _v in sorted(acts.items(), key=lambda kv: -kv[1])[:12]
+            ),
+        )
+
     # ── [Step 5] 실제 실행 — _EXECUTE=1 일 때만. 삭제→갱신→리스톡 순. rate limit 여유(0.1s).
     # 로그는 실행 진행 중 5건마다 DB flush — 사이클 끝까지 안 기다리고 UI에 즉시 노출.
     exec_patch = exec_post = exec_del = exec_fail = exec_revert = 0
