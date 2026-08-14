@@ -222,9 +222,20 @@ class PlayAutoPlugin(MarketPlugin):
                     # 쌓이던 문제를 등록 '전' 사전확인으로 차단한다.
                     # (타임아웃 자체를 성공으로 보는 금지 패턴과 무관)
                     _prod_name = str(emp_data.get("ProdName", "")).strip()
+                    # 특수문자 정제 전(레거시) 이름으로 등록된 기존 상품도 찾아야 한다.
+                    # 정제본으로만 조회하면 EMP엔 원본명으로 있는 상품을 못 찾아
+                    # 복제본이 새로 생긴다 (이름이 유일 키인 구조).
+                    _raw_name = str(product.get("name", "")).strip()
                     _dup_code = ""
                     try:
                         _dup_code = await client.find_master_code_by_name(_prod_name)
+                        if not _dup_code and _raw_name and _raw_name != _prod_name:
+                            _dup_code = await client.find_master_code_by_name(_raw_name)
+                            if _dup_code:
+                                logger.info(
+                                    "[플레이오토] 레거시 원본명으로 기등록 발견 — "
+                                    f"재연결: {_raw_name[:30]}"
+                                )
                     except Exception as _pre_e:
                         logger.warning(
                             f"[플레이오토] 중복 사전조회 실패(등록 계속): {_pre_e}"

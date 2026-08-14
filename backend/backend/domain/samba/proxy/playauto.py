@@ -1,5 +1,6 @@
 """플레이오토 EMP API 클라이언트."""
 
+import re
 from typing import Any
 
 import httpx
@@ -26,6 +27,30 @@ def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     if len(encoded) <= max_bytes:
         return text
     return encoded[:max_bytes].decode("utf-8", errors="ignore").strip()
+
+
+# 마켓이 상품명에서 거부하는 특수문자.
+# 현대H몰 실거부(2026-08-14): "판매상품명에 특수문자 ';' 는 포함될 수 없습니다."
+# EMP 마스터 상품명은 연결된 전 쇼핑몰로 그대로 내려가므로, 한 몰이라도 거부하는
+# 문자는 마스터 단계에서 제거해야 그 몰만 통째로 실패하는 일이 없다.
+_NAME_DROP_CHARS = "'’ʼ\"“”`"  # 따옴표류 — 삭제(단어 안 쪼개짐)
+_NAME_SPACE_CHARS = ";|\\<>{}^~"  # 구분자류 — 공백 치환
+
+
+def sanitize_prod_name(name: Any) -> str:
+    """마켓 거부 특수문자를 제거한 상품명.
+
+    따옴표류는 삭제한다 — 공백으로 바꾸면 "Levi's"가 "Levi s"로 쪼개진다.
+    나머지 구분자류는 공백으로 바꾸고 연속 공백을 접는다.
+    """
+    text = str(name or "")
+    for _c in _NAME_DROP_CHARS:
+        text = text.replace(_c, "")
+    for _c in _NAME_SPACE_CHARS:
+        text = text.replace(_c, " ")
+    # 제어문자 제거 + 공백 정리
+    text = "".join(ch if ch >= " " else " " for ch in text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 def is_derived_order(ro: dict) -> bool:
@@ -603,7 +628,7 @@ class PlayAutoClient:
         # 기본 정보
         data: dict[str, Any] = {
             "MasterCode": "__AUTO__",
-            "ProdName": str(product.get("name", "")),
+            "ProdName": sanitize_prod_name(product.get("name", "")),
             "Price": str(int(product.get("sale_price", 0))),
             "Count": str(stock_qty),
             "MadeIn": _normalize_origin(product.get("origin")),
