@@ -5468,6 +5468,8 @@ async def run_kream_unified_once() -> dict:
                     _skip_note("이행대기", kid, nm)
                 else:
                     rs["ok"] += 1
+                    if f"{kid}|{nm}" in _g_early_posted:
+                        continue  # 판정 청크에서 이미 등록됨 - 중복 POST 방지
                     pend_restock.append((kid, nm, target, pname))
             if act not in ("유지", "유지(동률)"):
                 if _emitted < 120:
