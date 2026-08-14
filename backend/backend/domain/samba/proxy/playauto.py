@@ -1022,7 +1022,19 @@ def _build_options(
             emp_opt["stock"] = str(int(opt_stock))
 
         emp_opt["weight"] = "0"
-        emp_opt["manage_code"] = ""
+        # 옵션 관리코드 — GS이숍은 옵션별 공급사 단품코드(attrPrdListSupAttrPrdCd)가
+        # 필수라, 빈 값이면 EMP→GS이숍 전송이 "필수 값을 확인 해주세요"로 전량 거부됨
+        # (2026-08-14 에잇세컨즈 GS이숍 등록 실패로 발견). 수집 옵션의 관리코드
+        # (무신사 managedCode "흰색^M" 등) 우선, 없으면 옵션 고유번호(no) 폴백.
+        # 타 마켓은 관리코드가 있어도 무해(판매자 참조용 필드).
+        _mcode = str(
+            opt.get("managedCode")
+            or opt.get("managed_code")
+            or opt.get("itemCode")
+            or opt.get("no")
+            or ""
+        ).strip()
+        emp_opt["manage_code"] = _mcode[:50]
         emp_opt["barcode_user"] = ""
 
         emp_opts.append(emp_opt)
