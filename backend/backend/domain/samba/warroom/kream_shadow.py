@@ -2980,12 +2980,47 @@ def _opt_keys(name) -> set[str]:
         base = v.split("(")[0]
         if base:
             out.add(base)
+    # [2026-08-14] 아래 셋은 '표기만 다른 같은 옵션'인데 매칭 실패로 등록이 통째로
+    # 건너뛰어지던 것들이다(입찰 없는 재고옵션 81,232 중 표본 4.2% = 약 3,400건).
+    raw = str(name).strip()
+    for v in list(out):
+        # ① 수량 묶음 — DB '5個'/'9パック' ↔ 크림 '해외배송(5개)'
+        m = re.fullmatch(r"(\d+)(?:個|コ|파ック|パック|개|PACK|PCS)?", v)
+        if m:
+            out.add(f"수량{int(m.group(1))}")
+        # ② 여성 접두 — DB '250' ↔ 크림 'W250'
+        if v.startswith("W") and v[1:].replace(".", "").isdigit():
+            out.add(v[1:])
+        elif v.replace(".", "").isdigit():
+            out.add("W" + v)
+    m2 = re.search(r"(?:해외배송|일반배송)\s*\((\d+)\s*개\)", raw)
+    if m2:
+        out.add(f"수량{int(m2.group(1))}")
     return out
+
+
+def _opt_range(name) -> tuple[int, int] | None:
+    """크림 범위 표기 '260-270(XS)' → (260, 270). 아니면 None. [2026-08-14]"""
+    m = re.match(r"^\s*(\d{3})\s*-\s*(\d{3})", str(name))
+    if not m:
+        return None
+    lo, hi = int(m.group(1)), int(m.group(2))
+    return (lo, hi) if lo <= hi else (hi, lo)
 
 
 def _opt_same(a, b) -> bool:
     """두 옵션명이 같은 옵션인가 — 표기 차이 흡수 후 비교."""
-    return bool(_opt_keys(a) & _opt_keys(b))
+    if _opt_keys(a) & _opt_keys(b):
+        return True
+    # 범위 표기 — DB '265' 가 크림 '260-270(XS)' 안에 들면 같은 옵션이다.
+    for x, y in ((a, b), (b, a)):
+        rng = _opt_range(y)
+        if not rng:
+            continue
+        for k in _opt_keys(x):
+            if k.isdigit() and rng[0] <= int(k) <= rng[1]:
+                return True
+    return False
 
 
 def _live_opt(sizes: dict | None, opt: str) -> dict | None:
