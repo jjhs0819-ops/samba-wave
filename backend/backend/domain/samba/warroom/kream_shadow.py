@@ -5504,15 +5504,10 @@ async def run_kream_unified_once() -> dict:
     # 125,000 인데 시장최저 123,000 — 팔 수 없는데 순번 95 로 방치).
     # 삭제는 손실 방지라 가장 급하다. 청크마다 삭제분만 먼저 지우고, 갱신·등록은
     # 종전대로 판정이 끝난 뒤 모아서 실행한다(rate limit·순서 보존).
-    # [2026-08-14] 3,000 → **8. 판정 동시성과 같은 수 = 한 세트**.
-    # 판정 동시성은 위 Semaphore(8) 이 잡는데, gather 에 3,000개를 넣으면 그 3,000개가
-    # **전부** 끝나야 반환한다. 그래서 가장 느린 상품 하나가 청크 전체의 삭제·조정·등록을
-    # 붙잡았다(한 청크 약 12분, 8청크 = 90분). "청크에서 즉시 실행"이라 불렀지만 실제로는
-    # 3,000건 배치였다.
-    # 8 로 맞추면 동시에 도는 8개가 한 세트로 끝나고 그 자리에서 실행이 나간다 —
-    # 스니덩크 재고·원가 수집 → 크림 순위·가격 판정 → 삭제/조정/등록까지 한 묶음.
-    # 병렬도는 그대로 8 이라 전체 속도는 변하지 않는다.
-    _CH_JUDGE = int(os.environ.get("KREAM_JUDGE_CHUNK") or 8)
+    # [2026-08-14] 판정 워커 수. 청크 gather 를 버리고 워커 풀로 바꿨다 —
+    # 워커가 각자 큐에서 상품을 집어가 판정하고 그 자리에서 실행까지 낸다.
+    # 상품 단위 처리 동시성은 아래 Semaphore(8) 과 같은 수로 맞춘다.
+    _JUDGE_WORKERS = int(os.environ.get("KREAM_JUDGE_WORKERS") or 8)
     results: list = []
     _early_del = 0
     _early_upd = 0
@@ -5528,154 +5523,183 @@ async def run_kream_unified_once() -> dict:
         httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli,
         httpx.AsyncClient(mounts=_mounts(), timeout=25) as _ecli,
     ):
-        for _ci in range(0, len(products), _CH_JUDGE):
-            _part = await asyncio.gather(
-                *[_process_logged(p, scli) for p in products[_ci : _ci + _CH_JUDGE]],
-                return_exceptions=True,
-            )
-            results.extend(_part)
-            if not _EXECUTE:
-                continue
-            # [2026-08-14] 이 청크의 **삭제와 조정을 함께** 즉시 실행한다.
-            # 종전엔 삭제만 내보내고 조정(renew)은 판정 전량이 끝날 때까지 기다렸다.
-            # 그래서 1,000원 차이로 밀린 입찰이 만 건이 지나도록 그대로였다
-            # (실측 459800: 내 414,000 / 시장 413,000 — 51% 지나도록 무변화).
-            # 등록(restock)은 고시 토큰·rate limit 때문에 종전대로 끝에 모아서 낸다.
-            _dels_now: list = []
-            _upds_now: list = []
-            _posts_now: list = []
-            for _r in _part:
-                if not isinstance(_r, dict):
+        # [2026-08-14] **워커 풀** — 청크 gather 를 버린다.
+        # gather(8) 은 8개가 **전부** 끝나야 다음으로 간다. 8개 중 하나가 느리면 나머지
+        # 7개는 끝나고도 논다(꼬리 지연). 청크 3,000 일 땐 평균에 묻혔는데 8 로 줄이니
+        # 그대로 드러나 판정이 6.6건/초 → 1.6건/초 로 떨어졌다(90분 → 4시간).
+        # 워커가 각자 큐에서 다음 상품을 집어가고, 자기 상품 판정이 끝나면 그 자리에서
+        # 삭제·조정·등록을 낸다. 서로 기다리지 않는다 — '상품 하나씩 세트로 즉시'.
+        _pq: asyncio.Queue = asyncio.Queue()
+        for _p in products:
+            _pq.put_nowait(_p)
+
+        async def _worker():
+            while True:
+                try:
+                    _p = _pq.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    _r = await _process_logged(_p, scli)
+                except Exception as _e:  # 한 상품 실패로 워커가 죽으면 안 된다
+                    _r = _e
+                results.append(_r)
+                if not _EXECUTE:
                     continue
-                for _row in _r.get("rows") or []:
-                    _kind = _row[0]
-                    if _kind not in ("delete", "renew", "restock"):
+                _part = [_r]
+                # [2026-08-14] 이 청크의 **삭제와 조정을 함께** 즉시 실행한다.
+                # 종전엔 삭제만 내보내고 조정(renew)은 판정 전량이 끝날 때까지 기다렸다.
+                # 그래서 1,000원 차이로 밀린 입찰이 만 건이 지나도록 그대로였다
+                # (실측 459800: 내 414,000 / 시장 413,000 — 51% 지나도록 무변화).
+                # 등록(restock)은 고시 토큰·rate limit 때문에 종전대로 끝에 모아서 낸다.
+                _dels_now: list = []
+                _upds_now: list = []
+                _posts_now: list = []
+                for _r in _part:
+                    if not isinstance(_r, dict):
                         continue
-                    # [2026-08-14] 리스톡은 아직 입찰이 없으니 ask 조회 대상이 아니다.
-                    # 스니덩크 재고·원가를 보고 등록 가능하다고 판정된 그 자리에서
-                    # 바로 등록한다 — 판정 전량(70분)을 기다리면 그 사이 시세가
-                    # 움직여 등록하자마자 2등이 된다(실측 840375: 15분 만에 밀림).
-                    if _kind == "restock":
-                        _posts_now.append(
-                            (
-                                str(_row[2]),
-                                str(_row[3]),
-                                int(_row[5] or 0),
-                                str(_row[7] or ""),
-                            )
-                        )
-                        continue
-                    _a = _get_live_ask(str(_row[2]), str(_row[3]))
-                    if not _a:
-                        continue
-                    if _kind == "delete":
-                        _dels_now.append((_a.get("id"), str(_row[2]), str(_row[3])))
-                    elif _kind == "renew":
-                        # [2026-08-14] **바뀔 때만 보낸다.** 종전엔 조건 없이 전부 PATCH 해
-                        # "유지"(가격 그대로) 판정까지 크림에 요청이 나갔다. 결과는 같지만
-                        # 로그의 '조정 N건'이 부풀고 API 호출 한도를 헛되이 쓴다.
-                        # Step5(전량 일괄)에는 원래 이 조건이 있었는데 청크에만 빠져 있었다.
-                        _adj_row = bool(_row[6])
-                        if not (_adj_row and int(_row[5] or 0) != int(_row[4] or 0)):
+                    for _row in _r.get("rows") or []:
+                        _kind = _row[0]
+                        if _kind not in ("delete", "renew", "restock"):
                             continue
-                        # (ask_id, target, cur, is_nc, kid, opt)
-                        _upds_now.append(
-                            (
-                                _a.get("id"),
-                                int(_row[5] or 0),
-                                int(_row[4] or 0),
-                                bool(_row[8]) if len(_row) > 8 else False,
-                                str(_row[2]),
-                                str(_row[3]),
+                        # [2026-08-14] 리스톡은 아직 입찰이 없으니 ask 조회 대상이 아니다.
+                        # 스니덩크 재고·원가를 보고 등록 가능하다고 판정된 그 자리에서
+                        # 바로 등록한다 — 판정 전량(70분)을 기다리면 그 사이 시세가
+                        # 움직여 등록하자마자 2등이 된다(실측 840375: 15분 만에 밀림).
+                        if _kind == "restock":
+                            _posts_now.append(
+                                (
+                                    str(_row[2]),
+                                    str(_row[3]),
+                                    int(_row[5] or 0),
+                                    str(_row[7] or ""),
+                                )
                             )
-                        )
-            # 리스톡 가드 — 소비 루프와 같은 순서(실패쿨다운 → 거래이력 → 이행대기).
-            # 가드 없이 등록하면 실패가 반복되거나 팔 수 없는 건이 걸린다.
-            _ready: list = []
-            for _kid_p, _nm_p, _tg_p, _pn_p in _posts_now:
-                _key_p = f"{_kid_p}|{_nm_p}"
-                if _key_p in _g_early_posted:
-                    continue
-                if _key_p in _g_failed_posts:
-                    continue
-                if not _trade_ok(_kid_p, _pn_p):
-                    continue
-                if (str(_kid_p), _nm_p.replace(" ", "")) in _g_unfulfilled:
-                    continue
-                if _tg_p <= 0:
-                    continue
-                _ready.append((_kid_p, _nm_p, _tg_p, _pn_p))
-
-            if _dels_now or _upds_now or _ready:
-                # [2026-08-14] 실행을 **백그라운드로 던진다**. 청크를 8 로 줄이자
-                # '8건 판정 → 실행(PATCH 수십 건) → 판정 정지' 가 반복돼 판정 속도가
-                # 6.6건/초 → 1.0건/초 로 떨어졌다(전체 90분 → 6.5시간).
-                # 실행은 크림 API 왕복이라 판정(스니덩크 조회)과 겹쳐 돌아도 되고,
-                # 동시 폭주는 _exec_bg_sem 이 막는다. 사이클 끝에서 전부 기다린다.
-
-                async def _flush_bg(
-                    _dels_now=_dels_now, _upds_now=_upds_now, _ready=_ready
-                ):
-                    nonlocal _early_del, _early_upd, _early_post
-                    async with _exec_bg_sem:
-                        _c_now: dict = {}
-                        if True:  # 실행 클라이언트는 위에서 연 _ecli 재사용
-                            await _exec_pending(_ecli, h, _dels_now, _upds_now, _c_now)
-                            if _ready:
-                                _psem_now = asyncio.Semaphore(
-                                    int(os.environ.get("KREAM_POST_CONCURRENCY") or 4)
+                            continue
+                        _a = _get_live_ask(str(_row[2]), str(_row[3]))
+                        if not _a:
+                            continue
+                        if _kind == "delete":
+                            _dels_now.append((_a.get("id"), str(_row[2]), str(_row[3])))
+                        elif _kind == "renew":
+                            # [2026-08-14] **바뀔 때만 보낸다.** 종전엔 조건 없이 전부 PATCH 해
+                            # "유지"(가격 그대로) 판정까지 크림에 요청이 나갔다. 결과는 같지만
+                            # 로그의 '조정 N건'이 부풀고 API 호출 한도를 헛되이 쓴다.
+                            # Step5(전량 일괄)에는 원래 이 조건이 있었는데 청크에만 빠져 있었다.
+                            _adj_row = bool(_row[6])
+                            if not (
+                                _adj_row and int(_row[5] or 0) != int(_row[4] or 0)
+                            ):
+                                continue
+                            # (ask_id, target, cur, is_nc, kid, opt)
+                            _upds_now.append(
+                                (
+                                    _a.get("id"),
+                                    int(_row[5] or 0),
+                                    int(_row[4] or 0),
+                                    bool(_row[8]) if len(_row) > 8 else False,
+                                    str(_row[2]),
+                                    str(_row[3]),
                                 )
+                            )
+                # 리스톡 가드 — 소비 루프와 같은 순서(실패쿨다운 → 거래이력 → 이행대기).
+                # 가드 없이 등록하면 실패가 반복되거나 팔 수 없는 건이 걸린다.
+                _ready: list = []
+                for _kid_p, _nm_p, _tg_p, _pn_p in _posts_now:
+                    _key_p = f"{_kid_p}|{_nm_p}"
+                    if _key_p in _g_early_posted:
+                        continue
+                    if _key_p in _g_failed_posts:
+                        continue
+                    if not _trade_ok(_kid_p, _pn_p):
+                        continue
+                    if (str(_kid_p), _nm_p.replace(" ", "")) in _g_unfulfilled:
+                        continue
+                    if _tg_p <= 0:
+                        continue
+                    _ready.append((_kid_p, _nm_p, _tg_p, _pn_p))
 
-                                async def _post_now(_k, _n, _t, _p):
-                                    nonlocal _early_post
-                                    async with _psem_now:
-                                        _progress()
-                                        # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
-                                        # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
-                                        _pre = await _rival_low(_ecli, h, _k, _n)
-                                        _ok, _rs = await _exec_create_ask(
-                                            _ecli, h, _k, _t, _n
+                if _dels_now or _upds_now or _ready:
+                    # [2026-08-14] 실행을 **백그라운드로 던진다**. 청크를 8 로 줄이자
+                    # '8건 판정 → 실행(PATCH 수십 건) → 판정 정지' 가 반복돼 판정 속도가
+                    # 6.6건/초 → 1.0건/초 로 떨어졌다(전체 90분 → 6.5시간).
+                    # 실행은 크림 API 왕복이라 판정(스니덩크 조회)과 겹쳐 돌아도 되고,
+                    # 동시 폭주는 _exec_bg_sem 이 막는다. 사이클 끝에서 전부 기다린다.
+
+                    async def _flush_bg(
+                        _dels_now=_dels_now, _upds_now=_upds_now, _ready=_ready
+                    ):
+                        nonlocal _early_del, _early_upd, _early_post
+                        async with _exec_bg_sem:
+                            _c_now: dict = {}
+                            if True:  # 실행 클라이언트는 위에서 연 _ecli 재사용
+                                await _exec_pending(
+                                    _ecli, h, _dels_now, _upds_now, _c_now
+                                )
+                                if _ready:
+                                    _psem_now = asyncio.Semaphore(
+                                        int(
+                                            os.environ.get("KREAM_POST_CONCURRENCY")
+                                            or 4
                                         )
-                                        if (not _ok) and (
-                                            "announcement" in _rs or "고시" in _rs
-                                        ):
-                                            if await _register_announcement(_k):
-                                                _progress()
-                                                _ok, _rs = await _exec_create_ask(
-                                                    _ecli, h, _k, _t, _n
-                                                )
-                                        if _ok:
-                                            _early_post += 1
-                                            _g_early_posted.add(f"{_k}|{_n}")
-                                            await _audit_post(
-                                                _ecli, h, _k, _n, _t, _pre
+                                    )
+
+                                    async def _post_now(_k, _n, _t, _p):
+                                        nonlocal _early_post
+                                        async with _psem_now:
+                                            _progress()
+                                            # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
+                                            # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
+                                            _pre = await _rival_low(_ecli, h, _k, _n)
+                                            _ok, _rs = await _exec_create_ask(
+                                                _ecli, h, _k, _t, _n
                                             )
-                                        else:
-                                            _g_failed_posts[f"{_k}|{_n}"] = _now_ts()
+                                            if (not _ok) and (
+                                                "announcement" in _rs or "고시" in _rs
+                                            ):
+                                                if await _register_announcement(_k):
+                                                    _progress()
+                                                    _ok, _rs = await _exec_create_ask(
+                                                        _ecli, h, _k, _t, _n
+                                                    )
+                                            if _ok:
+                                                _early_post += 1
+                                                _g_early_posted.add(f"{_k}|{_n}")
+                                                await _audit_post(
+                                                    _ecli, h, _k, _n, _t, _pre
+                                                )
+                                            else:
+                                                _g_failed_posts[f"{_k}|{_n}"] = (
+                                                    _now_ts()
+                                                )
 
-                                await asyncio.gather(
-                                    *[_post_now(*x) for x in _ready],
-                                    return_exceptions=True,
-                                )
-                        _early_del += int(_c_now.get("del", 0))
-                        _early_upd += int(_c_now.get("patch", 0))
-                        _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
-                        _g_early_renewed.update(
-                            f"{k}|{o}" for _, _t, _c, _n, k, o in _upds_now
-                        )
-                        logger.info(
-                            "[크림통합] 판정중 실행 삭제%d 조정%d 등록%d "
-                            "(누적 삭제%d 조정%d 등록%d · %.0f초경과)",
-                            int(_c_now.get("del", 0)),
-                            int(_c_now.get("patch", 0)),
-                            len(_ready),
-                            _early_del,
-                            _early_upd,
-                            _early_post,
-                            _stage_t.time() - _t_stage,
-                        )
+                                    await asyncio.gather(
+                                        *[_post_now(*x) for x in _ready],
+                                        return_exceptions=True,
+                                    )
+                            _early_del += int(_c_now.get("del", 0))
+                            _early_upd += int(_c_now.get("patch", 0))
+                            _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
+                            _g_early_renewed.update(
+                                f"{k}|{o}" for _, _t, _c, _n, k, o in _upds_now
+                            )
+                            logger.info(
+                                "[크림통합] 판정중 실행 삭제%d 조정%d 등록%d "
+                                "(누적 삭제%d 조정%d 등록%d · %.0f초경과)",
+                                int(_c_now.get("del", 0)),
+                                int(_c_now.get("patch", 0)),
+                                len(_ready),
+                                _early_del,
+                                _early_upd,
+                                _early_post,
+                                _stage_t.time() - _t_stage,
+                            )
 
-                _exec_bg.append(asyncio.create_task(_flush_bg()))
+                    _exec_bg.append(asyncio.create_task(_flush_bg()))
+
+        await asyncio.gather(
+            *[_worker() for _ in range(_JUDGE_WORKERS)], return_exceptions=True
+        )
     # 백그라운드로 던진 실행을 여기서 전부 회수한다. 안 기다리면 판정이 끝나는 순간
     # AsyncClient(_ecli) 가 닫히고 진행 중이던 PATCH/DELETE/POST 가 통째로 끊긴다.
     if _exec_bg:
