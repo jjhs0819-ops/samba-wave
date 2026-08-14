@@ -3460,6 +3460,9 @@ _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
 # (3) 단계가 뒤에 있어 앞이 길어지면 통째로 잘렸다.
 # 1 이면 이 루프가 갱신·삭제까지 판정하고 _process_shoe_asks 를 건너뛴다.
 _UNIFIED_NONCARD = os.environ.get("KREAM_UNIFIED_NONCARD") == "1"
+# 밀봉품(박스·카드팩)도 통합 루프에서 갱신·삭제한다. 종전엔 _process_box_asks
+# 라는 별도 STAGE 라 판정이 끝나야 차례가 왔다.
+_UNIFIED_SEALED = os.environ.get("KREAM_UNIFIED_SEALED") == "1"
 # 판정 중 즉시 삭제한 (kid|opt) — 뒤 실행 단계에서 중복 삭제를 막는다.
 _g_early_deleted: set = set()
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
@@ -4429,8 +4432,15 @@ async def run_kream_unified_once() -> dict:
             # 밀봉품 249건에 값 0인 PSA 9/PSA 10 옵션이 박혀 있어(카드 write-back 잔재)
             # has_psa_opt 가 True 로 잡히며 카드 분기로 샜고, 매 사이클 PSA 0/0 을 되써
             # 오염을 재생산하면서 정작 밀봉 옵션은 아무도 등록하지 않았다.
+            # [2026-08-14] 밀봉품도 통합 루프에서 처리한다(_UNIFIED_SEALED=1).
+            # 제외 사유였던 '옵션명 매핑'(1個/10パック ↔ 크림 해외배송(N개))은
+            # _opt_keys 에 수량 규칙을 넣어 해결했다. 별도 STAGE 로 남겨두면
+            # 판정이 다 끝난 뒤에야 차례가 와서, 삭제 판정이 나도 한 사이클을
+            # 통째로 기다린다(실측 670179: 1등불가삭제인데 순번 95 로 방치).
             if any(_SEALED_OPT_RE.search(str(n)) for n in prod["db_opts"]):
-                return r
+                if not _UNIFIED_SEALED:
+                    return r
+                r["sealed"] = 1
             # [2026-08-04] 옵션이 비면 카드로 인식하지 못해 카드 분기(=PSA 시세 조회 후
             # options write-back)에 못 들어가고, 못 들어가니 옵션이 영영 안 채워진다.
             # 그 상태로 주문이 들어오면 "상품 전체 품절"로 찍혀 재고X 가 붙는다
@@ -5501,11 +5511,32 @@ async def run_kream_unified_once() -> dict:
     await _save_setting_map(_SET_GUARD, _g_price_guard)  # 급락 가드 직전가 유지
 
     # ── [A] 박스(해외배송) 갱신/삭제 — 전역 ask 대상(배치 무관). _EXEC_BOX 게이트.
-    logger.info("[크림통합] STAGE 박스갱신 시작 %.0f초경과", _stage_t.time() - _t_stage)
     _sealed_kids = await _load_sealed_kids()
-    box = await _process_box_asks(
-        asks, kid_to_snkr, cooldown, rate, tariff_threshold, h, _sealed_kids
-    )
+    if _UNIFIED_SEALED:
+        logger.info(
+            "[크림통합] STAGE 박스갱신 생략(통합 루프가 처리) — KREAM_UNIFIED_SEALED=1"
+        )
+        box = {
+            k: 0
+            for k in (
+                "total",
+                "renew",
+                "delete",
+                "hold",
+                "nocost",
+                "patch",
+                "del",
+                "revert",
+                "fail",
+            )
+        }
+    else:
+        logger.info(
+            "[크림통합] STAGE 박스갱신 시작 %.0f초경과", _stage_t.time() - _t_stage
+        )
+        box = await _process_box_asks(
+            asks, kid_to_snkr, cooldown, rate, tariff_threshold, h, _sealed_kids
+        )
     logger.info(
         "[크림통합] 박스(해외배송) %d — 갱신%d 삭제%d 보류%d 원가없음%d / 실행[갱신%d 삭제%d 복귀%d 실패%d] (%s)",
         box["total"],
