@@ -4922,6 +4922,28 @@ async def run_kream_unified_once() -> dict:
                         )
                         continue
                     _co = _copt
+                    # [2026-08-14] **등록할 바로 그 크림 옵션명으로 보유를 재확인**한다.
+                    # 위 has_ask 는 DB/스니덩크 옵션명 기준이라, 표기 규칙이 한 군데라도
+                    # 어긋나면 '입찰 없음'으로 새 나간다. 등록은 _copt["name"](크림 실제
+                    # 옵션명)으로 나가므로 그 이름으로 보면 규칙과 무관하게 절대 안 뚫린다.
+                    # 뚫렸을 때 나오는 결과가 '내 기존 입찰을 시장최저로 읽고 -1,000 해서
+                    # 그 위에 또 등록' 이다 — 실측 중복 359쌍이 전부 정확히 1,000원 차이.
+                    _kopt_nm = str(_copt.get("name") or "")
+                    if _kopt_nm and _get_live_ask(kid, _kopt_nm) is not None:
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(이미입찰중)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     _act, _tgt, _adj, _isnc = _decide_price_action(
                         0,
                         nm,
@@ -5182,6 +5204,28 @@ async def run_kream_unified_once() -> dict:
                         )
                         continue
                     _co = _copt
+                    # [2026-08-14] **등록할 바로 그 크림 옵션명으로 보유를 재확인**한다.
+                    # 위 has_ask 는 DB/스니덩크 옵션명 기준이라, 표기 규칙이 한 군데라도
+                    # 어긋나면 '입찰 없음'으로 새 나간다. 등록은 _copt["name"](크림 실제
+                    # 옵션명)으로 나가므로 그 이름으로 보면 규칙과 무관하게 절대 안 뚫린다.
+                    # 뚫렸을 때 나오는 결과가 '내 기존 입찰을 시장최저로 읽고 -1,000 해서
+                    # 그 위에 또 등록' 이다 — 실측 중복 359쌍이 전부 정확히 1,000원 차이.
+                    _kopt_nm = str(_copt.get("name") or "")
+                    if _kopt_nm and _get_live_ask(kid, _kopt_nm) is not None:
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(이미입찰중)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     _act, _tgt, _adj, _isnc = _decide_price_action(
                         0,
                         nm,
