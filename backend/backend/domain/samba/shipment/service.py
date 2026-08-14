@@ -2599,6 +2599,28 @@ class SambaShipmentService:
                                     pass
                             _capped_opts.append(_opt_copy)
                         acct_product["options"] = _capped_opts
+                        # [신규등록 보류] 캡 결과 전 옵션이 0이면 마켓엔 '품절 상품'이
+                        # 깔린다 — 팔 수 없는 상품이 심사 슬롯과 목록만 차지한다.
+                        # (2026-08-14 에잇세컨즈: 재고 1~2개뿐인 상품 913건이 캡으로
+                        # 전량 0 → 쿠팡에 품절 등록) 신규등록 가드(위쪽)는 캡 '이전'
+                        # 값을 보므로 통과해버린다 — 캡 직후에 다시 판정한다.
+                        # 갱신은 그대로 전송 — 기존 등록의 품절 전파는 오버셀 방지에 필수.
+                        if (
+                            not res.get("is_update")
+                            and available_stock(_capped_opts) <= 0
+                            and available_stock(product_dict.get("options")) > 0
+                        ):
+                            res["status"] = "skipped"
+                            res["error"] = (
+                                "신규등록 보류: 저재고 캡(재고 "
+                                f"{_LOW_STOCK_SEND_CAP_TH}개 이하)으로 전송재고 0 — "
+                                "재고 회복 후 자동 등록"
+                            )
+                            logger.info(
+                                f"[전송] {market_type} 신규등록 보류 — 저재고 캡: "
+                                f"{(product_row.name or '')[:30]}"
+                            )
+                            return res
 
                     logger.info(f"[메모리] 마켓전송 전: {_mem_mb()}MB")
                     start_time = time.time()
