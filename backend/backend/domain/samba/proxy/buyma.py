@@ -53,7 +53,9 @@ class BuymaClient:
     ) -> dict[str, Any]:
         """CollectedProduct → 바이마 CSV 행 변환."""
         settings = account_settings or {}
-        name = product.get("name") or ""
+        # 바이마=일본 마켓 → 일문상품명(name_ja) 우선. 없으면 한글 name 폴백
+        # (일문명 미설정 시 등록은 BuymaPlugin.execute에서 차단됨)
+        name = product.get("name_ja") or product.get("name") or ""
         sale_price = int(
             product.get("_final_sale_price") or product.get("sale_price") or 0
         )

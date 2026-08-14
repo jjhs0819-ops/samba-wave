@@ -150,6 +150,14 @@ interface MarketPolicyForm {
   kreamItemFeeBase?: number           // 실물(신발/의류/시계) 기본수수료 (원) — 정산 차감
   kreamSellerLevel?: number           // 크림 판매등급 (1~5) — 등급수수료율 자동 도출(매달 변동)
   kreamItemFeeVat?: number            // 실물 수수료 VAT율 (%) — 별도 부과
+  // 바이마(무재고 구매대행) 전용
+  buymaMinMarginKrw?: number          // 최소마진금액 (원) — 미만이면 등록 제외
+  buymaFeeRate?: number               // 성약수수료율 (%) — 레귤러 7.7
+  buymaShippingKrw?: number           // 배송비(K패킷 등, 원) — 향후 서포트유/KSE로 교체 가능
+  buymaSettleFeeKrw?: number          // 정산 수수료 (원)
+  buymaExchangeRate?: number          // 환율 (엔→원)
+  buymaPriceBasis?: string            // 가격기준 'median' | 'min'
+  buymaMaxSellers?: number            // 최대 경쟁 셀러수 — 초과 시 선별 제외
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
   adEnabled?: boolean // eBay General 광고 사용 여부 — 등록/수정 시 자동 활성
@@ -1630,7 +1638,7 @@ export default function PoliciesPage() {
                   </label>
                 </div>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && marketPolicyTab !== 'KREAM' && (
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && marketPolicyTab !== 'KREAM' && marketPolicyTab !== '바이마' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
                   <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
@@ -1738,7 +1746,50 @@ export default function PoliciesPage() {
                   </div>
                 </>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && marketPolicyTab !== 'KREAM' && (
+              {/* 바이마(무재고 구매대행) 전용: 최소마진/성약수수료율/배송비/정산/환율/가격기준/경쟁셀러수 */}
+              {marketPolicyTab === '바이마' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소마진금액</span>
+                    <NumInput value={mp.buymaMinMarginKrw ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaMinMarginKrw: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이 마진 미만이면 등록 제외(선별 하한)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>성약수수료율</span>
+                    <NumInput value={mp.buymaFeeRate ?? 7.7} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>BUYMA 成約手数料. 레귤러 7.7%(매출 등급 상승 시 인하)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
+                    <NumInput value={mp.buymaShippingKrw ?? 10000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaShippingKrw: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>한→일 발송비(K패킷 등). 향후 서포트유/KSE 사용 시 그 값으로 변경</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>정산 수수료</span>
+                    <NumInput value={mp.buymaSettleFeeKrw ?? 2500} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaSettleFeeKrw: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외 정산(송금) 수수료. 마진 계산 시 차감</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>환율(엔→원)</span>
+                    <NumInput value={mp.buymaExchangeRate ?? 9} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaExchangeRate: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="원/엔" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>엔화 판매가→원화 환산에 사용</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>가격기준</span>
+                    <select style={{ ...inputStyle, width: 'auto' }} value={mp.buymaPriceBasis ?? 'median'} onChange={(e) => { setCurrentMarketPolicy({ ...mp, buymaPriceBasis: e.target.value }); triggerAutoSave() }}>
+                      <option value="median">시세 중앙값(median)</option>
+                      <option value="min">시세 최저가(min)</option>
+                    </select>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>바이마 경쟁 시세 기준 — 판매가 산정에 사용</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최대 경쟁셀러수</span>
+                    <NumInput value={mp.buymaMaxSellers ?? 40} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaMaxSellers: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="명" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이보다 경쟁 셀러 많은 상품은 선별 제외(레드오션 회피)</span>
+                  </div>
+                </>
+              )}
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && marketPolicyTab !== 'KREAM' && marketPolicyTab !== '바이마' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                   <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix={marketPolicyTab === 'eBay' ? '$' : '원'} />
