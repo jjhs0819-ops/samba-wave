@@ -5517,7 +5517,17 @@ async def run_kream_unified_once() -> dict:
     _early_del = 0
     _early_upd = 0
     _early_post = 0
-    async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
+    # [2026-08-14] 실행용 클라이언트를 **사이클당 하나만** 연다. 청크가 8 로 줄면서
+    # 청크마다 AsyncClient 를 새로 만들면 TCP/TLS 재수립이 수천 번 반복된다.
+    # 판정용(scli)과 분리는 유지 — 타임아웃이 다르다.
+    _exec_bg: list = []  # 백그라운드 실행 태스크(사이클 끝에서 전부 대기)
+    _exec_bg_sem = asyncio.Semaphore(
+        int(os.environ.get("KREAM_EXEC_BG_CONCURRENCY") or 3)
+    )
+    async with (
+        httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli,
+        httpx.AsyncClient(mounts=_mounts(), timeout=25) as _ecli,
+    ):
         for _ci in range(0, len(products), _CH_JUDGE):
             _part = await asyncio.gather(
                 *[_process_logged(p, scli) for p in products[_ci : _ci + _CH_JUDGE]],
@@ -5597,55 +5607,86 @@ async def run_kream_unified_once() -> dict:
                 _ready.append((_kid_p, _nm_p, _tg_p, _pn_p))
 
             if _dels_now or _upds_now or _ready:
-                _c_now: dict = {}
-                async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as _ecli:
-                    await _exec_pending(_ecli, h, _dels_now, _upds_now, _c_now)
-                    if _ready:
-                        _psem_now = asyncio.Semaphore(
-                            int(os.environ.get("KREAM_POST_CONCURRENCY") or 4)
-                        )
+                # [2026-08-14] 실행을 **백그라운드로 던진다**. 청크를 8 로 줄이자
+                # '8건 판정 → 실행(PATCH 수십 건) → 판정 정지' 가 반복돼 판정 속도가
+                # 6.6건/초 → 1.0건/초 로 떨어졌다(전체 90분 → 6.5시간).
+                # 실행은 크림 API 왕복이라 판정(스니덩크 조회)과 겹쳐 돌아도 되고,
+                # 동시 폭주는 _exec_bg_sem 이 막는다. 사이클 끝에서 전부 기다린다.
 
-                        async def _post_now(_k, _n, _t, _p):
-                            nonlocal _early_post
-                            async with _psem_now:
-                                _progress()
-                                # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
-                                # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
-                                _pre = await _rival_low(_ecli, h, _k, _n)
-                                _ok, _rs = await _exec_create_ask(_ecli, h, _k, _t, _n)
-                                if (not _ok) and (
-                                    "announcement" in _rs or "고시" in _rs
-                                ):
-                                    if await _register_announcement(_k):
+                async def _flush_bg(
+                    _dels_now=_dels_now, _upds_now=_upds_now, _ready=_ready
+                ):
+                    nonlocal _early_del, _early_upd, _early_post
+                    async with _exec_bg_sem:
+                        _c_now: dict = {}
+                        if True:  # 실행 클라이언트는 위에서 연 _ecli 재사용
+                            await _exec_pending(_ecli, h, _dels_now, _upds_now, _c_now)
+                            if _ready:
+                                _psem_now = asyncio.Semaphore(
+                                    int(os.environ.get("KREAM_POST_CONCURRENCY") or 4)
+                                )
+
+                                async def _post_now(_k, _n, _t, _p):
+                                    nonlocal _early_post
+                                    async with _psem_now:
                                         _progress()
+                                        # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
+                                        # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
+                                        _pre = await _rival_low(_ecli, h, _k, _n)
                                         _ok, _rs = await _exec_create_ask(
                                             _ecli, h, _k, _t, _n
                                         )
-                                if _ok:
-                                    _early_post += 1
-                                    _g_early_posted.add(f"{_k}|{_n}")
-                                    await _audit_post(_ecli, h, _k, _n, _t, _pre)
-                                else:
-                                    _g_failed_posts[f"{_k}|{_n}"] = _now_ts()
+                                        if (not _ok) and (
+                                            "announcement" in _rs or "고시" in _rs
+                                        ):
+                                            if await _register_announcement(_k):
+                                                _progress()
+                                                _ok, _rs = await _exec_create_ask(
+                                                    _ecli, h, _k, _t, _n
+                                                )
+                                        if _ok:
+                                            _early_post += 1
+                                            _g_early_posted.add(f"{_k}|{_n}")
+                                            await _audit_post(
+                                                _ecli, h, _k, _n, _t, _pre
+                                            )
+                                        else:
+                                            _g_failed_posts[f"{_k}|{_n}"] = _now_ts()
 
-                        await asyncio.gather(
-                            *[_post_now(*x) for x in _ready], return_exceptions=True
+                                await asyncio.gather(
+                                    *[_post_now(*x) for x in _ready],
+                                    return_exceptions=True,
+                                )
+                        _early_del += int(_c_now.get("del", 0))
+                        _early_upd += int(_c_now.get("patch", 0))
+                        _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
+                        _g_early_renewed.update(
+                            f"{k}|{o}" for _, _t, _c, _n, k, o in _upds_now
                         )
-                _early_del += int(_c_now.get("del", 0))
-                _early_upd += int(_c_now.get("patch", 0))
-                _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
-                _g_early_renewed.update(f"{k}|{o}" for _, _t, _c, _n, k, o in _upds_now)
-                logger.info(
-                    "[크림통합] 판정중 실행 삭제%d 조정%d 등록%d "
-                    "(누적 삭제%d 조정%d 등록%d · %.0f초경과)",
-                    int(_c_now.get("del", 0)),
-                    int(_c_now.get("patch", 0)),
-                    len(_ready),
-                    _early_del,
-                    _early_upd,
-                    _early_post,
-                    _stage_t.time() - _t_stage,
-                )
+                        logger.info(
+                            "[크림통합] 판정중 실행 삭제%d 조정%d 등록%d "
+                            "(누적 삭제%d 조정%d 등록%d · %.0f초경과)",
+                            int(_c_now.get("del", 0)),
+                            int(_c_now.get("patch", 0)),
+                            len(_ready),
+                            _early_del,
+                            _early_upd,
+                            _early_post,
+                            _stage_t.time() - _t_stage,
+                        )
+
+                _exec_bg.append(asyncio.create_task(_flush_bg()))
+    # 백그라운드로 던진 실행을 여기서 전부 회수한다. 안 기다리면 판정이 끝나는 순간
+    # AsyncClient(_ecli) 가 닫히고 진행 중이던 PATCH/DELETE/POST 가 통째로 끊긴다.
+    if _exec_bg:
+        _bg_done = await asyncio.gather(*_exec_bg, return_exceptions=True)
+        _bg_err = sum(1 for _x in _bg_done if isinstance(_x, BaseException))
+        logger.info(
+            "[크림통합] 백그라운드 실행 회수 %d건%s",
+            len(_exec_bg),
+            f" (실패 {_bg_err})" if _bg_err else "",
+        )
+        _exec_bg.clear()
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
     if _g_post_audit["n"]:
         logger.info(
