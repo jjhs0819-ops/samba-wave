@@ -2913,6 +2913,62 @@ async def _register_announcement(kid: str) -> bool:
         return False
 
 
+# ── 리스톡 등록 검증 계측 [2026-08-14] ────────────────────────────────────
+# "신규 입찰인데 왜 1등이 아니냐"를 사후가 아니라 **등록 그 순간** 남긴다.
+# 종전엔 POST 응답을 통째로 버려(return True, "ok") 등록 직후 순위를 알 수 없었고,
+# 나중에 목록을 봐야 했는데 그때는 이미 시세가 움직인 뒤라 원인을 못 갈랐다.
+_g_post_rank: dict = {}  # "kid|opt" -> live_rank(int|None)
+_g_post_audit = {"n": 0, "rank1": 0, "bad": 0}  # 사이클 집계
+
+
+def _remember_post_rank(key: str, resp) -> None:
+    """POST /asks 응답에서 live_rank 를 건져 둔다(실패해도 등록 자체엔 영향 없음)."""
+    try:
+        _g_post_rank[key] = (resp.json() or {}).get("live_rank")
+    except Exception:
+        _g_post_rank[key] = None
+
+
+async def _audit_post(cli, h, kid: str, opt: str, price: int, pre_low: int) -> None:
+    """등록 직전 최저가 · 등록가 · 등록 후 순위를 한 줄로 남긴다.
+
+    rank 가 1 이 아니면 그 자리에서 이유를 가를 수 있다:
+      pre_low 가 등록가보다 낮다  → 판정이 시세를 잘못 봤다(코드 문제)
+      pre_low 가 등록가보다 높다  → 등록과 동시에 남이 더 싸게 들어왔다(시장 변동)
+    """
+    _key = f"{kid}|{opt}"
+    _rank = _g_post_rank.get(_key)
+    if _rank is None:  # POST 응답에 없으면 실측으로 보강
+        _rank = await _rival_rank_after(cli, h, kid, opt, price)
+    _g_post_audit["n"] += 1
+    if _rank == 1:
+        _g_post_audit["rank1"] += 1
+    else:
+        _g_post_audit["bad"] += 1
+        _why = (
+            "판정오류(등록 전부터 더 싼 매물 있었음)"
+            if pre_low and price > pre_low
+            else "등록직후 시장변동 또는 동가경쟁"
+        )
+        logger.warning(
+            "[크림통합] 등록검증 %s|%s 등록가%s · 직전최저%s → rank=%s · %s",
+            kid,
+            opt,
+            f"{int(price):,}",
+            f"{int(pre_low):,}" if pre_low else "없음",
+            _rank,
+            _why,
+        )
+
+
+async def _rival_rank_after(cli, h, kid: str, opt: str, price: int):
+    """POST 응답에 순위가 없을 때 — 현재 최저가와 비교해 1등 여부만 추정한다."""
+    _low = await _rival_low(cli, h, kid, opt)
+    if _low <= 0:
+        return None
+    return 1 if price <= _low else 2
+
+
 async def _exec_create_ask(
     cli: httpx.AsyncClient, h: dict, kid: str, price: int, opt: str
 ) -> tuple[bool, str]:
@@ -2926,6 +2982,7 @@ async def _exec_create_ask(
     try:
         r = await _rq("POST", f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
         if r.status_code in (200, 201):
+            _remember_post_rank(_key, r)
             return True, "ok"
         detail = str((r.json() or {}).get("detail") or r.text)[:200]
         # 보관 불가 → keep 빼고 재등록(정상 등록 보존)
@@ -2934,6 +2991,7 @@ async def _exec_create_ask(
             body.pop("is_keep_on_deferred")
             r = await _rq("POST", f"{KREAM_OPENAPI_BASE}/asks", headers=h, json=body)
             if r.status_code in (200, 201):
+                _remember_post_rank(_key, r)
                 return True, "ok"
             detail = str((r.json() or {}).get("detail") or r.text)[:200]
         return False, detail
@@ -4223,6 +4281,8 @@ async def run_kream_unified_once() -> dict:
     _cycle_t0 = _tstart.time()  # 사이클 처리속도(avg_sec) 계산용
     _start_watchdog()  # 행 감시 가동(1회) — 진행 신호가 끊기면 프로세스 재기동
     _progress()
+    _g_post_rank.clear()  # 등록검증 계측 — 사이클 단위
+    _g_post_audit.update({"n": 0, "rank1": 0, "bad": 0})
     _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
     _g_early_renewed.clear()
     _g_early_posted.clear()
@@ -5444,13 +5504,15 @@ async def run_kream_unified_once() -> dict:
     # 125,000 인데 시장최저 123,000 — 팔 수 없는데 순번 95 로 방치).
     # 삭제는 손실 방지라 가장 급하다. 청크마다 삭제분만 먼저 지우고, 갱신·등록은
     # 종전대로 판정이 끝난 뒤 모아서 실행한다(rate limit·순서 보존).
-    # [2026-08-14] 3,000 → 100. **청크 크기는 속도와 무관하고 실행 시점만 늦춘다.**
-    # 판정 동시성은 위 Semaphore(8) 이 따로 잡으므로, gather 에 3,000개를 넣어도 실제
-    # 처리는 8개씩이다. 그런데 gather 는 3,000개가 **전부** 끝나야 반환하므로, 가장 느린
-    # 상품 하나가 청크 전체의 삭제·조정·등록을 붙잡았다(한 청크 ~12분).
-    # 상품 단위로 '스니덩크 재고·원가 → 크림 순위·가격 판정 → 즉시 실행'이 되어야 한다.
-    # 100 이면 8동시 기준 20~30초마다 실행이 나간다. 건수는 같으므로 오버헤드는 없다.
-    _CH_JUDGE = int(os.environ.get("KREAM_JUDGE_CHUNK") or 100)
+    # [2026-08-14] 3,000 → **8. 판정 동시성과 같은 수 = 한 세트**.
+    # 판정 동시성은 위 Semaphore(8) 이 잡는데, gather 에 3,000개를 넣으면 그 3,000개가
+    # **전부** 끝나야 반환한다. 그래서 가장 느린 상품 하나가 청크 전체의 삭제·조정·등록을
+    # 붙잡았다(한 청크 약 12분, 8청크 = 90분). "청크에서 즉시 실행"이라 불렀지만 실제로는
+    # 3,000건 배치였다.
+    # 8 로 맞추면 동시에 도는 8개가 한 세트로 끝나고 그 자리에서 실행이 나간다 —
+    # 스니덩크 재고·원가 수집 → 크림 순위·가격 판정 → 삭제/조정/등록까지 한 묶음.
+    # 병렬도는 그대로 8 이라 전체 속도는 변하지 않는다.
+    _CH_JUDGE = int(os.environ.get("KREAM_JUDGE_CHUNK") or 8)
     results: list = []
     _early_del = 0
     _early_upd = 0
@@ -5540,6 +5602,9 @@ async def run_kream_unified_once() -> dict:
                             nonlocal _early_post
                             async with _psem_now:
                                 _progress()
+                                # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
+                                # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
+                                _pre = await _rival_low(_ecli, h, _k, _n)
                                 _ok, _rs = await _exec_create_ask(_ecli, h, _k, _t, _n)
                                 if (not _ok) and (
                                     "announcement" in _rs or "고시" in _rs
@@ -5552,6 +5617,7 @@ async def run_kream_unified_once() -> dict:
                                 if _ok:
                                     _early_post += 1
                                     _g_early_posted.add(f"{_k}|{_n}")
+                                    await _audit_post(_ecli, h, _k, _n, _t, _pre)
                                 else:
                                     _g_failed_posts[f"{_k}|{_n}"] = _now_ts()
 
@@ -5574,6 +5640,14 @@ async def run_kream_unified_once() -> dict:
                     _stage_t.time() - _t_stage,
                 )
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
+    if _g_post_audit["n"]:
+        logger.info(
+            "[크림통합] 등록검증 집계 — 등록%d건 중 1등%d · 비1등%d (%.0f%%)",
+            _g_post_audit["n"],
+            _g_post_audit["rank1"],
+            _g_post_audit["bad"],
+            _g_post_audit["rank1"] * 100.0 / max(1, _g_post_audit["n"]),
+        )
     # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
     if _g_unjudged:
         _scanned -= _g_unjudged
@@ -5793,6 +5867,8 @@ async def run_kream_unified_once() -> dict:
                 nonlocal exec_post, exec_fail
                 async with _psem:
                     _progress()  # 워치독 — 등록도 '진행'이다
+                    # 등록 직전 경쟁최저(검증용) — 청크 경로와 동일 규칙.
+                    _pre = await _rival_low(ecli, h, _kid, _nm)
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
                         if await _register_announcement(_kid):
@@ -5800,6 +5876,7 @@ async def run_kream_unified_once() -> dict:
                             _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if _ok:
                         exec_post += 1
+                        await _audit_post(ecli, h, _kid, _nm, _tg, _pre)
                         # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
                         registered_lines.append(f"{str(_pn)[:20]} {_nm} {_tg:,}원")
                         _g_recent_posts[f"{_kid}|{_nm}"] = _now
