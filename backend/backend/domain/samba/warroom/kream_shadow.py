@@ -3469,6 +3469,8 @@ _UNIFIED_NONCARD = os.environ.get("KREAM_UNIFIED_NONCARD", "1") != "0"
 _UNIFIED_SEALED = os.environ.get("KREAM_UNIFIED_SEALED", "1") != "0"
 # 판정 중 즉시 삭제한 (kid|opt) — 뒤 실행 단계에서 중복 삭제를 막는다.
 _g_early_deleted: set = set()
+# 판정 중 이미 조정한 (kid|opt) — 뒤 실행 단계에서 중복 PATCH 를 막는다.
+_g_early_renewed: set = set()
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
 # 기존 이름 정규식(박스|카드 ?팩|팩 \()은 '베이스 팩'·'프로모 카드팩' 같은 낱장 카드를
 # 386건 오탐하고, 반대로 이름에 팩/박스가 없는 실제 밀봉품은 못 잡았다.
@@ -4114,6 +4116,7 @@ async def run_kream_unified_once() -> dict:
     _start_watchdog()  # 행 감시 가동(1회) — 진행 신호가 끊기면 프로세스 재기동
     _progress()
     _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
+    _g_early_renewed.clear()
 
     if not await _kream_autotune_enabled():
         logger.info("[크림통합] 오토튠 UI서 스니덩크/크림 체크해제 — 이번 사이클 스킵")
@@ -5238,6 +5241,7 @@ async def run_kream_unified_once() -> dict:
     _CH_JUDGE = int(os.environ.get("KREAM_JUDGE_CHUNK") or 3000)
     results: list = []
     _early_del = 0
+    _early_upd = 0
     async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
         for _ci in range(0, len(products), _CH_JUDGE):
             _part = await asyncio.gather(
@@ -5247,27 +5251,51 @@ async def run_kream_unified_once() -> dict:
             results.extend(_part)
             if not _EXECUTE:
                 continue
-            # 이 청크에서 나온 삭제 판정만 골라 즉시 실행한다.
+            # [2026-08-14] 이 청크의 **삭제와 조정을 함께** 즉시 실행한다.
+            # 종전엔 삭제만 내보내고 조정(renew)은 판정 전량이 끝날 때까지 기다렸다.
+            # 그래서 1,000원 차이로 밀린 입찰이 만 건이 지나도록 그대로였다
+            # (실측 459800: 내 414,000 / 시장 413,000 — 51% 지나도록 무변화).
+            # 등록(restock)은 고시 토큰·rate limit 때문에 종전대로 끝에 모아서 낸다.
             _dels_now: list = []
+            _upds_now: list = []
             for _r in _part:
                 if not isinstance(_r, dict):
                     continue
                 for _row in _r.get("rows") or []:
-                    if _row[0] != "delete":
+                    _kind = _row[0]
+                    if _kind not in ("delete", "renew"):
                         continue
                     _a = _get_live_ask(str(_row[2]), str(_row[3]))
-                    if _a:
+                    if not _a:
+                        continue
+                    if _kind == "delete":
                         _dels_now.append((_a.get("id"), str(_row[2]), str(_row[3])))
-            if _dels_now:
+                    else:
+                        # (ask_id, target, cur, is_nc, kid, opt)
+                        _upds_now.append(
+                            (
+                                _a.get("id"),
+                                int(_row[5] or 0),
+                                int(_row[4] or 0),
+                                bool(_row[8]) if len(_row) > 8 else False,
+                                str(_row[2]),
+                                str(_row[3]),
+                            )
+                        )
+            if _dels_now or _upds_now:
                 _c_now: dict = {}
                 async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as _ecli:
-                    await _exec_pending(_ecli, h, _dels_now, [], _c_now)
+                    await _exec_pending(_ecli, h, _dels_now, _upds_now, _c_now)
                 _early_del += int(_c_now.get("del", 0))
+                _early_upd += int(_c_now.get("patch", 0))
                 _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
+                _g_early_renewed.update(f"{k}|{o}" for _, _t, _c, _n, k, o in _upds_now)
                 logger.info(
-                    "[크림통합] 판정중 삭제 %d건 실행 (누적 %d · %.0f초경과)",
+                    "[크림통합] 판정중 실행 삭제%d 조정%d (누적 삭제%d 조정%d · %.0f초경과)",
                     int(_c_now.get("del", 0)),
+                    int(_c_now.get("patch", 0)),
                     _early_del,
+                    _early_upd,
                     _stage_t.time() - _t_stage,
                 )
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
@@ -5442,6 +5470,8 @@ async def run_kream_unified_once() -> dict:
                     _miss_del += 1  # 기존 _do_del 과 동일하게 실패로 센다
             _upds: list = []
             for _k, _n, _tg, _cur, _nc in pend_renew:
+                if f"{_k}|{_n}" in _g_early_renewed:
+                    continue  # 판정 중 이미 조정됨 — 중복 PATCH 방지
                 _a = _get_live_ask(_k, _n)
                 if _a:  # 기존 _do_renew 는 ask 없으면 조용히 건너뛴다 — 동작 유지
                     _upds.append((_a.get("id"), _tg, _cur, _nc, _k, _n))
