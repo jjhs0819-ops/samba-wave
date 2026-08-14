@@ -3459,10 +3459,14 @@ _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
 # (2) 그 단계가 순차 루프라 오늘 API 호출을 넣자 3시간 정지했으며,
 # (3) 단계가 뒤에 있어 앞이 길어지면 통째로 잘렸다.
 # 1 이면 이 루프가 갱신·삭제까지 판정하고 _process_shoe_asks 를 건너뛴다.
-_UNIFIED_NONCARD = os.environ.get("KREAM_UNIFIED_NONCARD") == "1"
+# [2026-08-14] 브랜드·카테고리 구분 없이 **한 경로**로 판정한다.
+# 카드·신발·의류·박스가 각자 다른 STAGE 를 타던 구조가 오늘 사고의 뿌리였다
+# (순차 루프인 신발만 3시간 정지 / 맨 뒤인 박스만 매 사이클 누락 /
+#  같은 상품 시세를 두 번 조회). 되돌릴 일이 있으면 =0 으로만 끈다.
+_UNIFIED_NONCARD = os.environ.get("KREAM_UNIFIED_NONCARD", "1") != "0"
 # 밀봉품(박스·카드팩)도 통합 루프에서 갱신·삭제한다. 종전엔 _process_box_asks
 # 라는 별도 STAGE 라 판정이 끝나야 차례가 왔다.
-_UNIFIED_SEALED = os.environ.get("KREAM_UNIFIED_SEALED") == "1"
+_UNIFIED_SEALED = os.environ.get("KREAM_UNIFIED_SEALED", "1") != "0"
 # 판정 중 즉시 삭제한 (kid|opt) — 뒤 실행 단계에서 중복 삭제를 막는다.
 _g_early_deleted: set = set()
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
