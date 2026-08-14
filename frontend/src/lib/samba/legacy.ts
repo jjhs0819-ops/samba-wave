@@ -295,7 +295,13 @@ export const orderApi = {
       search_category: params.search_category ?? 'customer',
       sort_by: params.sort_by ?? 'date_desc',
     })
-    return request<PaginatedOrderList>(`${SAMBA_PREFIX}/orders/by-date-range-paged?${q}`)
+    return request<PaginatedOrderList>(
+      `${SAMBA_PREFIX}/orders/by-date-range-paged?${q}`,
+      undefined,
+      // 타임아웃 20초 + 2회 재시도 — 배포/일시 끊김에 "Failed to fetch"로 바로
+      // 실패 처리하지 않고 자동 복구 (2026-08-14 주문 페이지 반복 실패 보고)
+      { timeoutMs: 20000, retries: 2 },
+    )
   },
   listByCollectedProduct: (collectedProductId: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-collected-product?collected_product_id=${encodeURIComponent(collectedProductId)}`),
@@ -331,7 +337,11 @@ export const orderApi = {
       search_category: params.search_category ?? 'customer',
       sort_by: params.sort_by ?? 'date_desc',
     })
-    return request<PaginatedOrderList>(`${SAMBA_PREFIX}/orders/by-collected-product-paged?${q}`)
+    return request<PaginatedOrderList>(
+      `${SAMBA_PREFIX}/orders/by-collected-product-paged?${q}`,
+      undefined,
+      { timeoutMs: 20000, retries: 2 },
+    )
   },
   downloadExcel: async (params: {
     order_ids?: string[]

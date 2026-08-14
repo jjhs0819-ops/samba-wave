@@ -417,7 +417,7 @@ async def _unfulfilled_count() -> int:
 
 
 async def _brand_reg_rates(
-    asks: list | None = None, limit: int = 14
+    asks: list | None = None, limit: int = 60
 ) -> tuple[str, str]:
     """브랜드별 '입찰상품수/재고매칭상품수' 두 줄. [2026-08-13 상품 단위로 전환]
 
@@ -461,7 +461,10 @@ async def _brand_reg_rates(
                         "       COALESCE(MAX(bid.n), 0) reg,"
                         "       COUNT(*) matched "
                         "FROM m LEFT JOIN bid ON bid.br = m.br "
-                        "GROUP BY m.br HAVING COUNT(*) >= 10 ORDER BY 2 DESC LIMIT :n"
+                        # [2026-08-14] 매칭된 브랜드는 입찰이 0이어도 전부 보여준다.
+                        # LIMIT 14 로 자르니 Supreme(재고 219)이 Play CDG(238)
+                        # 바로 아래에서 잘려 "빠진 브랜드"가 생겼다.
+                        "GROUP BY m.br ORDER BY 2 DESC LIMIT :n"
                     ),
                     # 원가 상한은 정책값(kreamMaxCostJpy). 25만엔 하드코딩이면 정책이
                     # 35만이어도 25만~35만 구간이 집계에서 빠져 등록률이 왜곡된다.
