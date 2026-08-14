@@ -2937,6 +2937,12 @@ async def _audit_post(cli, h, kid: str, opt: str, price: int, pre_low: int) -> N
       pre_low 가 등록가보다 높다  → 등록과 동시에 남이 더 싸게 들어왔다(시장 변동)
     """
     _key = f"{kid}|{opt}"
+    # [2026-08-14] 경쟁자가 아예 없으면(직전최저 0) 순위를 매길 상대가 없다 — 무경쟁
+    # 등록이고 사실상 1등이다. 종전엔 rank=None 을 비1등으로 세어 경고를 쏟았다.
+    if not pre_low:
+        _g_post_audit["n"] += 1
+        _g_post_audit["rank1"] += 1
+        return
     _rank = _g_post_rank.get(_key)
     if _rank is None:  # POST 응답에 없으면 실측으로 보강
         _rank = await _rival_rank_after(cli, h, kid, opt, price)
