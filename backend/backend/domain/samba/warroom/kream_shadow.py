@@ -384,8 +384,12 @@ def _rank_summary(asks: list) -> tuple[int, int, int, int]:
         our = int(a.get("price") or 0)
         ov = int(a.get("lowest_overseas_price") or 0)
         dom = int(a.get("lowest_normal_price") or 0)
+        # [2026-08-14] 빠른배송(lowest_100)도 같은 순위표에 들어간다. 빠져 있어서
+        # 빠른배송이 더 싼 옵션이 '1순위'로 집계됐다(지표가 실제보다 좋게 보인다).
+        # 보관 95점은 제외한다.
+        keep = int(a.get("lowest_100_price") or 0)
         rank1 = ov > 0 and 0 < our <= ov
-        real1 = rank1 and (dom <= 0 or our <= dom)
+        real1 = rank1 and (dom <= 0 or our <= dom) and (keep <= 0 or our <= keep)
         # 그룹당 real1 이 하나라도 있으면 1순위로 승격(중복입찰 대비)
         if k not in groups or (real1 and not groups[k]):
             groups[k] = real1
@@ -508,7 +512,13 @@ async def _brand_reg_rates(
                 _our = int(a.get("price") or 0)
                 _ov = int(a.get("lowest_overseas_price") or 0)
                 _dom = int(a.get("lowest_normal_price") or 0)
-                if _ov > 0 and 0 < _our <= _ov and (_dom <= 0 or _our <= _dom):
+                _kp = int(a.get("lowest_100_price") or 0)  # 빠른배송도 같은 순위표
+                if (
+                    _ov > 0
+                    and 0 < _our <= _ov
+                    and (_dom <= 0 or _our <= _dom)
+                    and (_kp <= 0 or _our <= _kp)
+                ):
                     _b = kid_br.get(_kid)
                     if _b:
                         r1_by_br[_b] = r1_by_br.get(_b, 0) + 1
@@ -1285,17 +1295,40 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                     "GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h
                 )
                 _want = str(opt).replace(" ", "")
+                _opts_all = (_pr.json() or {}).get("options") or []
                 _po = next(
                     (
                         _o
-                        for _o in ((_pr.json() or {}).get("options") or [])
+                        for _o in _opts_all
                         if str(_o.get("name") or "").replace(" ", "") == _want
                     ),
                     None,
                 )
+                # [2026-08-14] 옵션 표기차(30.5cm↔305, FREE↔ONE SIZE 등)를 흡수한다.
+                # 문자열 일치만 보면 옵션을 못 찾아 경쟁가를 모른 채 원복해버린다.
+                if _po is None:
+                    _po = next(
+                        (_o for _o in _opts_all if _opt_same(opt, _o.get("name"))), None
+                    )
                 if _po:
-                    _rival = int(_po.get("lowest_normal_price") or 0) or int(
-                        _po.get("lowest_overseas_price") or 0
+                    # [2026-08-14] **`or` 체인이 진범이었다.** 일반가가 있으면 해외·빠른을
+                    # 아예 안 봤다. 크림 순위는 판매유형을 합쳐 매기므로 더 싼 유형이
+                    # 있으면 그대로 밀린다.
+                    #   실측 18119|250: 일반 1,590,000 만 보고 1,589,000 으로 잡았으나
+                    #   해외 1,548,000 이 있어 rank=3. 로그도 그대로였다
+                    #   ("경쟁가 추종 18119 250: 1,550,000→1,589,000 ... rank=3").
+                    # 기준은 min(일반, 빠른100, 해외) 하나로 통일한다(보관 95점은 제외).
+                    _rival = min(
+                        [
+                            _v
+                            for _v in (
+                                int(_po.get("lowest_normal_price") or 0),
+                                int(_po.get("lowest_100_price") or 0),
+                                int(_po.get("lowest_overseas_price") or 0),
+                            )
+                            if _v > 0
+                        ]
+                        or [0]
                     )
                     # 내 인상가보다 낮게 잡히는 값 = 경쟁자 실가격
                     if 0 < _rival < int(target):
