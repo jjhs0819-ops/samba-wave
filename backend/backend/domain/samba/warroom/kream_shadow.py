@@ -3437,6 +3437,8 @@ _EXEC_BOX_RESTOCK = os.environ.get("KREAM_EXEC_BOX_RESTOCK") == "1"
 # (3) 단계가 뒤에 있어 앞이 길어지면 통째로 잘렸다.
 # 1 이면 이 루프가 갱신·삭제까지 판정하고 _process_shoe_asks 를 건너뛴다.
 _UNIFIED_NONCARD = os.environ.get("KREAM_UNIFIED_NONCARD") == "1"
+# 판정 중 즉시 삭제한 (kid|opt) — 뒤 실행 단계에서 중복 삭제를 막는다.
+_g_early_deleted: set = set()
 # 밀봉품(박스/카드팩) 판정 — **옵션명** 기준. [2026-08-03 교체]
 # 기존 이름 정규식(박스|카드 ?팩|팩 \()은 '베이스 팩'·'프로모 카드팩' 같은 낱장 카드를
 # 386건 오탐하고, 반대로 이름에 팩/박스가 없는 실제 밀봉품은 못 잡았다.
@@ -4081,6 +4083,7 @@ async def run_kream_unified_once() -> dict:
     _cycle_t0 = _tstart.time()  # 사이클 처리속도(avg_sec) 계산용
     _start_watchdog()  # 행 감시 가동(1회) — 진행 신호가 끊기면 프로세스 재기동
     _progress()
+    _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
 
     if not await _kream_autotune_enabled():
         logger.info("[크림통합] 오토튠 UI서 스니덩크/크림 체크해제 — 이번 사이클 스킵")
@@ -5189,10 +5192,47 @@ async def run_kream_unified_once() -> dict:
                     _stage_t.time() - _t_stage,
                 )
 
+    # [2026-08-14] 청크 판정 + **삭제 즉시 실행**.
+    # 종전엔 24,000건을 전량 판정(69분)한 뒤에야 실행이 시작됐다. 그래서 '1등불가삭제'
+    # 판정이 나도 한 시간 넘게 그대로 걸려 있었다(실측 670179: 원가 ¥10,000 → 최소가
+    # 125,000 인데 시장최저 123,000 — 팔 수 없는데 순번 95 로 방치).
+    # 삭제는 손실 방지라 가장 급하다. 청크마다 삭제분만 먼저 지우고, 갱신·등록은
+    # 종전대로 판정이 끝난 뒤 모아서 실행한다(rate limit·순서 보존).
+    _CH_JUDGE = int(os.environ.get("KREAM_JUDGE_CHUNK") or 3000)
+    results: list = []
+    _early_del = 0
     async with httpx.AsyncClient(mounts=_mounts(), timeout=20) as scli:
-        results = await asyncio.gather(
-            *[_process_logged(p, scli) for p in products], return_exceptions=True
-        )
+        for _ci in range(0, len(products), _CH_JUDGE):
+            _part = await asyncio.gather(
+                *[_process_logged(p, scli) for p in products[_ci : _ci + _CH_JUDGE]],
+                return_exceptions=True,
+            )
+            results.extend(_part)
+            if not _EXECUTE:
+                continue
+            # 이 청크에서 나온 삭제 판정만 골라 즉시 실행한다.
+            _dels_now: list = []
+            for _r in _part:
+                if not isinstance(_r, dict):
+                    continue
+                for _row in _r.get("rows") or []:
+                    if _row[0] != "delete":
+                        continue
+                    _a = _get_live_ask(str(_row[2]), str(_row[3]))
+                    if _a:
+                        _dels_now.append((_a.get("id"), str(_row[2]), str(_row[3])))
+            if _dels_now:
+                _c_now: dict = {}
+                async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as _ecli:
+                    await _exec_pending(_ecli, h, _dels_now, [], _c_now)
+                _early_del += int(_c_now.get("del", 0))
+                _g_early_deleted.update(f"{k}|{o}" for _, k, o in _dels_now)
+                logger.info(
+                    "[크림통합] 판정중 삭제 %d건 실행 (누적 %d · %.0f초경과)",
+                    int(_c_now.get("del", 0)),
+                    _early_del,
+                    _stage_t.time() - _t_stage,
+                )
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
     # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
     if _g_unjudged:
@@ -5356,6 +5396,8 @@ async def run_kream_unified_once() -> dict:
             # 실측: 통합 첫 사이클에서 삭제 3,065건 중 2,080건이 이 때문에 실패했다
             # (판정 루프는 _get_live_ask 로 흡수해 찾았는데 실행 변환만 빠뜨렸다).
             for _k, _n in pend_delete:
+                if f"{_k}|{_n}" in _g_early_deleted:
+                    continue  # 판정 중 이미 삭제됨 — 중복 호출 방지
                 _a = _get_live_ask(_k, _n)
                 if _a:
                     _dels.append((_a.get("id"), _k, _n))
