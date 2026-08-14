@@ -4522,6 +4522,37 @@ async def run_kream_unified_once() -> dict:
         len(_scanned),
         len(rest_products),
     )
+
+    # [2026-08-14] **밀린 입찰을 앞으로 당긴다.** 한 바퀴가 23,000건·90분이라, 시장이
+    # 움직여 2등이 된 건이 뒤쪽에 있으면 최대 90분을 밀린 채 방치된다(배포로 사이클이
+    # 끊기면 영영 차례가 안 오기도 한다). 처리량은 그대로지만 급한 것부터 고쳐진다.
+    #   실측 385249|290: 우리 249,000 / 해외최저 248,000(live_rank=2) — 판정은 247,000
+    #   조정으로 정확한데 차례가 안 와서 밀린 채였다.
+    # 기준은 판정과 동일한 min(일반, 빠른100, 해외). 정렬만 하고 대상은 그대로다.
+    def _behind(_p) -> int:
+        _kid = str(_p.get("kid") or "")
+        for _a in _ask_by_kid.get(_kid) or []:
+            _cur = int(_a.get("price") or 0)
+            _c = [
+                int(_v)
+                for _v in (
+                    _a.get("lowest_overseas_price"),
+                    _a.get("lowest_normal_price"),
+                    _a.get("lowest_100_price"),
+                )
+                if _v and int(_v) > 0
+            ]
+            if _cur > 0 and _c and _cur > min(_c):
+                return 0  # 밀린 입찰 보유 → 우선
+        return 1
+
+    live_products.sort(key=_behind)
+    _behind_n = sum(1 for _p in live_products if _behind(_p) == 0)
+    logger.info(
+        "[크림통합] 갱신 순서 — 밀린 입찰 보유 %d개 상품을 앞으로 (전체 %d)",
+        _behind_n,
+        len(live_products),
+    )
     products = live_products + rest_slice
     rest_total = len(rest_products)  # 리스톡 탐색 로테이션 분모(진행률 표시용)
     logger.info(
