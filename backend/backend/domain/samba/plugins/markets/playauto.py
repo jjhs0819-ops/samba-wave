@@ -41,6 +41,28 @@ def _looks_like_image(head: bytes) -> bool:
     return any(head.startswith(m) for m in _IMAGE_MAGIC_PREFIXES)
 
 
+def _resolve_stock_qty(options: list, real_stock: int, max_stock: int) -> int:
+    """상품(마스터) 재고수량 결정 — 옵션 재고가 진실의 원천.
+
+    옵션이 있는데 판매가능 재고가 0이면 상품 재고도 0이어야 한다. 계정 설정값
+    (_max_stock)이나 99로 폴백하면 EMP에 "상품 재고 20 · 전 단품 0"이라는 모순
+    상태가 만들어진다 — 계정 설정은 상한이지 품절 상품의 기본값이 아니다.
+    (2026-08-14 에잇세컨즈: 저재고 캡으로 전 옵션 0이 된 상품 413건이 EMP에
+    재고 20으로 올라가 GS이숍 채널등록이 단품코드 필수값 오류로 전량 거절)
+
+    옵션이 아예 없는 단일상품은 옵션 재고라는 개념이 없으므로 기존 폴백 유지.
+    """
+    if options and real_stock <= 0:
+        return 0
+    if max_stock > 0 and real_stock > 0:
+        return min(real_stock, max_stock)
+    if max_stock > 0:
+        return max_stock
+    if real_stock > 0:
+        return real_stock
+    return 99
+
+
 class PlayAutoPlugin(MarketPlugin):
     """플레이오토 EMP 마켓 플러그인."""
 
@@ -61,14 +83,7 @@ class PlayAutoPlugin(MarketPlugin):
         real_stock = sum(
             int(o.get("stock") or 0) for o in options if not o.get("isSoldOut")
         )
-        if max_stock > 0 and real_stock > 0:
-            stock_qty = min(real_stock, max_stock)
-        elif max_stock > 0:
-            stock_qty = max_stock
-        elif real_stock > 0:
-            stock_qty = real_stock
-        else:
-            stock_qty = 99
+        stock_qty = _resolve_stock_qty(options, real_stock, max_stock)
         return PlayAutoClient.transform_product(
             product=product,
             category_id=category_id if category_id != "__SKIP__" else "",
@@ -145,14 +160,7 @@ class PlayAutoPlugin(MarketPlugin):
                 real_stock = sum(
                     int(o.get("stock") or 0) for o in options if not o.get("isSoldOut")
                 )
-                if max_stock > 0 and real_stock > 0:
-                    stock_qty = min(real_stock, max_stock)
-                elif max_stock > 0:
-                    stock_qty = max_stock
-                elif real_stock > 0:
-                    stock_qty = real_stock
-                else:
-                    stock_qty = 99
+                stock_qty = _resolve_stock_qty(options, real_stock, max_stock)
 
                 sale_price = int(product.get("sale_price") or 0)
                 minimal: dict[str, Any] = {
