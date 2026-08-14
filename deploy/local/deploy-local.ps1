@@ -4,6 +4,34 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $compose = "docker-compose.tunnel.yml"
 
+# ── 세션 간 배포 잠금 [2026-08-14] ─────────────────────────────────────────
+# 여러 세션(사람/크론)이 동시에 배포하면 컨테이너가 두 번 갈리고, 진행 중이던
+# 크림 사이클이 통째로 날아간다. 실측: 판정 43~51% 까지 간 사이클이 다른 세션
+# 배포로 초기화되기를 반복했다.
+# 락 파일을 잡고 배포하며, 남이 잡고 있으면 최대 20분 기다린다.
+$lockPath = Join-Path $PSScriptRoot ".deploy.lock"
+$lockFs = $null
+$lockWaited = 0
+while ($true) {
+  try {
+    $lockFs = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None')
+    break
+  } catch {
+    if ($lockWaited -eq 0) {
+      Write-Host "다른 세션이 배포 중 — 끝날 때까지 대기(최대 20분)" -ForegroundColor Yellow
+    }
+    Start-Sleep -Seconds 10
+    $lockWaited += 10
+    if ($lockWaited -ge 1200) {
+      Write-Host "배포 락 대기 20분 초과 — 중단. 남은 락이 비정상이면 $lockPath 삭제" -ForegroundColor Red
+      exit 1
+    }
+  }
+}
+if ($lockWaited -gt 0) { Write-Host "락 획득 (대기 $lockWaited 초)" -ForegroundColor Green }
+try {
+
+
 Write-Host "[1/4] ruff 정리..." -ForegroundColor Cyan
 Push-Location ..\..\backend
 try {
@@ -184,4 +212,10 @@ if ($ok) {
   docker logs local-samba-api-1 --tail 30 2>&1 | ForEach-Object { Write-Host $_ }
   Write-Host "전체 로그: docker compose --env-file local.env -f $compose logs samba-api" -ForegroundColor Red
   exit 1
+}
+}
+finally {
+  # 락 해제 — 실패해도 반드시 푼다(안 풀면 다음 배포가 20분 막힌다).
+  if ($lockFs) { $lockFs.Close(); $lockFs.Dispose() }
+  Remove-Item $lockPath -ErrorAction SilentlyContinue
 }
