@@ -211,6 +211,25 @@ def _build_search_tags(product: dict[str, Any]) -> list[str]:
     return tags[:20]
 
 
+def _variation_fill_value(type_name: str, size_val: str, color_val: str) -> str:
+    """카테고리 필수 구매옵션 이름이 사이즈/색상 계열이면 아이템 실제값을 반환.
+
+    쿠팡은 아이템 간 '인정된 속성 조합'이 같으면 중복으로 보고 상품 전체를 거절한다.
+    사이즈 속성명은 카테고리마다 다른데("사이즈", "의류 사이즈", "패션의류/잡화 사이즈"…)
+    우리가 보내는 이름이 그 카테고리에 없으면 무시되고, 보충 로직이 넣는 상수값만
+    남아 전 아이템이 동일해진다 (2026-08-14 에잇세컨즈 S/M/L 3종 전건 거절).
+    해당 없으면 빈 문자열 — 호출부가 기존 상수 보충으로 폴백한다.
+    """
+    name = str(type_name or "").strip().lower()
+    if not name:
+        return ""
+    if "사이즈" in name or "size" in name:
+        return str(size_val or "").strip()
+    if "색상" in name or "컬러" in name or "color" in name:
+        return str(color_val or "").strip()
+    return ""
+
+
 def _parse_option_color_size(opt_name: str, default_color: str) -> tuple[str, str]:
     """옵션명에서 색상/사이즈 분리."""
     opt_name = opt_name.strip()
@@ -1176,12 +1195,19 @@ class CoupangClient:
                 _present = {a["attributeTypeName"] for a in _attrs}
                 for _req in _required_attr_types:
                     if _req and _req not in _present:
+                        # [중복옵션 방지] 카테고리가 요구하는 이름이 '사이즈/색상' 계열이면
+                        # 상수 보충값이 아니라 이 아이템의 실제 사이즈·색상을 채운다.
+                        # (2026-08-14 에잇세컨즈 실패 4건) 우리는 "패션의류/잡화 사이즈"로
+                        # 보내는데 카테고리 실제 속성명이 "사이즈"면 쿠팡이 우리 속성은
+                        # 무시하고, 보충된 "사이즈"에는 전 아이템 동일한 상수가 들어가
+                        # S/M/L 3개가 같은 옵션으로 판정 → "중복된 옵션값" 전건 거절.
+                        _v = _variation_fill_value(_req, size_val, resolved_color)
+                        if not _v:
+                            _v = required_attribute_fill_value(notice_meta, _req)
                         _attrs.append(
                             {
                                 "attributeTypeName": _req[:25],
-                                "attributeValueName": required_attribute_fill_value(
-                                    notice_meta, _req
-                                ),
+                                "attributeValueName": str(_v)[:30],
                             }
                         )
 
@@ -1299,6 +1325,30 @@ class CoupangClient:
                     product.get("name", "기본"), _no_opt_stock, "FREE", default_color
                 )
             )
+
+        # [진단] 아이템 간 속성 조합이 겹치면 쿠팡이 "중복된 옵션값"으로 상품 전체를
+        # 거절한다. API 에러만 보면 어느 속성이 겹쳤는지 알 수 없어 원인 추적에
+        # 이틀이 걸렸다(2026-08-14) — 전송 전에 조합을 찍어 로그에 남긴다.
+        if len(items) > 1:
+            _sigs = [
+                tuple(
+                    sorted(
+                        (
+                            a.get("attributeTypeName", ""),
+                            a.get("attributeValueName", ""),
+                        )
+                        for a in (it.get("attributes") or [])
+                    )
+                )
+                for it in items
+            ]
+            if len(set(_sigs)) < len(_sigs):
+                logger.warning(
+                    "[쿠팡] 옵션 속성 조합 중복 감지 — 등록 거절 위험: "
+                    f"{str(product.get('name', ''))[:40]} "
+                    f"items={len(items)} 고유조합={len(set(_sigs))} "
+                    f"예시={_sigs[0]}"
+                )
 
         # SEO 최적화: 노출상품명 + 검색태그
         display_name = _build_display_product_name(product)
