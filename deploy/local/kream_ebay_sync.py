@@ -47,14 +47,39 @@ def find_kream_tab(url_contains):
     return None
 
 
-def find_any_kream_tabs(n=3):
-    """kream.co.kr 탭 아무거나 n개 — 이전 실행에서 /my/order/xxx로 옮겨져있어도 상관없음."""
+def _open_kream_tab(url):
+    """새 kream.co.kr 탭 CDP로 오픈 (/json/new PUT)."""
     import urllib.request
 
-    resp = urllib.request.urlopen(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=10)
-    tabs = json.loads(resp.read())
-    ids = [t["id"] for t in tabs if t.get("type") == "page" and "kream.co.kr" in t.get("url", "")
-           and "partner.kream.co.kr" not in t.get("url", "")]
+    req = urllib.request.Request(f"http://{CDP_HOST}:{CDP_PORT}/json/new?{url}", method="PUT")
+    urllib.request.urlopen(req, timeout=10)
+
+
+def find_any_kream_tabs(n=3, auto_open=False):
+    """kream.co.kr 탭 아무거나 n개 — 이전 실행에서 /my/order/xxx로 옮겨져있어도 상관없음.
+
+    auto_open=True면 부족한 만큼 pending/finished 탭을 직접 새로 열어서 채움
+    (2026-08-14: 탭이 딴 데로 넘어가있어 P5 실행이 계속 실패하던 문제 — 사람이 매번
+    웨일 가서 탭 열 필요 없이 스크립트가 알아서 복구).
+    """
+    import urllib.request
+
+    def _list():
+        resp = urllib.request.urlopen(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=10)
+        tabs = json.loads(resp.read())
+        return [t["id"] for t in tabs if t.get("type") == "page" and "kream.co.kr" in t.get("url", "")
+                and "partner.kream.co.kr" not in t.get("url", "")]
+
+    ids = _list()
+    if auto_open and len(ids) < n:
+        fallback_urls = [
+            "https://kream.co.kr/my/buying?tab=pending",
+            "https://kream.co.kr/my/buying?tab=finished",
+        ]
+        for i in range(n - len(ids)):
+            _open_kream_tab(fallback_urls[i % len(fallback_urls)])
+        time.sleep(3)
+        ids = _list()
     return ids[:n]
 
 
@@ -93,9 +118,9 @@ def fetch_kream_orders():
 
     반환: {order_no: {"date": "26/08/13 14:51", "status": "..."}}
     """
-    kream_tabs = find_any_kream_tabs(2)
+    kream_tabs = find_any_kream_tabs(2, auto_open=True)
     if len(kream_tabs) < 2:
-        raise RuntimeError("KREAM 탭이 2개 이상 안 열려있음 — 웨일에서 kream.co.kr 탭 2개 열어두세요")
+        raise RuntimeError("KREAM 탭 자동 오픈 실패 — 웨일이 꺼져있거나 CDP 연결 안 됨")
     pending_tab, finished_tab = kream_tabs[0], kream_tabs[1]
 
     all_orders = {}
@@ -140,11 +165,14 @@ def fetch_price(conn, order_id_numeric):
     직전 fetch_price가 이미 그 탭을 /my/order/xxx로 옮겨놔서 URL 매칭이 깨짐).
     """
     conn.send("Page.navigate", {"url": f"https://kream.co.kr/my/order/{order_id_numeric}"})
-    time.sleep(1.8)
-    r = conn.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
-    text = r.get("result", {}).get("result", {}).get("value", "") or ""
-    m = re.search(r"최초 결제금액\s*\n+\s*([\d,]+)원", text)
-    return m.group(1) if m else None
+    for wait in (1.8, 1.5, 1.5):  # 로딩 느릴 때 대비 최대 3회(합 4.8초) 재시도
+        time.sleep(wait)
+        r = conn.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
+        text = r.get("result", {}).get("result", {}).get("value", "") or ""
+        m = re.search(r"최초 결제금액\s*\n+\s*([\d,]+)원", text)
+        if m:
+            return m.group(1)
+    return None
 
 
 MIN_EXPECTED_ORDERS = 20  # 이보다 적게 읽히면 크림 탭/스크롤이 제대로 안 된 걸로 보고 중단(K:N 보호)
@@ -160,7 +188,7 @@ def fetch_new_ebay_orders():
     import subprocess
 
     query_script = r"""
-import asyncio, asyncpg, json
+import asyncio, asyncpg, json, datetime
 async def main():
     conn = await asyncpg.connect(host='postgres', port=5432, user='samba',
         password='09aac90f3fb8c4394ad2d6062b1a5910', database='samba', ssl=False)
@@ -172,9 +200,12 @@ async def main():
           AND status != 'shipping'
         ORDER BY created_at ASC
     ''')
-    out = [{"order_number": r["order_number"], "quantity": r["quantity"],
-            "ship_by_at": r["ship_by_at"].strftime("%Y. %-m. %-d") if r["ship_by_at"] else ""}
-           for r in rows]
+    out = []
+    for r in rows:
+        # 이베이가 shipByDate 아직 안 준 신규주문 — created_at+7일로 대체(다른 주문들 실측 패턴)
+        ship_by = r["ship_by_at"] or (r["created_at"] + datetime.timedelta(days=7))
+        out.append({"order_number": r["order_number"], "quantity": r["quantity"],
+                     "ship_by_at": ship_by.strftime("%Y. %-m. %-d")})
     print(json.dumps(out, ensure_ascii=False))
 asyncio.run(main())
 """
