@@ -1272,7 +1272,14 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
             and _rank_fix["used"] < _rank_fix["cap"]
         ):
             _floor = int(_floor_map.get((str(pid), str(opt)), 0) or 0)
-            _new = int(target) - 1000
+            # [2026-08-14] 종전엔 무조건 `target - 1000` 이었다. 시장최저가 한참 아래면
+            # 1,000원 내려도 여전히 2등이고, cap 때문에 다음 기회도 없다(실측 18119|250:
+            # 1,589,000 → 1,588,000 이어도 해외 1,548,000 에 밀림). 실제 경쟁최저를
+            # 다시 조회해 그 바로 아래로 잡는다 — 마진 하한은 절대 안 깬다.
+            _rl = await _rival_low(cli, h, pid, opt)
+            _new = (_rl - 1000) if _rl > 0 else (int(target) - 1000)
+            if _new >= int(target):  # 경쟁최저가 내 위면 굳이 올리지 않는다
+                _new = int(target) - 1000
             if _new > 0 and _floor > 0 and _new >= _floor:
                 _rank_fix["used"] += 1
                 r3 = await _rq(
@@ -2924,6 +2931,34 @@ async def _exec_create_ask(
         return False, detail
     except Exception as exc:
         return False, str(exc)[:120]
+
+
+async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
+    """그 옵션의 **경쟁 최저가** = min(일반, 빠른100, 해외). 모르면 0.
+
+    [2026-08-14] 순위 교정·경쟁가 추종 두 경로가 각자 다른 기준을 쓰다가 비1순위를
+    만들었다(한쪽은 `일반 or 해외` 라 해외가 더 싸도 무시). 크림 순위는 판매유형을
+    합쳐 매기므로 기준은 하나여야 한다. 보관 95점은 우리가 취급하지 않으므로 뺀다.
+    옵션은 표기차(30.5cm↔305, FREE↔ONE SIZE)를 _opt_same 으로 흡수한다.
+    """
+    try:
+        r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
+        opts = (r.json() or {}).get("options") or []
+    except Exception:
+        return 0
+    _want = str(opt).replace(" ", "")
+    po = next(
+        (o for o in opts if str(o.get("name") or "").replace(" ", "") == _want), None
+    )
+    if po is None:
+        po = next((o for o in opts if _opt_same(opt, o.get("name"))), None)
+    if not po:
+        return 0
+    vals = [
+        int(po.get(k) or 0)
+        for k in ("lowest_normal_price", "lowest_100_price", "lowest_overseas_price")
+    ]
+    return min([v for v in vals if v > 0] or [0])
 
 
 async def _exec_delete_ask(
