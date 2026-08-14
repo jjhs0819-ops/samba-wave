@@ -1206,10 +1206,27 @@ class SambaShipmentService:
         )
         refresh_status = ""  # 프론트 로그용
         pending_refresh_updates: dict[str, Any] = {}  # 최종 업데이트에 통합
+        # 신규등록 대상 여부 — 대상 계정 중 하나라도 이 상품의 마켓번호가 없으면 True.
+        # (2026-08-14 에잇세컨즈 실사고) 기존 로직은 'DB가 품절일 때만' 전송 직전
+        # 최신화를 해서, DB 재고가 낡아 있으면 그 값이 그대로 마켓에 등록된다 —
+        # 실재고 1~2개 상품 11건이 재고 0(품절)으로 쿠팡 등록됨. 신규등록만큼은
+        # DB를 신뢰하지 않고 실재고를 다시 읽는다. 끄기: TRANSMIT_FRESH_ON_REGISTER=0
+        _fresh_on_register = os.environ.get("TRANSMIT_FRESH_ON_REGISTER", "1") != "0"
+        _nos_for_fresh = product_row.market_product_nos
+        if not isinstance(_nos_for_fresh, dict):
+            _nos_for_fresh = {}
+        _has_new_target = any(
+            not real_market_no(_nos_for_fresh.get(_aid))
+            and not any(
+                real_market_no(_v)
+                for _k, _v in _nos_for_fresh.items()
+                if _k.startswith(f"{_aid}_")
+            )
+            for _aid in (target_account_ids or [])
+        )
         if (
-            has_update
+            ((has_update and _is_sold_out) or (_fresh_on_register and _has_new_target))
             and not skip_refresh
-            and _is_sold_out
             and product_row.source_site
             and product_row.site_product_id
         ):
@@ -1220,6 +1237,27 @@ class SambaShipmentService:
                     refresh_product(product_row, source="transmit"),
                     timeout=60,  # 갱신이 전송 전체를 막지 않도록 60초 제한
                 )
+                # [순단 방어] 재수집이 '가용재고 0'을 반환했는데 직전 DB엔 재고가
+                # 있었다면 일시 오류 가능성 — 3초 후 1회 재조회로 확정한다.
+                # (2026-08-13 실측: 240 재고 1 상품이 전송 순간만 전량 0으로 읽혀
+                # 쿠팡에 품절 등록, 2분 뒤 갱신에서 정상 복원)
+                if (
+                    not refresh_result.error
+                    and refresh_result.new_options is not None
+                    and available_stock(refresh_result.new_options) <= 0
+                    and available_stock(product_row.options) > 0
+                ):
+                    logger.warning(
+                        f"[전송] 재고 전량 0 응답 — DB엔 재고 있음, 3초 후 재검증: "
+                        f"{(product_row.name or '')[:30]}"
+                    )
+                    await asyncio.sleep(3)
+                    _second = await asyncio.wait_for(
+                        refresh_product(product_row, source="transmit"),
+                        timeout=60,
+                    )
+                    if not _second.error and _second.new_options is not None:
+                        refresh_result = _second
                 if refresh_result.error:
                     refresh_status = f"최신화실패:{refresh_result.error[:30]}"
                     logger.warning(f"[전송] 소싱처 최신화 실패: {refresh_result.error}")
