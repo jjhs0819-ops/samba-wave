@@ -1984,7 +1984,15 @@ def _decide_price_action(
     #                     (live_rank)만 본다.
     # live_rank 가 없을 때만 cur <= market_low 로 대신 본다(내가 최저면 1등).
     if cur > 0 and live_rank is not None:
-        rank1 = int(live_rank) == 1
+        # [2026-08-14] **live_rank 는 판매유형(해외배송) 안에서의 순위다.** 일반배송에
+        # 훨씬 싼 매물이 있어도 해외끼리 1등이면 1 이 온다. 그걸 그대로 rank1 로 믿으면
+        # 아래 삭제·조정 게이트를 통째로 건너뛰어 **영구 방치**된다.
+        #   실측 581338|260: 해외 346,000(우리, live_rank=1) / 일반 274,000
+        #                    → 구매자는 274,000 을 사므로 우리 입찰은 죽은 입찰이다.
+        #   실측 664656|PSA 9: 해외 1,240,000(우리, rank=1) / 일반 800,000
+        # 같은 취지가 1순위 집계(_group_rank1)에는 이미 있었는데 판정만 빠져 있었다
+        # ("해외만 1위고 국내가 더 싸면 무의미한 1등"). 지표와 판정 기준을 맞춘다.
+        rank1 = int(live_rank) == 1 and (market_low <= 0 or cur <= market_low)
     else:
         rank1 = market_low > 0 and 0 < cur <= market_low
     # [2026-08-06] 국내 10% 할인 상한(domestic_cap) 게이트 **폐기**.
