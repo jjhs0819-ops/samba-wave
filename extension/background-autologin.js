@@ -797,25 +797,44 @@ const _ensureLoggedInInflight = new Map()  // siteKey → Promise<boolean>
 
 // 진입점 — 외부에서 자동로그인을 트리거할 때 호출 (3회 재시도)
 // opts.accountId — 주문 매칭 계정으로 강제 로그인 (송장 수집 등 계정별 격리 필요시)
+// opts.force    — 성공 캐시 무시하고 실제 로그아웃 + 재로그인 (적립금 계정별 잡)
 function ensureLoggedIn(siteKey, opts) {
   const accountId = (opts && opts.accountId) || ''
+  const force = !!(opts && opts.force)
   // accountId별 inflight key — 같은 사이트라도 계정별로는 독립 처리
   const inflightKey = accountId ? `${siteKey}::${accountId}` : siteKey
-  if (_ensureLoggedInInflight.has(inflightKey)) {
-    return _ensureLoggedInInflight.get(inflightKey)
-  }
+  const prev = _ensureLoggedInInflight.get(inflightKey)
+  // [2026-08-14] force 호출은 진행 중인 호출에 편승하면 안 된다.
+  // 편승하면 그 호출이 성공 캐시로 true 를 돌려줄 수 있어(= 실제 로그인 안 함) force 의
+  // 목적('지금 이 세션이 정확히 이 계정')이 깨진다. 앞 호출이 끝나기를 기다린 뒤
+  // 내 재로그인을 수행한다(동시 로그인으로 쿠키가 엉키지 않게 편승 대신 직렬).
+  if (prev && !force) return prev
   const p = (async () => {
+    if (prev) { try { await prev } catch {} }
     try {
-      return await _ensureLoggedInImpl(siteKey, accountId)
+      return await _ensureLoggedInImpl(siteKey, accountId, force)
     } finally {
-      _ensureLoggedInInflight.delete(inflightKey)
+      // 내가 마지막 등록자일 때만 정리 — 뒤에 다른 force 가 붙었으면 그쪽이 소유권을 가진다.
+      if (_ensureLoggedInInflight.get(inflightKey) === p) {
+        _ensureLoggedInInflight.delete(inflightKey)
+      }
     }
   })()
   _ensureLoggedInInflight.set(inflightKey, p)
   return p
 }
 
-async function _ensureLoggedInImpl(siteKey, accountId) {
+// [2026-08-14] 쿠키 자(jar) 그룹 — 로그인 세션을 공유하는 사이트키 묶음.
+// abcmart(abcmart.a-rt.com)와 member(ABC캠프, member.a-rt.com)는 a-rt.com 쿠키를 공유해서
+// 한쪽이 로그인하면 다른 쪽 세션도 그 계정으로 바뀐다. 그런데 성공 캐시는 사이트키별로 따로라
+// "member 캐시엔 내 계정 성공이 남아있는데 실제 세션은 abcmart 잡이 갈아끼운 남의 계정" 이
+// 될 수 있었다 → 로그인 스킵 → 남의 계정으로 출석. 자 단위로 마지막 로그인 계정을 추적한다.
+const _COOKIE_JAR_BY_SITE = { abcmart: 'a-rt', member: 'a-rt' }
+function _cookieJarOf(siteKey) {
+  return _COOKIE_JAR_BY_SITE[siteKey] || siteKey
+}
+
+async function _ensureLoggedInImpl(siteKey, accountId, force) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) {
     console.log(`[자동로그인] 미지원 사이트: ${siteKey}`)
@@ -873,12 +892,23 @@ async function _ensureLoggedInImpl(siteKey, accountId) {
 
   // 계정별 최근 성공 캐시 체크 — 같은 계정으로 10분 이내 로그인 확인됐으면 스킵
   // (송장수집 100건 잡 돌릴 때 매 주문마다 ensureLoggedIn 트리거되는 비용 + alert 폭주 차단)
+  // [2026-08-14] force=true 면 캐시를 아예 보지 않는다. 적립금(출첵 등) 계정별 잡은
+  // '지금 이 세션이 정확히 이 계정' 이어야 하는데, 캐시는 그걸 보장하지 못한다.
+  // (사용자가 브라우저에서 손으로 다른 계정 로그인 / 세션 만료 등은 캐시에 안 잡힘)
   const ACCOUNT_LOGIN_TTL_MS = 10 * 60 * 1000
-  try {
+  if (force) {
+    console.log(`[자동로그인] ${site.name}(${accountId || '_default'}) 강제 재로그인 — 성공 캐시 무시`)
+  } else try {
     const cache = globalThis._lastAutoLoginSuccessAt?.[siteKey]
     const accKey = accountId || '_default'
     const lastTs = (cache && typeof cache === 'object') ? (cache[accKey] || 0) : 0
-    if (lastTs && (Date.now() - lastTs) < ACCOUNT_LOGIN_TTL_MS) {
+    // 쿠키 자를 공유하는 다른 사이트키가 나중에 다른 계정으로 로그인했으면 캐시는 무효다.
+    const jar = _cookieJarOf(siteKey)
+    const jarAcc = globalThis._lastJarLoginAccount?.[jar]
+    const jarMismatch = !!jarAcc && jarAcc !== accKey
+    if (jarMismatch && lastTs) {
+      console.log(`[자동로그인] ${site.name}(${accKey}) 성공캐시 있으나 ${jar} 세션은 ${jarAcc} — 캐시 무시하고 재로그인`)
+    } else if (lastTs && (Date.now() - lastTs) < ACCOUNT_LOGIN_TTL_MS) {
       const ageSec = Math.round((Date.now() - lastTs) / 1000)
       console.log(`[자동로그인] ${site.name}(${accKey}) ${ageSec}초 전 성공 — 스킵`)
       return true
@@ -935,7 +965,14 @@ async function _ensureLoggedInImpl(siteKey, accountId) {
         // CDP 3단계 검증(무신사): 캐시 클리어 시 ensureLoggedIn 이 실제 로그아웃+병기 로그인으로
         // 세션 전환 성공(myinfo ID=cannonfort) → 캐시 교체가 정확한 스왑 유도.
         globalThis._lastAutoLoginSuccessAt[siteKey] = { [accKey]: Date.now() }
-        chrome.storage.local.set({ _lastAutoLoginSuccessAt: globalThis._lastAutoLoginSuccessAt }).catch(() => {})
+        // 쿠키 자 단위 '지금 이 세션의 주인' 기록 — a-rt.com 처럼 abcmart/member 가 세션을
+        // 공유하는 경우, 한쪽 로그인이 다른 쪽 캐시를 무효화하는 근거가 된다.
+        globalThis._lastJarLoginAccount = globalThis._lastJarLoginAccount || {}
+        globalThis._lastJarLoginAccount[_cookieJarOf(siteKey)] = accKey
+        chrome.storage.local.set({
+          _lastAutoLoginSuccessAt: globalThis._lastAutoLoginSuccessAt,
+          _lastJarLoginAccount: globalThis._lastJarLoginAccount,
+        }).catch(() => {})
       } catch {}
       console.log(`[자동로그인] ✅ ${site.name} 성공 — 폴링 자동 재개`)
     } else {

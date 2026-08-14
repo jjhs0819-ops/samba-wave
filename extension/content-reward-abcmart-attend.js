@@ -99,6 +99,51 @@
     return blob.includes(idOnly.toLowerCase()) ? true : null
   }
 
+  // [2026-08-14] 지금 로그인된 아이디를 **실제로 읽어낸다**.
+  // 위 accountConfirmed 는 '기대 아이디가 어딘가 보이나' 만 봐서, 다른 계정이 로그인돼 있으면
+  // 그냥 흔적 없음(null)으로 넘어가 그 계정으로 출석을 찍어버렸다.
+  // 아이디를 특정할 수 있으면 대조해서 다르면 즉시 실패시킨다. 못 읽으면 null(기존대로 진행).
+  // ⚠ 출처는 **서버가 이번 요청에 그려준 인라인 script** 로 한정한다.
+  // localStorage 는 쿠키를 지우고 다른 계정으로 로그인해도 그대로 남아서, 예전 계정 아이디가
+  // 튀어나와 '정상 로그인인데 불일치' 로 오판정하게 된다(= 출첵이 영영 실패).
+  // 인라인 script 의 전역값은 매 페이지 로드마다 현재 세션 기준으로 다시 그려지므로 신뢰 가능.
+  function currentLoginId() {
+    const pats = [
+      /loginId\s*[:=]\s*['"]([\w.@-]{4,})['"]/i,
+      /"loginId"\s*:\s*"([\w.@-]{4,})"/i,
+      /mbrLoginId\s*[:=]\s*['"]([\w.@-]{4,})['"]/i,
+    ]
+    const blobs = []
+    try {
+      for (const s of document.querySelectorAll('script')) {
+        // 외부 스크립트(src)는 본문이 비어 있고, 있어도 세션값이 아니다.
+        if (s.src) continue
+        const t = s.textContent || ''
+        if (t && t.length < 20000) blobs.push(t)
+      }
+    } catch (_) {}
+    for (const b of blobs) {
+      for (const re of pats) {
+        const m = b.match(re)
+        // 폼 기본값·플레이스홀더('loginId', 'null', 'undefined', '')는 거른다.
+        const v = m && m[1]
+        if (v && !['loginid', 'null', 'undefined', 'false', 'true'].includes(v.toLowerCase())) return v
+      }
+    }
+    return null
+  }
+
+  // 기대 계정과 실제 로그인 계정이 다르면 사유 문자열, 같거나 확인 불가면 null.
+  function accountMismatch() {
+    const expected = window.__sambaRewardExpectedUser__
+    if (!expected) return null
+    const actual = currentLoginId()
+    if (!actual) return null // 못 읽음 → 판정 보류(오탐 방지)
+    const norm = v => String(v).split('@')[0].trim().toLowerCase()
+    if (norm(actual) === norm(expected)) return null
+    return `다른 계정 로그인됨 (기대=${expected} / 실제=${actual})`
+  }
+
   await sleep(2000)
   log('ABC-CAMP 출석체크 페이지 진입')
 
@@ -106,6 +151,15 @@
     if (loginNeeded()) {
       log('로그인이 필요합니다')
       send({ success: false, error: '로그인 필요' })
+      return
+    }
+
+    // [2026-08-14] 다른 계정 세션으로 출석을 찍어버리는 사고 차단.
+    // 계정이 여러 개일 때 이게 없으면, 앞 계정 세션에서 '이미 출석' 을 보고 성공으로 보고한다.
+    const mismatch = accountMismatch()
+    if (mismatch) {
+      log(mismatch)
+      send({ success: false, error: mismatch })
       return
     }
 

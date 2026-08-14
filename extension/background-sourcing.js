@@ -480,6 +480,22 @@ function _serializeMusinsaTracking(fn) {
   return next
 }
 
+// [2026-08-14] 계정 지정 적립금 잡 직렬화 — 사이트당 1건씩.
+// 브라우저는 사이트당 로그인 세션을 하나만 가진다. 그런데 팝업 사이트(ABCmart/SSG/LOTTEON)는
+// 큐 적체 방지로 동시실행 캡이 최소 4로 강제돼 있어(_POPUP_SITES_MIN_CAP), 계정이 여러 개면
+// 출첵 잡 4건이 동시에 '쿠키 삭제 → 로그인' 을 해서 서로 세션을 덮어썼다.
+// 결과: 마지막에 로그인한 계정으로만 출석이 찍히고, 나머지 탭은 그 세션에서 '이미 출석' 을 보고
+// 성공으로 보고 — 실측된 'ABC마트 맨 위 계정만 출첵되고 나머지는 완료로만 찍힘' 의 원인.
+// 계정별 로그아웃 → 로그인 → 작업 완료까지를 한 덩어리로 묶어 사이트당 순차 처리한다.
+const _accountJobChains = new Map() // 사이트키 → Promise
+function _serializeAccountJob(site, fn) {
+  const key = _normalizeSiteForCap(site)
+  const prev = _accountJobChains.get(key) || Promise.resolve()
+  const next = prev.then(() => fn(), () => fn())
+  _accountJobChains.set(key, next.catch(() => {}))
+  return next
+}
+
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
   // [우선 모드] rewardOnlyMode(적립금만) / purchaseOnlyMode(가구매만) 켜져 있으면 해당 타입 외 잡은
@@ -492,14 +508,19 @@ async function _processJobWithCap(job) {
   } catch {}
   // 적립금 자동 적립 잡(type=reward) — 가격수집과 격리, 사이트 세마포어 사용
   if (job.type === 'reward') {
-    await _siteSemAcquire(site)
-    _markSourcingSiteActive(site)
-    try {
-      return await handleRewardJob(job)
-    } finally {
-      _markSourcingSiteInactive(site)
-      _siteSemRelease(site)
+    // 계정 지정 잡은 사이트당 1건씩 순차 처리 — 동시 로그인이 서로 세션을 덮어쓰는 것 차단.
+    // (계정 미지정 잡은 세션 전환이 없으므로 기존대로 캡 안에서 병렬 처리)
+    const run = async () => {
+      await _siteSemAcquire(site)
+      _markSourcingSiteActive(site)
+      try {
+        return await handleRewardJob(job)
+      } finally {
+        _markSourcingSiteInactive(site)
+        _siteSemRelease(site)
+      }
     }
+    return job.sourcingAccountId ? await _serializeAccountJob(site, run) : await run()
   }
   // 마켓 점수·품절률 수집 잡(type=store_metrics) — 적립금과 동일 격리/세마포어.
   if (job.type === 'store_metrics') {
@@ -1555,7 +1576,11 @@ async function handleRewardJob(job) {
   let autoLoginOk = null // null = 시도 안 함(계정ID 없음 등)
   if (autoKey && typeof globalThis.ensureLoggedIn === 'function' && sourcingAccountId) {
     try {
-      autoLoginOk = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId })
+      // [2026-08-14] force — 성공 캐시를 믿지 않고 항상 로그아웃 후 잡 계정으로 새로 로그인한다.
+      // 적립금은 '이 세션이 정확히 이 계정' 이어야 적립이 그 계정에 붙는다. 캐시는 그걸 보장 못 한다:
+      // 사용자가 브라우저에서 손으로 다른 계정에 로그인했거나, 세션이 만료됐거나, 같은 쿠키를 쓰는
+      // 다른 사이트키 잡(ABC마트↔ABC캠프)이 세션을 갈아끼운 경우가 캐시엔 안 잡힌다.
+      autoLoginOk = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId, force: true })
       if (!autoLoginOk) console.warn(`[적립금] 자동 로그인 실패 (site=${site} action=${action})`)
     } catch (e) {
       autoLoginOk = false
