@@ -17,7 +17,9 @@
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import re
 from typing import Any
 
@@ -105,6 +107,43 @@ _CATEGORY_LABELS = {
     "streetwear": "스트릿웨어",
     "trading-card": "트레이딩카드",
 }
+
+
+# ── 스니덩크 인증 프록시 [2026-08-13] ────────────────────────────────────────
+# 이 모듈은 httpx.AsyncClient 를 프록시 없이 만들고 있었다(7곳 전부).
+# 스니덩크는 우리 IP 를 차단해 **직결은 전부 403** 이다(실측).
+#   그 결과 해외송장 조회가 6일째 전량 실패했는데, 로그에는 "조회 53 / 수집 0"
+#   으로만 보여 '아직 발송 전'으로 오인됐고 허브넷 송장 누락이 계속 쌓였다.
+# kream_shadow 는 같은 SNKR_PROXY 를 _mounts() 로 물려 정상 동작 중이다.
+# 같은 방식으로 snkrdunk.com 요청만 인증 프록시로 우회한다.
+_SNKR_PROXIES = [
+    _p.strip() for _p in os.environ.get("SNKR_PROXY", "").split(",") if _p.strip()
+]
+_snkr_rr = itertools.count()
+
+
+class _RoundRobinProxyTransport(httpx.AsyncBaseTransport):
+    """요청마다 프록시를 번갈아 쓴다 — 한 IP 로 몰리면 스니덩크가 조인다."""
+
+    def __init__(self, proxies: list[str]) -> None:
+        self._tr = [httpx.AsyncHTTPTransport(proxy=p) for p in proxies]
+
+    async def handle_async_request(self, request):
+        return await self._tr[next(_snkr_rr) % len(self._tr)].handle_async_request(
+            request
+        )
+
+    async def aclose(self) -> None:
+        for t in self._tr:
+            await t.aclose()
+
+
+def _snkr_mounts():
+    """snkrdunk.com 전용 프록시 마운트. 미설정이면 None(직결)."""
+    if not _SNKR_PROXIES:
+        return None
+    tr = _RoundRobinProxyTransport(_SNKR_PROXIES)
+    return {"all://snkrdunk.com": tr, "all://*.snkrdunk.com": tr}
 
 
 def _category_label(snkr_type: str | None) -> str:
@@ -285,7 +324,10 @@ class SnkrdunkClient:
         products: list[dict[str, Any]] = []
         total = 0
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             cur_page = page
             while len(products) < max_count:
@@ -395,7 +437,10 @@ class SnkrdunkClient:
         products: list[dict[str, Any]] = []
         per_page = max(1, min(int(per_page or 100), 100))
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             page = 1
             seen: set[str] = set()
@@ -484,7 +529,10 @@ class SnkrdunkClient:
         products: list[dict[str, Any]] = []
         seen: set[str] = set()
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             page = max(1, int(start_page or 1))
             last_page = page + max_pages - 1
@@ -610,7 +658,10 @@ class SnkrdunkClient:
         box_min_price = 0
 
         async with httpx.AsyncClient(
-            headers=JP_HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=JP_HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             # 1) JP 상세 — name(영문 유지)·품번·이미지·박스 minPrice(엔)
             try:
@@ -760,7 +811,10 @@ class SnkrdunkClient:
             return await self.get_trading_card_detail(site_product_id)
         url = _detail_url(site_product_id, snkr_type)
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             try:
                 r = await client.get(url)
@@ -803,6 +857,7 @@ class SnkrdunkClient:
         """JP 상세페이지에서 사이즈별 엔화 최저가 조회. 실패 시 빈 리스트(=USD 폴백)."""
         try:
             async with httpx.AsyncClient(
+                mounts=_snkr_mounts(),
                 headers={**HEADERS, "Accept-Language": "ja"},
                 timeout=self._timeout,
                 follow_redirects=True,
@@ -952,7 +1007,7 @@ async def fetch_order_overseas_tracking(
         "Referer": f"{BASE}/",
     }
     async with httpx.AsyncClient(
-        headers=headers, timeout=timeout, follow_redirects=True
+        mounts=_snkr_mounts(), headers=headers, timeout=timeout, follow_redirects=True
     ) as client:
         # 1) 주문 상세 — trackingNumber(해외송장)·orderStatus·orderAdminShippedAt
         try:

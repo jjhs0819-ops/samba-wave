@@ -200,12 +200,14 @@ async def main():
           AND status != 'shipping'
         ORDER BY created_at ASC
     ''')
+    kst = datetime.timezone(datetime.timedelta(hours=9))
     out = []
     for r in rows:
         # 이베이가 shipByDate 아직 안 준 신규주문 — created_at+7일로 대체(다른 주문들 실측 패턴)
         ship_by = r["ship_by_at"] or (r["created_at"] + datetime.timedelta(days=7))
         out.append({"order_number": r["order_number"], "quantity": r["quantity"],
-                     "ship_by_at": ship_by.strftime("%Y. %-m. %-d")})
+                     "ship_by_at": ship_by.strftime("%Y. %-m. %-d"),
+                     "order_date": r["created_at"].astimezone(kst).strftime("%Y. %-m. %-d")})
     print(json.dumps(out, ensure_ascii=False))
 asyncio.run(main())
 """
@@ -230,12 +232,10 @@ def append_new_ebay_orders(ws):
         return
     a_col = ws.col_values(1)
     last_row = len(a_col)
-    _now = time.localtime()
-    order_date = f"{_now.tm_year}. {_now.tm_mon}. {_now.tm_mday}"
     rows = []
     for o in new_orders:
         for seq in range(1, o["quantity"] + 1):
-            rows.append([order_date, o["order_number"], str(seq), "", "", "97.30%", "0", "", o["ship_by_at"]])
+            rows.append([o["order_date"], o["order_number"], str(seq), "", "", "97.30%", "0", "", o["ship_by_at"]])
     ws.update(range_name=f"A{last_row + 1}", values=rows, value_input_option="USER_ENTERED")
     print(f"[0] 신규 이베이 주문 {len(new_orders)}건({len(rows)}행) 추가: "
           f"{', '.join(o['order_number'] for o in new_orders)}")
