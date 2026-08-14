@@ -4250,18 +4250,40 @@ async def run_kream_unified_once() -> dict:
         if _b and _b != _o:
             ask_base_index.setdefault((_k, _b), _a)
 
-    def _has_live_ask(_kid: str, _opt: str) -> bool:
-        """DB 옵션명으로 라이브 입찰 유무 확인 — 크림 접미 표기까지 흡수."""
-        if (_kid, _opt) in ask_index:
-            return True
-        return (_kid, str(_opt).strip().replace(" ", "")) in ask_base_index
+    # [2026-08-14] 상품별 ask 목록 — 아래 _opt_same 폴백에서 쓴다.
+    _ask_by_kid: dict = {}
+    for a in asks:
+        _ask_by_kid.setdefault(str(a.get("product_id") or ""), []).append(a)
 
     def _get_live_ask(_kid: str, _opt: str):
-        """DB 옵션명으로 라이브 입찰 객체를 꺼낸다 — _has_live_ask 와 같은 흡수 규칙."""
+        """DB 옵션명으로 라이브 입찰 객체를 꺼낸다."""
         a = ask_index.get((_kid, _opt))
         if a is not None:
             return a
-        return ask_base_index.get((_kid, str(_opt).strip().replace(" ", "")))
+        a = ask_base_index.get((_kid, str(_opt).strip().replace(" ", "")))
+        if a is not None:
+            return a
+        # [2026-08-14] cm↔mm 등 표기차를 _opt_same 으로 흡수한다. **비대칭이 진범이었다.**
+        # 등록 경로는 _match_kream_option(= _opt_same)으로 DB '27cm' → 크림 '270' 을
+        # 정확히 찾아 등록하는데, 보유 검사만 문자열 일치라 '270' 에 이미 걸린 입찰을
+        # 못 봤다. 그래서 '입찰 없음'으로 판단해 같은 옵션에 또 등록했고, 그때 시장최저가
+        # **우리 자신의 기존 입찰**이라 거기서 1,000원을 깎아 얹었다.
+        #   실측 358645|270 (Nike Calm Slide):
+        #     15:48 우리 339,000 등록 → 19:28 우리 338,000 또 등록(=339,000-1,000)
+        #     실제 시장최저는 남의 241,000 인데 그 위에 두 건이 쌓여 순번 2·3.
+        #   실측 라이브 28,215건 중 같은 (상품,옵션) 중복 96쌍.
+        _best = None
+        for _x in _ask_by_kid.get(str(_kid)) or []:
+            if _opt_same(_opt, _x.get("option")):
+                if _best is None or int(_x.get("price") or 0) > int(
+                    _best.get("price") or 0
+                ):
+                    _best = _x
+        return _best
+
+    def _has_live_ask(_kid: str, _opt: str) -> bool:
+        """DB 옵션명으로 라이브 입찰 유무 확인 — _get_live_ask 와 같은 흡수 규칙."""
+        return _get_live_ask(_kid, _opt) is not None
 
     products = await _load_matched_products()
     # 박스 pass용 kid→snkr_id 맵 (배치 슬라이스 전 전체 — 박스 ask는 카탈로그 전역, 로테이션 안 함)
@@ -4737,7 +4759,7 @@ async def run_kream_unified_once() -> dict:
                 d = live.get(nm) or {}
                 price = _guard_jpy(kid, nm, int(d.get("price") or 0))
                 stock = int(d.get("stock") or 0)
-                ask = ask_index.get((kid, nm))
+                ask = _get_live_ask(kid, nm)
                 has_ask = ask is not None
                 # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
                 # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
@@ -4999,7 +5021,7 @@ async def run_kream_unified_once() -> dict:
                 d = live.get(nm) or {}
                 price = _guard_jpy(kid, nm, int(d.get("price") or 0))
                 stock = int(d.get("stock") or 0)
-                ask = ask_index.get((kid, nm))
+                ask = _get_live_ask(kid, nm)
                 has_ask = ask is not None
                 # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
                 # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
