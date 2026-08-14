@@ -1568,6 +1568,13 @@ async def _frankfurter_rate(frm: str, to: str, fallback: float) -> float:
                 v = float((r.json().get("rates") or {}).get(to) or 0)
             if v > 0:
                 _rate_cache[pair] = v
+                # 재기동을 넘기기 위한 마지막 성공값 보존(위 실패 경로가 읽는다).
+                try:
+                    _fx = await _load_setting_map(_SET_FX)
+                    _fx[pair] = {"v": v, "ts": _now_ts()}
+                    await _save_setting_map(_SET_FX, _fx)
+                except Exception:
+                    pass
                 return v
             _last = "rates 비어있음"
         except Exception as exc:
@@ -1575,7 +1582,29 @@ async def _frankfurter_rate(frm: str, to: str, fallback: float) -> float:
         if _try < 2:
             await asyncio.sleep(1.5)
     logger.warning("[크림] 환율 %s 조회 실패(3회): %s", pair, _last)
-    return _rate_cache.get(pair, fallback)
+    _mem = _rate_cache.get(pair)
+    if _mem and _mem > 0:
+        return _mem
+    # [2026-08-14] 메모리 캐시는 배포마다 빈다. 재기동 직후엔 터널이 올라오기 전
+    # 5초(3회x1.5초) 안에 재시도를 다 소진해 실패하고, JPY/KRW 는 폴백이 0 이라
+    # **사이클이 통째로 스킵**된다(실측 2026-08-14 19:57 KST). 마지막 성공값을 DB 에
+    # 남겨 재기동을 넘긴다. 3일 넘은 값은 쓰지 않는다 — 낡은 환율로 도는 것이
+    # 하드코딩 폴백과 같은 사고를 낸다.
+    try:
+        _db = (await _load_setting_map(_SET_FX)).get(pair) or {}
+        _v, _ts = float(_db.get("v") or 0), float(_db.get("ts") or 0)
+        if _v > 0 and _ts > 0 and (_now_ts() - _ts) <= 3 * 86400:
+            logger.warning(
+                "[크림] 환율 %s — DB 캐시 사용 %.4f (%.1f시간 전 값)",
+                pair,
+                _v,
+                (_now_ts() - _ts) / 3600,
+            )
+            _rate_cache[pair] = _v
+            return _v
+    except Exception as exc:
+        logger.warning("[크림] 환율 DB 캐시 조회 실패(무시): %s", str(exc)[:80])
+    return fallback
 
 
 async def _jpy_krw_rate() -> float:
@@ -2262,6 +2291,7 @@ _SET_MISS = "kream_miss_counts"
 # 리스톡 로테이션 offset 영속화 — 재배포/재시작에도 순회 위치 유지(안 하면 매 재시작 0 리셋 →
 # 앞부분만 반복, 뒤쪽 카드 영영 미평가 → 품절 재고갱신·리스톡 누락). [2026-07-25]
 _SET_OFFSET = "kream_unified_offset"  # (구) offset 로테이션 — 미사용
+_SET_FX = "kream_fx_rate"  # 마지막 성공 환율(재기동 대비)
 _SET_SCANNED = "kream_restock_scanned"  # 이번 바퀴에 본 kid 집합
 _SET_LIVE_OFFSET = (
     "kream_live_offset"  # 갱신 로테이션 위치 — 재시작해도 이어가게 영속화
