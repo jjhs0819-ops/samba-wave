@@ -2917,6 +2917,34 @@ async def _register_announcement(kid: str) -> bool:
 # "신규 입찰인데 왜 1등이 아니냐"를 사후가 아니라 **등록 그 순간** 남긴다.
 # 종전엔 POST 응답을 통째로 버려(return True, "ok") 등록 직후 순위를 알 수 없었고,
 # 나중에 목록을 봐야 했는데 그때는 이미 시세가 움직인 뒤라 원인을 못 갈랐다.
+_g_patch_audit = {"n": 0, "rank1": 0, "bad": 0, "unknown": 0}  # 조정 검증 집계
+
+
+def _audit_patch(kid: str, opt: str, target: int, cur: int, rank) -> None:
+    """조정(PATCH) 직후 순위 검증 — 등록(_audit_post)과 같은 취지.
+
+    [2026-08-14] 종전엔 PATCH 응답의 live_rank 를 순위교정에만 쓰고 버렸다. 그래서
+    '조정했는데 여전히 1등이 아닌' 건이 얼마나 되는지 볼 수단이 없었고, 그게
+    개선이 안 되는 이유였다. 조정할 때마다 결과를 남긴다.
+    """
+    _g_patch_audit["n"] += 1
+    if rank is None:
+        _g_patch_audit["unknown"] += 1
+        return
+    if int(rank) == 1:
+        _g_patch_audit["rank1"] += 1
+        return
+    _g_patch_audit["bad"] += 1
+    logger.warning(
+        "[크림통합] 조정검증 %s|%s %s→%s · rank=%s **1등 아님**",
+        kid,
+        opt,
+        f"{int(cur):,}",
+        f"{int(target):,}",
+        rank,
+    )
+
+
 _g_post_rank: dict = {}  # "kid|opt" -> live_rank(int|None)
 _g_post_audit = {"n": 0, "rank1": 0, "bad": 0}  # 사이클 집계
 
@@ -3148,6 +3176,7 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
             _res, _r = await _execute_update(cli, h, _aid, _tg, _cur, _nc, _kid, _opt)
             if _res == "ok":
                 c["patch"] = c.get("patch", 0) + 1
+                _audit_patch(_kid, _opt, _tg, _cur, _r)
             elif _res == "reverted":
                 c["revert"] = c.get("revert", 0) + 1
             else:
@@ -4289,6 +4318,7 @@ async def run_kream_unified_once() -> dict:
     _progress()
     _g_post_rank.clear()  # 등록검증 계측 — 사이클 단위
     _g_post_audit.update({"n": 0, "rank1": 0, "bad": 0})
+    _g_patch_audit.update({"n": 0, "rank1": 0, "bad": 0, "unknown": 0})
     _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
     _g_early_renewed.clear()
     _g_early_posted.clear()
@@ -5718,6 +5748,15 @@ async def run_kream_unified_once() -> dict:
         )
         _exec_bg.clear()
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
+    if _g_patch_audit["n"]:
+        logger.info(
+            "[크림통합] 조정검증 집계 — 조정%d건 중 1등%d · 비1등%d · 확인불가%d (%.0f%%)",
+            _g_patch_audit["n"],
+            _g_patch_audit["rank1"],
+            _g_patch_audit["bad"],
+            _g_patch_audit["unknown"],
+            _g_patch_audit["rank1"] * 100.0 / max(1, _g_patch_audit["n"]),
+        )
     if _g_post_audit["n"]:
         logger.info(
             "[크림통합] 등록검증 집계 — 등록%d건 중 1등%d · 비1등%d (%.0f%%)",
