@@ -1852,6 +1852,31 @@ _SNKR_HEADERS = {
 }
 
 
+# ── 매도 오등록 매물 블랙리스트 [2026-08-16] ────────────────────────────────
+# 스니덩크 매도자가 **PSA 3 카드를 PSA 10 자리에 ¥188,000** 으로 올렸고, 우리가 그
+# 값을 원가로 믿어 크림에 2,319,000원 판매 입찰을 걸어 체결됐다(주문 A-LI189098169).
+# 진짜 PSA 10 은 ¥2,500,000 — 오등록가는 정상가의 **7.5%** 였다.
+# _robust_floor 는 5건 미만이면 통계근거가 없어 최저가를 그대로 쓰므로 못 막았다.
+# 사람이 눈으로 잡은 오등록 매물을 **그 매물 단위로** 원가 계산에서 빼는 장치.
+#   설정키 kream_used_blacklist = {"<used_item_id>": "사유"}
+_SET_USED_BL = "kream_used_blacklist"
+_g_used_blacklist: dict = {}
+
+
+async def blacklist_used_item(item_id: int | str, reason: str = "") -> int:
+    """오등록 매물을 블랙리스트에 올린다. 반환=등록 후 총 건수."""
+    _g_used_blacklist.update(await _load_setting_map(_SET_USED_BL))
+    _g_used_blacklist[str(item_id)] = reason or "오등록"
+    await _save_setting_map(_SET_USED_BL, _g_used_blacklist)
+    logger.info(
+        "[크림통합] 매물 블랙리스트 등록 %s (%s) — 총 %d건",
+        item_id,
+        reason,
+        len(_g_used_blacklist),
+    )
+    return len(_g_used_blacklist)
+
+
 def _robust_floor(prices_sorted: list[int]) -> int:
     """단일 헐값(오등록/스캠 리스팅) outlier 제거 등급 하한가 [로컬 이식·근본 fix].
     - 5개↑: 중앙값 50% 미만 호가는 outlier 로 버리고 남은 것 중 최저가.
@@ -1900,6 +1925,15 @@ async def _fetch_snkr_used(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
             break
         for x in items:
             if not isinstance(x, dict) or x.get("isDisplaySold"):
+                continue
+            # 오등록으로 확인된 매물은 원가 계산에서 제외 [2026-08-16]
+            if str(x.get("id") or "") in _g_used_blacklist:
+                logger.info(
+                    "[크림통합] 블랙리스트 매물 제외 %s ¥%s (%s)",
+                    x.get("id"),
+                    x.get("price"),
+                    x.get("displayShortConditionTitle"),
+                )
                 continue
             cond = (x.get("displayShortConditionTitle") or "").strip()
             if re.match(r"PSA\s*10\b", cond, re.IGNORECASE):
@@ -2624,6 +2658,10 @@ async def _load_restock_guards() -> None:
         {k: float(v) for k, v in fp.items() if now - float(v) < _FAILED_TTL}
     )
     _g_miss_counts.update(await _load_setting_map(_SET_MISS))
+    # 오등록 매물 블랙리스트 — 원가 계산에서 그 매물만 뺀다 [2026-08-16]
+    _g_used_blacklist.update(await _load_setting_map(_SET_USED_BL))
+    if _g_used_blacklist:
+        logger.info("[크림통합] 오등록 매물 블랙리스트 %d건", len(_g_used_blacklist))
 
 
 def _trade_ok(kid: str, name: str) -> bool:
