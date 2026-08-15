@@ -4747,6 +4747,20 @@ async def run_kream_unified_once() -> dict:
         )
         _scanned = set()
         _fresh = rest_products
+
+    # [2026-08-15] **재고 있는 것부터 스캔한다.** 종전엔 스캔목록 순서 그대로 잘랐는데,
+    # 슬라이스마다 재고 보유량이 극심하게 갈려 등록이 0 에 가까운 사이클이 반복됐다.
+    #   실측: 10,000건 스캔 — 재고보유 13건 / 다음 슬라이스는 2,044건
+    #   그 결과 12시간 동안 등록 177 · 삭제 248 로 입찰이 28,400 에서 정체했다.
+    # DB 재고(db_opts)는 갱신 때 write-back 된 값이라 완벽하진 않지만, 재고 0 인 것을
+    # 먼저 훑어 한 사이클을 통째로 버리는 것보다 낫다. 실시간 재고는 판정에서 다시 본다.
+    def _has_stock(_p) -> int:
+        for _d in (_p.get("db_opts") or {}).values():
+            if int((_d or {}).get("stock") or 0) > 0:
+                return 0  # 재고 있음 → 앞으로
+        return 1
+
+    _fresh.sort(key=_has_stock)
     rest_slice = _fresh[:_restock_scan] if _restock_scan > 0 else _fresh
     # [2026-08-05] 스캔목록 저장을 **판정 뒤로** 옮긴다.
     # 종전엔 슬라이스에 뽑자마자 전량 '완료'로 찍고 저장했다. 판정까지 갔는지는
