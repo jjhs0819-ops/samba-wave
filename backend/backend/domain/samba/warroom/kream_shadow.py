@@ -1840,6 +1840,20 @@ def _mounts():
     return {"all://snkrdunk.com": tr, "all://*.snkrdunk.com": tr}
 
 
+# ── 소싱처 [2026-08-16] ────────────────────────────────────────────────────
+# 스니덩크 외에 유니클로/GU **일본 공홈**을 소싱처로 쓴다. 스니덩크는 이 두 브랜드
+# 물량이 얇고(UNIQLO 1,282 · GU 552) 공홈은 전 상품·전 사이즈 재고를 그대로 준다.
+# 품번이 그대로 대응해 오매칭 여지가 없다: 크림 488253-09 ↔ 공홈 488253-09-002-000.
+_SOURCE_SITES = ("SNKRDUNK", "ONITSUKA", "UNIQLO", "GU")
+_SOURCE_SITES_SQL = "('" + "','".join(_SOURCE_SITES) + "')"
+# 공홈 API — 3,000엔 미만 주문은 배송비 500엔이 붙는다(사용자 확정 규칙).
+_HOME_API = {
+    "UNIQLO": "https://www.uniqlo.com/jp/api/commerce/v5/ja",
+    "GU": "https://www.gu-global.com/jp/api/commerce/v5/ja",
+}
+_HOME_FREE_SHIP_MIN = 3000
+_HOME_SHIP_FEE = 500
+
 _SNKR_USED_URL = "https://snkrdunk.com/v1/apparels/{id}/used"
 _SNKR_HEADERS = {
     "User-Agent": (
@@ -2300,13 +2314,28 @@ async def _load_matched_products() -> list[dict]:
                     "options::text AS opts, name, "
                     "(resell_matches->'kream'->>'verified')='true' AS verified, "
                     "COALESCE(extra_data->>'currency','JPY') AS currency, "
-                    "COALESCE(extra_data->>'snkr_type','') AS snkr_type "
-                    "FROM samba_collected_product WHERE source_site='SNKRDUNK' "
+                    "COALESCE(extra_data->>'snkr_type','') AS snkr_type, "
+                    "source_site "
+                    # [2026-08-16] 유니클로/GU 공홈 소싱분 포함. 스니덩크는 이 두 브랜드
+                    # 물량이 얇다(UNIQLO 1,282 · GU 552)는 게 공홈을 쓰는 이유고,
+                    # 품번이 그대로 대응해(488253-09 ↔ 488253-09-002-000) 오매칭이 없다.
+                    "FROM samba_collected_product "
+                    f"WHERE source_site IN {_SOURCE_SITES_SQL} "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                 )
             )
         ).all()
-    for snkr_id, kid, ambiguous, opts_txt, name, verified, currency, snkr_type in rows:
+    for (
+        snkr_id,
+        kid,
+        ambiguous,
+        opts_txt,
+        name,
+        verified,
+        currency,
+        snkr_type,
+        src_site,
+    ) in rows:
         db_opts: dict = {}
         fixed: dict = {}
         if opts_txt:
@@ -2334,6 +2363,8 @@ async def _load_matched_products() -> list[dict]:
                 # 코드가 전부 JPY 로 가정해 원화값을 엔화로 곱해 9배 부풀린 입찰 사고 발생.
                 "currency": str(currency or "JPY").upper(),
                 "snkr_type": str(snkr_type or ""),
+                # 소싱처 — 실시간 시세를 어디서 받을지 가른다(스니덩크 vs 공홈).
+                "site": str(src_site or "SNKRDUNK").upper(),
                 "db_opts": db_opts,
                 "fixed": fixed,
             }
@@ -3483,6 +3514,73 @@ def _live_opt(sizes: dict | None, opt: str) -> dict | None:
 
 
 @_timed("스니덩크_사이즈")
+async def _fetch_home_sizes(
+    cli: httpx.AsyncClient, site: str, style_code: str
+) -> dict | None:
+    """유니클로/GU 공홈 사이즈별 실원가·재고 — {사이즈명: {price, stock}} (JPY).
+
+    [2026-08-16] 공홈 수집기(_home_collect.py)와 같은 경로를 쓴다.
+      · 크림 style_code '488253-09' = 품번6 + 색상2
+      · 공홈 communicationCode '488253-09-002-000' = 품번-색상-사이즈-PLD
+      · 사이즈 '이름'(S/M/L)은 l2s 에 없다 — products 검색 응답 sizes 가 코드→이름을 준다.
+    원가에는 3,000엔 미만 주문 배송비 500엔을 미리 포함한다(판정기가 원가를 그대로 쓴다).
+    조회 실패는 None(기존 DB값 유지) — 0 을 반환하면 정상 입찰이 무재고로 삭제된다.
+    """
+    base = _HOME_API.get(str(site).upper())
+    if not base or "-" not in str(style_code):
+        return None
+    code, color = str(style_code).split("-", 1)
+    if not code.isdigit():
+        return None
+    try:
+        r = await _rq(
+            "GET", f"{base}/products", params={"q": code, "limit": 1, "offset": 0}
+        )
+        item = ((r.json().get("result") or {}).get("items") or [{}])[0]
+        names = {
+            str(z.get("code")): str(z.get("name") or "")
+            for z in (item.get("sizes") or [])
+        }
+        d = await _rq(
+            "GET",
+            f"{base}/products/E{code}-000/price-groups/00/l2s",
+            params={"withPrices": "true", "withStocks": "true"},
+        )
+        res = d.json().get("result") or {}
+    except Exception:
+        return None
+    stocks, prices = res.get("stocks") or {}, res.get("prices") or {}
+    out: dict = {}
+    for l2 in res.get("l2s") or []:
+        cc = str(l2.get("communicationCode") or "")
+        parts = cc.split("-")
+        if len(parts) < 3 or parts[1] != color:
+            continue  # 다른 색상 — 크림 품번의 색상만 취한다
+        l2id = str(l2.get("l2Id") or "")
+        qty = int((stocks.get(l2id) or {}).get("quantity") or 0)
+        pr = int(((prices.get(l2id) or {}).get("base") or {}).get("value") or 0)
+        if qty <= 0 or pr <= 0:
+            continue
+        sz = (l2.get("size") or {}).get("code")
+        nm = names.get(str(sz)) or str((l2.get("size") or {}).get("displayCode") or "")
+        if not nm:
+            continue
+        landed = pr + (_HOME_SHIP_FEE if pr < _HOME_FREE_SHIP_MIN else 0)
+        cur = out.get(nm)
+        if cur is None or landed < cur["price"]:
+            out[nm] = {"price": landed, "stock": qty}
+    return out
+
+
+async def _fetch_live_sizes_by_site(
+    cli: httpx.AsyncClient, site: str, sid: str
+) -> dict | None:
+    """소싱처별 실시간 사이즈 시세 진입점 — 스니덩크 / 공홈(유니클로·GU)."""
+    if str(site).upper() in _HOME_API:
+        return await _fetch_home_sizes(cli, site, sid)
+    return await _fetch_snkr_live_sizes(cli, sid)
+
+
 async def _fetch_snkr_live_sizes(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
     """비카드 실시간 사이즈별 원가·재고 — 숫자 id는 의류/잡화, 스타일코드는 mm 품목.
 
@@ -4344,7 +4442,7 @@ async def _lookup_snkr_mapping(kid: str) -> tuple[str, str] | None:
                     "SELECT site_product_id, source_site "
                     "FROM samba_collected_product "
                     "WHERE resell_matches->'kream'->>'product_id' = :k "
-                    "AND source_site IN ('SNKRDUNK','ONITSUKA') LIMIT 1"
+                    f"AND source_site IN {_SOURCE_SITES_SQL} LIMIT 1"
                 ),
                 {"k": kid},
             )
@@ -4972,7 +5070,9 @@ async def run_kream_unified_once() -> dict:
                 #   예) kid 22830 opt 295 — 실시간 255~285(295 없음) 인데 DB 재고1.
                 # 조회 실패는 DB 폴백 금지(통화사고 이력) — 이번 회차 건너뛰고 다음에 재시도.
                 try:
-                    _live_sz = await _fetch_snkr_live_sizes(scli, str(snkr_id))
+                    _live_sz = await _fetch_live_sizes_by_site(
+                        scli, prod.get("site") or "SNKRDUNK", str(snkr_id)
+                    )
                 except Exception as _e:
                     _live_sz = None
                     _trace(kid, "", f"리스톡 실시간조회 예외: {type(_e).__name__}")
