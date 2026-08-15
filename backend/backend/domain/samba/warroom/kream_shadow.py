@@ -1173,7 +1173,33 @@ def _now_ts() -> float:
 _hb_clamp = {"used": 0, "cap": 10**9}  # [2026-08-05] 상한 제거
 # (kid, opt) → 마진 하한. 순위교정 시 이 아래로는 절대 안 내린다.
 _floor_map: dict = {}
+
+
 # 순위교정(rank>=2 → 1,000원 인하) 사이클 상한
+def _floor_of(pid, opt: str) -> int:
+    """(kid, opt) 마진 하한 조회 — **옵션 표기차를 흡수한다.**
+
+    [2026-08-14] _floor_map 은 판정에서 **DB 옵션명**(nm, 예 '29cm')으로 넣는데,
+    순위교정·경쟁가추종은 **크림 ask 옵션명**(opt, 예 '290')으로 찾았다. 둘이 다르면
+    _floor 가 0 이 되고, 교정 조건 `_floor > 0` 에서 걸려 **교정이 통째로 스킵**된다.
+    rank=2 를 알고도 못 고치는 상태가 된다.
+      실측 16423|290: 내 2,211,000(rank=2) / 최소가 1,930,000 — 28만원 여유가 있는데
+      1,000~2,000원만 내리고 멈췄다. 같은 패턴이 사이클마다 수십 건.
+    오늘 중복 입찰을 만든 비대칭과 같은 뿌리다(_get_live_ask 참조).
+    """
+    _k = str(pid)
+    v = _floor_map.get((_k, str(opt)))
+    if v:
+        return int(v)
+    _n = str(opt).replace(" ", "")
+    for (_pk, _po), _v in _floor_map.items():
+        if str(_pk) != _k or not _v:
+            continue
+        if str(_po).replace(" ", "") == _n or _opt_same(opt, _po):
+            return int(_v)
+    return 0
+
+
 _rank_fix = {"used": 0, "cap": 10**9}  # [2026-08-05] 상한 제거
 
 
@@ -1199,7 +1225,9 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
     # 입력단 급락가드를 통과하더라도(직전가 없음·완만한 하락 등) 최소가 미만 값은 절대
     # 전송 금지. 원가가 뭐든 마진 하한(_floor_map) 이상만 나가게 강제한다.
     # 652078/649924 저마진 체결(8~9%, 정책 14%) 재발 원천 차단.
-    _floor = int(_floor_map.get((str(pid), str(opt)), 0) or 0)
+    # [2026-08-14] 옵션 표기차 흡수 — 종전엔 크림 옵션명으로만 찾아 DB 옵션명과 다르면
+    # _floor 가 0 이 되고, 이 **저마진 방지 가드가 통째로 무력화**됐다.
+    _floor = _floor_of(pid, opt)
     if _floor > 0 and int(target) < _floor:
         _note_fail(f"마진하한미달 차단: 목표 {int(target):,} < 최소 {_floor:,}")
         logger.warning(
@@ -1292,7 +1320,7 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
             and int(rank) >= 2
             and _rank_fix["used"] < _rank_fix["cap"]
         ):
-            _floor = int(_floor_map.get((str(pid), str(opt)), 0) or 0)
+            _floor = _floor_of(pid, opt)
             # [2026-08-14] 종전엔 무조건 `target - 1000` 이었다. 시장최저가 한참 아래면
             # 1,000원 내려도 여전히 2등이고, cap 때문에 다음 기회도 없다(실측 18119|250:
             # 1,589,000 → 1,588,000 이어도 해외 1,548,000 에 밀림). 실제 경쟁최저를
