@@ -4937,6 +4937,23 @@ async def run_kream_unified_once() -> dict:
                                 )
                             )
                             continue
+                        # [2026-08-14] **비카드(신발·의류) 갱신에 마진 하한 기록이 없었다.**
+                        # 카드 루프(PSA)에만 _floor_map 기록이 있어서, 신발 조정 후
+                        # 순위교정이 `_floor > 0` 조건에 걸려 전량 스킵됐다.
+                        #   실측: 순위교정 스킵 67715|275 · 39144|275 · 178442|280 —
+                        #   전부 rank=2 인데 '하한0(하한없음)'.
+                        # 이게 '2등이 널렸다'의 최종 원인이다. 판정과 같은 기준(item 수수료,
+                        # 배송비 포함)으로 계산해 교정이 마진 하한까지 내려갈 수 있게 한다.
+                        _fl_nc = calc_min_price(
+                            _pr,
+                            rate,
+                            True,
+                            False,
+                            POLICY["non_card_margin_rate"],
+                            fee_kind="item",
+                        )
+                        _floor_map[(kid, _nm)] = _fl_nc
+                        _floor_hint_put(kid, _nm, _fl_nc)
                         _a_nc, _t_nc, _adj_nc, _isnc_nc = _decide_price_action(
                             _cur_nc,
                             _nm,
