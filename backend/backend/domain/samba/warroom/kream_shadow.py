@@ -499,7 +499,10 @@ async def _brand_reg_rates(
                         "       COUNT(*) FILTER (WHERE m.stk > 0"
                         "         AND m.pr BETWEEN 5000 AND :maxc) tot,"
                         "       COALESCE(MAX(bid.n), 0) reg,"
-                        "       COUNT(*) matched "
+                        "       COUNT(*) matched,"
+                        # [2026-08-15] 매칭 옆 괄호로 **상품수** 를 같이 낸다.
+                        # 다른 칸은 전부 옵션(상품×사이즈) 단위라 규모 감이 안 잡힌다.
+                        "       COUNT(DISTINCT m.kid) matched_prod "
                         "FROM m LEFT JOIN bid ON bid.br = m.br "
                         # [2026-08-14] 매칭된 브랜드는 입찰이 0이어도 전부 보여준다.
                         # LIMIT 14 로 자르니 Supreme(재고 219)이 Play CDG(238)
@@ -513,7 +516,7 @@ async def _brand_reg_rates(
             ).all()
         if not rows:
             return "", ""
-        live = [(str(r[0]), int(r[1]), int(r[2]), int(r[3])) for r in rows]
+        live = [(str(r[0]), int(r[1]), int(r[2]), int(r[3]), int(r[4])) for r in rows]
 
         # [2026-08-13] 1순위 수를 같이 낸다 — '입찰이 걸렸다'와 '1등이다'는 다르다.
         # kream_live_asks 에는 시세 컬럼이 없어 DB 만으론 순위를 못 구한다.
@@ -577,10 +580,10 @@ async def _brand_reg_rates(
             + _pad("1등", 8, True)
             + _pad("입찰", 8, True)
             + _pad("재고", 8, True)
-            + _pad("매칭", 9, True)
+            + _pad("매칭(상품)", 15, True)
             + _pad("입찰률", 8, True),
         ]
-        for br, tot, reg, mat in live:
+        for br, tot, reg, mat, mprod in live:
             r1 = r1_by_br.get(br, 0) if asks else 0
             # [2026-08-13] 1등률(1등/입찰) → 입찰률(입찰/재고).
             # 1등률은 분자를 실시간 asks, 분모를 DB 스냅샷에서 가져와 시점이 어긋나
@@ -592,12 +595,12 @@ async def _brand_reg_rates(
                 + _pad(f"{r1:,}", 8, True)
                 + _pad(f"{reg:,}", 8, True)
                 + _pad(f"{tot:,}", 8, True)
-                + _pad(f"{mat:,}", 9, True)
+                + _pad(f"{mat:,}({mprod:,})", 15, True)
                 + _pad(_rate, 8, True)
             )
         _rows.append("```")
         head = "\n" + "\n".join(_rows)
-        zero = [f"{br} 0/{tot:,}" for br, tot, reg, _m in live if reg == 0]
+        zero = [f"{br} 0/{tot:,}" for br, tot, reg, _m, _mp in live if reg == 0]
         return head, (" · ".join(zero) if zero else "")
     except Exception as exc:
         logger.info("[크림통합] 브랜드 등록률 집계 실패(무시): %s", str(exc)[:60])
