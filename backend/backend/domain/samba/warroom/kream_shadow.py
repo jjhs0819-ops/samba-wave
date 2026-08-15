@@ -1398,25 +1398,34 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                     opt,
                     str(_e)[:60],
                 )
-            await _rq(
+            _rb = await _rq(
                 "PATCH",
                 f"{KREAM_OPENAPI_BASE}/asks/{ask_id}",
                 headers=h,
                 json={"price": _back},
             )
+            # [2026-08-14] 복귀 PATCH 응답의 순위를 쓴다. 종전엔 **인상 시점 rank**(밀린
+            # 값)를 그대로 반환해, 복귀 후 1등이 됐어도 검증에 '1등 아님'으로 찍혔다.
+            # 실측 142145|250 1,008,000→1,010,000 rank=2 — 인상 때 값이지 결과가 아니다.
+            _back_rank = rank
+            try:
+                if _rb.status_code in (200, 201):
+                    _back_rank = (_rb.json() or {}).get("live_rank")
+            except Exception:
+                pass
             await record_nocomp_cooldown(pid, opt)
             if _back != int(cur):
                 logger.info(
-                    "[크림통합] 경쟁가 추종 %s %s: %s→%s (인상 %s 밀림, rank=%s)",
+                    "[크림통합] 경쟁가 추종 %s %s: %s→%s (인상 %s 밀림, 복귀후 rank=%s)",
                     pid,
                     opt,
                     f"{int(cur):,}",
                     f"{_back:,}",
                     f"{int(target):,}",
-                    rank,
+                    _back_rank,
                 )
-                return "ok", rank
-            return "reverted", rank
+                return "ok", _back_rank
+            return "reverted", _back_rank
         return "ok", rank
     except Exception as exc:
         _note_fail(f"예외 {type(exc).__name__}: {str(exc)[:80]}")
