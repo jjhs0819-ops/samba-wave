@@ -1176,6 +1176,22 @@ _floor_map: dict = {}
 
 
 # 순위교정(rank>=2 → 1,000원 인하) 사이클 상한
+_g_floor_hint: dict = {}  # "kid|opt"(정규화) -> 마진하한. 판정이 실행에 직접 넘긴다.
+
+
+def _floor_hint_put(kid, opt, val: int) -> None:
+    """판정 시점에 계산한 마진 하한을 실행 단계가 쓰도록 남긴다.
+
+    [2026-08-14] _floor_map 만으로는 실행 시점에 조회가 빗나가는 사례가 있었다
+    (실측 23429|290 — '순위교정 스킵 … 하한0(하한없음)'). 판정과 실행이 워커·
+    백그라운드로 갈라져 있어 전역 dict 하나에 기대는 게 불안정하다.
+    옵션명을 정규화한 키로 한 번 더 남겨 교정이 하한을 못 찾아 스킵되는 일을 막는다.
+    """
+    if not val:
+        return
+    _g_floor_hint[f"{kid}|{str(opt).replace(' ', '')}"] = int(val)
+
+
 def _floor_of(pid, opt: str) -> int:
     """(kid, opt) 마진 하한 조회 — **옵션 표기차를 흡수한다.**
 
@@ -1197,6 +1213,14 @@ def _floor_of(pid, opt: str) -> int:
             continue
         if str(_po).replace(" ", "") == _n or _opt_same(opt, _po):
             return int(_v)
+    # 판정이 남긴 힌트 — _floor_map 조회가 빗나가도 교정이 하한을 잃지 않게.
+    v = _g_floor_hint.get(f"{_k}|{_n}")
+    if v:
+        return int(v)
+    for _hk, _hv in _g_floor_hint.items():
+        _hp, _, _ho = _hk.partition("|")
+        if _hp == _k and _opt_same(opt, _ho):
+            return int(_hv)
     return 0
 
 
@@ -4461,6 +4485,7 @@ async def run_kream_unified_once() -> dict:
     _noncard_probe_used = 0
     _price_del_left = _PRICE_DEL_CAP  # 가격열위 삭제 예산 리셋(사이클당 200)
     _floor_map.clear()
+    _g_floor_hint.clear()
     # 입찰제한 쿨다운 로드(만료 정리) — 반복 실패 건을 이번 사이클 조정에서 제외
     _g_limit_cd.clear()
     _now_l = _now_ts()
@@ -5145,9 +5170,11 @@ async def run_kream_unified_once() -> dict:
                         )
                         continue
                     # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
-                    _floor_map[(kid, nm)] = calc_min_price(
+                    _mp_now = calc_min_price(
                         price, rate, False, nm.upper().startswith("PSA")
                     )
+                    _floor_map[(kid, nm)] = _mp_now
+                    _floor_hint_put(kid, nm, _mp_now)
                     act, target, adjusting, is_nc = _decide_price_action(
                         cur,
                         nm,
@@ -5429,9 +5456,11 @@ async def run_kream_unified_once() -> dict:
                         )
                         continue
                     # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
-                    _floor_map[(kid, nm)] = calc_min_price(
+                    _mp_now = calc_min_price(
                         price, rate, False, nm.upper().startswith("PSA")
                     )
+                    _floor_map[(kid, nm)] = _mp_now
+                    _floor_hint_put(kid, nm, _mp_now)
                     act, target, adjusting, is_nc = _decide_price_action(
                         cur,
                         nm,
