@@ -199,7 +199,27 @@ def _start_watchdog() -> None:
     logger.info("[크림통합] 워치독 가동 — %d초 무진행 시 재기동", _WATCHDOG_STALL_SEC)
 
 
-async def _rank_of(h: dict, ask_id) -> int | None:
+def _timed(name: str):
+    """비동기 함수 소요시간을 _g_api_meter 에 누적하는 데코레이터."""
+
+    def _deco(fn):
+        async def _wrap(*a, **k):
+            import time as _tm
+
+            _t0 = _tm.time()
+            try:
+                return await fn(*a, **k)
+            finally:
+                _meter(name, _tm.time() - _t0)
+
+        _wrap.__name__ = getattr(fn, "__name__", name)
+        return _wrap
+
+    return _deco
+
+
+@_timed("크림단건_rank")
+async def _rank_of(h: dict, ask_id) -> int | None:  # noqa: D401
     """판정하는 그 자리에서 실순위를 조회한다(사이클 캐시 겸용). 실패 시 None.
 
     [2026-08-13] 종전엔 사이클 앞단에서 3만 건을 몰아 조회했다(_load_live_ranks).
@@ -1171,6 +1191,7 @@ async def _fetch_highest_bid(cli, h, pid: str, opt: str) -> int:
     return 0
 
 
+@_timed("조정PATCH")
 async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> tuple:
     """실제 PATCH 실행(가격조정) — 응답 live_rank 검증 [Phase4c]. _EXECUTE=1 일 때만 호출.
     무경쟁 인상인데 rank!=1(밀림)이면 원가로 복귀 + 24h 쿨다운 기록(재스윙 방지)."""
@@ -2917,6 +2938,28 @@ async def _register_announcement(kid: str) -> bool:
 # "신규 입찰인데 왜 1등이 아니냐"를 사후가 아니라 **등록 그 순간** 남긴다.
 # 종전엔 POST 응답을 통째로 버려(return True, "ok") 등록 직후 순위를 알 수 없었고,
 # 나중에 목록을 봐야 했는데 그때는 이미 시세가 움직인 뒤라 원인을 못 갈랐다.
+# ── API 호출 계측 [2026-08-14] ─────────────────────────────────────────────
+# 갱신 40~45분 / 리스톡 7.5~29분 인데 대상 수는 13,584 vs 10,000 으로 비슷하다.
+# 어느 호출이 시간을 먹는지 몰라 추측만 하고 있었다 — 호출수와 누적시간을 센다.
+_g_api_meter: dict = {}
+
+
+def _meter(name: str, sec: float) -> None:
+    d = _g_api_meter.setdefault(name, {"n": 0, "sec": 0.0})
+    d["n"] += 1
+    d["sec"] += sec
+
+
+def _meter_report() -> str:
+    if not _g_api_meter:
+        return ""
+    rows = sorted(_g_api_meter.items(), key=lambda kv: -kv[1]["sec"])
+    return " · ".join(
+        f"{k} {v['n']:,}회/{v['sec']:.0f}초(평균{v['sec'] / max(1, v['n']):.2f}s)"
+        for k, v in rows
+    )
+
+
 _g_patch_audit = {"n": 0, "rank1": 0, "bad": 0, "unknown": 0}  # 조정 검증 집계
 
 
@@ -3003,6 +3046,7 @@ async def _rival_rank_after(cli, h, kid: str, opt: str, price: int):
     return 1 if price <= _low else 2
 
 
+@_timed("등록POST")
 async def _exec_create_ask(
     cli: httpx.AsyncClient, h: dict, kid: str, price: int, opt: str
 ) -> tuple[bool, str]:
@@ -3033,6 +3077,7 @@ async def _exec_create_ask(
         return False, str(exc)[:120]
 
 
+@_timed("크림상품_rival")
 async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
     """그 옵션의 **경쟁 최저가** = min(일반, 빠른100, 해외). 모르면 0.
 
@@ -3275,6 +3320,7 @@ def _live_opt(sizes: dict | None, opt: str) -> dict | None:
     return None
 
 
+@_timed("스니덩크_사이즈")
 async def _fetch_snkr_live_sizes(cli: httpx.AsyncClient, snkr_id: str) -> dict | None:
     """비카드 실시간 사이즈별 원가·재고 — 숫자 id는 의류/잡화, 스타일코드는 mm 품목.
 
@@ -3700,6 +3746,7 @@ def _has_sealed_option(opts_txt: str | None) -> bool:
     return False
 
 
+@_timed("크림옵션_box")
 async def _resolve_box_option(cli: httpx.AsyncClient, h: dict, kid: str) -> dict:
     """크림 실제 옵션 확정 — '해외배송' 정확일치 → '해외배송…' 변형 → 옵션 1개뿐이면 그것
     (밀봉품은 단일옵션 'ONE SIZE'로 박힌 상품이 있다). 없으면 빈 dict.
@@ -4319,6 +4366,7 @@ async def run_kream_unified_once() -> dict:
     _g_post_rank.clear()  # 등록검증 계측 — 사이클 단위
     _g_post_audit.update({"n": 0, "rank1": 0, "bad": 0})
     _g_patch_audit.update({"n": 0, "rank1": 0, "bad": 0, "unknown": 0})
+    _g_api_meter.clear()
     _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
     _g_early_renewed.clear()
     _g_early_posted.clear()
@@ -5748,6 +5796,9 @@ async def run_kream_unified_once() -> dict:
         )
         _exec_bg.clear()
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
+    _mrep = _meter_report()
+    if _mrep:
+        logger.info("[크림통합] API 소요 — %s", _mrep)
     if _g_patch_audit["n"]:
         logger.info(
             "[크림통합] 조정검증 집계 — 조정%d건 중 1등%d · 비1등%d · 확인불가%d (%.0f%%)",
