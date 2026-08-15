@@ -1329,6 +1329,20 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
             _new = (_rl - 1000) if _rl > 0 else (int(target) - 1000)
             if _new >= int(target):  # 경쟁최저가 내 위면 굳이 올리지 않는다
                 _new = int(target) - 1000
+            # [2026-08-14] 교정 실행/스킵을 남긴다. 종전엔 아무 로그가 없어 rank=2 인
+            # 건이 '교정했는데도 2등'인지 '교정 자체가 안 됐는지' 구분할 수 없었다.
+            if not (_new > 0 and _floor > 0 and _new >= _floor):
+                logger.info(
+                    "[크림통합] 순위교정 스킵 %s %s rank=%s 목표%s→%s · 경쟁최저%s 하한%s (%s)",
+                    pid,
+                    opt,
+                    rank,
+                    f"{int(target):,}",
+                    f"{_new:,}",
+                    f"{_rl:,}",
+                    f"{_floor:,}",
+                    "하한없음" if _floor <= 0 else "하한미달",
+                )
             if _new > 0 and _floor > 0 and _new >= _floor:
                 _rank_fix["used"] += 1
                 r3 = await _rq(
@@ -1338,7 +1352,18 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
                     json={"price": _new},
                 )
                 if r3.status_code in (200, 201):
-                    return "ok", (r3.json() or {}).get("live_rank")
+                    _fx_rank = (r3.json() or {}).get("live_rank")
+                    logger.info(
+                        "[크림통합] 순위교정 %s %s %s→%s (경쟁최저%s) rank %s→%s",
+                        pid,
+                        opt,
+                        f"{int(target):,}",
+                        f"{_new:,}",
+                        f"{_rl:,}",
+                        rank,
+                        _fx_rank,
+                    )
+                    return "ok", _fx_rank
         if is_nocomp and rank is not None and rank != 1:
             # [2026-08-03] 원래 가격으로 그냥 되돌리면 다음 사이클에 똑같이 올렸다 밀리는
             # 왕복이 무한 반복된다(884440: 71,000→76,000→복귀를 매 사이클).
