@@ -332,6 +332,20 @@ def _trace(kid: str, opt: str, msg: str) -> None:
         logger.info("[크림추적] %s|%s %s", kid, opt, msg)
 
 
+# [2026-08-15] 나중에 조건이 풀리면 바로 등록해야 하는 탈락 사유들.
+# 이 사유로 빠진 상품은 **스캔완료로 찍지 않는다** — 찍으면 한 바퀴(7만건) 내내
+# 다시 안 뽑혀서, 검수를 확정해도 등록이 안 된다.
+#   실측: 확정+재고보유+입찰없음 18,591건 중 18,561건(99.8%)이 스캔완료로 박혀
+#   등록 대기 중이었다. 사진 검증으로 확정시켜도 그 바퀴에선 소용이 없었다.
+# 재고0·1등불가처럼 '다음 바퀴에 봐도 되는' 사유는 그대로 스캔완료로 둔다.
+_RETRY_DROP_REASONS = (
+    "검수미확정",
+    "통화가드(비JPY)",
+    "실시간조회실패",
+)
+_g_retry_kids: set[str] = set()
+
+
 def _drop(reason: str, kid: str = "", opt: str = "", extra: str = "") -> None:
     """등록 후보에서 빠진 사유 기록 — 집계 + 샘플 + 추적.
 
@@ -340,6 +354,8 @@ def _drop(reason: str, kid: str = "", opt: str = "", extra: str = "") -> None:
     _g_drop[reason] = _g_drop.get(reason, 0) + 1
     _skip_note(reason, kid, opt, extra)
     _trace(kid, opt, f"제외: {reason}{(' ' + extra) if extra else ''}")
+    if kid and reason in _RETRY_DROP_REASONS:
+        _g_retry_kids.add(str(kid))
 
 
 def _fail_kind(reason: str) -> str:
@@ -4670,6 +4686,7 @@ async def run_kream_unified_once() -> dict:
     _g_optmiss = {}
     _g_skip_samples = {}
     _g_drop.clear()
+    _g_retry_kids.clear()  # 사이클마다 새로 모은다(스캔완료 제외 대상)
     total_products = len(products)
     _live_kids = {k for (k, _o) in ask_index}
     live_products = [p for p in products if p["kid"] in _live_kids]
@@ -6212,7 +6229,15 @@ async def run_kream_unified_once() -> dict:
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
         await _save_setting_map(_SET_FAILED, _g_failed_posts)
     # 등록 실행까지 마쳤으므로 이제 '봤음'으로 확정한다(위 [2026-08-06] 주석 참조).
-    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _scanned})
+    # 단 조건이 풀리면 바로 등록해야 하는 사유(_RETRY_DROP_REASONS)로 빠진 상품은
+    # 제외한다 — 찍어두면 한 바퀴 내내 다시 안 뽑혀 검수를 확정해도 등록이 안 된다.
+    _keep = _scanned - _g_retry_kids
+    if _g_retry_kids:
+        logger.info(
+            "[크림통합] 재시도 대상 %d건은 스캔완료에서 제외(다음 사이클 재판정)",
+            len(_scanned) - len(_keep),
+        )
+    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _keep})
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
@@ -6551,17 +6576,30 @@ async def run_kream_unified_once() -> dict:
             return "shoe"
         return "apparel"
 
-    _card_asks = [a for a in asks if _ask_kind(a) == "card"]
-    _box_asks = [a for a in asks if _ask_kind(a) == "box"]
-    _pack_asks = [a for a in asks if _ask_kind(a) == "pack"]
-    _shoe_asks_r = [a for a in asks if _ask_kind(a) == "shoe"]
-    _apparel_asks_r = [a for a in asks if _ask_kind(a) == "apparel"]
+    # [2026-08-15] 순위 집계는 **사이클 끝 스냅샷** 기준으로 낸다.
+    # 예전엔 시작 스냅샷(asks)으로 세는 바람에 "1순위+비1순위 = 시작값"인데
+    # 옆줄 '실제'는 끝 재조회값이라 합이 안 맞았다(28,423 vs 30,392).
+    # 이번 사이클 신규 등록분(전량 1등)이 순위표에 아예 안 잡히던 것도 같은 원인.
+    # 조회는 아래 '반영후 재조회'와 공유하므로 API 호출은 늘지 않는다.
+    _asks_end = None
+    try:
+        _asks_end = await _fetch_live_asks(h)
+    except Exception as _e:
+        logger.info("[크림통합] 반영후 재조회 실패(무시): %s", str(_e)[:60])
+    _after_n = len(_asks_end) if _asks_end is not None else None
+    _rank_src = _asks_end if _asks_end is not None else asks
+
+    _card_asks = [a for a in _rank_src if _ask_kind(a) == "card"]
+    _box_asks = [a for a in _rank_src if _ask_kind(a) == "box"]
+    _pack_asks = [a for a in _rank_src if _ask_kind(a) == "pack"]
+    _shoe_asks_r = [a for a in _rank_src if _ask_kind(a) == "shoe"]
+    _apparel_asks_r = [a for a in _rank_src if _ask_kind(a) == "apparel"]
     _r1c, _n1c, _gtc, _ncc = _rank_summary(_card_asks)
     _r1b, _n1b, _gtb, _ncb = _rank_summary(_box_asks)
     _r1p, _n1p, _gtp, _ncp = _rank_summary(_pack_asks)
     _r1s, _n1s, _gts, _ncs = _rank_summary(_shoe_asks_r)
     _r1a, _n1a, _gta, _nca = _rank_summary(_apparel_asks_r)
-    _r1, _n1, _gt, _nc = _rank_summary(asks)
+    _r1, _n1, _gt, _nc = _rank_summary(_rank_src)
     _ask_kids = {str(a.get("product_id") or "") for a in asks}
     _mapped = len([k for k in _ask_kids if k in kid_to_snkr])
     # [2026-08-02] 신발 삭제(shoe["del"])가 빠져 "삭제 1건"으로 과소표기되던 것 수정.
@@ -6604,11 +6642,7 @@ async def run_kream_unified_once() -> dict:
     # [2026-08-05] 실제 반영 재조회 — "반영후"가 산술 계산(시작-삭제+등록)이라
     # 등록이 200 을 받고도 실제로 안 붙은 분(실측 1,193건)이 통째로 가려졌다.
     # 예상과 실제를 나란히 찍어 유실을 드러낸다. 6시간 사이클에 조회 2분은 무시 가능.
-    _after_n = None
-    try:
-        _after_n = len(await _fetch_live_asks(h))
-    except Exception as _e:
-        logger.info("[크림통합] 반영후 재조회 실패(무시): %s", str(_e)[:60])
+    # (재조회 자체는 위 순위 집계에서 이미 끝냈다 — _after_n / _asks_end)
     _restock_sec += "\n━━━━━━━━━━\n"
     _msg = (
         f"[크림 입찰갱신]\n"
@@ -6629,10 +6663,9 @@ async def run_kream_unified_once() -> dict:
         + f" | 매핑 {_mapped:,}/{len(_ask_kids):,}건\n"
         f"삭제 {_del_all:,}건(실행) | 조정 {_upd_all:,}건"
         + (f" | ❌실행실패 {_fail_all:,}건(등록포함)" if _fail_all else "")
-        # 비1순위도 시작 시점 집계 — 이번 사이클 가격열위 삭제분을 뺀 값을 같이 보여준다
+        # 순위는 끝 스냅샷 기준이라 삭제·등록이 이미 반영돼 있다 — 위 '실제'와 합이 맞는다.
         + f"\n1순위(국내포함) {_r1:,} / 비1순위 {_n1:,}"
-        + (f" → {max(0, _n1 - _del_all):,}(삭제반영후)" if _del_all else "")
-        + f" (그룹 {_gt:,})\n"
+        + f" (그룹 {_gt:,}{'·시작기준' if _asks_end is None else ''})\n"
         f"  카드 1순위 {_r1c:,}/{_gtc:,} · 박스 {_r1b:,}/{_gtb:,} · 카드팩 {_r1p:,}/{_gtp:,}\n"
         f"  신발 1순위 {_r1s:,}/{_gts:,} · 의류/잡화 {_r1a:,}/{_gta:,}\n"
         f"무경쟁 후보(국내없음·내입찰연속) {_nc:,}그룹"
