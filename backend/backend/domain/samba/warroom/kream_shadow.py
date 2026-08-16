@@ -3278,12 +3278,13 @@ async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
         opts = (r.json() or {}).get("options") or []
     except Exception:
         return 0
-    _want = str(opt).replace(" ", "")
-    po = next(
-        (o for o in opts if str(o.get("name") or "").replace(" ", "") == _want), None
-    )
-    if po is None:
-        po = next((o for o in opts if _opt_same(opt, o.get("name"))), None)
+    # [2026-08-16] 매처를 판정과 **하나로** 통일한다. 종전엔 여기만 자체 매칭이라
+    # 구성(번들) 옵션을 걸러내지 않았다 — _match_kream_option 은 is_bundle_option 으로
+    # 빼는데 여기는 안 빼서, 본품과 가격체계가 다른 번들이 '경쟁 최저가'로 잡혔다.
+    #   실측 695194: 275·280 이 사이즈가 다른데 직전최저가 똑같이 135,000
+    #   (두 건 모두 같은 번들 옵션에 걸린 것으로 보인다)
+    # 판정은 본품 시세로 등록가를 정하고 검증은 번들가와 비교하니 늘 어긋났다.
+    po = _match_kream_option(opt, opts)
     if not po:
         return 0
     vals = [
@@ -6045,6 +6046,15 @@ async def run_kream_unified_once() -> dict:
                                             # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
                                             # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
                                             _pre = await _rival_low(_ecli, h, _k, _n)
+                                            # 등록 직전 재확인 게이트 — 아래 _do_post 와 동일.
+                                            if _pre > 0 and _t > _pre:
+                                                _drop(
+                                                    "등록보류(직전최저역전)",
+                                                    _k,
+                                                    _n,
+                                                    f"{_t:,}>{_pre:,}",
+                                                )
+                                                return
                                             _ok, _rs = await _exec_create_ask(
                                                 _ecli, h, _k, _t, _n
                                             )
@@ -6345,8 +6355,18 @@ async def run_kream_unified_once() -> dict:
                 nonlocal exec_post, exec_fail
                 async with _psem:
                     _progress()  # 워치독 — 등록도 '진행'이다
-                    # 등록 직전 경쟁최저(검증용) — 청크 경로와 동일 규칙.
+                    # 등록 직전 경쟁최저 — 청크 경로와 동일 규칙.
                     _pre = await _rival_low(ecli, h, _kid, _nm)
+                    # [2026-08-16] **등록 직전 재확인 게이트.** 판정과 실행 사이가
+                    # 한 사이클(60~70분)이라 그 사이 남이 더 싸게 들어오면 등록하자마자
+                    # 2등이 된다. _pre 는 이미 받아놓고 로그로만 쓰고 있었다.
+                    #   실측 695194|275 등록가 232,000 · 직전최저 135,000 → rank=2
+                    #        695194|280 등록가 214,000 · 직전최저 135,000 → rank=2
+                    #   (판정 시점엔 해외·국내 모두 0 이라 무경쟁으로 보고 원가 기준가로
+                    #    등록했는데, 실행 시점엔 국내 135,000 이 깔려 있었다)
+                    if _pre > 0 and _tg > _pre:
+                        _drop("등록보류(직전최저역전)", _kid, _nm, f"{_tg:,}>{_pre:,}")
+                        return
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
                         if await _register_announcement(_kid):
