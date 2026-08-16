@@ -3633,6 +3633,20 @@ def _opt_keys(name) -> set[str]:
     m2 = re.search(r"(?:해외배송|일반배송)\s*\((\d+)\s*개\)", raw)
     if m2:
         out.add(f"수량{int(m2.group(1))}")
+    # [2026-08-16] 아래 둘은 '옵션이 한 개도 안 맞아 상품 통째로 건너뛰던' 실측 사례다.
+    #   ① 키즈 cm 표기 — GU '100cm'·'110cm' ↔ 크림 '100'·'110'
+    #      기존 _cm_to_mm_variants 는 '24.5cm'→'245' 처럼 신발 mm 로만 바꿔서,
+    #      세 자리 키즈 신장(100cm→1000)이 되어 크림 '100' 과 안 만났다.
+    #   ② 단품 수량 ↔ 단일 사이즈 — '1個' ↔ 'ONE SIZE'
+    #      플레이매트처럼 사이즈가 없는 물건은 소싱처가 개수, 크림이 ONE SIZE 로 쓴다.
+    #      1개들이일 때만 같게 본다(2個 이상은 묶음이라 단품과 다른 상품이다).
+    for v in list(out):
+        m3 = re.fullmatch(r"(\d{2,3})CM", v)
+        if m3:
+            out.add(m3.group(1))
+    if "수량1" in out:
+        out.add("ONESIZE")
+        out.add("FREE")
     return out
 
 
