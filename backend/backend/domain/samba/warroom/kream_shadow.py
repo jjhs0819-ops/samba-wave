@@ -2312,7 +2312,10 @@ async def _load_matched_products() -> list[dict]:
                     "(resell_matches->'kream'->>'verified')='true' AS verified, "
                     "COALESCE(extra_data->>'currency','JPY') AS currency, "
                     "COALESCE(extra_data->>'snkr_type','') AS snkr_type, "
-                    "source_site "
+                    "source_site, "
+                    # [2026-08-16] 소싱처 정보(원가·재고)를 마지막으로 확인한 시각.
+                    # 리스톡 순서를 이걸로 정한다 — 오래 안 본 것부터.
+                    "EXTRACT(EPOCH FROM updated_at) AS upd_ts "
                     # [2026-08-16] 유니클로/GU 공홈 소싱분 포함. 스니덩크는 이 두 브랜드
                     # 물량이 얇다(UNIQLO 1,282 · GU 552)는 게 공홈을 쓰는 이유고,
                     # 품번이 그대로 대응해(488253-09 ↔ 488253-09-002-000) 오매칭이 없다.
@@ -2332,6 +2335,7 @@ async def _load_matched_products() -> list[dict]:
         currency,
         snkr_type,
         src_site,
+        upd_ts,
     ) in rows:
         db_opts: dict = {}
         fixed: dict = {}
@@ -2362,6 +2366,8 @@ async def _load_matched_products() -> list[dict]:
                 "snkr_type": str(snkr_type or ""),
                 # 소싱처 — 실시간 시세를 어디서 받을지 가른다(스니덩크 vs 공홈).
                 "site": str(src_site or "SNKRDUNK").upper(),
+                # 소싱처 정보 마지막 확인 시각(epoch) — 리스톡 순서 기준.
+                "upd_ts": float(upd_ts or 0),
                 "db_opts": db_opts,
                 "fixed": fixed,
             }
@@ -5036,7 +5042,11 @@ async def run_kream_unified_once() -> dict:
                 return 0  # 재고 있음 → 앞으로
         return 1
 
-    _fresh.sort(key=_has_stock)
+    # [2026-08-16] 재고 우선 + **소싱처 정보가 오래된 것부터**.
+    # 스캔목록만으로 회전시키면 배포로 리셋될 때마다 같은 앞부분을 다시 훑는다.
+    # updated_at 은 갱신·리스톡이 실시간 원가/재고를 되쓸 때 NOW() 로 찍히므로,
+    # 오래된 순이 곧 '아직 안 본 것' 이다 — 스캔목록이 없어도 자연히 순환한다.
+    _fresh.sort(key=lambda p: (_has_stock(p), p.get("upd_ts") or 0))
     rest_slice = _fresh[:_restock_scan] if _restock_scan > 0 else _fresh
     # [2026-08-05] 스캔목록 저장을 **판정 뒤로** 옮긴다.
     # 종전엔 슬라이스에 뽑자마자 전량 '완료'로 찍고 저장했다. 판정까지 갔는지는
@@ -5093,7 +5103,30 @@ async def run_kream_unified_once() -> dict:
         _behind_n,
         len(live_products),
     )
-    products = live_products + rest_slice
+
+    # [2026-08-16] 갱신(live)과 리스톡을 **번갈아 배치**한다.
+    # 종전 `live_products + rest_slice` 는 라이브 1.6만 건을 다 판정한 뒤에야 리스톡에
+    # 도달했다. 사이클 초반 수십 분간 조정만 나오고 신규 등록은 한 건도 안 나왔고,
+    # 사이클이 중간에 끊기면(배포·재기동) 리스톡 구간에 아예 못 갔다.
+    # 비율대로 섞어 사이클 시작부터 조정·등록이 함께 나가게 한다.
+    def _interleave(a: list, b: list) -> list:
+        if not a:
+            return list(b)
+        if not b:
+            return list(a)
+        out, ia, ib = [], 0, 0
+        step = len(a) / len(b)  # a 를 step 개 넣을 때마다 b 하나
+        while ia < len(a) or ib < len(b):
+            for _ in range(max(1, int(step))):
+                if ia < len(a):
+                    out.append(a[ia])
+                    ia += 1
+            if ib < len(b):
+                out.append(b[ib])
+                ib += 1
+        return out
+
+    products = _interleave(live_products, rest_slice)
     rest_total = len(rest_products)  # 리스톡 탐색 로테이션 분모(진행률 표시용)
     logger.info(
         "[크림통합] 대상선정 — 갱신(live)%d 전량 + 리스톡탐색 %d/%d (offset %d)",
