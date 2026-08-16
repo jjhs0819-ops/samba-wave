@@ -424,7 +424,12 @@ def _rank_summary(asks: list) -> tuple[int, int, int, int]:
         # 빠른배송이 더 싼 옵션이 '1순위'로 집계됐다(지표가 실제보다 좋게 보인다).
         # 보관 95점은 제외한다.
         keep = int(a.get("lowest_100_price") or 0)
-        rank1 = ov > 0 and 0 < our <= ov
+        # [2026-08-16] 해외배송에 **나 혼자면** 크림이 lowest_overseas_price=0 을 준다.
+        # 종전 `ov > 0` 조건이 그걸 '1등 아님'으로 세서, 실제로는 국내보다 싸게 잘
+        # 걸린 입찰이 비1순위로 잡혔다(실측 471건 = 전체 비1순위 1,105 의 43%).
+        #   예) 794410 내 3,374,000 · 해외 0 · 국내 3,375,000 → 명백한 1등인데 비1순위
+        # 경쟁이 없으면 내가 곧 최저다. ov 가 0 이어도 rank1 로 본다.
+        rank1 = our > 0 and (ov <= 0 or our <= ov)
         real1 = rank1 and (dom <= 0 or our <= dom) and (keep <= 0 or our <= keep)
         # 그룹당 real1 이 하나라도 있으면 1순위로 승격(중복입찰 대비)
         if k not in groups or (real1 and not groups[k]):
@@ -4198,6 +4203,12 @@ async def _process_box_restock(
                 is_box=True,
                 surcharge_rate=_sur,
                 fee_kind="overseas",  # 박스·카드팩 리스톡 = 1,370 + 3.3%
+                # [2026-08-16] low_keep 누락 수정. 판정기는
+                # market_low = min(해외, 국내, 보관/빠른) 인데 이 호출만 보관가를 안 넘겨
+                # 기본값 0 이 되면서 그 값이 계산에서 통째로 빠졌다.
+                # 호출부 9곳 중 여기 한 곳만 누락 — 빠른배송이 더 싼 옵션을 1등으로
+                # 오판해 등록했다. _mlow(전 옵션 통합)가 있으면 그쪽이 우선한다.
+                low_keep=_mlow or int(_popt.get("lowest_100_price") or 0),
             )
             if "삭제" in act or target <= 0:
                 c["policy"] += 1  # 1등불가/국내못이김 — 등록해도 체결 안 됨
