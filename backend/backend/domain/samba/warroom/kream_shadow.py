@@ -1250,10 +1250,8 @@ _rank_fix = {"used": 0, "cap": 10**9}  # [2026-08-05] 상한 제거
 async def _fetch_highest_bid(cli, h, pid: str, opt: str) -> int:
     """옵션별 최고구매입찰가 — 크림 판매입찰가는 이 값 이상이어야 등록/수정된다."""
     try:
-        r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
-        if r.status_code != 200:
-            return 0
-        for o in (r.json() or {}).get("options") or []:
+        # [2026-08-16] 옵션마다 상품 전체를 다시 받던 것 → 상품 단위 캐시 재사용
+        for o in await _fetch_prod_options(h, pid):
             if str(o.get("name") or "") == opt:
                 return int(o.get("highest_bid") or 0)
     except Exception:
@@ -3371,7 +3369,9 @@ async def _rival_low_retry(
     0 은 '경쟁 없음'과 '조회 실패'를 구분 못 하므로 몇 번 더 물어본다.
     """
     for i in range(tries):
-        v = await _rival_low(cli, h, pid, opt)
+        # [2026-08-16] 등록 직전 게이트라 **캐시를 쓰지 않는다**. 90초 전 값으로 판정하면
+        # 그 사이 내려간 시장최저를 못 보고 2등으로 등록된다.
+        v = await _rival_low(cli, h, pid, opt, fresh=True)
         if v > 0:
             return v
         if i < tries - 1:
@@ -3379,8 +3379,36 @@ async def _rival_low_retry(
     return 0
 
 
+# [2026-08-16] 상품 응답 캐시 — GET /products/{id} 한 번이면 **전 옵션 시세가 다 온다**.
+# 실증(893073 포켓몬 프로모 잉어킹): 호출 1회에 옵션 16개 × 시세 4종(일반·보관100·
+# 해외·구매입찰) 전량. 그런데 _rival_low 는 옵션을 볼 때마다 같은 응답을 처음부터 다시
+# 받아, 이 상품 하나에 16번을 호출했다.
+#   실측: 크림 상품조회 0.55초 × 상품당 평균 옵션 3.3개 ≈ 1.8초 = 사이클 건당 2.1초의 대부분
+# 같은 상품의 옵션들은 한 워커가 이어서 처리하므로 짧은 TTL 로도 대부분 흡수된다.
+# 등록 직전 게이트처럼 **최신값이 필요한 자리는 fresh=True** 로 캐시를 건너뛴다.
+_PROD_CACHE_TTL = 90.0
+_g_prod_cache: dict[str, tuple[float, list]] = {}
+
+
+async def _fetch_prod_options(h: dict, pid, fresh: bool = False) -> list:
+    """상품 옵션 전량(시세 동봉). 사이클 내 TTL 캐시."""
+    key = str(pid)
+    if not fresh:
+        hit = _g_prod_cache.get(key)
+        if hit and (_now_ts() - hit[0]) < _PROD_CACHE_TTL:
+            return hit[1]
+    r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
+    opts = (r.json() or {}).get("options") or []
+    # 빈 응답은 캐시하지 않는다 — 일시 실패를 TTL 동안 굳히면 무경쟁 오판으로 이어진다
+    if opts:
+        _g_prod_cache[key] = (_now_ts(), opts)
+    return opts
+
+
 @_timed("크림상품_rival")
-async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
+async def _rival_low(
+    cli: httpx.AsyncClient, h: dict, pid, opt: str, fresh: bool = False
+) -> int:
     """그 옵션의 **경쟁 최저가** = min(일반, 빠른100, 해외). 모르면 0.
 
     [2026-08-14] 순위 교정·경쟁가 추종 두 경로가 각자 다른 기준을 쓰다가 비1순위를
@@ -3392,8 +3420,7 @@ async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
     # 통째로 열리므로(무경쟁으로 간주) **왜 0 인지 반드시 남긴다.**
     #   실측 4081|280: 해외최저 283,000 인데 조회가 0 을 줘 287,000 으로 등록 → 즉시 2등
     try:
-        r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
-        opts = (r.json() or {}).get("options") or []
+        opts = await _fetch_prod_options(h, pid, fresh=fresh)
     except Exception as exc:
         _g_rival_fail["api"] = _g_rival_fail.get("api", 0) + 1
         logger.info(
@@ -4978,6 +5005,7 @@ async def run_kream_unified_once() -> dict:
     _g_optmiss = {}
     _g_skip_samples = {}
     _g_drop.clear()
+    _g_prod_cache.clear()  # 상품 시세 캐시는 사이클 경계에서 반드시 비운다
     _g_retry_kids.clear()  # 사이클마다 새로 모은다(스캔완료 제외 대상)
     _g_rival_fail.clear()  # 경쟁가 조회 실패 사유 집계
     total_products = len(products)
