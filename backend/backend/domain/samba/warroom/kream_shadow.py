@@ -3200,7 +3200,7 @@ def _audit_patch(kid: str, opt: str, target: int, cur: int, rank) -> None:
 
 
 _g_post_rank: dict = {}  # "kid|opt" -> live_rank(int|None)
-_g_post_audit = {"n": 0, "rank1": 0, "bad": 0}  # 사이클 집계
+_g_post_audit = {"n": 0, "rank1": 0, "bad": 0, "unknown": 0}  # 사이클 집계
 
 
 def _remember_post_rank(key: str, resp) -> None:
@@ -3219,15 +3219,19 @@ async def _audit_post(cli, h, kid: str, opt: str, price: int, pre_low: int) -> N
       pre_low 가 등록가보다 높다  → 등록과 동시에 남이 더 싸게 들어왔다(시장 변동)
     """
     _key = f"{kid}|{opt}"
-    # [2026-08-14] 경쟁자가 아예 없으면(직전최저 0) 순위를 매길 상대가 없다 — 무경쟁
-    # 등록이고 사실상 1등이다. 종전엔 rank=None 을 비1등으로 세어 경고를 쏟았다.
-    if not pre_low:
-        _g_post_audit["n"] += 1
-        _g_post_audit["rank1"] += 1
-        return
     _rank = _g_post_rank.get(_key)
     if _rank is None:  # POST 응답에 없으면 실측으로 보강
         _rank = await _rival_rank_after(cli, h, kid, opt, price)
+    # [2026-08-17] pre_low==0 을 **무검증 1등으로 세지 않는다.**
+    # 종전엔 여기서 곧바로 rank1 을 올리고 리턴했다. 0 은 '경쟁 없음'과 '조회 실패'를
+    # 구분하지 못하므로, 조회가 실패한 건이 전부 1등으로 집계됐다.
+    #   그 결과가 "등록 2,173건 중 1등 2,173 (100%)" 이고, 실제로는 2등이 섞여 있었다
+    #   (실측 77890|250 해외최저 171,000 인데 172,000 으로 등록).
+    # 순위를 못 읽은 건은 unknown 으로 따로 센다 — 1등으로 위장시키지 않는다.
+    if not pre_low and _rank is None:
+        _g_post_audit["n"] += 1
+        _g_post_audit["unknown"] = _g_post_audit.get("unknown", 0) + 1
+        return
     _g_post_audit["n"] += 1
     if _rank == 1:
         _g_post_audit["rank1"] += 1
@@ -3250,8 +3254,12 @@ async def _audit_post(cli, h, kid: str, opt: str, price: int, pre_low: int) -> N
 
 
 async def _rival_rank_after(cli, h, kid: str, opt: str, price: int):
-    """POST 응답에 순위가 없을 때 — 현재 최저가와 비교해 1등 여부만 추정한다."""
-    _low = await _rival_low(cli, h, kid, opt)
+    """POST 응답에 순위가 없을 때 — 현재 최저가와 비교해 1등 여부만 추정한다.
+
+    [2026-08-17] 등록 직후 확인이라 **캐시를 쓰면 안 된다**(90초 전 값으로는
+    방금 내가 넣은 입찰조차 반영되지 않는다).
+    """
+    _low = await _rival_low(cli, h, kid, opt, fresh=True)
     if _low <= 0:
         return None
     return 1 if price <= _low else 2
@@ -4854,7 +4862,7 @@ async def run_kream_unified_once() -> dict:
     _start_watchdog()  # 행 감시 가동(1회) — 진행 신호가 끊기면 프로세스 재기동
     _progress()
     _g_post_rank.clear()  # 등록검증 계측 — 사이클 단위
-    _g_post_audit.update({"n": 0, "rank1": 0, "bad": 0})
+    _g_post_audit.update({"n": 0, "rank1": 0, "bad": 0, "unknown": 0})
     _g_patch_audit.update({"n": 0, "rank1": 0, "bad": 0, "unknown": 0})
     _g_api_meter.clear()
     _g_early_deleted.clear()  # 사이클 단위 — 안 비우면 다음 사이클 삭제를 건너뛴다
@@ -6379,10 +6387,11 @@ async def run_kream_unified_once() -> dict:
         )
     if _g_post_audit["n"]:
         logger.info(
-            "[크림통합] 등록검증 집계 — 등록%d건 중 1등%d · 비1등%d (%.0f%%)",
+            "[크림통합] 등록검증 집계 — 등록%d건 중 1등%d · 비1등%d · 확인불가%d (%.0f%%)",
             _g_post_audit["n"],
             _g_post_audit["rank1"],
             _g_post_audit["bad"],
+            _g_post_audit.get("unknown", 0),
             _g_post_audit["rank1"] * 100.0 / max(1, _g_post_audit["n"]),
         )
     # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
