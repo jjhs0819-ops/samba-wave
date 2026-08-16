@@ -6283,15 +6283,27 @@ async def run_kream_unified_once() -> dict:
                                             _pre = await _rival_low_retry(
                                                 _ecli, h, _k, _n
                                             )
-                                            # 등록 직전 재확인 게이트 — 아래 _do_post 와 동일.
+                                            # 등록 직전 재확인 — 아래 _do_post 와 동일 규칙.
+                                            # 역전이면 보류가 아니라 하한 안에서 다시 계산해 넣는다.
                                             if _pre > 0 and _t > _pre:
-                                                _drop(
-                                                    "등록보류(직전최저역전)",
-                                                    _k,
-                                                    _n,
-                                                    f"{_t:,}>{_pre:,}",
-                                                )
-                                                return
+                                                _fl = _floor_of(_k, _n)
+                                                _cand = (_pre - 1000) // 1000 * 1000
+                                                if _fl and _cand >= _fl:
+                                                    _drop(
+                                                        "등록가재계산(직전최저역전)",
+                                                        _k,
+                                                        _n,
+                                                        f"{_t:,}→{_cand:,}",
+                                                    )
+                                                    _t = _cand
+                                                else:
+                                                    _drop(
+                                                        "등록보류(하한초과)",
+                                                        _k,
+                                                        _n,
+                                                        f"{_t:,}>{_pre:,} 하한{_fl:,}",
+                                                    )
+                                                    return
                                             _ok, _rs = await _exec_create_ask(
                                                 _ecli, h, _k, _t, _n
                                             )
@@ -6622,9 +6634,31 @@ async def run_kream_unified_once() -> dict:
                     #        695194|280 등록가 214,000 · 직전최저 135,000 → rank=2
                     #   (판정 시점엔 해외·국내 모두 0 이라 무경쟁으로 보고 원가 기준가로
                     #    등록했는데, 실행 시점엔 국내 135,000 이 깔려 있었다)
+                    # [2026-08-17] 역전이면 **보류가 아니라 다시 계산해서 넣는다.**
+                    # 신규 등록인데 "남보다 비싸면 멈춤"은 등록도 못 하게 만든다.
+                    # 마진 하한만 지키면 1,000원 아래로 넣어 1등을 잡는 게 맞다.
+                    #   실측 77890|250: 해외최저 171,000 인데 172,000 으로 등록돼 2등.
+                    #   하한은 165,000 이라 170,000 이면 1등이었다.
                     if _pre > 0 and _tg > _pre:
-                        _drop("등록보류(직전최저역전)", _kid, _nm, f"{_tg:,}>{_pre:,}")
-                        return
+                        _fl = _floor_of(_kid, _nm)
+                        _cand = (_pre - 1000) // 1000 * 1000
+                        if _fl and _cand >= _fl:
+                            _drop(
+                                "등록가재계산(직전최저역전)",
+                                _kid,
+                                _nm,
+                                f"{_tg:,}→{_cand:,}",
+                            )
+                            _tg = _cand
+                        else:
+                            # 하한을 깨야만 1등이 되는 건 등록해도 2등이라 의미가 없다
+                            _drop(
+                                "등록보류(하한초과)",
+                                _kid,
+                                _nm,
+                                f"{_tg:,}>{_pre:,} 하한{_fl:,}",
+                            )
+                            return
                     _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if (not _ok) and ("announcement" in _rs or "고시" in _rs):
                         if await _register_announcement(_kid):
