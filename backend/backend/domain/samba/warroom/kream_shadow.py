@@ -3322,6 +3322,25 @@ async def _fetch_ask_counts(kid: str) -> dict:
     return out
 
 
+async def _rival_low_retry(
+    cli: httpx.AsyncClient, h: dict, pid, opt: str, tries: int = 3
+) -> int:
+    """_rival_low 를 0 이 아닐 때까지 재시도한다.
+
+    [2026-08-16] 크림 API 가 응답 없이 끊는 일이 잦아(실측 PATCH 실패 2.8%) 조회가
+    0 을 반환하면 등록 게이트(`_pre > 0`)가 통째로 무력화된다.
+      실측 4081|280: 해외최저 283,000 인데 287,000 으로 등록돼 즉시 2등.
+    0 은 '경쟁 없음'과 '조회 실패'를 구분 못 하므로 몇 번 더 물어본다.
+    """
+    for i in range(tries):
+        v = await _rival_low(cli, h, pid, opt)
+        if v > 0:
+            return v
+        if i < tries - 1:
+            await asyncio.sleep(0.5 * (i + 1))
+    return 0
+
+
 @_timed("크림상품_rival")
 async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
     """그 옵션의 **경쟁 최저가** = min(일반, 빠른100, 해외). 모르면 0.
@@ -6103,7 +6122,9 @@ async def run_kream_unified_once() -> dict:
                                             _progress()
                                             # 등록 **직전** 경쟁최저를 찍어둔다 — 등록 후 순위와 짝지어야
                                             # "판정이 틀렸나 / 등록 직후 시장이 움직였나"를 가를 수 있다.
-                                            _pre = await _rival_low(_ecli, h, _k, _n)
+                                            _pre = await _rival_low_retry(
+                                                _ecli, h, _k, _n
+                                            )
                                             # 등록 직전 재확인 게이트 — 아래 _do_post 와 동일.
                                             if _pre > 0 and _t > _pre:
                                                 _drop(
@@ -6435,7 +6456,7 @@ async def run_kream_unified_once() -> dict:
                 async with _psem:
                     _progress()  # 워치독 — 등록도 '진행'이다
                     # 등록 직전 경쟁최저 — 청크 경로와 동일 규칙.
-                    _pre = await _rival_low(ecli, h, _kid, _nm)
+                    _pre = await _rival_low_retry(ecli, h, _kid, _nm)
                     # [2026-08-16] **등록 직전 재확인 게이트.** 판정과 실행 사이가
                     # 한 사이클(60~70분)이라 그 사이 남이 더 싸게 들어오면 등록하자마자
                     # 2등이 된다. _pre 는 이미 받아놓고 로그로만 쓰고 있었다.
