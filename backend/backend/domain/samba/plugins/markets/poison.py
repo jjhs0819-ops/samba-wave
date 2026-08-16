@@ -33,19 +33,12 @@ class PoisonPlugin(MarketPlugin):
     async def _load_auth(self, session, account) -> dict | None:
         """POIZON 인증 로드 — account.additional_fields 우선, store_poison 폴백."""
         if account:
-            extras = account.additional_fields or {}
-            # additional_fields 키: appKey(구), apiKey(신 프론트 저장명) 모두 허용
-            app_key = (
-                extras.get("appKey") or extras.get("apiKey") or account.api_key or ""
-            )
-            app_secret = (
-                extras.get("appSecret")
-                or extras.get("apiSecret")
-                or account.api_secret
-                or ""
-            )
+            # 필드명이 제각각(appKey/apiKey/app_key/최상위 api_key)이라 공통 함수로 통일
+            from backend.domain.samba.proxy.poison import extract_credentials
+
+            app_key, app_secret = extract_credentials(account)
             if app_key and app_secret:
-                return {"app_key": str(app_key), "app_secret": str(app_secret)}
+                return {"app_key": app_key, "app_secret": app_secret}
             # account 지정됐으나 인증정보 없으면 폴백 없이 None (오인 전송 방지)
             return None
 

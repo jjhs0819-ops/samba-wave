@@ -211,23 +211,16 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
             elif market_type == "poison":
                 from backend.domain.samba.proxy.poison import (
                     PoisonClient,
+                    extract_credentials,
                     is_buyer_cancelable,
                     is_canceled,
                 )
 
-                app_key = (
-                    extras.get("app_key", "")
-                    or extras.get("appKey", "")
-                    or account.api_key
-                    or ""
-                )
-                app_secret = (
-                    extras.get("app_secret", "")
-                    or extras.get("appSecret", "")
-                    or account.api_secret
-                    or ""
-                )
+                app_key, app_secret = extract_credentials(account)
                 if not app_key or not app_secret:
+                    logger.warning(
+                        f"[POIZON] 주문 폴링 건너뜀 — 인증정보 없음 account={account.id}"
+                    )
                     continue
                 client = PoisonClient(app_key, app_secret)
                 raw_orders = await client.get_orders(days=7)

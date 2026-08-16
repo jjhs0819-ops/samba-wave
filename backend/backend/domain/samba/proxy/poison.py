@@ -41,6 +41,34 @@ POISON_FEE_MAX = int(os.environ.get("POISON_FEE_MAX", "45000"))
 POISON_MIN_PROFIT = int(os.environ.get("POISON_MIN_PROFIT", "10000"))
 
 
+def extract_credentials(account: Any) -> tuple[str, str]:
+    """계정에서 app_key/app_secret 을 꺼낸다.
+
+    저장 필드명이 경로마다 달라(appKey/apiKey/app_key, 최상위 api_key) 등록은 되는데
+    주문 폴러·송장 전송만 조용히 실패하는 사고가 있었다. 세 경로가 이 함수를 쓴다.
+    """
+    if account is None:
+        return "", ""
+    extras = getattr(account, "additional_fields", None)
+    if not isinstance(extras, dict):
+        extras = {}
+    key = (
+        extras.get("appKey")
+        or extras.get("apiKey")
+        or extras.get("app_key")
+        or getattr(account, "api_key", "")
+        or ""
+    )
+    secret = (
+        extras.get("appSecret")
+        or extras.get("apiSecret")
+        or extras.get("app_secret")
+        or getattr(account, "api_secret", "")
+        or ""
+    )
+    return str(key), str(secret)
+
+
 def poizon_fee(
     price: float,
     rate: float = POISON_FEE_RATE,

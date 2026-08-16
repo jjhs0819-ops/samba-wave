@@ -959,23 +959,9 @@ async def _send_poison(order, account, courier, tracking, session):
     """
     from sqlalchemy import text as _text
 
-    from backend.domain.samba.proxy.poison import PoisonClient
+    from backend.domain.samba.proxy.poison import PoisonClient, extract_credentials
 
-    extras = account.additional_fields or {}
-    if not isinstance(extras, dict):
-        extras = {}
-    app_key = (
-        extras.get("app_key", "")
-        or extras.get("appKey", "")
-        or getattr(account, "api_key", "")
-        or ""
-    )
-    app_secret = (
-        extras.get("app_secret", "")
-        or extras.get("appSecret", "")
-        or getattr(account, "api_secret", "")
-        or ""
-    )
+    app_key, app_secret = extract_credentials(account)
     if not app_key or not app_secret:
         return False, "POIZON app_key/app_secret 없음"
     if not tracking:
