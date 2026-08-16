@@ -6007,12 +6007,19 @@ async def run_kream_unified_once() -> dict:
             _done_n += 1
             _progress()  # 워치독 — 상품 하나 끝날 때마다 살아있음 표시
             if _done_n % _prog_every == 0:
+                # [2026-08-16] 등록제외 사유를 **중간에도** 찍는다. 종전엔 사이클 끝에만
+                # 나와서, 2시간짜리 사이클에서 "왜 등록이 안 되는가"를 완주 전엔 알 수 없었다.
+                _top = " / ".join(
+                    f"{k}:{v:,}"
+                    for k, v in sorted(_g_drop.items(), key=lambda x: -x[1])[:5]
+                )
                 logger.info(
-                    "[크림통합] 판정 진행 %d/%d (%.0f%%) %.0f초경과",
+                    "[크림통합] 판정 진행 %d/%d (%.0f%%) %.0f초경과 — 제외 %s",
                     _done_n,
                     len(products),
                     _done_n * 100.0 / max(1, len(products)),
                     _stage_t.time() - _t_stage,
+                    _top or "없음",
                 )
 
     # [2026-08-14] 청크 판정 + **삭제 즉시 실행**.
