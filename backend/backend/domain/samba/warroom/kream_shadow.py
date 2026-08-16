@@ -775,10 +775,9 @@ POLICY = {
     # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외. 로컬 봇의 25만엔 원칙.
     # 초고가 카드(수백만엔)에 입찰이 걸리면 체결 시 그 값으로 소싱해야 해 치명적.
     "max_cost_jpy": 250000,
-    # 조정 데드밴드(원) — 목표가와 현재가 차이가 이 금액 미만이면 조정 생략.
-    # 실시간 원가/시세의 미세변동이 매 사이클 수백 건의 헛조정으로 번지는 것 차단.
-    # 단 '마진 하한 미달(현재가 < 최소가)' 은 손실 방지라 데드밴드와 무관하게 항상 조정.
-    "adjust_deadband_krw": 2000,
+    # [2026-08-16] 조정 데드밴드 폐기 — 정책값까지 제거했다.
+    # 크림은 1,000원 차이로 순위가 갈린다. 생략한 그 금액이 곧 1등과 2등의 차이라
+    # '아낀 호출'보다 잃은 순위가 크다. 조정은 판정이 시키는 대로 전부 실행한다.
     # ── 크림 판매수수료(정산 차감분) [2026-08-02] ──
     # 해외배송(박스·카드팩): 기본 1,370원 + 판매가 3.3%  ※3.3% 는 3%+VAT 가 이미 포함된 값
     "overseas_base_fee": 1370,
@@ -836,9 +835,6 @@ async def _load_policy() -> None:
                         ),
                         "max_cost_jpy": k.get(
                             "kreamMaxCostJpy", POLICY["max_cost_jpy"]
-                        ),
-                        "adjust_deadband_krw": k.get(
-                            "kreamAdjustDeadbandKrw", POLICY["adjust_deadband_krw"]
                         ),
                         # 판매수수료 — 정책관리 값 우선, 없으면 기본값 [2026-08-02]
                         "overseas_base_fee": k.get(
@@ -2132,6 +2128,7 @@ def _decide_price_action(
     fee_kind: str | None = None,
     live_rank: int | None = None,
     low_keep: int = 0,
+    ask_count: int | None = None,
 ) -> tuple[str, int, bool, bool]:
     """갱신 결정 — 반환 (act, target, adjusting, is_nocomp).
     로컬 _kream_ask_adjust rank1유도+5분기+rank2추종+안전장치 이식.
@@ -2191,9 +2188,14 @@ def _decide_price_action(
     # 이 값은 rank1(입찰 중 1등)일 때만 쓰이는데, 1등이면 최저입찰가는 보지 않는 게
     # 규칙이다. 국내 상한으로 눌러 목표가를 낮추면 경쟁자도 없는데 스스로 깎는 꼴.
     no_comp_eff = no_comp
-    # 문턱은 정책값(kreamAdjustDeadbandKrw)을 쓴다. 3,000원·3% 는 하드코딩이었다.
-    band = int(POLICY.get("adjust_deadband_krw") or 0)
     truly_nocomp = (rank1 or market_low >= no_comp_eff) and no_comp_eff > min_price
+    # [2026-08-16] 입찰수로 무경쟁을 **실증**한다. lowest_overseas 는 우리가 최저일 때
+    # 우리 자신을 되비추므로 위에 다른 매물이 있어도 '무경쟁'으로 보인다.
+    #   실측 164941|280: 우리 289,000(최저) → 무경쟁 판단 → 299,000 인상 → 해외 298,000 노출
+    #   같은 상품 285 는 active_ask_count=1 로 진짜 우리뿐이다(280 은 5).
+    # 값을 못 받으면(토큰 만료·API 실패) None 이라 기존 판정을 그대로 쓴다.
+    if ask_count is not None and cur > 0:
+        truly_nocomp = truly_nocomp and int(ask_count) <= 1
 
     act, target, is_nocomp = "유지", cur, False
     if rank1:
@@ -2204,7 +2206,7 @@ def _decide_price_action(
         elif market_low > 0 and cur < market_low - 1000:
             target = max(market_low - 1000, min_price)
             act = "경쟁추종인상" if target > cur else "유지"
-        elif truly_nocomp and cur < no_comp_eff - band:
+        elif truly_nocomp and cur < no_comp_eff:
             if cooldown_hit:
                 act = "무경쟁인상(쿨다운보류)"
             else:
@@ -2287,21 +2289,11 @@ def _decide_price_action(
             target = int(min_price) // 1000 * 1000
         if target == cur:
             adjusting = False
-    # ── 데드밴드 — 미세 조정 생략(헛조정·API 소음 차단).
-    # 예외 1) 마진 하한 미달 복구(손실 방지)
-    # 예외 2) 1순위 획득 조정 — 크림은 1,000원 차이로 순위가 갈리므로 금액이 작아도
-    #        실행해야 한다. 데드밴드를 여기까지 적용했더니 1,018건이 경쟁에서 이탈했다.
-    _gains_rank1 = market_low > 0 and 0 < target <= market_low and not rank1
-    if (
-        adjusting
-        and target != cur
-        and cur > 0
-        and cur >= min_price
-        and not _gains_rank1
-    ):
-        _db = float(POLICY.get("adjust_deadband_krw") or 0)
-        if _db > 0 and abs(target - cur) < _db:
-            act, target, adjusting = "데드밴드생략", cur, False
+    # ── 데드밴드 **폐기** [2026-08-16 지시].
+    # 헛조정·API 소음을 줄이려고 미세 조정을 생략했는데, 크림은 1,000원 차이로 순위가
+    # 갈린다. 생략한 그 금액이 곧 1등과 2등의 차이라 '아낀 호출'보다 잃은 순위가 크다.
+    # 1순위 획득 조정(_gains_rank1)엔 이미 예외가 있었지만, 그 밖의 미세 조정도
+    # 결국 경쟁가 추종이라 막을 이유가 없다. 조정은 판정이 시키는 대로 전부 실행한다.
     return act, target, adjusting, is_nocomp
 
 
@@ -3262,6 +3254,72 @@ async def _exec_create_ask(
         return False, detail
     except Exception as exc:
         return False, str(exc)[:120]
+
+
+# ── 옵션별 판매입찰수 [2026-08-16] ─────────────────────────────────────────
+# 공식 OpenAPI options[] 에는 최저가 4종·highest_bid 뿐이고 **입찰 수가 없다**.
+# 그래서 무경쟁 판정을 lowest_overseas 로 대신했는데, 그 값은 우리가 최저일 때
+# **우리 자신을 되비춘다**. 위에 다른 매물이 있어도 안 보이므로 '무경쟁'으로 오판하고
+# 원가×1.4 까지 올렸다가 그제야 2등이 드러난다.
+#   실측 164941|280: 우리 289,000(최저) → 무경쟁으로 보고 299,000 인상 → 해외 298,000 노출
+# 판매자센터가 쓰는 파트너 API 에는 옵션별 active_ask_count 가 있다(280=5, 285=1).
+# 이 값이 1이면 우리뿐이므로 그때만 인상한다.
+_MARKET_ASKS_URL = "https://partner-api.kream.co.kr/api/v1/market/asks"
+_g_ask_count: dict = {}  # "kid|opt" → active_ask_count (사이클 캐시)
+
+
+async def _fetch_ask_counts(kid: str) -> dict:
+    """상품의 옵션별 판매입찰수 {옵션명: 건수}. 실패하면 빈 dict(판정은 기존 규칙 유지)."""
+    import datetime as _dt  # noqa: F811
+
+    tok = await _partner_token()
+    if not tok:
+        return {}
+    today = _dt.date.today()
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(
+                _MARKET_ASKS_URL,
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://partner.kream.co.kr/",
+                    "Accept": "application/json",
+                },
+                # 판매자센터가 보내는 파라미터 전부 — 빠뜨리면 400 이다.
+                params={
+                    "cursor": 1,
+                    "per_page": 10,
+                    "sort": "",
+                    "start_date": str(today - _dt.timedelta(days=31)),
+                    "end_date": str(today),
+                    "status": "live",
+                    "order_id": "",
+                    "product_name": "",
+                    "model_number": "",
+                    "brand_ids": "",
+                    "date_column": "date_created",
+                    "price_column": "sale_price",
+                    "keyword": str(kid),
+                    "keyword_type": "product_id",
+                    "option_names": "",
+                    "product_id": str(kid),
+                },
+            )
+        if r.status_code != 200:
+            return {}
+        items = (r.json() or {}).get("items") or []
+    except Exception:
+        return {}
+    out: dict = {}
+    for it in items:
+        for mo in (it.get("product") or {}).get("market_options") or []:
+            n = mo.get("active_ask_count")
+            if mo.get("option") is not None and n is not None:
+                out[str(mo["option"])] = int(n)
+        if out:
+            break
+    return out
 
 
 @_timed("크림상품_rival")
@@ -6320,12 +6378,33 @@ async def run_kream_unified_once() -> dict:
                 else:
                     _miss_del += 1  # 기존 _do_del 과 동일하게 실패로 센다
             _upds: list = []
+            # [2026-08-16] **무경쟁인상은 입찰수로 실증하고 실행한다.**
+            # lowest_overseas 는 우리가 최저일 때 우리 자신을 되비추므로 위에 다른
+            # 매물이 있어도 '무경쟁'으로 보인다. 그 상태로 원가×1.4 까지 올리면 그제야
+            # 2등이 드러난다(실측 164941|280: 289,000 → 299,000, 해외 298,000 노출).
+            # 파트너 API 의 옵션별 active_ask_count 가 1 일 때만 인상한다.
+            # 상품 단위로 캐시해 같은 상품 여러 옵션은 호출 1회로 끝낸다.
+            _nc_cache: dict = {}
+            _nc_block = 0
             for _k, _n, _tg, _cur, _nc in pend_renew:
                 if f"{_k}|{_n}" in _g_early_renewed:
                     continue  # 판정 중 이미 조정됨 — 중복 PATCH 방지
+                if _nc:  # 무경쟁인상 — 인상 전에 진짜 우리뿐인지 확인
+                    if _k not in _nc_cache:
+                        _nc_cache[_k] = await _fetch_ask_counts(_k)
+                    _cnt = (_nc_cache[_k] or {}).get(str(_n))
+                    if _cnt is not None and int(_cnt) > 1:
+                        _nc_block += 1
+                        _trace(_k, _n, f"무경쟁인상 취소 — 판매입찰 {_cnt}건")
+                        continue
                 _a = _get_live_ask(_k, _n)
                 if _a:  # 기존 _do_renew 는 ask 없으면 조용히 건너뛴다 — 동작 유지
                     _upds.append((_a.get("id"), _tg, _cur, _nc, _k, _n))
+            if _nc_block:
+                logger.info(
+                    "[크림통합] 무경쟁인상 취소 %d건 (판매입찰 2건 이상 — 인상 시 2등)",
+                    _nc_block,
+                )
 
             await _exec_pending(ecli, h, _dels, [], _ec)
             await _flush_logs_to_db()

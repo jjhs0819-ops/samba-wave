@@ -820,8 +820,6 @@ async def get_kream_margin_policy_public(
                 "non_card_margin_rate": k.get("kreamNonCardMarginRate", 5),
                 # 입찰 최고 원가(엔) — 초과 상품은 갱신·리스톡 제외
                 "max_cost_jpy": k.get("kreamMaxCostJpy", 250000),
-                # 조정 데드밴드(원) — 이 금액 미만 차이는 조정 생략(헛조정 차단)
-                "adjust_deadband_krw": k.get("kreamAdjustDeadbandKrw", 2000),
                 # 해외판매(박스·카드팩) 정산 수수료 — 기본수수료(원) + 판매가 비율(%).
                 "overseas_base_fee": k.get("kreamOverseasBaseFee", 1370),
                 "overseas_fee_rate": k.get("kreamOverseasFeeRate", 3.3),
