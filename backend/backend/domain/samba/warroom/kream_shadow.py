@@ -3644,6 +3644,10 @@ def _opt_keys(name) -> set[str]:
         m3 = re.fullmatch(r"(\d{2,3})CM", v)
         if m3:
             out.add(m3.group(1))
+        # ③ 인치 접미 — 공홈 청바지 '29inch' ↔ 크림 '29' (실측 GU Baggy Jeans 등)
+        m4 = re.fullmatch(r"(\d{2,3})(?:INCH|IN)", v)
+        if m4:
+            out.add(m4.group(1))
     if "수량1" in out:
         out.add("ONESIZE")
         out.add("FREE")
@@ -3729,6 +3733,9 @@ async def _fetch_home_sizes(
             str(z.get("code")): str(z.get("name") or "")
             for z in (item.get("sizes") or [])
         }
+        # 코드 끝 세 자리(숫자)로도 찾을 수 있게 보조 표를 만든다 — 검색과 l2s 의
+        # 코드 접두가 다른 상품이 있다(실측 464191: 'KXC016' vs 'KSS016').
+        _names_by_num = {k[-3:]: v for k, v in names.items() if v and k[-3:].isdigit()}
         d = await _rq(
             "GET",
             f"{base}/products/E{code}-000/price-groups/00/l2s",
@@ -3764,8 +3771,22 @@ async def _fetch_home_sizes(
         pr = int(((prices.get(l2id) or {}).get("base") or {}).get("value") or 0)
         if qty <= 0 or pr <= 0:
             continue
-        sz = (l2.get("size") or {}).get("code")
-        nm = names.get(str(sz)) or str((l2.get("size") or {}).get("displayCode") or "")
+        # [2026-08-16] 사이즈 **이름**을 못 얻으면 코드(displayCode '002')가 그대로
+        # 옵션명이 되어 크림 'XS'·'S' 와 한 개도 안 붙는다(실측 21종, 옵션 전부 불일치).
+        # 이름 표(products 검색의 sizes)가 비는 경우가 셋 있었다.
+        #   ① 검색에 상품이 안 잡힘   349380-08 → items 0개
+        #   ② 코드 체계가 서로 다름   464191 검색 'KXC016' vs l2s 'KSS016'
+        #   ③ 수집 시점에만 비었음    359078-09 는 지금 보면 정상(GML002=XS)
+        # 그래서 code 로 먼저 찾고, 없으면 **끝 세 자리 숫자**로 다시 찾는다
+        # (GML002·KXC016 처럼 앞 세 글자만 다른 경우를 흡수).
+        _s = l2.get("size") or {}
+        sz = str(_s.get("code") or "")
+        disp = str(_s.get("displayCode") or "")
+        nm = names.get(sz) or ""
+        if not nm and disp:
+            nm = _names_by_num.get(disp) or ""
+        if not nm:
+            nm = disp
         if not nm:
             continue
         landed = pr + (_HOME_SHIP_FEE if pr < _HOME_FREE_SHIP_MIN else 0)
