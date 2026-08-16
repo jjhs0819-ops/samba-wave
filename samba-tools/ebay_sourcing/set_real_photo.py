@@ -27,9 +27,10 @@ async def main():
     from backend.domain.samba.shipment.dispatcher import dispatch_to_market
     from sqlmodel import select
 
-    product_id = sys.argv[1]
+    sku = sys.argv[1]
     img_path = sys.argv[2]
-    acc_id = sys.argv[3] if len(sys.argv) > 3 else KV
+    product_id = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("ma_") else sku
+    acc_id = sys.argv[4] if len(sys.argv) > 4 else (sys.argv[3] if len(sys.argv) > 3 and sys.argv[3].startswith("ma_") else KV)
 
     tok = current_tenant_id.set(TENANT)
     try:
@@ -46,7 +47,7 @@ async def main():
                 cert_id=addf.get("clientSecret") or acc.api_secret,
                 refresh_token=addf.get("oauthToken") or acc.oauth_refresh_token,
             )
-            offs = await ec.get_offers_by_sku(product_id)
+            offs = await ec.get_offers_by_sku(sku)
             before = offs[0].get("listing", {}).get("listingId") if offs else None
             cat = offs[0].get("categoryId", "183454") if offs else "183454"
 

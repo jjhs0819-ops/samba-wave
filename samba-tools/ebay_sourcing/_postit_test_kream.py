@@ -18,30 +18,8 @@ MAX_TRY = 8
 MAX_RATIO = 0.62
 
 PROMPT = (
-    "You are given two photos. The FIRST photo is a product. The SECOND photo is a real "
-    "yellow paper note with the handwritten text 'tcg-vault'.\n"
-    "Task: place that EXACT note from the second photo into the first photo, lying flat on "
-    "the surface DIRECTLY BELOW the product — horizontally centered on the product, just under "
-    "its bottom edge, as if someone physically put it there. Never beside the product, never "
-    "above it, never off to one side.\n"
-    "Hard rules:\n"
-    "1. Use the note exactly as it appears in the second photo — same paper, same handwriting. "
-    "Do NOT redraw, re-letter, or restyle the text.\n"
-    "2. Do NOT cover, crop, move, recolor or alter the product in any way. The whole product "
-    "must stay fully visible exactly as in the first photo.\n"
-    "3. The note must rest ON the same surface, matching that surface's perspective, with a "
-    "soft contact shadow under its lower edge so it does not look like it floats.\n"
-    "3b. SIZE (critical, most common failure): measure the product's width in pixels, call it "
-    "P. The note's width must be 0.5 x P — if the product is 600 px wide the note must be "
-    "about 300 px wide, NOT 800 px. The note's left edge must be to the RIGHT of the product's "
-    "left edge and its right edge to the LEFT of the product's right edge, so the note sits "
-    "entirely inside the product's vertical band. A note wider than the product is a failure.\n"
-    "4. Match the first photo's lighting, white balance and grain so it looks like one photo.\n"
-    "5. Keep the original background and the SAME framing: identical aspect ratio and zoom "
-    "as the first photo. Do NOT widen the canvas, do NOT add empty space around the scene, "
-    "do NOT zoom out. The product must fill the frame just like in the first photo.\n"
-    "6. If there is no free surface below the product, let the note slightly overlap the "
-    "bottom edge of the frame instead of shrinking the product."
+    "이 카드 사진을 나무 책상 위에 놓고, 카드 바로 아래에 두번째 사진 속 실물 포스트잇을 "
+    "그대로 놓아줘. 정사각형 사진으로."
 )
 
 
@@ -95,7 +73,10 @@ async def main():
                 {"inline_data": {"mime_type": "image/png",
                                  "data": base64.b64encode(note).decode("ascii")}},
             ]}],
-            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": {"aspectRatio": "1:1"},
+            },
         }
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
         best, best_ratio = None, 99.0
@@ -122,6 +103,21 @@ async def main():
         if not best:
             print("실패: 이미지 파트 없음")
             return
+
+        # Gemini 가 캔버스를 옆으로 늘리는 경우 대비 — 정사각형 아니면 중앙 크롭으로 강제
+        from PIL import Image
+        im = Image.open(io.BytesIO(best))
+        w, h = im.size
+        if w != h:
+            side = min(w, h)
+            left = (w - side) // 2
+            top = 0  # 포스트잇이 하단에 있으므로 위쪽 기준 크롭(하단 잘림 방지)
+            im2 = im.crop((left, top, left + side, top + side))
+            buf = io.BytesIO()
+            im2.save(buf, format="JPEG", quality=92)
+            best = buf.getvalue()
+            print(f"  캔버스 {w}x{h} -> 정사각 {side}x{side} 강제 크롭")
+
         open(out_path, "wb").write(best)
         print(f"OK {len(best)} bytes 비율 {best_ratio:.2f} -> {out_path}")
     finally:

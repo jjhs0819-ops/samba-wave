@@ -2392,6 +2392,8 @@ _g_trade_counts: dict[str, int] = {}
 # SNKRDUNK 영문 카드명이라 needs_trade 문자열검사가 원피스/유희왕을 못 잡던 사고(2026-07-31)
 # 재발 방지: brand 로 확실히 판별. 신발/의류(sneaker/apparel/watch)는 로드서 제외(팬텀PSA 오게이트 방지).
 _g_card_brand: dict[str, str] = {}
+# 비카드(신발/의류/시계) kid — 거래게이트는 TCG 전용이라 이 집합은 무조건 통과시킨다.
+_g_noncard_kids: set[str] = set()
 # [2026-08-06] DB brand 를 크림 브랜드명 표기로 통일했다('포켓몬카드'→'Pokemon TCG',
 # 'ONE PIECE'→'One Piece TCG'). 여기 집합은 UPPER(TRIM(brand)) 와 정확일치로 비교하므로
 # 통일된 표기를 반드시 포함해야 한다. 종전엔 'POKEMON TCG'·'ONE PIECE TCG' 가 없어
@@ -2669,6 +2671,26 @@ async def _load_restock_guards() -> None:
             ).all():
                 if kid and br:
                     _g_card_brand[str(kid)] = str(br)
+            # [2026-08-16] 비카드(신발/의류/시계) kid 집합.
+            # 위 브랜드맵은 이 셋을 **제외하고** 담아서, 신발은 br="" 이 되고
+            # _trade_ok 의 name 폴백(needs_trade)으로 흘러들었다. 거기서 컬렉션 이름의
+            # 'Pack'(New Balance "Protection Pack" 등)을 카드 밀봉팩으로 오판해
+            # 거래게이트에 걸렸다 — 실측 리스톡 959건 중 436건(45%)이 이걸로 막힘.
+            # 거래게이트는 TCG 전용이므로 비카드는 여기서 확실히 걷어낸다.
+            _g_noncard_kids.clear()
+            for (kid,) in (
+                await s.execute(
+                    _text(
+                        "SELECT DISTINCT resell_matches->'kream'->>'product_id' AS kid "
+                        "FROM samba_collected_product "
+                        "WHERE COALESCE(resell_matches->'kream'->>'product_id','')<>'' "
+                        "AND COALESCE(extra_data->>'snkr_type','') "
+                        "  IN ('sneaker','apparel','watch')"
+                    )
+                )
+            ).all():
+                if kid:
+                    _g_noncard_kids.add(str(kid))
             # 이행대기 — 소싱주문번호 없는 미이행 주문(판매 후 소싱 전 재입찰 보류)
             for kid, opt in (
                 await s.execute(
@@ -2702,6 +2724,12 @@ def _trade_ok(kid: str, name: str) -> bool:
     """거래이력 게이트 — 거래≥1 필요 상품은 누적거래수≥1 이어야 등록 허용.
     비포켓몬 TCG 카드(원피스/유희왕/MTG/유니온아레나 등)는 SNKRDUNK 영문 카드명이라
     needs_trade 문자열검사가 못 잡음 → brand 로 확실히 판별(2026-07-31 사고 재발방지)."""
+    # [2026-08-16] **거래게이트는 TCG 전용이다.** 비카드(신발/의류/시계)는 이름을 보지 않고
+    # 즉시 통과시킨다. 종전엔 브랜드맵이 비카드를 제외해 담는 탓에 br="" 이 되고,
+    # 아래 name 폴백에서 컬렉션명의 'Pack'(New Balance "Protection Pack" 등)을
+    # 카드 밀봉팩으로 오판했다 — 실측 리스톡 959건 중 436건(45%)이 이걸로 막혔다.
+    if str(kid) in _g_noncard_kids:
+        return True
     br = _g_card_brand.get(str(kid), "")
     # [2026-08-02] TCG 브랜드 화이트리스트로만 판정 — snkr_type 이 빈 신발/의류가 섞여
     # NIKE 같은 브랜드가 "거래이력없음"으로 잘못 막히던 것 차단. 거래게이트는 TCG 전용.
