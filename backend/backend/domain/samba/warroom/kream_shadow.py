@@ -5002,33 +5002,14 @@ async def run_kream_unified_once() -> dict:
     #   실측(2026-08-06 07:55 KST): 리스톡 풀 56,354 / 스캔목록 56,525 / 이번 대상 1건.
     #   177955(adidas Track Jacket, JP S, 재고 1, 크림 무경쟁)는 옵션 매처를 고치기
     #   전에 스캔목록에 올라, 매처 배포 뒤에도 차례가 안 와 계속 미등록이었다.
-    # 남은 대상이 한 사이클치(1만)에 못 미치면 새 바퀴를 시작해 전량을 다시 훑는다.
-    _reset_below = int(os.environ.get("KREAM_RESTOCK_RESET_BELOW") or 10000)
+    # [2026-08-16] **스캔목록 폐기.** 종전엔 '이번 바퀴에 본 kid' 집합으로 회전시켰는데,
+    # 배포·재기동 때마다 리셋돼 같은 앞부분을 반복해서 훑었고, 확정이 늦게 붙은 상품이
+    # '봤음'으로 박혀 한 바퀴 내내 안 뽑히는 사고도 냈다(실측 18,561건 적체).
+    # 순서를 '재고보유 + 소싱처 정보 오래된 순'으로 잡으면 순환은 저절로 된다 —
+    # 판정한 상품은 실시간 원가/재고를 되쓰며 updated_at 이 NOW() 로 밀리므로
+    # 자연히 뒤로 간다. 별도 상태를 들고 다닐 이유가 없다.
     _scanned: set = set()
-    # [2026-08-06] 프로세스가 새로 뜬 뒤 **첫 사이클은 무조건 리셋**한다.
-    # 배포·컨테이너 교체로 사이클이 중간에 죽으면 그때까지 등록하던 슬라이스가
-    # 통째로 날아가는데, 스캔목록은 남아 있어 다시 잡히지 않는다
-    # (실측 2026-08-06 11:00 KST: 등록 6,604건 중 2,398건만 반영, 4,206건 유실).
-    # 새로 떴다 = 직전 사이클이 정상 완주하지 못했을 수 있다 → 처음부터 다시 훑는다.
-    global _fresh_boot
-    if _fresh_boot:
-        _fresh_boot = False
-        logger.info("[크림통합] 기동 후 첫 사이클 — 스캔목록 리셋(처음부터 재순회)")
-    else:
-        try:
-            _scanned = set((await _load_setting_map(_SET_SCANNED)).keys())
-        except Exception:
-            _scanned = set()
-    _fresh = [p for p in rest_products if p["kid"] not in _scanned]
-    if len(_fresh) < _reset_below:
-        logger.info(
-            "[크림통합] 리스톡 잔여 %d건 < %d — 스캔목록 리셋(전량 %d건 재순회)",
-            len(_fresh),
-            _reset_below,
-            len(rest_products),
-        )
-        _scanned = set()
-        _fresh = rest_products
+    _fresh = list(rest_products)
 
     # [2026-08-15] **재고 있는 것부터 스캔한다.** 종전엔 스캔목록 순서 그대로 잘랐는데,
     # 슬라이스마다 재고 보유량이 극심하게 갈려 등록이 0 에 가까운 사이클이 반복됐다.
@@ -6564,16 +6545,10 @@ async def run_kream_unified_once() -> dict:
             await _flush_logs_to_db()
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
         await _save_setting_map(_SET_FAILED, _g_failed_posts)
-    # 등록 실행까지 마쳤으므로 이제 '봤음'으로 확정한다(위 [2026-08-06] 주석 참조).
-    # 단 조건이 풀리면 바로 등록해야 하는 사유(_RETRY_DROP_REASONS)로 빠진 상품은
-    # 제외한다 — 찍어두면 한 바퀴 내내 다시 안 뽑혀 검수를 확정해도 등록이 안 된다.
-    _keep = _scanned - _g_retry_kids
-    if _g_retry_kids:
-        logger.info(
-            "[크림통합] 재시도 대상 %d건은 스캔완료에서 제외(다음 사이클 재판정)",
-            len(_scanned) - len(_keep),
-        )
-    await _save_setting_map(_SET_SCANNED, {k: 1 for k in _keep})
+    # [2026-08-16] 스캔목록 저장 폐기 — 순환은 '재고보유 + updated_at 오래된 순'
+    # 정렬이 담당한다. 판정한 상품은 실시간 원가/재고 되쓰기로 updated_at 이 밀려
+    # 자연히 뒤로 간다. 별도 상태를 저장할 이유가 없다.
+    # (남아 있던 값은 다음 로드에서 안 읽으므로 그대로 둬도 무해하다)
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
