@@ -3322,6 +3322,10 @@ async def _fetch_ask_counts(kid: str) -> dict:
     return out
 
 
+# 경쟁가 조회가 0 을 반환한 사유별 집계 — 0 이면 등록 게이트가 열리므로 규모를 본다.
+_g_rival_fail: dict = {}
+
+
 async def _rival_low_retry(
     cli: httpx.AsyncClient, h: dict, pid, opt: str, tries: int = 3
 ) -> int:
@@ -3350,10 +3354,25 @@ async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
     합쳐 매기므로 기준은 하나여야 한다. 보관 95점은 우리가 취급하지 않으므로 뺀다.
     옵션은 표기차(30.5cm↔305, FREE↔ONE SIZE)를 _opt_same 으로 흡수한다.
     """
+    # [2026-08-16] 0 을 돌려주는 자리가 셋인데 전부 조용했다. 0 이면 등록 게이트가
+    # 통째로 열리므로(무경쟁으로 간주) **왜 0 인지 반드시 남긴다.**
+    #   실측 4081|280: 해외최저 283,000 인데 조회가 0 을 줘 287,000 으로 등록 → 즉시 2등
     try:
         r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
         opts = (r.json() or {}).get("options") or []
-    except Exception:
+    except Exception as exc:
+        _g_rival_fail["api"] = _g_rival_fail.get("api", 0) + 1
+        logger.info(
+            "[크림통합] 경쟁가조회 실패 %s|%s — API %s: %s",
+            pid,
+            opt,
+            type(exc).__name__,
+            str(exc)[:60],
+        )
+        return 0
+    if not opts:
+        _g_rival_fail["noopt"] = _g_rival_fail.get("noopt", 0) + 1
+        logger.info("[크림통합] 경쟁가조회 실패 %s|%s — 옵션 응답 비어 있음", pid, opt)
         return 0
     # [2026-08-16] 매처를 판정과 **하나로** 통일한다. 종전엔 여기만 자체 매칭이라
     # 구성(번들) 옵션을 걸러내지 않았다 — _match_kream_option 은 is_bundle_option 으로
@@ -3363,12 +3382,23 @@ async def _rival_low(cli: httpx.AsyncClient, h: dict, pid, opt: str) -> int:
     # 판정은 본품 시세로 등록가를 정하고 검증은 번들가와 비교하니 늘 어긋났다.
     po = _match_kream_option(opt, opts)
     if not po:
+        _g_rival_fail["nomatch"] = _g_rival_fail.get("nomatch", 0) + 1
+        logger.info(
+            "[크림통합] 경쟁가조회 실패 %s|%s — 크림 옵션 %d개에 해당 옵션 없음",
+            pid,
+            opt,
+            len(opts),
+        )
         return 0
     vals = [
         int(po.get(k) or 0)
         for k in ("lowest_normal_price", "lowest_100_price", "lowest_overseas_price")
     ]
-    return min([v for v in vals if v > 0] or [0])
+    got = min([v for v in vals if v > 0] or [0])
+    if got <= 0:
+        # 전 판매유형 호가가 0 — 진짜 무경쟁일 수 있으나 구분이 안 되므로 남긴다.
+        _g_rival_fail["allzero"] = _g_rival_fail.get("allzero", 0) + 1
+    return got
 
 
 async def _exec_delete_ask(
@@ -4915,6 +4945,7 @@ async def run_kream_unified_once() -> dict:
     _g_skip_samples = {}
     _g_drop.clear()
     _g_retry_kids.clear()  # 사이클마다 새로 모은다(스캔완료 제외 대상)
+    _g_rival_fail.clear()  # 경쟁가 조회 실패 사유 집계
     total_products = len(products)
     _live_kids = {k for (k, _o) in ask_index}
     live_products = [p for p in products if p["kid"] in _live_kids]
@@ -6712,6 +6743,15 @@ async def run_kream_unified_once() -> dict:
             "[크림통합] 등록제외 사유별 총계 — %s",
             " / ".join(
                 f"{k}:{v:,}" for k, v in sorted(_g_drop.items(), key=lambda x: -x[1])
+            ),
+        )
+    # 경쟁가 조회가 0 을 준 사유 — 0 이면 등록 게이트가 열려 2등 등록으로 이어진다.
+    if _g_rival_fail:
+        logger.info(
+            "[크림통합] 경쟁가조회 0 사유 — %s",
+            " / ".join(
+                f"{k}:{v:,}"
+                for k, v in sorted(_g_rival_fail.items(), key=lambda x: -x[1])
             ),
         )
     logger.info("[크림통합] STAGE 만료회수 시작 %.0f초경과", _stage_t.time() - _t_stage)
