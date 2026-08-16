@@ -3744,8 +3744,23 @@ async def _fetch_home_sizes(
         parts = cc.split("-")
         if len(parts) < 3 or parts[1] != color:
             continue  # 다른 색상 — 크림 품번의 색상만 취한다
+        # [2026-08-16] **재고 판정은 quantity 로 하면 안 된다.**
+        # 유니클로는 실수량을 주지 않고 상한으로 캡한다 — 실측 487517 은 21개 옵션이
+        # 전부 quantity=11 이었다. 게다가 발매 전 상품도 statusCode=IN_STOCK ·
+        # 在庫あり · quantity=11 로 내려온다(productFlags 에 comingSoon).
+        #   사고: 크림 1044133 (W) Fleece Stand Blouson Beige — '8月中旬販売予定'인데
+        #        재고 있음으로 읽어 입찰 → 팔렸는데 소싱 불가.
+        # 그래서 statusCode 로 판정하고, 발매 전/예약 플래그가 있으면 통째로 뺀다.
+        if any(
+            str(f.get("code")) in ("comingSoon", "preOrder")
+            for f in ((l2.get("flags") or {}).get("productFlags") or [])
+        ):
+            continue
         l2id = str(l2.get("l2Id") or "")
-        qty = int((stocks.get(l2id) or {}).get("quantity") or 0)
+        _st = stocks.get(l2id) or {}
+        if str(_st.get("statusCode") or "") != "IN_STOCK":
+            continue
+        qty = int(_st.get("quantity") or 0)
         pr = int(((prices.get(l2id) or {}).get("base") or {}).get("value") or 0)
         if qty <= 0 or pr <= 0:
             continue
