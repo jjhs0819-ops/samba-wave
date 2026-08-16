@@ -911,6 +911,13 @@ async def snkrdunk_compare_all_public(
             -- 최근 가격/재고 확인 시각(KST) — restock/갱신이 snkr price·stock 갱신 시 updated_at=NOW()
             to_char(updated_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS price_checked_at,
             COALESCE(style_code, '') AS style_code,
+            -- [2026-08-16] 스니덩크는 품번이 두 개다. officialProductNumber(제조사 품번)와
+            -- productNumber(스니덩크 자체번호). style_code 에는 official 우선으로 하나만
+            -- 들어가 있어서, official 이 빈 상품은 자체번호(HM-845)가 들어간다.
+            -- 그 자체번호를 크림 품번(HM26GD018)과 비교하면 전부 '불일치'로 오판한다.
+            -- 검수 화면에서 둘 다 보여야 사람이 가릴 수 있으므로 분리해 내려준다.
+            COALESCE(extra_data->>'snkr_official_no', '') AS snkr_official_no,
+            COALESCE(extra_data->>'snkr_product_no', '') AS snkr_product_no,
             COALESCE(brand, '') AS brand,
             COALESCE(extra_data->>'name_ja', '') AS name_ja,
             COALESCE(extra_data->>'name_en', '') AS name_en,
