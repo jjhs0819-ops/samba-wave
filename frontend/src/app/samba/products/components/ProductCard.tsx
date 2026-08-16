@@ -506,7 +506,8 @@ const ProductCard = React.memo(function ProductCard({
   // SNKRDUNK는 일본 사이트(JP API) 수집이라 엔화(¥).
   const _site = (p.source_site || '').toUpperCase()
   const _cur = (p.extra_data as Record<string, unknown> | undefined)?.currency
-  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA']
+  // UNIQLO/GU 는 일본 공홈(jp/api) 수집이라 엔화. 원가에 3,000엔 미만 배송비 500엔 포함.
+  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA', 'UNIQLO', 'GU']
   const USD_SOURCE_SITES = ['AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
   const curSym = (JPY_SOURCE_SITES.includes(_site) || _cur === 'JPY') ? '¥'
     : (USD_SOURCE_SITES.includes(_site) || _cur === 'USD') ? '$'
