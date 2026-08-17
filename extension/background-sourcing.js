@@ -3282,21 +3282,56 @@ async function _checkAbcmartLoggedInByApi(productId, site) {
 const SSG_FETCH_TAB_URL = 'https://department.ssg.com/item/itemView.ssg?itemId=1000633600861&siteNo=6009'
 let _ssgFetchTabId = null
 
+// [2026-08-18] 잠든 탭(status='unloaded') 대응.
+//
+// 크롬은 메모리 회수를 위해 백그라운드 탭을 통째로 재운다(discard). 잠든 탭에
+// chrome.scripting.executeScript 를 걸면 호스트 권한이 있어도 다음으로 실패한다:
+//   "Cannot access contents of the page. Extension manifest must request
+//    permission to access the respective host."
+// 실측(2026-08-18, 웨일 CDP): 같은 탭을 reload 해 status='complete' 로 깨우면
+// 동일 executeScript 가 정상 동작. 즉 권한이 아니라 탭 상태 문제다.
+//
+// 기존 코드는 tabs.query 결과의 found[0] 을 상태 확인 없이 집었고, 서비스워커가
+// 재시작되면 _ssgFetchTabId 가 null 이 되어 매번 이 경로를 탔다. 그래서 잠든
+// 탭이 하나 남아 있으면 SSG 전건이 in-tab fetch 실패 → popup 폴백(건당 130초)
+// 으로 흘렀다. 건당 305초의 실제 원인.
+async function _wakeTabIfNeeded(tabId) {
+  try {
+    const t = await chrome.tabs.get(tabId)
+    if (!t) return false
+    if (t.status === 'complete' && !t.discarded) return true
+    await chrome.tabs.reload(tabId)
+    await waitForTabLoad(tabId, 20000)
+    const t2 = await chrome.tabs.get(tabId)
+    return !!t2 && t2.status === 'complete'
+  } catch {
+    return false
+  }
+}
+
 async function _getSsgFetchTab() {
   // 기존 탭 재사용 — 살아있으면 그대로 쓴다(창 여닫이 자체를 없애는 게 목적).
   if (_ssgFetchTabId != null) {
     try {
       const t = await chrome.tabs.get(_ssgFetchTabId)
-      if (t && /department\.ssg\.com/.test(t.url || '')) return _ssgFetchTabId
+      if (t && /department\.ssg\.com/.test(t.url || '')) {
+        if (await _wakeTabIfNeeded(_ssgFetchTabId)) return _ssgFetchTabId
+      }
     } catch { /* 닫힘 — 아래에서 재생성 */ }
     _ssgFetchTabId = null
   }
   // 사용자가 이미 열어둔 SSG 탭이 있으면 그걸 빌려 쓴다.
+  // 단, "깨어 있는" 탭을 먼저 고른다. 전부 잠들었으면 하나를 깨워서 쓴다.
   try {
     const found = await chrome.tabs.query({ url: '*://department.ssg.com/*' })
     if (found && found.length) {
-      _ssgFetchTabId = found[0].id
-      return _ssgFetchTabId
+      const live = found.find((t) => t.status === 'complete' && !t.discarded)
+      const pick = live || found[0]
+      if (await _wakeTabIfNeeded(pick.id)) {
+        _ssgFetchTabId = pick.id
+        return _ssgFetchTabId
+      }
+      // 깨우기 실패 — 아래에서 새 탭 생성
     }
   } catch { /* 무시 */ }
   // 없으면 백그라운드 탭 1개만 생성해 계속 재사용한다(상품마다 만들지 않음).
