@@ -117,6 +117,7 @@ def decide_bid_price(
     cost: float,
     target: float,
     market: float | None,
+    own_price: float | None = None,
     min_profit: int = POISON_MIN_PROFIT,
     rate: float = POISON_FEE_RATE,
     fee_min: int = POISON_FEE_MIN,
@@ -140,6 +141,26 @@ def decide_bid_price(
         return BidDecision(skipped=True, reason="원가 없음")
 
     unit = max(int(unit or 1), 1)
+
+    # 자기참조 차단 — 포이즌 시세 API 는 내 입찰을 빼주지 않는다. 내가 최저가면
+    # 조회된 "시장 최저가"가 곧 내 가격이라, 그걸 또 시장가로 믿고 맞추면 갱신할수록
+    # 값이 내려가는 하향 나선이 생긴다(실측 20건 중 12건이 이 상태였다).
+    #
+    # 이때 목표가로 올려버리면 실제로는 다른 셀러와 동률이었던 경우 노출을 잃는다.
+    # 동률인지 나 혼자인지는 시세만으로 구분할 수 없으므로 **현재 가격을 유지**한다.
+    # 하한(최소이익)만 확인해서, 원가가 올라 하한을 깨면 그때만 하한까지 올린다.
+    if own_price and market and int(market) == int(own_price):
+        floor_now = _min_price_for_profit(cost, min_profit, rate, fee_min, fee_max)
+        floor_now = -(-floor_now // unit) * unit
+        keep = max(int(own_price), floor_now)
+        return BidDecision(
+            price=keep,
+            reason=(
+                "현재가 유지(내 입찰이 최저가)"
+                if keep == int(own_price)
+                else "원가 상승 — 최소이익 하한으로 상향"
+            ),
+        )
     floor = _min_price_for_profit(cost, min_profit, rate, fee_min, fee_max)
     floor = -(-floor // unit) * unit  # 올림 — 보정 후에도 최소이익 유지
 

@@ -117,3 +117,47 @@ def test_단위보정으로_하한이_상한을_넘으면_스킵():
         cost=40000, target=90000, market=64900, min_profit=MIN_PROFIT, unit=1000
     )
     assert r.skipped is True
+
+
+# ── 자기참조(내 입찰이 시세로 되돌아오는 문제) ──────────────────────────
+#
+# 포이즌 시세 API는 자기 입찰을 제외해주지 않는다. 우리가 최저가로 걸면 다음 조회에서
+# 우리 가격이 그대로 "시장 최저가"로 잡히고, 그걸 시장가로 믿고 또 맞추면 갱신할수록
+# 값이 내려가는 하향 나선이 생긴다. 실측에서 20건 중 12건이 이 상태였다.
+
+def test_시세가_내_등록가와_같으면_현재가를_유지한다():
+    # 내가 134,000에 걸어 최저가가 된 상태 → 시세도 134,000으로 조회된다.
+    # 목표가(120,000)로 내리지도, 올리지도 않고 그대로 둔다.
+    # (동률 경쟁자가 있었을 수도 있어 올리면 노출을 잃는다)
+    r = decide_bid_price(cost=50000, target=120000, market=134000,
+                         own_price=134000, min_profit=MIN_PROFIT, unit=1000)
+    assert r.skipped is False
+    assert r.price == 134000
+    assert "유지" in r.reason
+
+
+def test_자기참조라도_최소이익_하한은_지킨다():
+    # 원가가 올라 현재가로는 하한을 못 맞추면 하한까지 올린다
+    r = decide_bid_price(cost=100000, target=110000, market=110000,
+                         own_price=110000, min_profit=MIN_PROFIT, unit=1000)
+    assert r.skipped is False
+    assert r.price == 125000  # 100,000 + 15,000 + 10,000
+    assert profit(r.price, 100000) >= MIN_PROFIT
+    assert "상향" in r.reason
+
+
+def test_다른_셀러가_더_싸면_자기참조가_아니다():
+    # 내 등록가는 134,000인데 시세가 115,000 → 남이 더 싸게 건 것
+    r = decide_bid_price(cost=50000, target=120000, market=115000,
+                         own_price=134000, min_profit=MIN_PROFIT, unit=1000)
+    assert r.skipped is False
+    assert r.price == 115000  # 시장가에 맞춰 내림
+    assert r.lowered is True
+
+
+def test_자기참조_원가상승시_하한까지_올린다():
+    r = decide_bid_price(cost=95000, target=100000, market=100000,
+                         own_price=100000, min_profit=MIN_PROFIT, unit=1000)
+    assert r.skipped is False
+    assert r.price == 120000  # 95,000 + 15,000 + 10,000
+    assert profit(r.price, 95000) >= MIN_PROFIT

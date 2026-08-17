@@ -235,10 +235,13 @@ class PoisonPlugin(MarketPlugin):
             # 시세 게이트 — 시장가보다 비싸면 노출조차 안 되므로 시장가까지 내려서 등록하고,
             # 시장가로 팔아도 순이익 하한에 못 미치면 등록하지 않는다.
             # 등록가는 KRW 최소단위(1000원) 배수여야 하므로 unit 보정도 여기서 처리한다.
+            market_price = (market_map.get(int(global_sku_id)) or {}).get("minPrice")
             decision = decide_bid_price(
                 cost=cost,
                 target=target,
-                market=(market_map.get(int(global_sku_id)) or {}).get("minPrice"),
+                market=market_price,
+                # 이미 등록된 가격 — 시세가 이 값과 같으면 내 입찰이 되돌아온 것이다
+                own_price=self._safe_int(prev_entry.get("price")) or None,
                 min_profit=min_profit,
                 unit=1000,
             )
@@ -253,6 +256,12 @@ class PoisonPlugin(MarketPlugin):
                 )
                 continue
             price = decision.price
+            # 가격 결정 근거를 남긴다 — 나중에 "왜 이 값이 됐나"를 역추적하기 위함
+            logger.info(
+                f"[POIZON] 가격결정 {article_number}/{opt_name} 원가={int(cost)} "
+                f"목표={int(target)} 시세={market_price or '없음'} "
+                f"기존={prev_entry.get('price') or '없음'} → {price} ({decision.reason})"
+            )
 
             if bidding_no:
                 # 기존 입찰 → 가격/재고 수정
