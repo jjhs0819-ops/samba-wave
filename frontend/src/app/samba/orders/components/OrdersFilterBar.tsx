@@ -273,11 +273,11 @@ export default function OrdersFilterBar(props: Props) {
             <option value="no_order">주문번호X</option>
             <option value="direct">직배</option>
             <option value="kkadaegi">까대기</option>
-            <option value="gift">예외</option>
+            <option value="gift">선물</option>
             <option value="no_price">가격X</option>
             <option value="no_stock">재고X</option>
-            <option value="staff_a">송장필요</option>
-            <option value="staff_b">강제취소</option>
+            <option value="staff_a">직원A</option>
+            <option value="staff_b">직원B</option>
           </select>
           <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value)}>
             <option value="">송장필터</option>

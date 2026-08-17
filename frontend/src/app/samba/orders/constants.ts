@@ -29,7 +29,7 @@ export const ACTION_BUTTONS = [
   { key: 'no_stock', label: '재고X', activeColor: '#CA8A04' },
   { key: 'direct', label: '직배', activeColor: '#2563EB' },
   { key: 'kkadaegi', label: '까대기', activeColor: '#D97706' },
-  { key: 'gift', label: '예외', activeColor: '#059669' },
-  { key: 'staff_a', label: '송장필요', activeColor: '#0D9488' },
-  { key: 'staff_b', label: '강제취소', activeColor: '#9333EA' },
+  { key: 'gift', label: '선물', activeColor: '#059669' },
+  { key: 'staff_a', label: '직원A', activeColor: '#7C3AED' },
+  { key: 'staff_b', label: '직원B', activeColor: '#DB2777' },
 ] as const
