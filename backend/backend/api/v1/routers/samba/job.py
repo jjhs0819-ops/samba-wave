@@ -80,8 +80,10 @@ async def create_job(
                 ).scalar()
             ) or 0
 
-    # 주문 동기화 잡: 같은 tenant 에서 동시 실행 1개만 허용 — 이중 호출 방지
-    if body.job_type == "order_sync":
+    # 주문/반품 동기화 잡: 같은 tenant 에서 동시 실행 1개만 허용 — 이중 호출 방지.
+    # (반품 페이지 '가져오기' 연타로 sweep 이 중첩되던 것도 여기서 차단 — returns_sync
+    #  도 order_sync 와 동일하게 계정 순회형 장수명 잡이라 stale 판정 로직을 공유)
+    if body.job_type in ("order_sync", "returns_sync"):
         from backend.domain.samba.job.model import SambaJob
         from sqlmodel import select, col
 
@@ -90,7 +92,7 @@ async def create_job(
                 await session.execute(
                     select(SambaJob)
                     .where(
-                        SambaJob.job_type == "order_sync",
+                        SambaJob.job_type == body.job_type,
                         col(SambaJob.status).in_(
                             [JobStatus.PENDING, JobStatus.RUNNING]
                         ),
@@ -106,7 +108,7 @@ async def create_job(
         if active:
             if _is_stale_order_sync_job(active):
                 active.status = JobStatus.FAILED
-                active.error = "stale order_sync job auto-failed before restart"
+                active.error = f"stale {body.job_type} job auto-failed before restart"
                 active.completed_at = datetime.now(UTC)
                 session.add(active)
                 await session.flush()
@@ -114,7 +116,7 @@ async def create_job(
                 return {
                     "id": active.id,
                     "status": active.status,
-                    "job_type": "order_sync",
+                    "job_type": body.job_type,
                     "duplicate": True,
                     "current": active.current,
                     "total": active.total,

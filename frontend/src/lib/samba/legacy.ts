@@ -358,8 +358,8 @@ export const orderApi = {
     search_text?: string
     search_category?: string
     sort_by?: string
-    // 'ub1' (default, 소싱처 발주) | 'lotte' (롯데택배 송장 양식)
-    format?: 'ub1' | 'lotte'
+    // 'ub1' (default, 소싱처 발주) | 'lotte' (롯데택배 송장 양식) | 'cj' (CJ대한통운 송장 양식)
+    format?: 'ub1' | 'lotte' | 'cj'
   }) => {
     const res = await fetchWithAuth(`${SAMBA_PREFIX}/orders/excel-export`, {
       method: 'POST',
@@ -1883,11 +1883,11 @@ export const proxyApi = {
     const res = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
     return res.json() as Promise<{ success: boolean; message: string; image?: string }>
   },
-  transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
+  transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string, provider?: string) =>
     request<{ success: boolean; status?: string; job_id?: string; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
-        body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset }),
+        body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset, provider }),
       }),
   bgJobStatus: (jobId: string) =>
     request<{ status: string; total: number; current: number; total_transformed: number; total_failed: number; image_current?: number; image_total?: number; current_product_id?: string }>(
@@ -1898,11 +1898,11 @@ export const proxyApi = {
   bgJobCancel: (jobId: string) =>
     request<{ success: boolean; job_id?: string; status?: string; message?: string }>(
       `${SAMBA_PREFIX}/proxy/bg-jobs/${jobId}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
-  transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
+  transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string, provider?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
-        body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset }),
+        body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset, provider }),
       }),
   generateAiTagsByGroups: (groupIds: string[]) =>
     request<{ success: boolean; message: string; total_tagged: number; api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number }>(

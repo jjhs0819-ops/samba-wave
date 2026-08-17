@@ -329,7 +329,10 @@ class ESMPlusClient:
     ) -> None:
         self.hosting_id = hosting_id
         self.secret_key = secret_key
-        self.seller_id = seller_id
+        # 앞뒤 공백 방어 — 릴레이 모드에서 seller_id 는 X-ESM-Seller-Id 헤더로 나가는데,
+        # 공백이 붙어 있으면 httpx 가 "Illegal header value" 로 요청 자체를 거부한다.
+        # (계정 등록 시 붙여넣기로 유입. DB 저장분도 있으므로 여기서도 막는다.)
+        self.seller_id = (seller_id or "").strip()
         self.site = site
         self.cfg = self.SITE_CONFIG[site]
         self._timeout = httpx.Timeout(30.0, connect=10.0)
@@ -646,12 +649,13 @@ class ESMPlusClient:
         """출고지/반품지 목록 — GET /item/v1/shipping/places
 
         응답 key 'shippingPlaces' (본진 'places' 추출은 잘못).
+
+        실패는 예외로 전파한다. 과거 `except Exception: return []` 는 401(셀링툴
+        미인증)·헤더 오류(seller_id 공백)를 모두 '출고지 0건'으로 뭉개, 설정 화면에
+        초록색 "0개를 불러왔습니다"가 떠서 원인 진단이 불가능했다.
         """
-        try:
-            result = await self._call_api("GET", "/item/v1/shipping/places")
-            return result.get("shippingPlaces", [])
-        except Exception:
-            return []
+        result = await self._call_api("GET", "/item/v1/shipping/places")
+        return result.get("shippingPlaces", [])
 
     async def resolve_return_addr_no(self, return_place_no: int) -> int:
         """반품지 placeNo → addrNo 해석 (#389).
@@ -667,17 +671,27 @@ class ESMPlusClient:
             for p in await self.get_places():
                 if int(p.get("placeNo", 0) or 0) == return_place_no:
                     return int(p.get("addrNo", 0) or 0)
-        except Exception:
+        except Exception as exc:
+            # 전송 중단은 과하다(반품지 미주입으로도 등록은 됨) — 다만 조용히 넘기면
+            # 계정에 설정한 반품지가 왜 안 붙는지 추적이 불가능해 로그는 남긴다.
+            logger.warning(
+                f"[{self.cfg['label']}] 반품지 addrNo 해석 실패 "
+                f"(seller={self.seller_id}, placeNo={return_place_no}) → 미주입: {exc}"
+            )
             return 0
+        logger.warning(
+            f"[{self.cfg['label']}] 반품지 placeNo={return_place_no} 를 출고지 목록에서 "
+            f"찾지 못함 (seller={self.seller_id}) → addrNo 미주입"
+        )
         return 0
 
     async def get_dispatch_policies(self) -> list[dict[str, Any]]:
-        """발송정책 목록 — GET /item/v1/shipping/dispatch-policies"""
-        try:
-            result = await self._call_api("GET", "/item/v1/shipping/dispatch-policies")
-            return result.get("dispatchPolicies", [])
-        except Exception:
-            return []
+        """발송정책 목록 — GET /item/v1/shipping/dispatch-policies
+
+        get_places 와 동일하게 실패를 예외로 전파한다(빈 리스트로 뭉개지 않음).
+        """
+        result = await self._call_api("GET", "/item/v1/shipping/dispatch-policies")
+        return result.get("dispatchPolicies", [])
 
     # ------------------------------------------------------------------
     # 카테고리

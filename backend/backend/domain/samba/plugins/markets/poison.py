@@ -15,6 +15,9 @@ from typing import Any
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
+# POIZON 신규 셀러 제약 — SKU당 재고 1개 초과 등록 시 거부됨(첫 거래 완료 전까지 유지).
+_NEW_SELLER_QTY_CAP = 1
+
 
 def _normalize_size(text: str) -> str:
     """사이즈 비교용 정규화 — 단위/공백/대소문자 제거."""
@@ -150,22 +153,76 @@ class PoisonPlugin(MarketPlugin):
 
         client = PoisonClient(app_key=str(app_key), app_secret=str(app_secret))
 
-        # 1. 카탈로그 SKU 조회 (사이즈별 globalSkuId)
-        sku_list = await client.query_sku_by_article_number(article_number)
+        # 1. 카탈로그 SKU 조회 (색상·사이즈별 globalSkuId)
+        #    무신사 등 일부 소싱처는 style_code 에 색상 접미사를 붙여 저장한다.
+        #    원본 우선 조회 → 실패 시 하이픈 제거(LM5AO4S-0001→LM5AO4S) 재시도 →
+        #    실패 시 언더바 제거(_NAVY→) 재시도.
+        #    (full-first: Nike/Adidas 등 접미사 없는 정품번은 1차 조회로 잡혀 영향 없음)
+        sku_list = await client.query_sku_by_article_number(
+            article_number, language="en"
+        )
+        article_used = article_number
+        if not sku_list and "-" in article_number:
+            base_article = article_number.rsplit("-", 1)[0].strip()
+            if base_article and base_article != article_number:
+                alt = await client.query_sku_by_article_number(
+                    base_article, language="en"
+                )
+                if alt:
+                    logger.info(
+                        f"[POIZON] 품번 하이픈 폴백: '{article_number}' → '{base_article}'"
+                    )
+                    article_used = base_article
+                    sku_list = alt
+        if not sku_list and "_" in article_number:
+            base_article = article_number.rsplit("_", 1)[0].strip()
+            if base_article and base_article != article_number:
+                alt = await client.query_sku_by_article_number(
+                    base_article, language="en"
+                )
+                if alt:
+                    logger.info(
+                        f"[POIZON] 품번 언더바 폴백: '{article_number}' → '{base_article}'"
+                    )
+                    article_used = base_article
+                    sku_list = alt
         if not sku_list:
             return {
                 "success": False,
                 "message": f"POIZON 카탈로그에 품번 '{article_number}' 없음 (등록 대상 아님)",
             }
 
-        size_index: dict[str, dict[str, Any]] = {}
+        # 색상+사이즈 → SKU 인덱스 (멀티컬러 의류용)
+        # query_sku_by_article_number가 이미 파싱한 color/sizeValue 사용
+        color_size_index: dict[tuple[str, str], dict[str, Any]] = {}
+        size_only_index: dict[str, dict[str, Any]] = {}
         for sku in sku_list:
-            keys = {_normalize_size(sku.get("sizeValue", ""))}
-            for cand in (sku.get("sizeCandidates") or {}).values():
-                keys.add(_normalize_size(cand))
-            for key in keys:
-                if key:
-                    size_index.setdefault(key, sku)
+            color = (sku.get("color") or "").strip().upper()
+            size = _normalize_size(sku.get("sizeValue") or "")
+            if size:
+                size_only_index.setdefault(size, sku)
+            if color and size:
+                color_size_index[(color, size)] = sku
+
+        # 상품 색상 추출 — DB color 필드 > name 마지막 단어 > style_code "-" 뒤
+        product_color = ""
+        # 1) DB color 필드 우선 (무신사 "Solar Grey" 등 정확한 색상명)
+        if product.get("color"):
+            product_color = str(product.get("color")).strip().upper()
+        # 2) name 마지막 단어 폴백 (예: "... BLK")
+        if not product_color and product.get("name"):
+            parts = (product.get("name") or "").split()
+            if parts:
+                product_color = parts[-1].upper()
+        # 3) style_code "-" 뒤 폴백 (숫자 제외)
+        if not product_color:
+            original_style = str(product.get("style_code") or "")
+            if "-" in original_style:
+                candidate = original_style.rsplit("-", 1)[1].strip().upper()
+                if candidate and not candidate.isdigit():
+                    product_color = candidate
+        if product_color:
+            logger.info(f"[POIZON] 상품 색상 추출: {product_color}")
 
         # 이전 등록 매칭(사이즈별 sellerBiddingNo) — 오토튠 수정/취소용
         resell = product.get("resell_matches") or {}
@@ -191,7 +248,33 @@ class PoisonPlugin(MarketPlugin):
             stock = self._safe_int(opt.get("stock"), default=0)
             cost = self._safe_int(opt.get("cost")) or fallback_cost
             norm = _normalize_size(opt_name)
-            sku = size_index.get(norm)
+
+            # 색상+사이즈 이중 매칭 시도
+            sku = None
+            if product_color and norm:
+                # 1) 상품색상 + 사이즈 정확 매칭
+                sku = color_size_index.get((product_color, norm))
+                if not sku and product_color and norm in size_only_index:
+                    # 2) 색상 정확 매칭 실패 → 색상 키워드 부분매칭(BLK→블랙, GREY→그레이)
+                    for (c, s), candidate in color_size_index.items():
+                        if s == norm and product_color in c.upper():
+                            sku = candidate
+                            break
+                    # 3) 여전히 못 찾으면 → 영문/한글 혼합 색상(Solar Grey→솔라 그레이)
+                    if not sku:
+                        for (c, s), candidate in color_size_index.items():
+                            if s == norm:
+                                # 영문 키워드 포함 (GREY, BLACK 등)
+                                for kw in product_color.split():
+                                    if kw and len(kw) > 2 and kw in c.upper():
+                                        sku = candidate
+                                        break
+                            if sku:
+                                break
+            if not sku:
+                # 4) 색상 미추출 또는 색상 매칭 실패 → 사이즈만으로 폴백
+                sku = size_only_index.get(norm)
+
             prev_entry = prev_sizes.get(opt_name) or prev_sizes.get(norm) or {}
             bidding_no = str(prev_entry.get("biddingNo") or "")
             global_sku_id = (sku or {}).get("globalSkuId") or prev_entry.get(
@@ -221,34 +304,39 @@ class PoisonPlugin(MarketPlugin):
             # "Invalid value. Must be a multiple of" 로 거부 → 1000원 단위 올림(마진 보존).
             price = -(-int(price) // 1000) * 1000
 
+            # POIZON 신규 셀러는 SKU당 재고 1개까지만 등록 가능(첫 거래 완료 전까지).
+            # 초과 수량 전송 시 "listing Qty is limited to 1 piece per SKU" 로 거부.
+            qty = min(stock, _NEW_SELLER_QTY_CAP)
+
             if bidding_no:
                 # 기존 입찰 → 가격/재고 수정
                 r = await client.update_listing(
                     seller_bidding_no=bidding_no,
                     price=price,
-                    quantity=stock,
+                    quantity=qty,
                     global_sku_id=int(global_sku_id),
                 )
                 if r.get("success"):
+                    # POIZON은 수정 성공 시 신규 sellerBiddingNo를 발급(구 번호 만료)
                     new_sizes[opt_name] = {
                         "globalSkuId": int(global_sku_id),
-                        "biddingNo": bidding_no,
+                        "biddingNo": str(r.get("sellerBiddingNo") or bidding_no),
                         "price": price,
-                        "qty": stock,
+                        "qty": qty,
                     }
             else:
                 # 신규 등록
                 r = await client.manual_listing(
                     global_sku_id=int(global_sku_id),
                     price=price,
-                    quantity=stock,
+                    quantity=qty,
                 )
                 if r.get("success") and r.get("sellerBiddingNo"):
                     new_sizes[opt_name] = {
                         "globalSkuId": int(global_sku_id),
                         "biddingNo": str(r["sellerBiddingNo"]),
                         "price": price,
-                        "qty": stock,
+                        "qty": qty,
                     }
             r["size"] = opt_name
             results.append(r)
@@ -376,6 +464,16 @@ class PoisonPlugin(MarketPlugin):
             if not row:
                 return
             rm = dict(row.resell_matches or {})
+            existing_pm = rm.get("poison") or {}
+            # is_primary: 소싱처간 최저가 비교 기능은 아직 미구현이라 이 값을 True로
+            # 세팅하는 곳이 여기뿐임. 저장 때마다 누락시키면 "최저가 소싱처 아님" 게이트가
+            # 방금 성공한 자기 자신을 다음 전송(오토튠 재동기화 등)에서 막아버림 —
+            # 기존값이 명시적으로 False(향후 비교 기능 도입 시)가 아닌 한 True 유지.
+            is_primary = (
+                existing_pm.get("is_primary")
+                if isinstance(existing_pm, dict) and "is_primary" in existing_pm
+                else True
+            )
             rm["poison"] = {
                 # 상품관리 UI(resellRows)가 읽는 키 — 등록된 사이즈 있으면 매칭표시
                 "product_id": article_number if sizes else "",
@@ -383,6 +481,7 @@ class PoisonPlugin(MarketPlugin):
                 "articleNumber": article_number,
                 "sizes": sizes,
                 "updated_at": int(ts),
+                "is_primary": is_primary,
             }
             row.resell_matches = rm
             await session.commit()

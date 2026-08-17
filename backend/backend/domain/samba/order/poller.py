@@ -218,12 +218,14 @@ async def _fetch_new_order_numbers() -> tuple[dict[str, list[str]], set[str | No
                 app_key = (
                     extras.get("app_key", "")
                     or extras.get("appKey", "")
+                    or extras.get("apiKey", "")
                     or account.api_key
                     or ""
                 )
                 app_secret = (
                     extras.get("app_secret", "")
                     or extras.get("appSecret", "")
+                    or extras.get("apiSecret", "")
                     or account.api_secret
                     or ""
                 )

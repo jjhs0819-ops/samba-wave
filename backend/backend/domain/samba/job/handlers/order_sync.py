@@ -228,6 +228,29 @@ async def run(
 
     _add_job_log(job.id, f"전체마켓 주문수집 완료 — 총 {total_synced}건 신규 저장")
 
+    # 반품 레코드 정합 유지보수 — order_sync 내부 클레임 생성(order.py)이 경로별
+    # dedup 키 불일치로 중복/‌stale 을 남기므로, 계정 순회 완료 후 자가치유한다
+    # (returns_sync finalize 와 동일한 단일 소스). 독립 fresh 세션 + 짧은 타임아웃.
+    try:
+        from backend.db.orm import get_write_session
+        from backend.domain.samba.returns.maintenance import (
+            finalize_returns_consistency,
+        )
+
+        async with get_write_session() as _rm_session:
+            _rm = await asyncio.wait_for(
+                finalize_returns_consistency(_rm_session), timeout=60
+            )
+        if any(_rm.values()):
+            _add_job_log(
+                job.id,
+                f"반품 정합 정리 — 오분류복원 {_rm['restored']} / "
+                f"취소종결 {_rm['cancel_closed']} / 반품종결 {_rm['return_closed']} / "
+                f"중복삭제 {_rm['dup_deleted']}",
+            )
+    except Exception as _rm_err:
+        logger.warning(f"[order_sync] {job.id} 반품 정합 유지보수 실패(무시): {_rm_err}")
+
     # 주문폴러 발행 잡만 역마진/재고없음 자동판정 실행 (구 _run_direct_order_sync 이관,
     # 2026-06-26). 수동 '전체마켓 주문수집' 버튼(source 없음)은 기존대로 동작 무변경.
     # refresh_products_bulk 의 task swarm 부하를 api 루프 대신 B 워커에서 처리.

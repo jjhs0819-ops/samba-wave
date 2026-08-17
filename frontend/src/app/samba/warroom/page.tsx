@@ -1203,8 +1203,8 @@ export default function WarroomPage() {
 
   const { hourly_changes } = stats
 
-  // 가로 바 차트 최대값
-  const maxHourly = Math.max(...hourly_changes, 1)
+  // 가로 바 차트 최대값 (워밍업 중 등 배열이 아닐 수 있어 방어)
+  const maxHourly = Math.max(...(Array.isArray(hourly_changes) ? hourly_changes : []), 1)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>

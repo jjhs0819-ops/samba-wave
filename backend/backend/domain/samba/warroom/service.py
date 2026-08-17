@@ -43,7 +43,7 @@ _DASHBOARD_EMPTY: Dict[str, Any] = {
     "site_health": {},
     "market_health": {},
     "event_summary": {},
-    "hourly_changes": {},
+    "hourly_changes": [0] * 24,
     "_warming": True,
 }
 

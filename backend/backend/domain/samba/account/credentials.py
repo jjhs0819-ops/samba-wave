@@ -284,6 +284,16 @@ _FORM_TO_COLUMNS: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] 
 }
 
 
+def _clean(value: Any) -> str:
+    """폼 입력값 → 앞뒤 공백 제거한 문자열.
+
+    판매자ID/API키에 붙은 공백은 화면에서 보이지 않는데, 헤더로 나가는 순간
+    httpx 가 "Illegal header value" 로 요청을 거부한다(ESM X-ESM-Seller-Id 등).
+    실제로 지마켓 계정 'woo8482 ' 가 이 경로로 유입돼 조회 전건 실패했다.
+    """
+    return str(value or "").strip()
+
+
 def form_to_account_payload(
     market_type: str,
     form_data: dict[str, Any],
@@ -304,22 +314,26 @@ def form_to_account_payload(
         "is_active": True,
     }
     if api_key_field:
-        payload["api_key"] = form_data.get(api_key_field, "") or ""
+        payload["api_key"] = _clean(form_data.get(api_key_field, ""))
     if api_secret_field:
-        payload["api_secret"] = form_data.get(api_secret_field, "") or ""
+        payload["api_secret"] = _clean(form_data.get(api_secret_field, ""))
     if seller_id_field:
-        payload["seller_id"] = form_data.get(seller_id_field, "") or ""
+        payload["seller_id"] = _clean(form_data.get(seller_id_field, ""))
 
     # business_name 폼 키 보존
     if "businessName" in form_data:
-        payload["business_name"] = form_data.get("businessName", "") or ""
+        payload["business_name"] = _clean(form_data.get("businessName", ""))
 
     # additional_fields = form 전체 (컬럼 추출분도 남겨둠 — 기존 코드 호환).
-    # 빈 값은 제거해 noise 감소.
-    extras = {
-        k: v
-        for k, v in form_data.items()
-        if v not in (None, "", []) and k != "businessName"
-    }
+    # 빈 값은 제거해 noise 감소. 문자열은 앞뒤 공백 제거 후 판정 —
+    # " " 만 든 값이 빈 값으로 걸러지고, 공백 낀 ID/키가 그대로 남지 않는다.
+    extras: dict[str, Any] = {}
+    for k, v in form_data.items():
+        if k == "businessName":
+            continue
+        cleaned = _clean(v) if isinstance(v, str) else v
+        if cleaned in (None, "", []):
+            continue
+        extras[k] = cleaned
     payload["additional_fields"] = extras
     return payload

@@ -41,7 +41,7 @@ export default function SnkrdunkComparePage() {
   const load = useCallback(async (p: number) => {
     setLoading(true)
     try {
-      const res = await fetchWithAuth(`${SAMBA_PREFIX}/kream/snkrdunk-compare?page=${p}&per_page=${PER_PAGE}`)
+      const res = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/kream/snkrdunk-compare?page=${p}&per_page=${PER_PAGE}`)
       const json = await res.json() as CompareResponse
       setData(json)
       setCursor(0)
@@ -62,7 +62,7 @@ export default function SnkrdunkComparePage() {
     if (removing) return
     setRemoving(item.snkr_id)
     try {
-      await fetchWithAuth(`${SAMBA_PREFIX}/kream/snkrdunk-compare/${item.snkr_id}/match`, { method: 'DELETE' })
+      await fetchWithAuth(`${SAMBA_PREFIX}/proxy/kream/snkrdunk-compare/${item.snkr_id}/match`, { method: 'DELETE' })
       setRemoved(prev => new Set([...prev, item.snkr_id]))
       // 다음 상품으로
       if (cursor >= items.length - 2) {

@@ -112,6 +112,19 @@ class CoupangPlugin(MarketPlugin):
 
         client = CoupangClient(access_key, secret_key, vendor_id)
 
+        # ── 재고 상한 결정 (등록·오토튠 공통) ──
+        # 계정 설정의 "재고수량"(stockQuantity) 값을 우선 적용하고, 없으면 정책 maxStock을
+        # 폴백으로 쓴다. 쿠팡은 재고 99를 걸면 소명(99개 매입내역 요구)이 날아올 수 있어
+        # 낮은 값(예: 3)으로 유지하기 위한 상한이다. 등록(_build_item)·재고갱신 두 경로가
+        # 모두 product["_max_stock"]를 읽으므로 여기서 한 번만 계산해 주입한다.
+        # 우선순위는 11번가(elevenst.py) 방식과 동일. 0/미설정이면 상한 없음(기존 동작).
+        _acct_extras = (account.additional_fields or {}) if account else {}
+        _stock_cap = int(
+            _acct_extras.get("stockQuantity") or product.get("_max_stock") or 0
+        )
+        if _stock_cap > 0:
+            product["_max_stock"] = _stock_cap
+
         # ── 소명 브랜드 가드 ──
         # 쿠팡은 유통경로 소명 없이 특정 브랜드를 팔면 판매정지를 건다.
         # 주 계정은 정지 이력이 있어 재발 시 타격이 크므로, 등록 전에 막는다.
@@ -252,6 +265,13 @@ class CoupangPlugin(MarketPlugin):
                     else:
                         stk = 999
                     new_stk = min(int(stk), 99999)
+                    # 정책 maxStock 상한 적용 — 등록(_build_item) 경로와 동일하게 재고를
+                    # 캡한다. 쿠팡 소명(99개 매입내역 요구) 회피용으로 재고를 낮게 유지하며,
+                    # 오토튠 재전송 때마다 원본 재고가 상한을 넘으면 상한값으로 하향한다.
+                    # 품절(0)은 min 특성상 그대로 0 유지 → 품절 상품에 재고를 붙이지 않음.
+                    _max_stock_cap = int(product.get("_max_stock") or 0)
+                    if _max_stock_cap > 0:
+                        new_stk = min(new_stk, _max_stock_cap)
                     # maximumBuyCount는 1회 구매 한도 필드라 PUT /quantities 후 GET 응답에 반영되지 않음.
                     # 이전 조건 비교는 항상 false로 떨어져 재고 API 호출이 스킵되는 버그가 있었음(issue #200).
                     await _call_with_retry(

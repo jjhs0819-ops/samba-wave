@@ -1364,6 +1364,12 @@ class JobWorker:
                         )
 
                         await run_cs_sync(fresh_job, repo, session, self)
+                    elif _job_type == "returns_sync":
+                        from backend.domain.samba.job.handlers.returns_sync import (
+                            run as run_returns_sync,
+                        )
+
+                        await run_returns_sync(fresh_job, repo, session, self)
                     else:
                         await repo.fail_job(_job_id, f"알 수 없는 잡 타입: {_job_type}")
 

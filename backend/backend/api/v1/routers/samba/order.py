@@ -1417,8 +1417,8 @@ async def search_orders(
 
 @router.get("/by-date-range-paged", response_model=PaginatedOrdersResponse)
 async def list_orders_by_date_range_paged(
-    start: str = Query(..., description="start date YYYY-MM-DD"),
-    end: str = Query(..., description="end date YYYY-MM-DD"),
+    start: str = Query(..., description="start date YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: str = Query(..., description="end date YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=500),
     market_filter: str = Query(""),
@@ -1520,6 +1520,9 @@ class ExcelExportRequest(BaseModel):
       - 'ub1' (default): 소싱처 발주 양식 — 마켓주문일자/마켓명/.../옵션1 (10컬럼)
       - 'lotte': 롯데택배 양식 (수령자명/전화번호/우편번호/주소/상품명/수량/배송메세지)
                  플레이오토 다운로드 양식과 동일 헤더·순서.
+      - 'cj': CJ대한통운 양식 (수령인/주소/전화번호/상품명 4컬럼)
+              사용자 제공 CJ 업로드 템플릿과 동일 헤더·순서.
+              상품명은 "[옵션] 상품명" — 라벨 뒷부분 잘림 대비 옵션을 선두 노출.
     """
 
     order_ids: Optional[list[str]] = None
@@ -1536,7 +1539,7 @@ class ExcelExportRequest(BaseModel):
     search_text: str = ""
     search_category: str = "customer"
     sort_by: str = "date_desc"
-    format: str = "ub1"  # 'ub1' | 'lotte'
+    format: str = "ub1"  # 'ub1' | 'lotte' | 'cj'
 
 
 @router.post("/excel-export")
@@ -1697,6 +1700,95 @@ async def export_orders_excel(
             },
         )
 
+    if fmt == "cj":
+        # CJ대한통운 송장 발송용 양식 — 사용자 제공 업로드 템플릿과 동일 헤더·순서.
+        # 4컬럼: 수령인 / 주소 / 전화번호 / 상품명. 합포장 주소는 상세주소까지 1셀에 합침.
+        today_kst = datetime.now(timezone.utc).astimezone(KST).strftime("%Y-%m-%d")
+        ws.title = today_kst
+        headers = ["수령인", "주소", "전화번호", "상품명"]
+        ws.append(headers)
+        for c in ws[1]:
+            c.font = bold
+
+        def _join_addr_cj(addr: Optional[str], detail: Optional[str]) -> str:
+            a = (addr or "").strip()
+            d = (detail or "").strip()
+            if a and d:
+                return f"{a} {d}"
+            return a or d
+
+        def _dest_key(o: SambaOrder) -> tuple[str, str]:
+            # 합배송 판정 키 — 받는분 + 주소(전체) 공백 제거 정규화.
+            # 같은 목적지로 나가는 여러 주문 = 한 상자(합배송) → 1행/1송장으로 병합.
+            # 전화번호는 0502 안심번호가 주문마다 달라 키에서 제외.
+            name = (o.customer_name or "").strip()
+            addr = re.sub(
+                r"\s+", "", _join_addr_cj(o.customer_address, o.customer_address_detail)
+            )
+            return (name, addr)
+
+        def _base_product(o: SambaOrder) -> str:
+            # "[옵션] 상품명" — 옵션 선두 노출(CJ 라벨 뒷텍스트 잘림 대응). NONE/빈값이면 상품명만.
+            name = (o.product_name or "").strip()
+            opt = (o.product_option or "").strip()
+            return f"[{opt}] {name}".strip() if opt and opt.upper() != "NONE" else name
+
+        # 목적지(받는분+주소)별로 주문을 묶는다 — 등장 순서 보존.
+        # 합배송(같은 목적지 2건 이상)은 1행으로 병합 → CJ 업로드 시 송장 1개만 발급.
+        groups: dict[tuple[str, str], dict] = {}
+        group_order: list[tuple[str, str]] = []
+        for o in rows:
+            k = _dest_key(o)
+            if k not in groups:
+                groups[k] = {"rep": o, "items": [], "qty": 0}
+                group_order.append(k)
+            groups[k]["items"].append(o)
+            groups[k]["qty"] += int(o.quantity or 0)
+
+        for k in group_order:
+            g = groups[k]
+            rep = g["rep"]
+            items = g["items"]
+            total = g["qty"]
+            # CJ 라벨은 뒤가 잘리므로 잘리면 안 되는 정보를 선두에:
+            #   합배송: "합배송 총N개 [옵션A] 상품A + [옵션B] 상품B"
+            #   단건:   "N개 [옵션] 상품명"  (수량을 앞에 둬 잘림 방지 — 하나만 발송 사고 대응)
+            if len(items) >= 2:
+                prods = " + ".join(_base_product(io) for io in items)
+                cell = f"합배송 총{total}개 {prods}"
+            else:
+                cell = f"{total}개 {_base_product(rep)}"
+            ws.append(
+                [
+                    rep.customer_name or "",
+                    _join_addr_cj(rep.customer_address, rep.customer_address_detail),
+                    rep.customer_phone or "",
+                    cell,
+                ]
+            )
+
+        # 컬럼 너비 — 롯데 양식과 동일 비율 감각 (주소·상품명 넓게)
+        widths = [10, 50, 18, 50]
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[chr(64 + i)].width = w
+
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        if payload.order_ids:
+            fname = f"CJ택배_선택{len(rows)}건.xlsx"
+        else:
+            fname = f"CJ택배_{payload.start}_{payload.end}.xlsx"
+        quoted = quote(fname)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"cj_courier.xlsx\"; filename*=UTF-8''{quoted}"
+            },
+        )
+
     # ── 기본: UB1 소싱처 발주 양식 (10컬럼) ──
     ws.title = "orders"
     headers = [
@@ -1780,8 +1872,8 @@ async def export_orders_excel(
 
 @router.get("/analytics-aggregate")
 async def analytics_aggregate(
-    start: str = Query(..., description="시작일 YYYY-MM-DD"),
-    end: str = Query(..., description="종료일 YYYY-MM-DD"),
+    start: str = Query(..., description="시작일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: str = Query(..., description="종료일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
@@ -1862,8 +1954,8 @@ async def analytics_aggregate(
 
 @router.get("/by-date-range", response_model=list[SambaOrder])
 async def list_orders_by_date_range(
-    start: str = Query(..., description="시작일 YYYY-MM-DD"),
-    end: str = Query(..., description="종료일 YYYY-MM-DD"),
+    start: str = Query(..., description="시작일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end: str = Query(..., description="종료일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
@@ -5689,22 +5781,28 @@ async def ship_order(
     if not order:
         raise HTTPException(404, "주문을 찾을 수 없습니다")
 
+    # 마켓 송장 전송 — 통일 service (자동 dispatch_to_market 도 같은 함수 호출).
+    # [통일 2026-05-16] 이전엔 이곳과 dispatch_to_market 가 마켓별 분기를 중복 구현 →
+    # 자동 dispatch 가 자격증명 누락/필드 차이로 실패하던 회귀 차단. 단일 진실의 출처.
+    from backend.domain.samba.order.dispatch_service import (
+        normalize_tracking_number,
+        send_invoice_to_market,
+    )
+
+    # 송장번호 정규화 — 저장·전송·조회가 같은 규칙(구분자 제거)을 쓰도록 통일.
+    clean_tracking = normalize_tracking_number(body.tracking_number)
+
     # DB 저장 (마켓 전송 성공 여부와 무관하게 항상 저장)
     await svc.update_order(
         order_id,
         {
             "shipping_company": body.shipping_company,
-            "tracking_number": body.tracking_number,
+            "tracking_number": clean_tracking,
         },
     )
 
-    # 마켓 송장 전송 — 통일 service (자동 dispatch_to_market 도 같은 함수 호출).
-    # [통일 2026-05-16] 이전엔 이곳과 dispatch_to_market 가 마켓별 분기를 중복 구현 →
-    # 자동 dispatch 가 자격증명 누락/필드 차이로 실패하던 회귀 차단. 단일 진실의 출처.
-    from backend.domain.samba.order.dispatch_service import send_invoice_to_market
-
     market_sent, market_msg = await send_invoice_to_market(
-        order, body.shipping_company, body.tracking_number, session
+        order, body.shipping_company, clean_tracking, session
     )
 
     # 마켓 송장 전송 성공 시 status를 '국내배송중'으로 일괄 변경
@@ -5991,12 +6089,14 @@ async def sync_orders_from_markets(
                 _app_key = (
                     _extr.get("app_key", "")
                     or _extr.get("appKey", "")
+                    or _extr.get("apiKey", "")
                     or acc["api_key"]
                     or ""
                 )
                 _app_secret = (
                     _extr.get("app_secret", "")
                     or _extr.get("appSecret", "")
+                    or _extr.get("apiSecret", "")
                     or acc["api_secret"]
                     or ""
                 )
@@ -6315,6 +6415,21 @@ async def sync_orders_from_markets(
                                 "procSeq": ro.get("procSeq", 1) or 1,
                             }
                         )
+
+                # 활성 주문피드(raw_orders)가 살아있는 단계(10~50)로 반환한 주문번호 집합.
+                # stale/철회된 취소완료(21) 클레임이 이 주문들을 오취소하지 못하게 취소 sweep
+                # 전 분기 + 배송진행 sweep 에서 보호(장병규 재발 방지). 진짜 취소완료 주문은
+                # 활성 피드(get_orders 는 10~50 만 요청, 90 제외)에서 빠져 이 집합에 없으므로
+                # 정상 취소 검출엔 영향 없음.
+                _LO_ACTIVE_STEPS = {
+                    "10", "11", "12", "13", "14", "20", "24", "25", "30", "40", "50",
+                }
+                _lo_active_od_nos = {
+                    str(ro.get("odNo", ""))
+                    for ro in raw_orders
+                    if str(ro.get("odPrgsStepCd", "") or "") in _LO_ACTIVE_STEPS
+                    and ro.get("odNo")
+                }
 
                 # 주문확인(SellerIfCompleteInform, ifCplYN=Y) 일괄 실행 — 호출 후 셀러센터에서 상품준비중 자동 전이
                 if unconfirmed_items:
@@ -6642,6 +6757,16 @@ async def sync_orders_from_markets(
                         "구매확정",
                         "발송완료",
                     }
+                    # 취소완료(21) 전용 확장 가드 — 권위 주문피드(orders_data)가 살아있는
+                    # 준비단계(출고지시/상품준비/발주확인대기)로 반환한 주문에 stale/철회된 21
+                    # 클레임이 깜빡이며 씌워져 멀쩡한 주문을 오취소+잠금하던 사고 차단(장병규).
+                    # 진짜 취소완료 주문은 활성 피드에서 빠져 아래 DB-fallback 분기로 처리되므로
+                    # 이 확장 가드는 orders_data 분기에만 적용 — 정상 취소 검출엔 영향 없음.
+                    _lo_cancel_complete_guard = _lo_shipped_guard | {
+                        "출고지시",
+                        "상품준비",
+                        "발주확인대기",
+                    }
                     for claim in cancel_claims:
                         cn_od_no = claim.get("odNo", "")
                         # od_seq 정밀매칭 — 다중 품목 주문에서 취소된 od_seq 만 정확히 갱신.
@@ -6665,16 +6790,31 @@ async def sync_orders_from_markets(
                             )
                             continue
                         cn_ship_status, cn_status = mapped
+                        # 활성 피드가 살아있다고 반환한 주문의 취소완료(21) 클레임은
+                        # stale/철회 — orders_data/DB-fallback 어느 분기든 오취소 차단.
+                        # (진짜 취소완료 주문은 활성 피드에서 빠져 이 집합에 없음)
+                        if cn_status == "cancelled" and cn_od_no in _lo_active_od_nos:
+                            logger.info(
+                                f"[롯데ON][취소클레임] 활성주문 보호(stale 21 무시): {cn_od_no}"
+                            )
+                            continue
                         found_in_data_c = False
                         for od in orders_data:
                             if od.get("od_no") == cn_od_no and (
                                 not cn_od_seq or str(od.get("od_seq", "")) == cn_od_seq
                             ):
                                 cur_ss = od.get("shipping_status", "")
-                                # 취소요청·취소완료 모두 배송 진행/종결 상태는 보호 (정산 주문 오취소 차단)
+                                # 취소요청·취소완료 모두 배송 진행/종결 상태는 보호 (정산 주문 오취소 차단).
+                                # 취소완료(21)는 준비단계까지 확장 보호 — 활성 주문피드가 살아있다고
+                                # 반환한 주문에 씌워지는 stale/철회 클레임 차단(장병규 오취소 재발 방지).
+                                _od_cancel_guard = (
+                                    _lo_cancel_complete_guard
+                                    if cn_ship_status == "취소완료"
+                                    else _lo_shipped_guard
+                                )
                                 if (
                                     cn_ship_status in ("취소요청", "취소완료")
-                                    and cur_ss in _lo_shipped_guard
+                                    and cur_ss in _od_cancel_guard
                                 ):
                                     logger.info(
                                         f"[롯데ON][취소클레임] 배송 진행 상태 보호: {cn_od_no} "
@@ -6873,6 +7013,10 @@ async def sync_orders_from_markets(
                         if not mapped:
                             continue
                         new_ship_status, new_status = mapped
+                        # 활성 피드가 살아있다고 반환한 주문은 stale 배송진행 취소코드
+                        # (21 취소완료/22 철회)로 취소 상태를 덮지 않음 — 오취소 차단.
+                        if new_status == "cancelled" and od_no in _lo_active_od_nos:
+                            continue
                         invc_no = str(ps.get("invcNo", "") or "")
                         dv_co_cd = str(ps.get("dvCoCd", "") or "")
                         from sqlalchemy import text as _sa_text_ps
@@ -6916,12 +7060,14 @@ async def sync_orders_from_markets(
                 app_key = (
                     extras.get("app_key", "")
                     or extras.get("appKey", "")
+                    or extras.get("apiKey", "")
                     or account["api_key"]
                     or ""
                 )
                 app_secret = (
                     extras.get("app_secret", "")
                     or extras.get("appSecret", "")
+                    or extras.get("apiSecret", "")
                     or account["api_secret"]
                     or ""
                 )
@@ -8206,6 +8352,10 @@ async def sync_orders_from_markets(
                             _shipping_status = (
                                 "교환요청" if _div_cd == "22" else "반품요청"
                             )
+                            # 반품/교환 응답(listExchangeTarget)에 상품명·주문자명이 들어있음
+                            # — 과거엔 상태만 담아 원주문 stub이 상품명/고객명 공란으로 남고,
+                            #   그 stub에서 반품 레코드가 생성돼 반품 화면도 공란이던 버그 수정.
+                            #   parse_order 와 동일한 필드(itemNm/ordpeNm/rcptpeNm) 사용.
                             orders_data.append(
                                 {
                                     "order_number": _ret_ord_no,
@@ -8214,6 +8364,29 @@ async def sync_orders_from_markets(
                                     "status": _status,
                                     "shipping_status": _shipping_status,
                                     "source": "ssg",
+                                    "product_id": str(_ret.get("itemId", "") or ""),
+                                    "product_name": str(_ret.get("itemNm", "") or ""),
+                                    "product_option": str(_ret.get("uitemNm", "") or ""),
+                                    "customer_name": str(
+                                        _ret.get("rcptpeNm", "")
+                                        or _ret.get("ordpeNm", "")
+                                        or ""
+                                    ),
+                                    "orderer_name": str(
+                                        _ret.get("ordpeNm", "")
+                                        or _ret.get("rcptpeNm", "")
+                                        or ""
+                                    ),
+                                    "customer_phone": str(
+                                        _ret.get("rcptpeHpno", "")
+                                        or _ret.get("rcptpeTelno", "")
+                                        or ""
+                                    ),
+                                    "customer_address": str(
+                                        _ret.get("shpplocBascAddr", "")
+                                        or _ret.get("shpplocAddr", "")
+                                        or ""
+                                    ),
                                     "sale_price": 0.0,
                                     "revenue": 0.0,
                                     "fee_rate": _ssg_fee_rate,
@@ -11005,13 +11178,32 @@ async def sync_orders_from_markets(
                             "취소처리중",
                             "취소완료",
                         ):
-                            # 취소 종결/진행 상태는 마켓 진실의 원천 — 반품으로 덮지 않음
-                            # samba_return 활성 stale 레코드(type=return)로 인한
-                            # 매 sync 덮어쓰기 차단 (issue #224)
-                            logger.info(
-                                f"[주문동기화] 취소 상태 보호: {order_data.get('order_number')} "
-                                f"{existing.shipping_status} → {new_ship_status} 차단"
-                            )
+                            if (
+                                order_data.get("source") == "lotteon"
+                                and new_ship_status == "반품요청"
+                            ):
+                                # 롯데ON order-list 가 odTypCd=40(반품)으로 확정한 신호만
+                                # 여기 도달한다(_parse_lotteon_order 는 odTypCd=40 일 때만
+                                # '반품요청'을 생성). 롯데ON 은 취소 API 에 반품이 섞여 나와
+                                # 과거 반품이 '취소완료'로 굳던 사고(이용철 2026072419048395)
+                                # 를 마켓 권위 신호(주문목록 odTypCd)로 교정 허용. #224 는
+                                # samba_return stale 레코드가 원천이라 이 경로와 무관.
+                                update_fields["shipping_status"] = new_ship_status
+                                _lo_corr_status = order_data.get("status")
+                                if _lo_corr_status:
+                                    update_fields["status"] = _lo_corr_status
+                                logger.info(
+                                    f"[주문동기화] 롯데ON 취소→반품 교정: {order_data.get('order_number')} "
+                                    f"{existing.shipping_status} → {new_ship_status} (order-list odTypCd=40)"
+                                )
+                            else:
+                                # 취소 종결/진행 상태는 마켓 진실의 원천 — 반품으로 덮지 않음
+                                # samba_return 활성 stale 레코드(type=return)로 인한
+                                # 매 sync 덮어쓰기 차단 (issue #224)
+                                logger.info(
+                                    f"[주문동기화] 취소 상태 보호: {order_data.get('order_number')} "
+                                    f"{existing.shipping_status} → {new_ship_status} 차단"
+                                )
                         elif new_ship_status in (
                             "반품요청",
                             "반품완료",
@@ -11224,6 +11416,22 @@ async def sync_orders_from_markets(
                         _cv = order_data.get(_cf)
                         if _cv is not None and _cv != getattr(existing, _cf, None):
                             update_fields[_cf] = _cv
+                    # 정체성 필드 백필 — 기존값이 비어있을 때만 채운다(NULL/공란 덮어쓰기 금지).
+                    # 취소·반품처럼 상태만 담긴 stub으로 먼저 생성된 주문(특히 SSG 반품)이
+                    # 상품명·고객명 공란으로 남던 것을, 이후 값이 실린 재수집에서 보강.
+                    # 기존 비어있을 때만이라 정상 주문의 값은 절대 덮어쓰지 않는다.
+                    for _idf in (
+                        "product_name",
+                        "product_id",
+                        "product_option",
+                        "customer_name",
+                        "orderer_name",
+                        "customer_phone",
+                        "customer_address",
+                    ):
+                        _idv = order_data.get(_idf)
+                        if _idv and not (getattr(existing, _idf, None) or ""):
+                            update_fields[_idf] = _idv
                     if update_fields:
                         await svc.update_order(existing.id, update_fields, commit=False)
                         _pending += 1
@@ -12012,6 +12220,22 @@ def _classify_coupang_claim(cancel_info: Optional[dict]) -> Optional[tuple[str, 
     return None
 
 
+def _coupang_amount_to_int(v: Any) -> int:
+    """쿠팡 금액 필드 → int (원).
+
+    대량조회(get_orders)는 salesPrice/orderPrice/shippingPrice 를 숫자로 내려주지만,
+    v5 단건조회(get_ordersheets_by_order_id — 배송완료 종결 반품/취소 orphan 복원용)는
+    money-object {"currencyCode":"KRW","units":71640,"nanos":0} 로 내려준다.
+    두 형태를 모두 처리해 int(dict) TypeError 로 주문 파싱이 통째로 스킵(반품/취소 유실)
+    되던 문제를 차단한다. KRW 는 소수 없음 → units 만 사용(nanos 무시)."""
+    if isinstance(v, dict):
+        return int(v.get("units") or 0)
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _parse_coupang_order(
     order: dict,
     account_id: str,
@@ -12074,12 +12298,14 @@ def _parse_coupang_order(
         p.replace(" ", "") in _normalized for p in _NO_OPTION_PATTERNS
     ):
         option_name = "FREE"
-    sales_price = int(first_item.get("salesPrice", 0) or 0)
+    sales_price = _coupang_amount_to_int(first_item.get("salesPrice"))
     # 쿠팡 수량 필드는 shippingCount (orderQuantity 키는 응답에 없음)
     quantity = int(first_item.get("shippingCount", 1) or 1)
-    shipping_price = int(order.get("shippingPrice", 0) or 0)
+    shipping_price = _coupang_amount_to_int(order.get("shippingPrice"))
     # orderPrice = 라인 총액(단가×수량). 멀티수량 결제총액 정상화 폴백 salesPrice×quantity
-    line_total = int(first_item.get("orderPrice", 0) or 0) or (sales_price * quantity)
+    line_total = _coupang_amount_to_int(first_item.get("orderPrice")) or (
+        sales_price * quantity
+    )
     sale_price = line_total + shipping_price
 
     # 쿠팡 정률 수수료 10.5% + VAT 10% = 실효 11.55%
@@ -12303,10 +12529,27 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     status = status_map.get(step_cd, "pending")
     shipping_status = shipping_map.get(step_cd, "출고지시")
 
-    # 롯데ON 반품 사유코드(200/300번대)인데 교환 stepCd(21~25)로 들어온 경우
-    # → 실제로는 반품이므로 반품 상태로 재매핑
+    # 롯데ON 은 회수/완료 step(21~27)을 반품·교환 양쪽에 공유하고 odTypCd 로 구분한다
+    # (실측 2026-07-29: odTypCd=40 반품 / 30 교환. shipping_map 은 21~25 를 무조건 교환
+    # 라벨로 찍어, odTypCd=40 반품이 '교환회수완료' 로 오분류되고 취소로 굳던 원인 —
+    # 이용철 2026072419048395 step23/odTypCd40 관측). odTypCd 를 최우선 신호로 재매핑.
+    od_typ_cd = str(item.get("odTypCd", "") or "")
     clm_rsn_cd = str(item.get("clmRsnCd", "") or "")
-    if clm_rsn_cd.startswith(("2", "3")) and step_cd in ("21", "22", "23", "24", "25"):
+    if od_typ_cd == "40":  # 반품
+        if step_cd == "27":  # 반품완료
+            status, shipping_status = "returned", "반품완료"
+        else:  # 23=회수지시/진행, 그 외 반품 진행 단계
+            status, shipping_status = "return_requested", "반품요청"
+    elif od_typ_cd == "30":  # 교환 — 기존 교환 라벨 유지(shipping_map 값 사용)
+        pass
+    elif clm_rsn_cd.startswith(("2", "3")) and step_cd in (
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+    ):
+        # odTypCd 부재(배송모듈 응답 등) 시 폴백: 반품 사유코드 + 교환 step → 반품 재매핑
         status = "return_requested"
         shipping_status = "반품요청"
         logger.info(
@@ -12398,6 +12641,8 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
 
 def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
     """POIZON(得物) 주문 데이터 → SambaOrder dict 변환."""
+    from datetime import UTC
+
     from backend.utils import kst_str_to_utc
 
     # 주문 상태 코드(order_status, int) → 내부 status 매핑
@@ -12413,7 +12658,9 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
     status, ship_label = POISON_ORDER_STATUS_MAP.get(_status_code, ("preparing", ""))
 
     # 결제일시 — "yyyy-MM-dd HH:mm:ss" (셀러 타임존 KST 가정) → UTC
-    paid_at = kst_str_to_utc(item.get("pay_time") or "")
+    # pay_time 없으면(결제대기 등) 화면 조회(paid_at 필수 필터)에서 통째로
+    # 누락되므로 수집 시각으로 폴백 — 이후 재수집 시 실제 pay_time으로 갱신됨.
+    paid_at = kst_str_to_utc(item.get("pay_time") or "") or datetime.now(UTC)
 
     # 수량 안전 파싱
     try:
@@ -12469,6 +12716,9 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         # 이미 있는 값이라 수집 시점에 바로 채운다.
         "product_image": str(item.get("logo_url", "") or ""),
         "product_option": item.get("properties", "") or "",
+        # POIZON은 주문 응답에 대표이미지 URL을 직접 내려줌 — 로컬 수집상품
+        # 매칭(market_product_nos)에 기대지 않고 바로 채워 "No IMG" 방지.
+        "product_image": item.get("logo_url", "") or "",
         "quantity": quantity,
         "sale_price": product_price,
         "revenue": revenue,
@@ -13815,10 +14065,15 @@ async def ship_by_kakao(
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """카톡 알림(이름+품번+송장)으로 주문을 찾아 송장입력 + 마켓전송."""
+    from backend.domain.samba.order.dispatch_service import (
+        normalize_tracking_number,
+    )
+
     tenant_id = (body.tenant_id or "").strip()
     name = (body.customer_name or "").strip()
     code = (body.product_code or "").strip().upper()
-    inv = (body.tracking_number or "").strip()
+    # 구분자 제거 후 검증 — 저장·전송과 동일 규칙으로 통일.
+    inv = normalize_tracking_number(body.tracking_number)
 
     # 1) 송장 형식 검증
     ok, warn = _validate_invoice(inv)

@@ -42,12 +42,61 @@ MARKET_TYPE_TO_POLICY_KEY: dict[str, str] = {
     # 원가+공통마진만 반영된 저가로 등록됨. (2026-07-21 냐옹ex $28.32 저가등록 사고)
     "ebay": "eBay",
     "playauto": "플레이오토",
+    # 토스도 같은 누락이었다 — 정책에 토스 feeRate 12%(판매 8% + 결제 3% + 버퍼 1%p)가
+    # 설정돼 있는데 이 맵에 없어서 전혀 반영되지 않았다. 실측(2026-08-15, 첫 업로드 직전):
+    #   원가 235,000 → 270,900(1.15배)  … 수수료 미반영
+    #   원가 235,000 → 307,800(1.31배)  … 12% 반영
+    # 건당 36,900원(원가의 15.7%)을 덜 받는 저가등록이 될 뻔했다. 등록 0건 상태에서
+    # 발견해 기존 리스팅 영향은 없다.
+    "toss": "토스",
 }
+
+# ── 이 맵에 일부러 넣지 않는 마켓 ──
+# 플러그인이 자체적으로 정책 수수료를 읽어 가격을 만드는 마켓은 여기 넣으면 안 된다.
+# calc_market_price 가 한 번, 플러그인이 또 한 번 그로스업해서 수수료가 이중 반영된다.
+#   포이즌 — plugins/markets/poison.py 가 market_policies["포이즌"].feeRate 를 직접 읽는다.
+# 새 마켓을 붙일 때는 그 플러그인이 feeRate 를 자체로 읽는지 먼저 확인하고,
+# 읽지 않으면(=토스처럼) 반드시 이 맵에 등록해야 한다.
 
 # 저재고 오버셀 방지 캡 (#703) — 옵션 stock이 이 값 이하면 전송값만 0으로 캡.
 # 무재고 판매 특성상 재고 갱신 간격이 수십 시간이라, 마지막 1~2개는 그 사이
 # 팔릴 위험이 커 품절취소로 이어짐. DB 원본 재고는 건드리지 않음(다음 갱신 때 자연 복원).
 _LOW_STOCK_SEND_CAP_TH = 2
+
+# 저재고 캡 적용 마켓 — 리셀 플랫폼 전용 (2026-08-14 팀장 결정).
+# 크림/포이즌은 낙찰 후 미발송이 곧 페널티·정산차감으로 직결돼 마지막 1~2개를
+# 내리는 편이 이득이다. 반면 오픈마켓(롯데ON/쿠팡/스마트스토어 등)은 품절취소
+# 리스크보다 노출 SKU 축소 손실이 커서 실재고 그대로 보낸다.
+# (실측 사례: 브룩스러닝 글리세린22 는 재고 있는 5개 사이즈 중 240 하나만
+#  노출되고 230/235/245/250 이 전부 캡에 걸려 숨겨져 있었다.)
+_LOW_STOCK_SEND_CAP_MARKETS = frozenset({"kream", "poison"})
+
+# 마켓별 상품명 최대 바이트 — 상품명 폴백 체인(_compose_product_name) 판정용.
+# 각 마켓 플러그인이 실제로 자르는 값과 같아야 한다:
+#   11번가  proxy/elevenst.py  _truncate_to_bytes(name, 99)
+#   롯데ON  proxy/lotteon/api_client.py  _truncate_to_bytes(name, 149)
+# 여기 없는 마켓은 폴백 없이 첫 조합을 그대로 쓴다(기존 동작).
+_MARKET_NAME_MAX_BYTES: dict[str, int] = {
+    "11st": 99,
+    "lotteon": 149,
+}
+
+
+class _NameRuleWithComposition:
+    """name_composition 만 교체한 name_rule 프록시 — 폴백 체인 후보 조립용.
+
+    원본 name_rule 은 SQLModel 인스턴스라 속성을 직접 바꾸면 세션에 dirty 로 잡혀
+    의도치 않은 UPDATE 가 나갈 수 있다. 읽기 전용 위임으로 그 위험을 없앤다.
+    """
+
+    def __init__(self, base: Any, composition: list) -> None:
+        self._base = base
+        self.name_composition = composition
+        # 마켓별 조합을 다시 타지 않도록 비운다 — 후보 조합을 그대로 쓰게 한다.
+        self.market_name_compositions = None
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._base, item)
 
 
 def is_account_full_error(err: str | None) -> bool:
@@ -175,6 +224,68 @@ def exceeds_price_cap(*values) -> bool:
         except (TypeError, ValueError):
             continue
     return False
+
+
+def filter_accounts_by_policy(
+    target_account_ids: list[str],
+    accounts_by_id: dict[str, Any],
+    policy_market_data: dict[str, Any],
+) -> tuple[list[str], dict[str, str]]:
+    """정책의 마켓 설정 기준으로 전송 대상 계정을 거른다.
+
+    반환: (허용된 계정ID 목록, {정책에 설정이 없어 차단된 계정ID: 마켓 정책키})
+
+    차단 규칙 두 가지:
+      1. 정책의 해당 마켓에 accountId(s) 가 지정돼 있는데 대상 계정이 그 목록에
+         없으면 차단 — 브랜드가 사업자 계정 사이에 흩어지는 것을 막는다.
+      2. 정책에 그 마켓 설정 자체가 없으면 차단 — calc_market_price(219)가
+         빈 dict 를 받아 feeRate·마켓 배송비를 통째로 건너뛰고 원가+공통마진만
+         반영된 저가로 등록되기 때문이다. 계정이 "다르게" 지정된 경우는 막으면서
+         "아예 없는" 경우만 통과시키는 건 앞뒤가 안 맞는다.
+         실사고 2건:
+           2026-07-21 eBay $28.32 저가등록 (policy_key 매핑 누락, 27~44 주석)
+           2026-08-15 포이즌 전용(포이즌 키만 있는) 정책의 푸마 185건이 11번가로
+                      나가 리셀가(원가 1.1~1.5배)로 등록 — 11번가 수수료 31.2%
+                      감안하면 팔릴수록 손해였다.
+
+    정책키가 어느 쪽에도 없는 마켓은 정책으로 판단할 근거가 없으므로 그대로 허용한다.
+    """
+    # 정책키 출처가 둘이다 — 이 모듈의 하드코딩 맵(27~44)과 플러그인이 자동 생성하는
+    # plugins.MARKET_TYPE_TO_POLICY_KEY. 하드코딩 맵에는 poison/toss/amazon 등이
+    # 빠져 있어 그것만 보면 포이즌 계정이 무조건 통과한다(이번 사고의 반대 방향 구멍).
+    # 가드는 둘을 합쳐서 판단한다. 충돌 키는 없음(2026-08-15 실측).
+    from backend.domain.samba.plugins import (
+        MARKET_TYPE_TO_POLICY_KEY as _PLUGIN_POLICY_KEYS,
+    )
+
+    _policy_keys = {**_PLUGIN_POLICY_KEYS, **MARKET_TYPE_TO_POLICY_KEY}
+
+    allowed: list[str] = []
+    unconfigured: dict[str, str] = {}
+    for aid in target_account_ids:
+        acc = accounts_by_id.get(aid)
+        if not acc:
+            continue
+        policy_key = _policy_keys.get(getattr(acc, "market_type", ""))
+        if not policy_key:
+            allowed.append(aid)
+            continue
+        mp = (policy_market_data or {}).get(policy_key) or {}
+        if not mp:
+            unconfigured[aid] = policy_key
+            continue
+        policy_acc_ids = mp.get("accountIds") or []
+        if not policy_acc_ids and mp.get("accountId"):
+            policy_acc_ids = [mp["accountId"]]
+        # 정책에 계정 목록이 있으면 해당 계정만, 없으면 모두 허용
+        if policy_acc_ids and aid not in policy_acc_ids:
+            logger.warning(
+                f"[전송] 계정 {aid} 정책 필터링됨 — policy_acc_ids={policy_acc_ids}, "
+                f"market_type={getattr(acc, 'market_type', '')}"
+            )
+            continue
+        allowed.append(aid)
+    return allowed, unconfigured
 
 
 def calc_market_price(
@@ -501,6 +612,32 @@ def _usable_image_urls(urls: Any) -> list[str]:
             continue
         out.append(u)
     return out
+
+
+def _normalize_composition(raw: Any) -> list[str]:
+    """상품명 조합 배열을 문자열 리스트로 정규화한다.
+
+    name_composition / market_name_compositions 는 JSON 컬럼이라 스키마 강제가 없다.
+    실측으로 market_name_compositions["11st"] 가 후보 배열의 배열
+    `[["{브랜드명}","{상품명}"], ["{브랜드명}"]]` 로 저장된 사례가 있었고, 이 상태로
+    _resolve_tag 에 들어가면 `tag in tag_map` 이 unhashable type: 'list' 로 터진다
+    (= 해당 마켓 전송이 상품명 조합 단계에서 통째로 실패).
+
+    다만 "후보 배열의 배열"은 손상이 아니라 의도된 형태다 — 11번가 상품명
+    폴백 체인(_MARKET_NAME_MAX_BYTES / _compose_product_name)이 앞에서부터
+    한도(99byte) 안에 들어가는 첫 조합을 고르는 데 쓴다. 그래서 중첩은 평탄화하지
+    않고 각 후보만 정규화해 형태를 보존한다. 평탄화하면 첫 후보가 한도를 넘겨도
+    그대로 나가 뒤쪽 상품번호가 잘린다(폴백이 존재하는 이유).
+    그 외 비문자열은 버린다.
+    """
+    if not isinstance(raw, (list, tuple)):
+        return []
+    if any(isinstance(t, (list, tuple)) for t in raw):
+        cands = [
+            _normalize_composition(t) for t in raw if isinstance(t, (list, tuple))
+        ]
+        return [c for c in cands if c]
+    return [t for t in raw if isinstance(t, str)]
 
 
 class SambaShipmentService:
@@ -1279,8 +1416,28 @@ class SambaShipmentService:
                     if refresh_result.new_sale_status:
                         refresh_updates["sale_status"] = refresh_result.new_sale_status
                         # is_sold_out 제거 → sale_status로 통일
-                    # 이미지 갱신: update_items에 "image"가 명시적으로 체크된 경우만
-                    _update_image = update_items and "image" in update_items
+                    # 이미지 갱신: update_items에 "image"가 명시적으로 체크된 경우만.
+                    # 단 AI 변환/편집된 이미지는 절대 소싱처 원본으로 되돌리지 않는다.
+                    # 변환본은 images 컬럼을 in-place 덮어쓰므로 원본 백업이 없고,
+                    # 여기서 원본으로 갈아치우면 지재권 신고 브랜드(데상트/엠엘비)나
+                    # 마크비전 신고 브랜드(마뗑킴)의 원본 이미지가 그대로 마켓에 나간다.
+                    # collector_refresh.py 의 갱신 경로에는 이미 같은 가드가 있는데
+                    # 전송 경로에만 빠져 있었다(2026-08-14 확인, 경로별 보호 비대칭).
+                    _img_locked = bool(
+                        getattr(product_row, "ai_image_transformed", False)
+                    ) or bool(
+                        {"__ai_image__", "__img_edited__", "__img_filtered__"}
+                        & set(product_row.tags or [])
+                    )
+                    _update_image = (
+                        bool(update_items and "image" in update_items)
+                        and not _img_locked
+                    )
+                    if _img_locked and update_items and "image" in update_items:
+                        logger.info(
+                            f"[전송] 이미지 갱신 skip — AI변환/편집 이미지 보호 "
+                            f"(product={product_row.id})"
+                        )
                     if refresh_result.new_images and _update_image:
                         refresh_updates["images"] = refresh_result.new_images
                     if refresh_result.new_detail_images and _update_image:
@@ -1746,7 +1903,13 @@ class SambaShipmentService:
         # 정책이 있으면 계정 필터링, 없으면 사용자 선택 전체 유지
         # skip_policy_account_filter=True(테트리스 매칭 ON)이면 건너뜀 —
         # 테트리스 블럭이 계정을 결정하므로 정책 accountIds 필터 불필요
-        if policy_market_data and not skip_policy_account_filter:
+        #
+        # 게이트 조건이 policy_market_data(내용) 가 아니라 policy(존재) 인 이유:
+        # market_policies 가 통째로 비어 있으면 필터를 건너뛰던 예전 동작은
+        # "마켓 설정이 하나도 없는 정책 = 전 마켓 무조건 허용" 이라 아래 미설정 차단을
+        # 그대로 우회한다. 정책이 있으면 마켓 설정 유무와 무관하게 검사한다.
+        unconfigured_markets: dict[str, str] = {}
+        if policy is not None and not skip_policy_account_filter:
             # 배치 조회 (N+1 → 1회)
             from sqlmodel import select as _sel
             from backend.domain.samba.account.model import SambaMarketAccount
@@ -1757,31 +1920,17 @@ class SambaShipmentService:
             _res = await self.session.execute(_stmt)
             _account_map = {a.id: a for a in _res.scalars().all()}
 
-            filtered_ids = []
-            for aid in target_account_ids:
-                acc = _account_map.get(aid)
-                if not acc:
-                    continue
-                policy_key = MARKET_TYPE_TO_POLICY_KEY.get(acc.market_type)
-                if not policy_key:
-                    # 정책 키 매핑 안 되는 마켓 → 그대로 허용
-                    filtered_ids.append(aid)
-                    continue
-                mp = policy_market_data.get(policy_key, {})
-                if not mp:
-                    # 정책에 이 마켓이 없음 → 그대로 허용 (사용자가 직접 선택)
-                    filtered_ids.append(aid)
-                    continue
-                policy_acc_ids = mp.get("accountIds", [])
-                if not policy_acc_ids and mp.get("accountId"):
-                    policy_acc_ids = [mp["accountId"]]
-                # 정책에 계정 목록이 있으면 해당 계정만, 없으면 모두 허용
-                if policy_acc_ids and aid not in policy_acc_ids:
-                    logger.warning(
-                        f"[전송] 계정 {aid} 정책 필터링됨 — policy_acc_ids={policy_acc_ids}, market_type={acc.market_type}"
-                    )
-                    continue
-                filtered_ids.append(aid)
+            filtered_ids, unconfigured_markets = filter_accounts_by_policy(
+                target_account_ids, _account_map, policy_market_data
+            )
+            if unconfigured_markets:
+                logger.warning(
+                    f"[전송] 상품 {product_id} — 정책에 설정 없는 마켓 차단: "
+                    f"{sorted(set(unconfigured_markets.values()))} "
+                    f"(계정 {list(unconfigured_markets)}, "
+                    f"policy_id={product_row.applied_policy_id}). "
+                    f"수수료 미반영 저가등록 방지."
+                )
             target_account_ids = filtered_ids
             if not target_account_ids:
                 logger.warning(
@@ -1789,16 +1938,33 @@ class SambaShipmentService:
                     f"(정책ID: {product_row.applied_policy_id}). "
                     f"테트리스 매칭 ON 상태에서 발생 시 skip_policy_account_filter 미전달 의심"
                 )
+                if unconfigured_markets:
+                    _mk = ", ".join(dict.fromkeys(unconfigured_markets.values()))
+                    _err = (
+                        f"정책에 {_mk} 마켓 설정이 없어 전송 불가 — "
+                        f"수수료·마진이 반영되지 않아 저가로 등록됩니다. "
+                        f"정책({getattr(policy, 'name', '') or product_row.applied_policy_id})에 "
+                        f"{_mk} 설정을 추가하거나, 해당 마켓을 판매하는 정책으로 상품을 옮기세요."
+                    )
+                else:
+                    _err = "정책에 해당 계정이 없어 전송 불가 (정책 > 마켓 계정 설정 확인)"
                 await self.repo.update_async(
                     shipment.id,
                     status="failed",
-                    error="정책에 해당 계정이 없어 전송 불가 (정책 > 스마트스토어 계정 설정 확인)",
+                    error=_err,
                 )
                 return await self.repo.get_async(shipment.id) or shipment
             logger.info(f"[전송] 정책 필터링 후 계정: {len(target_account_ids)}개")
 
         transmit_result: dict[str, str] = {}
         transmit_error: dict[str, str] = {}
+        # 일부 계정만 차단된 경우(다른 마켓은 정상 전송) — 로그만 남기면 화면에서
+        # "왜 이 마켓만 안 갔는지" 알 수 없다. 결과에 사유를 남긴다. (silent fail 금지)
+        for _blocked_aid, _mk in unconfigured_markets.items():
+            transmit_error[_blocked_aid] = (
+                f"정책에 {_mk} 마켓 설정이 없어 전송하지 않음 — "
+                f"수수료·마진 미반영 저가등록 방지"
+            )
         plugin_messages: dict[str, str] = {}
         update_mode_accounts: set[str] = (
             set()
@@ -2069,11 +2235,15 @@ class SambaShipmentService:
 
                 # 카페24/롯데홈쇼핑/GS샵은 플러그인 내부에서 자체 카테고리를 결정하므로 매핑 없어도 허용.
                 # (GS샵: execute()가 소싱카테고리 기반 gsshop_category_map으로 prdClsCd|sectId 자동매칭)
+                # 포이즌/크림은 카탈로그형 리셀 — 브랜드 품번(globalSkuId)으로 매칭하므로
+                # 마켓 카테고리 자체가 불필요(plugin._validate_category가 "0" 반환). 매핑 게이트 면제.
                 if not category_id and market_type not in (
                     "playauto",
                     "cafe24",
                     "lottehome",
                     "gsshop",
+                    "poison",
+                    "kream",
                 ):
                     # 환경설정 미비(카테고리 매핑 부재)는 신규등록 실패가 아니라 skip —
                     # "failed" 로 두면 removable_failed 에 잡혀 등록 연결(market_product_nos)이
@@ -2089,7 +2259,15 @@ class SambaShipmentService:
                 _lotteon_like = market_type in ("lotteon", "ssg")
                 if (
                     market_type
-                    not in ("coupang", "playauto", "cafe24", "lottehome", "gsshop")
+                    not in (
+                        "coupang",
+                        "playauto",
+                        "cafe24",
+                        "lottehome",
+                        "gsshop",
+                        "poison",
+                        "kream",
+                    )
                     and not _lotteon_like
                     and not str(category_id).isdigit()
                 ):
@@ -2293,6 +2471,7 @@ class SambaShipmentService:
                     # 게이트 haystack 확장 — 등록상품명 + 원상품명 + brand + 영문명.
                     # 브랜드명을 금지어로 등록한 경우, name_rule 조합/마켓 정규화로
                     # 등록상품명에 브랜드가 빠져도 brand 필드로 매칭되도록 함(#414①).
+                    # 소문자 변환은 matcher 가 처리 — 여기서 lower() 하면 안 된다.
                     _hay = " ".join(
                         s
                         for s in (
@@ -2302,8 +2481,12 @@ class SambaShipmentService:
                             acct_product.get("name_en"),
                         )
                         if s
-                    ).lower()
-                    _hit = next((w for w in _fb_words if w.lower() in _hay), None)
+                    )
+                    from backend.domain.samba.forbidden.matcher import (
+                        find_forbidden_hit,
+                    )
+
+                    _hit = find_forbidden_hit(_hay, _fb_words)
                     if _hit:
                         res["status"] = "skipped"
                         res["error"] = f"금지어 '{_hit}' 포함 — {market_type} 전송 제외"
@@ -2313,6 +2496,40 @@ class SambaShipmentService:
                             f"market={market_type} word={_hit}"
                         )
                         return res
+
+                # ── 위험 브랜드 인식(경고 전용, 전송과 무관) ──
+                # 전송을 막지 않는다 — status/return 을 건드리지 않고 로그만 남긴다.
+                # 쿠팡은 plugins/markets/coupang.py 에 이미 자체 BrandGuardService
+                # 체크(API 실시간 판별 포함, 실제 차단함)가 있어 여기서 건드리지
+                # 않는다. 다른 마켓은 그 판별 수단이 없으므로 "명시적으로 위험하다고
+                # 이미 확인된 브랜드"(verdict=blocked)만 로그로 알리고, unknown(미확인)
+                # 은 아예 조용히 지나간다 — 검토 안 된 브랜드까지 알리면 노이즈만 커진다.
+                if (
+                    not is_price_stock_only
+                    and not _skip_filter
+                    and market_type != "coupang"
+                ):
+                    _risk_brand = acct_product.get("brand") or ""
+                    if _risk_brand:
+                        from backend.domain.samba.brand.model import VERDICT_BLOCKED
+                        from backend.domain.samba.brand.service import (
+                            BrandGuardService,
+                        )
+
+                        _guard = BrandGuardService(self.session)
+                        _risk_result = await _guard.check(
+                            _risk_brand,
+                            coupang_client=None,  # 이 마켓엔 실시간 API 판별 수단 없음
+                            tenant_id=getattr(product_row, "tenant_id", None),
+                            record=False,  # 조회만 — DB 기록 없음(인식만)
+                        )
+                        if _risk_result.verdict == VERDICT_BLOCKED:
+                            logger.warning(
+                                f"[위험브랜드 경고] product={product_id} "
+                                f"market={market_type} brand={_risk_brand} "
+                                f"reason={_risk_result.reason} — 전송은 그대로 진행됨"
+                            )
+                        # status/return 미변경 — 전송 흐름 계속 진행
 
                 if not is_price_stock_only:
                     _detail_tpl_id = ""
@@ -2581,10 +2798,14 @@ class SambaShipmentService:
                         except Exception:
                             pass
                     # 저재고 오버셀 방지 캡 (#703) — 전송값만 0으로, DB 원본 재고는 보존.
+                    # 리셀 플랫폼(크림/포이즌)에만 적용 — _LOW_STOCK_SEND_CAP_MARKETS 참고.
                     # 전 옵션 품절→마켓삭제 판정(위쪽)보다 반드시 뒤에 위치 — 캡이
                     # 삭제 오발동을 유발하지 않도록. options는 새 리스트로 교체(깊은 복사) —
                     # 얕은 복사(dict(product_dict))로 원본 product_dict/DB 오염 방지.
-                    if acct_product.get("options"):
+                    if (
+                        market_type in _LOW_STOCK_SEND_CAP_MARKETS
+                        and acct_product.get("options")
+                    ):
                         _capped_opts = []
                         for _opt in acct_product["options"]:
                             _opt_copy = dict(_opt) if isinstance(_opt, dict) else _opt
@@ -3275,6 +3496,12 @@ class SambaShipmentService:
         """정책의 상품명 규칙(name_composition)에 따라 상품명을 조합.
 
         market_type이 지정되고 market_name_compositions에 해당 마켓 설정이 있으면 마켓별 조합 사용.
+
+        **폴백 체인**: market_name_compositions 값이 "리스트의 리스트"이면 앞에서부터
+        시도해 마켓 상품명 한도(_MARKET_NAME_MAX_BYTES) 안에 들어가는 첫 조합을 쓴다.
+        전부 초과하면 마지막(가장 짧은) 조합을 쓰고 마켓 플러그인의 자름에 맡긴다.
+        11번가처럼 한도가 짧은(99byte) 마켓에서 브랜드는 살리고 부가정보만 단계적으로
+        떨어뜨리기 위한 것 — 무조건 자르면 뒤쪽 상품번호가 잘려 추적이 끊긴다.
         """
         # 마켓별 조합이 있으면 우선 사용
         composition = None
@@ -3282,8 +3509,25 @@ class SambaShipmentService:
             composition = name_rule.market_name_compositions.get(market_type)
         if not composition:
             composition = name_rule.name_composition
+        composition = _normalize_composition(composition)
         if not composition:
             return product.get("name", "")
+
+        # 폴백 체인이면 한도에 맞는 첫 조합을 고른다 (각 후보를 끝까지 조립해 실측 —
+        # 치환/접두접미/중복제거가 길이를 바꾸므로 태그만 보고 판단하면 어긋난다).
+        if isinstance(composition[0], (list, tuple)):
+            _chain = [list(c) for c in composition if c]
+            _limit = _MARKET_NAME_MAX_BYTES.get(market_type or "", 0)
+            for _cand in _chain:
+                _built = self._compose_product_name(
+                    product,
+                    _NameRuleWithComposition(name_rule, _cand),
+                    market_type=market_type,
+                    deletion_words=deletion_words,
+                )
+                if not _limit or len(_built.encode("utf-8")) <= _limit:
+                    return _built
+            composition = _chain[-1]
 
         # SEO 검색키워드: seo_keywords 배열을 공백 연결
         seo_kws = product.get("seo_keywords") or []
@@ -3483,8 +3727,8 @@ class SambaShipmentService:
         bottom_img = ""
         main_image_index = 0  # 대표이미지 번호(0-base) — 템플릿에서 로드 (#309)
         # 마켓 썸네일/갤러리(Image1~N) 추가이미지 포함 여부 — 상세 sub와 독립 (#342)
-        # 기본 True = 갤러리에 추가이미지 전부(템플릿 없으면 현행 동작 유지)
-        gallery_include_sub = True
+        # 기본 False = 갤러리에 대표이미지 1장만(템플릿 없어도 추가이미지 미전송 방침)
+        gallery_include_sub = False
         # 이미지 포함 설정 (기본값: 상단/대표/추가/상세/하단 포함)
         img_checks: dict[str, bool] = {
             "topImg": True,
@@ -3547,7 +3791,7 @@ class SambaShipmentService:
                         else:
                             img_order.append("sizeChart")
                 main_image_index = int(getattr(tpl, "main_image_index", 0) or 0)
-                gallery_include_sub = bool(getattr(tpl, "gallery_include_sub", True))
+                gallery_include_sub = bool(getattr(tpl, "gallery_include_sub", False))
                 logger.info(
                     f"[상세HTML] 템플릿 로드 — 상단:{bool(top_img)}, 하단:{bool(bottom_img)}, "
                     f"checks:{img_checks}, gallery_sub:{gallery_include_sub}"
@@ -3555,7 +3799,17 @@ class SambaShipmentService:
             else:
                 logger.warning(f"[상세HTML] 템플릿 {template_id} 조회 실패")
 
-        images = _usable_image_urls(product.get("images"))
+        # 원본 이미지 보존 — 아래에서 product["images"] 를 gallery_include_sub 에 맞춰
+        # 잘라 덮어쓰는데, 이 함수는 상품당 두 번 호출된다(1466 기본 템플릿 → 2282
+        # 마켓별 템플릿). 잘린 목록을 소스로 다시 자르면 마켓별 템플릿의
+        # gallery_include_sub 가 통째로 무시된다.
+        # 2026-08-15 토스 첫 등록 실패가 이 경로였다: 기본 템플릿이 false 라 8장 →
+        # 1장으로 줄어든 뒤, 토스 전용 템플릿(true)을 적용해도 1장뿐이라 상세 이미지가
+        # 0장이 되어 [COMMON_ERROR] 상세 이미지 또는 html을 찾을 수 없음 으로 거부됐다.
+        # 첫 호출 때 원본을 보관하고 이후 항상 그걸 소스로 쓴다.
+        if "_gallery_source_images" not in product:
+            product["_gallery_source_images"] = list(product.get("images") or [])
+        images = _usable_image_urls(product["_gallery_source_images"])
         # 대표이미지 선택 (#309) — main_image_index가 가리키는 이미지를 맨 앞으로.
         # 상세HTML main / 마켓 썸네일 대표이미지 일치. 갤러리·상세 공통 적용.
         if images and 0 < main_image_index < len(images):
@@ -3944,8 +4198,12 @@ class SambaShipmentService:
                     if _std_cat:
                         acct_product["_std_category_id"] = _std_cat
                 # 저재고 오버셀 방지 캡 (#703) — 정상 send path(위쪽)와 동일 패턴.
+                # 리셀 플랫폼(크림/포이즌)에만 적용 — _LOW_STOCK_SEND_CAP_MARKETS 참고.
                 # options는 새 리스트로 교체(깊은 복사) — 원본 product_dict 오염 방지.
-                if acct_product.get("options"):
+                if (
+                    account.market_type in _LOW_STOCK_SEND_CAP_MARKETS
+                    and acct_product.get("options")
+                ):
                     _capped_opts_rt = []
                     for _opt_rt in acct_product["options"]:
                         _opt_rt_copy = (

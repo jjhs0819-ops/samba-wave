@@ -88,7 +88,7 @@ export default function OrdersFilterBar(props: Props) {
 
   const [excelDownloading, setExcelDownloading] = useState(false)
   const [excelMenuOpen, setExcelMenuOpen] = useState(false)
-  const handleExcelDownload = async (format: 'ub1' | 'lotte' = 'ub1') => {
+  const handleExcelDownload = async (format: 'ub1' | 'lotte' | 'cj' = 'ub1') => {
     if (excelDownloading) return
     setExcelDownloading(true)
     try {
@@ -273,11 +273,11 @@ export default function OrdersFilterBar(props: Props) {
             <option value="no_order">주문번호X</option>
             <option value="direct">직배</option>
             <option value="kkadaegi">까대기</option>
-            <option value="gift">선물</option>
+            <option value="gift">예외</option>
             <option value="no_price">가격X</option>
             <option value="no_stock">재고X</option>
-            <option value="staff_a">직원A</option>
-            <option value="staff_b">직원B</option>
+            <option value="staff_a">송장필요</option>
+            <option value="staff_b">강제취소</option>
           </select>
           <select style={{ ...inputStyle, width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value)}>
             <option value="">송장필터</option>
@@ -392,6 +392,7 @@ export default function OrdersFilterBar(props: Props) {
                       textAlign: 'left',
                       background: 'transparent',
                       border: 'none',
+                      borderBottom: `1px solid ${c.border}`,
                       color: c.text,
                       cursor: 'pointer',
                     }}
@@ -401,6 +402,30 @@ export default function OrdersFilterBar(props: Props) {
                     <div style={{ fontWeight: 600 }}>롯데택배 송장 양식</div>
                     <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '2px' }}>
                       수령자·연락처·주소·상품명·수량·배송메세지 7컬럼
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setExcelMenuOpen(false)
+                      handleExcelDownload('cj')
+                    }}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      background: 'transparent',
+                      border: 'none',
+                      color: c.text,
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                  >
+                    <div style={{ fontWeight: 600 }}>CJ대한통운 송장 양식</div>
+                    <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '2px' }}>
+                      수령인·주소·전화번호·상품명 4컬럼
                     </div>
                   </button>
                 </div>

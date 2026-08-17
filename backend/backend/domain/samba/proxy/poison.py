@@ -181,16 +181,16 @@ class PoisonClient:
     # ------------------------------------------------------------------
 
     async def query_sku_by_article_number(
-        self, article_number: str, region: str | None = None
+        self, article_number: str, region: str | None = None, language: str | None = None
     ) -> list[dict[str, Any]]:
         """브랜드 공식품번으로 카탈로그 SKU 조회 → 사이즈별 globalSkuId 목록.
 
-        Returns: [{globalSkuId, skuId, sizeValue, sizeCandidates}]
+        Returns: [{globalSkuId, skuId, sizeValue, sizeCandidates, color}]
         """
         business = {
             "articleNumber": article_number,
             "region": region or self.region,
-            "language": self.language,
+            "language": language or self.language,
         }
         data = await self._post(self.PATH_SKU_BY_ARTICLE, business)
         if data.get("code") != 200:
@@ -206,24 +206,27 @@ class PoisonClient:
                 global_sku_id = sku.get("globalSkuId")
                 if not global_sku_id:
                     continue
-                # 사이즈 후보 추출 (regionSalePvInfoList의 Size 속성 sizeInfos)
+                # 사이즈/색상 후보 추출 (regionSalePvInfoList: level1=색상, level2=사이즈)
                 size_candidates: dict[str, str] = {}
                 rep_size = ""
+                rep_color = ""
                 for pv in sku.get("regionSalePvInfoList") or []:
                     for si in pv.get("sizeInfos") or []:
                         size_key = (si.get("sizeKey") or "").strip()
                         size_val = (si.get("value") or "").strip()
                         if size_key and size_val:
                             size_candidates[size_key] = size_val
-                    # level==2 가 사이즈 속성 (level1=색상, level3=구성)
                     if pv.get("level") == 2 and pv.get("value"):
                         rep_size = str(pv.get("value")).strip()
+                    if pv.get("level") == 1 and pv.get("value"):
+                        rep_color = str(pv.get("value")).strip()
                 results.append(
                     {
                         "globalSkuId": int(global_sku_id),
                         "skuId": int(sku["skuId"]) if sku.get("skuId") else None,
                         "sizeValue": rep_size,
                         "sizeCandidates": size_candidates,
+                        "color": rep_color,
                     }
                 )
         return results

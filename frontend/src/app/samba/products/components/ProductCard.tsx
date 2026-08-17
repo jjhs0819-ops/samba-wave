@@ -310,6 +310,35 @@ function simultaneousReplace(
   return result
 }
 
+// 조합 배열 정규화 — 손상된 저장값 방어 (백엔드 _normalize_composition와 동일 규칙).
+// 비문자열 항목을 버린다. 그대로 map/filter를 돌면 v.trim is not a function 으로
+// 상세 패널 전체가 죽는다.
+function normalizeComposition(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((t): t is string => typeof t === 'string')
+}
+
+// "후보 배열의 배열"이면 폴백 체인 — 손상이 아니라 의도된 형태다.
+// 백엔드 _compose_product_name 과 동일하게 앞에서부터 마켓 상품명 한도 안에
+// 들어가는 첫 조합을 쓰고, 전부 넘치면 마지막(가장 짧은) 조합을 쓴다.
+// 카드에 보이는 "등록 상품명"이 실제 전송값과 어긋나지 않게 하기 위함.
+function normalizeCompositionChain(raw: unknown): string[][] {
+  if (!Array.isArray(raw)) return []
+  if (raw.some(Array.isArray)) {
+    return raw
+      .filter(Array.isArray)
+      .map(normalizeComposition)
+      .filter(c => c.length > 0)
+  }
+  const flat = normalizeComposition(raw)
+  return flat.length ? [flat] : []
+}
+
+// 마켓별 상품명 최대 바이트 — 백엔드 _MARKET_NAME_MAX_BYTES 와 같아야 한다.
+const MARKET_NAME_MAX_BYTES: Record<string, number> = { '11st': 99, lotteon: 149 }
+
+const utf8Len = (s: string) => new TextEncoder().encode(s).length
+
 // 상품명 조합 적용 (name_composition 태그 기반)
 // market_type이 지정되고 market_name_compositions에 해당 마켓 설정이 있으면 마켓별 조합 사용 (백엔드 _compose_product_name와 동일)
 function composeProductName(
@@ -319,10 +348,29 @@ function composeProductName(
   marketType?: string,
 ): string {
   // 마켓별 조합 우선, 없으면 일반 조합 폴백
-  const composition =
+  const chain = normalizeCompositionChain(
     (marketType && nameRule?.market_name_compositions?.[marketType]) ||
     nameRule?.name_composition
-  if (!composition?.length) return product.name
+  )
+  if (!chain.length) return product.name
+  // 폴백 체인 — 한도 안에 들어가는 첫 후보를 쓴다. 각 후보를 끝까지 조립해 실측한다
+  // (치환/접두접미/중복제거가 길이를 바꾸므로 태그만 보고 판단하면 어긋난다).
+  if (chain.length > 1) {
+    const limit = MARKET_NAME_MAX_BYTES[marketType || ''] ?? 0
+    for (let i = 0; i < chain.length; i++) {
+      const built = composeWithComposition(product, nameRule, deletionWords, chain[i])
+      if (!limit || i === chain.length - 1 || utf8Len(built) <= limit) return built
+    }
+  }
+  return composeWithComposition(product, nameRule, deletionWords, chain[0])
+}
+
+function composeWithComposition(
+  product: SambaCollectedProduct,
+  nameRule: SambaNameRule | undefined,
+  deletionWords: string[] | undefined,
+  composition: string[],
+): string {
   const seoKws = product.seo_keywords || []
   const tagMap: Record<string, string> = {
     '{상품명}': product.name || '',
@@ -487,6 +535,20 @@ const ProductCard = React.memo(function ProductCard({
       if (as && Array.isArray(as.sizes) && as.sizes.length > 0) setActualSize(as)
     }).catch(() => {})
   }, [compact, expanded, actualSizeLoaded, p.id, p.source_site])
+
+  // 추가이미지를 대표(썸네일)로 승격 — 해당 URL을 맨 앞으로 이동(기존 대표는 추가로 밀림)
+  const promoteImageToMain = async (url: string) => {
+    const newImgs = [url, ...productImages.filter(u => u !== url)]
+    try {
+      const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+      if (!(p.tags || []).includes('__img_edited__')) ud.tags = [...(p.tags || []), '__img_edited__']
+      await collectorApi.updateProduct(p.id, ud)
+      setProductImages(newImgs)
+      onProductUpdate(p.id, ud)
+    } catch (e) {
+      setCardAlert({ msg: '대표 변경 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' })
+    }
+  }
 
   // 모달 열 때 상세이미지/HTML 단일 fetch (목록 API에서는 defer되어 비어있음)
   const openImageModal = () => {
@@ -1090,7 +1152,7 @@ const ProductCard = React.memo(function ProductCard({
         })
 
         // 이미지 행 렌더
-        const renderImageRow = (img: string, i: number, list: string[], setList: (imgs: string[]) => void, label?: string) => (
+        const renderImageRow = (img: string, i: number, list: string[], setList: (imgs: string[]) => void, label?: string, onSetMain?: () => void) => (
           <div key={i} style={{
             display: 'flex', alignItems: 'center', gap: '12px', padding: '8px', borderRadius: '8px',
             background: label ? 'rgba(255,140,0,0.06)' : c.surface,
@@ -1119,6 +1181,8 @@ const ProductCard = React.memo(function ProductCard({
               <p style={{ margin: 0, fontSize: '0.68rem', color: c.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
             </div>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+              {onSetMain && <button onClick={onSetMain}
+                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #a9ddd2', background: '#e3f4f0', color: '#0f6a5b', fontWeight: 600, whiteSpace: 'nowrap' }}>대표로</button>}
               {i > 0 && <button onClick={() => { const a = [...list]; [a[i-1], a[i]] = [a[i], a[i-1]]; setList(a) }}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted }}>▲</button>}
               {i < list.length - 1 && <button onClick={() => { const a = [...list]; [a[i+1], a[i]] = [a[i], a[i+1]]; setList(a) }}
@@ -1355,7 +1419,7 @@ const ProductCard = React.memo(function ProductCard({
                             console.error('[이미지삭제] 저장 실패:', e)
                             setCardAlert({ msg: '이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' })
                           }
-                        }, i === 0 ? `추가 1` : undefined))}
+                        }, i === 0 ? `추가 1` : undefined, () => promoteImageToMain(img)))}
                       </div>
                     )}
                     {/* URL로 추가 */}
@@ -2026,7 +2090,7 @@ const ProductCard = React.memo(function ProductCard({
                               <React.Fragment key={rm.accId}>
                               {rm.url ? (
                                 <button
-                                  onClick={() => window.open(rm.url, '_blank')}
+                                  onClick={() => window.open(rm.url, '_blank', 'noreferrer')}
                                   style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                   onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
@@ -2120,7 +2184,7 @@ const ProductCard = React.memo(function ProductCard({
                         {rr.id ? (
                           rr.url ? (
                             <button
-                              onClick={() => window.open(rr.url, '_blank')}
+                              onClick={() => window.open(rr.url, '_blank', 'noreferrer')}
                               style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
@@ -2204,7 +2268,7 @@ const ProductCard = React.memo(function ProductCard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             {rm.url ? (
                               <button
-                                onClick={() => window.open(rm.url, '_blank')}
+                                onClick={() => window.open(rm.url, '_blank', 'noreferrer')}
                                 style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}

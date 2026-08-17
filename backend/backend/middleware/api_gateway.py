@@ -38,6 +38,9 @@ _EXEMPT_PATHS = {
 # 화이트리스트 누락 시 프론트가 무한 재요청하며 워커 event loop 소모 → health timeout 유발
 _EXEMPT_PREFIXES = (
     "/static/",
+    # R2 이미지 공개 프록시 — 마켓 서버(롯데ON 등)가 상품등록 검수 중 헤더 없이
+    # 이미지를 받아간다. 키 형태 검증으로 이미지 오브젝트만 노출(image_proxy.py).
+    "/api/v1/samba/img/",
     "/docs",
     "/redoc",
     "/openapi.json",

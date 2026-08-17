@@ -23,6 +23,7 @@ type Props = {
   aiImgScope: AiImgScope
   aiImgMode: string
   aiModelPreset: string
+  aiImgProvider: string
   aiPresetList: AiPreset[]
   aiImgTransforming: boolean
   imgFiltering: boolean
@@ -36,6 +37,7 @@ type Props = {
   setAiImgScope: Dispatch<SetStateAction<AiImgScope>>
   setAiImgMode: Dispatch<SetStateAction<string>>
   setAiModelPreset: Dispatch<SetStateAction<string>>
+  setAiImgProvider: Dispatch<SetStateAction<string>>
   setAiImgTransforming: Dispatch<SetStateAction<boolean>>
   setImgFiltering: Dispatch<SetStateAction<boolean>>
   setImgFilterScopes: Dispatch<SetStateAction<Set<string>>>
@@ -59,6 +61,7 @@ export default function AiToolsPanel(props: Props) {
     aiImgScope,
     aiImgMode,
     aiModelPreset,
+    aiImgProvider,
     aiPresetList,
     aiImgTransforming,
     imgFiltering,
@@ -70,6 +73,7 @@ export default function AiToolsPanel(props: Props) {
     setAiImgScope,
     setAiImgMode,
     setAiModelPreset,
+    setAiImgProvider,
     setAiImgTransforming,
     setImgFiltering,
     setImgFilterScopes,
@@ -117,6 +121,12 @@ export default function AiToolsPanel(props: Props) {
           <option value="scene">연출컷</option>
           <option value="model">모델 착용</option>
         </select>
+        {aiImgMode !== 'background' && (
+          <select value={aiImgProvider} onChange={e => setAiImgProvider(e.target.value)} style={{ background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        )}
         {aiImgMode === 'model' && (
           <select
             value={aiModelPreset}
@@ -273,7 +283,7 @@ export default function AiToolsPanel(props: Props) {
                 const label = productIds[i].slice(-8)
                 setAiJobTitle(`AI 이미지변환 [${fmtNum(i + 1)}/${fmtNum(productIds.length)}]`)
                 try {
-                  const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset)
+                  const res = await proxyApi.transformImages([productIds[i]], aiImgScope, aiImgMode, aiModelPreset, aiImgProvider)
                   if (res.success) { success++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 완료`) }
                   else { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 실패: ${res.message}`) }
                 } catch (e) { fail++; addLog(`[${ts()}] [${fmtNum(i + 1)}/${fmtNum(productIds.length)}] ${label} — 오류: ${e instanceof Error ? e.message : ''}`) }
@@ -286,9 +296,11 @@ export default function AiToolsPanel(props: Props) {
             setAiJobDone(true)
             setAiImgTransforming(false)
             const cnt = success
-            // issue #665: 배경제거는 로컬(rembg) 무료, 나머지는 Gemini 유료(장당 ~55원/1290토큰)
+            // issue #665: 배경제거는 로컬(rembg) 무료, 나머지는 유료 — provider별 단가 다름
+            // Gemini: 장당 ~55원(1290토큰) / OpenAI gpt-image-1: 장당 ~60원(1024x1024 medium 근사치, 토큰 개념 없음)
             const isPaid = aiImgMode !== 'background'
-            setLastAiUsage({ calls: cnt, tokens: isPaid ? cnt * 1290 : 0, cost: isPaid ? cnt * 55 : 0, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
+            const perImageCost = aiImgProvider === 'openai' ? 60 : 55
+            setLastAiUsage({ calls: cnt, tokens: isPaid && aiImgProvider !== 'openai' ? cnt * 1290 : 0, cost: isPaid ? cnt * perImageCost : 0, date: new Date().toLocaleTimeString('ko-KR', { hour12: false, hour: '2-digit', minute: '2-digit' }) })
             setSelectedIds(new Set()); setSelectAll(false)
           }}
           disabled={aiImgTransforming}

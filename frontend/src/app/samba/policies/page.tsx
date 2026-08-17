@@ -131,6 +131,8 @@ interface MarketPolicyForm {
   ssgBrandMappings?: { brandId: string; brandNm: string }[]
   ssgExtraFeeRate?: number
   extraFeeRate?: number
+  // 쿠팡 전용
+  coupangNoAdditionalImages?: boolean // 추가이미지(DETAIL) 미등록 — 대표이미지만 전송
   // 포이즌(리셀) 전용
   minFeeAmount?: number        // 최소 수수료 (원) — POIZON 건당 최소 15,000원
   ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
@@ -1820,6 +1822,17 @@ export default function PoliciesPage() {
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
               </div>
               )}
+              {/* 쿠팡 전용: 추가이미지 등록 여부 */}
+              {marketPolicyTab === '쿠팡' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>추가이미지</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: c.text }}>
+                    <input type="checkbox" checked={!mp.coupangNoAdditionalImages}
+                      onChange={(e) => { setCurrentMarketPolicy({ ...mp, coupangNoAdditionalImages: !e.target.checked }); triggerAutoSave() }} /> 등록
+                  </label>
+                  <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>끄면 대표이미지만 등록 — 옵션별 추가(측면/뒷면 등) 이미지 미전송</span>
+                </div>
+              )}
               {/* 플레이오토 전용: 원산지, 시중가 */}
               {marketPolicyTab === '플레이오토' && (
               <>
@@ -2215,7 +2228,7 @@ export default function PoliciesPage() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={t.gallery_include_sub ?? true}
+                      checked={t.gallery_include_sub ?? false}
                       onChange={async (e) => {
                         const checked = e.target.checked
                         setDetailTemplates(prev => prev.map(x => x.id === t.id ? { ...x, gallery_include_sub: checked } : x))
@@ -2581,26 +2594,28 @@ export default function PoliciesPage() {
                   <button onClick={() => updateRule({ replacements: [...(r.replacements || []), { from: '', to: '', caseInsensitive: true }] })}
                     style={{ ...btn('secondary'), fontSize: '0.68rem', borderRadius: '4px', padding: '1px 8px' }}>+ 조건추가</button>
                 </div>
-                {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
-                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
-                    <input value={rep.from} placeholder="변경전"
-                      onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], from: e.target.value }; updateRule({ replacements: reps }) }}
-                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>→</span>
-                    <input value={rep.to} placeholder="변경후"
-                      onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], to: e.target.value }; updateRule({ replacements: reps }) }}
-                      style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
-                    {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
-                    {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: c.textMuted, whiteSpace: 'nowrap' }}>
-                      <input type="checkbox" checked={rep.caseInsensitive ?? true}
-                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
-                        style={{ accentColor: c.primary, width: '11px', height: '11px' }} />대소문자무시
-                    </label>
-                    <button onClick={() => updateRule({ replacements: (r.replacements || []).filter((_: unknown, i: number) => i !== idx) })}
-                      style={{ color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
-                  </div>
-                ))}
+                <div style={{ maxHeight: '360px', overflowY: 'auto', paddingRight: '0.25rem' }}>
+                  {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
+                      <input value={rep.from} placeholder="변경전"
+                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], from: e.target.value }; updateRule({ replacements: reps }) }}
+                        style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
+                      <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>→</span>
+                      <input value={rep.to} placeholder="변경후"
+                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], to: e.target.value }; updateRule({ replacements: reps }) }}
+                        style={{ ...inputStyle, flex: 1, fontSize: '0.75rem' }} />
+                      {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
+                      {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: c.textMuted, whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={rep.caseInsensitive ?? true}
+                          onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
+                          style={{ accentColor: c.primary, width: '11px', height: '11px' }} />대소문자무시
+                      </label>
+                      <button onClick={() => updateRule({ replacements: (r.replacements || []).filter((_: unknown, i: number) => i !== idx) })}
+                        style={{ color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* ── 옵션명 치환 ── */}

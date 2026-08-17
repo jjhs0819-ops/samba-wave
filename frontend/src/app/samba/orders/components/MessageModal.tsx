@@ -20,6 +20,30 @@ interface SmsTemplate {
   msg: string
 }
 
+// 라벨 앞 숫자 연번(0, 1-1, 2-0-2, 10 …)을 기준으로 정렬 — 선택하기 쉽도록 순서 고정.
+// 숫자 프리픽스가 없는 기존 템플릿은 뒤로 밀고, 원래 순서를 유지한다.
+const seqKey = (label: string): number[] | null => {
+  const m = label.match(/^\s*(\d+(?:-\d+)*)/)
+  return m ? m[1].split('-').map(Number) : null
+}
+const sortTemplatesBySeq = (templates: SmsTemplate[]): SmsTemplate[] =>
+  [...templates].sort((a, b) => {
+    const ka = seqKey(a.label)
+    const kb = seqKey(b.label)
+    if (ka && kb) {
+      const len = Math.max(ka.length, kb.length)
+      for (let i = 0; i < len; i++) {
+        const da = ka[i] ?? -1
+        const db = kb[i] ?? -1
+        if (da !== db) return da - db
+      }
+      return 0
+    }
+    if (ka) return -1
+    if (kb) return 1
+    return 0
+  })
+
 interface Props {
   msgModal: { type: 'sms' | 'kakao'; order: SambaOrder } | null
   setMsgModal: Dispatch<SetStateAction<{ type: 'sms' | 'kakao'; order: SambaOrder } | null>>
@@ -35,6 +59,7 @@ interface Props {
   openEditTemplate: (t: SmsTemplate) => void
   openNewTemplate: () => void
   deleteTemplate: (id: string) => void
+  addDefaultTemplates: () => void
   handleSendMsg: () => void | Promise<void>
 }
 
@@ -46,7 +71,7 @@ export default function MessageModal(props: Props) {
     msgPhone, setMsgPhone,
     msgTextRef, msgSending, msgHistory,
     smsTemplates, insertMsgTag,
-    openEditTemplate, openNewTemplate, deleteTemplate,
+    openEditTemplate, openNewTemplate, deleteTemplate, addDefaultTemplates,
     handleSendMsg,
   } = props
 
@@ -82,9 +107,19 @@ export default function MessageModal(props: Props) {
           </div>
         </div>
 
+        {/* 빠른 템플릿 헤더 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+          <span style={{ fontSize: '0.75rem', color: c.textMuted, fontWeight: 600 }}>빠른 템플릿</span>
+          <button
+            onClick={addDefaultTemplates}
+            style={{ padding: '0.2rem 0.55rem', fontSize: '0.6875rem', background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.textSub, cursor: 'pointer' }}
+            title='기본 제공 템플릿 중 목록에 없는 것을 추가합니다 (기존 템플릿은 유지)'
+          >+ 기본 템플릿 추가</button>
+        </div>
+
         {/* 빠른 템플릿 카드 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
-          {smsTemplates.map(t => (
+          {sortTemplatesBySeq(smsTemplates).map(t => (
             <div
               key={t.id}
               style={{ background: c.surfaceAlt, border: `1px solid ${c.border}`, borderRadius: '8px', padding: '0.625rem', transition: 'border-color 0.15s', position: 'relative' }}

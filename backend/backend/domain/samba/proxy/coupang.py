@@ -1073,6 +1073,8 @@ class CoupangClient:
             else ([_main_raw] if _main_raw else [])
         )
         coupang_main = _main_filtered[0] if _main_filtered else ""
+        # 정책 토글: 추가이미지(DETAIL) 미등록 — 대표(REPRESENTATION)만 전송
+        _no_additional_images = bool(product.get("_coupang_no_additional_images"))
         default_color = product.get("color", "") or "상세 이미지 참조"
         detail_html = (
             product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
@@ -1107,7 +1109,7 @@ class CoupangClient:
             _filter_html_external_images(detail_html) if _is_gsshop else detail_html
         )
 
-        # 상세 컨텐츠 (IMAGE/TEXT 혼합)
+        # 상세 컨텐츠 (IMAGE/TEXT 혼합) — 블록 구성은 _build_contents_blocks가 처리
         content_details = _build_content_details(detail_html)
 
         # 품번(MPN, modelNo) — 2026-08-01 의무화: 바코드(GTIN) 또는 품번 둘 중 하나 필수
@@ -1136,14 +1138,15 @@ class CoupangClient:
                         "vendorPath": rep_image,
                     }
                 )
-                for idx, url in enumerate(images_raw[1:10], start=1):
-                    item_images.append(
-                        {
-                            "imageOrder": idx,
-                            "imageType": "DETAIL",
-                            "vendorPath": url,
-                        }
-                    )
+                if not _no_additional_images:
+                    for idx, url in enumerate(images_raw[1:10], start=1):
+                        item_images.append(
+                            {
+                                "imageOrder": idx,
+                                "imageType": "DETAIL",
+                                "vendorPath": url,
+                            }
+                        )
 
             # 아이템별 색상 (옵션에서 파싱된 개별 색상 우선)
             resolved_color = item_color or default_color
@@ -1432,56 +1435,68 @@ class CoupangClient:
         targets = [status] if status else STATUSES
 
         now = datetime.now(timezone.utc)
-        since = now - timedelta(days=days)
         # createdAtTo는 exclusive로 처리되므로 +1일 추가 (당일 주문 누락 방지)
-        until = now + timedelta(days=1)
-        created_at_from = since.strftime("%Y-%m-%d")
-        created_at_to = until.strftime("%Y-%m-%d")
+        overall_since = now - timedelta(days=days)
+        overall_until = now + timedelta(days=1)
+
+        # 쿠팡 API 제약: createdAtTo - createdAtFrom < 32일. days가 크면(예: 32일
+        # 조회 요청) 통째로 보내면 HTTP 400으로 전체 실패하므로 31일 단위로 분할 조회.
+        MAX_SPAN_DAYS = 31
+        windows: list[tuple[datetime, datetime]] = []
+        win_start = overall_since
+        while win_start < overall_until:
+            win_end = min(win_start + timedelta(days=MAX_SPAN_DAYS), overall_until)
+            windows.append((win_start, win_end))
+            win_start = win_end
 
         path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
         seen_ids: set[int] = set()
         all_orders: list[dict[str, Any]] = []
 
-        for idx, target_status in enumerate(targets):
-            if idx > 0:
-                await asyncio.sleep(1.5)  # 쿠팡 API rate limit 회피 (HTTP 429)
-            next_token = ""
-            for _ in range(100):  # 무한루프 방지
-                params: dict[str, str] = {
-                    "createdAtFrom": created_at_from,
-                    "createdAtTo": created_at_to,
-                    "status": target_status,
-                    "maxPerPage": str(max_per_page),
-                }
-                if next_token:
-                    params["nextToken"] = next_token
+        for win_idx, (since, until) in enumerate(windows):
+            created_at_from = since.strftime("%Y-%m-%d")
+            created_at_to = until.strftime("%Y-%m-%d")
 
-                result = await self._call_api("GET", path, params=params)
+            for idx, target_status in enumerate(targets):
+                if idx > 0 or win_idx > 0:
+                    await asyncio.sleep(1.5)  # 쿠팡 API rate limit 회피 (HTTP 429)
+                next_token = ""
+                for _ in range(100):  # 무한루프 방지
+                    params: dict[str, str] = {
+                        "createdAtFrom": created_at_from,
+                        "createdAtTo": created_at_to,
+                        "status": target_status,
+                        "maxPerPage": str(max_per_page),
+                    }
+                    if next_token:
+                        params["nextToken"] = next_token
 
-                data = result.get("data", []) if isinstance(result, dict) else []
-                extracted: list[dict[str, Any]] = []
-                if isinstance(data, list):
-                    extracted = data
-                elif isinstance(data, dict):
-                    sheets = data.get("orderSheets", data.get("content", []))
-                    if isinstance(sheets, list):
-                        extracted = sheets
+                    result = await self._call_api("GET", path, params=params)
 
-                for order in extracted:
-                    box_id = order.get("shipmentBoxId")
-                    if box_id and box_id not in seen_ids:
-                        seen_ids.add(box_id)
-                        all_orders.append(order)
+                    data = result.get("data", []) if isinstance(result, dict) else []
+                    extracted: list[dict[str, Any]] = []
+                    if isinstance(data, list):
+                        extracted = data
+                    elif isinstance(data, dict):
+                        sheets = data.get("orderSheets", data.get("content", []))
+                        if isinstance(sheets, list):
+                            extracted = sheets
 
-                next_token = (
-                    result.get("nextToken", "") if isinstance(result, dict) else ""
-                )
-                if not next_token:
-                    break
+                    for order in extracted:
+                        box_id = order.get("shipmentBoxId")
+                        if box_id and box_id not in seen_ids:
+                            seen_ids.add(box_id)
+                            all_orders.append(order)
+
+                    next_token = (
+                        result.get("nextToken", "") if isinstance(result, dict) else ""
+                    )
+                    if not next_token:
+                        break
 
         logger.info(
             f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 "
-            f"(최근 {days}일, status={status or 'ALL'})"
+            f"(최근 {days}일, status={status or 'ALL'}, {len(windows)}개 구간 분할)"
         )
         return all_orders
 

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   collectorApi,
   accountApi,
@@ -66,7 +66,6 @@ export default function ProductsPage() {
     return () => { cancelled = true; clearInterval(t) }
   }, [])
   const searchParams = useSearchParams();
-  const router = useRouter();
   const [queryReady, setQueryReady] = useState(false)
   // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
   // searchParams를 dep에 포함해야 클라이언트 네비게이션 시에도 동작함
@@ -177,6 +176,7 @@ export default function ProductsPage() {
   // AI 이미지 변환
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
+  const [aiImgProvider, setAiImgProvider] = useState('gemini')
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: true, detail: false })
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
@@ -735,6 +735,18 @@ export default function ProductsPage() {
       p.id === productId ? { ...p, applied_policy_id: policyId || undefined } as SambaCollectedProduct : p
     ))
     await collectorApi.updateProduct(productId, { applied_policy_id: policyId || undefined } as Partial<SambaCollectedProduct>).catch(() => {})
+  };
+
+  // 사진 뷰: 추가사진 썸네일 클릭 → 대표(썸네일)로 승격 (해당 URL을 맨 앞으로, 기존 대표는 추가로 밀림)
+  const handleSetMainImage = async (product: SambaCollectedProduct, url: string) => {
+    const cur = product.images || []
+    if (!cur.length || cur[0] === url) return
+    const newImgs = [url, ...cur.filter(u => u !== url)]
+    const newTags = (product.tags || []).includes('__img_edited__') ? (product.tags || []) : [...(product.tags || []), '__img_edited__']
+    setAllProducts(prev => prev.map(p =>
+      p.id === product.id ? { ...p, images: newImgs, tags: newTags } as SambaCollectedProduct : p
+    ))
+    await collectorApi.updateProduct(product.id, { images: newImgs, tags: newTags } as Partial<SambaCollectedProduct>).catch(() => {})
   };
 
   const handleEnrich = async (productId: string) => {
@@ -2333,6 +2345,12 @@ export default function ProductsPage() {
           <option value="scene">연출컷</option>
           <option value="model">모델 착용</option>
         </select>
+        {aiImgMode !== 'background' && (
+          <select value={aiImgProvider} onChange={e => setAiImgProvider(e.target.value)} style={{ background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        )}
         {aiImgMode === 'model' && (
           <select
             value={aiModelPreset}
@@ -2527,7 +2545,7 @@ export default function ProductsPage() {
                     await new Promise(r => setTimeout(r, delays[attempt - 1]))
                   }
                   try {
-                    const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
+                    const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset, aiImgProvider)
                     if (res.success && res.total_transformed > 0) {
                       success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`)
                     } else {
@@ -3109,17 +3127,37 @@ export default function ProductsPage() {
               borderRadius: "8px",
               overflow: "hidden", cursor: "pointer", position: "relative",
             }} onClick={() => handleCheckboxToggle(p.id, !selectedIds.has(p.id))}>
-              <input
-                type="checkbox"
-                checked={selectedIds.has(p.id)}
-                onChange={e => handleCheckboxToggle(p.id, e.target.checked)}
+              {/* 체크박스 — 클릭영역을 넓혀(패딩) 오조준해도 선택되게. 카드 전체도 선택 토글이라 이중토글 방지 위해 stopPropagation. */}
+              <label
                 onClick={e => e.stopPropagation()}
                 style={{
-                  position: "absolute", top: "6px", left: "6px", zIndex: 1,
-                  accentColor: c.primary, width: "14px", height: "14px", cursor: "pointer",
+                  position: "absolute", top: 0, left: 0, zIndex: 2,
+                  padding: "6px 10px 10px 6px", cursor: "pointer",
                 }}
-              />
-              <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(p.id)}
+                  onChange={e => handleCheckboxToggle(p.id, e.target.checked)}
+                  style={{
+                    accentColor: c.primary, width: "17px", height: "17px", cursor: "pointer",
+                    display: "block", boxShadow: "0 0 0 2px rgba(0,0,0,0.35)", borderRadius: "3px",
+                  }}
+                />
+              </label>
+              {/* 상세보기 — 새 탭으로 열어 그리드 스크롤·선택상태·뒤로가기 보존 */}
+              <button
+                onClick={(e) => { e.stopPropagation(); window.open(`/samba/products?search_type=id&search=${p.id}`, '_blank'); }}
+                title="상세보기 (새 탭)"
+                style={{
+                  position: "absolute", top: "6px", right: "6px", zIndex: 2,
+                  fontSize: "0.62rem", padding: "2px 7px", borderRadius: "4px", cursor: "pointer",
+                  border: `1px solid ${c.border}`, background: "rgba(0,0,0,0.45)", color: "#fff",
+                  lineHeight: 1.4, whiteSpace: "nowrap",
+                }}
+              >상세 ↗</button>
+              {/* 이미지 클릭 = 카드 선택 토글(별도 onClick 없이 상위 div로 버블) */}
+              <div>
                 <ProductImage src={p.images?.[0]} name={p.name} size={140} />
               </div>
               {(p.free_shipping || p.same_day_delivery) && (
@@ -3133,6 +3171,18 @@ export default function ProductsPage() {
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
                 </p>
                 <p style={{ fontSize: "0.75rem", color: c.text, fontWeight: 600, margin: 0 }}>₩{fmt(p.sale_price)}</p>
+                {(p.images?.length || 0) > 1 && (
+                  <div style={{ display: 'flex', gap: '3px', marginTop: '5px', flexWrap: 'wrap' }}>
+                    {(p.images || []).slice(1).map((img, ii) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={ii} src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
+                        title="클릭 → 이 사진을 대표로"
+                        onClick={(e) => { e.stopPropagation(); handleSetMainImage(p, img) }}
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: '4px', border: `1px solid ${c.border}`, cursor: 'pointer' }} />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}

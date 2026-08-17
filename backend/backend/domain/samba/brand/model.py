@@ -83,6 +83,68 @@ class SambaBrandRestriction(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
 
+    # ── 신규 Brand Risk System 축 (Phase 1: 스키마만 추가, 판정 로직 미연결) ──
+    # 전부 nullable. 값이 비어 있으면 "아직 이 축을 평가 안 함"이며 기존
+    # verdict/soomyeong/ipr 판정과 BrandGuardService.check() 동작에는 영향이
+    # 없다 — check()는 여전히 verdict만 읽는다(brand/service.py 미변경).
+    #
+    # ip_risk_level 과 coupang_pre_auth 는 서로 완전히 독립된 축이다.
+    # 실측 근거(2026-08 데이터 감사): 브룩스는 coupang_api 판정상
+    # coupang_uid_required=true(=사전소명 필요) 이면서 지재권 신고 이력은
+    # 없는 상태 — 즉 ip_risk_level=NO_RISK_FOUND, coupang_pre_auth=REQUIRED
+    # 조합이 실제로 존재한다. 단일 verdict 축으로는 이 조합을 표현 못 했다.
+
+    # BLOCK_STRONG | BLOCK | CAUTION | NO_RISK_FOUND | REVIEW_REQUIRED | UNKNOWN
+    # (brand/risk_constants.IP_RISK_LEVELS)
+    ip_risk_level: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True, index=True)
+    )
+
+    # REQUIRED | NOT_REQUIRED | UNKNOWN (brand/risk_constants.COUPANG_PRE_AUTH_STATES)
+    # 쿠팡이 유통경로 소명(재고증빙)을 요구하는지 여부 — ip_risk_level 과 무관.
+    coupang_pre_auth: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # Marq Vision 관리목록 포함 여부. None=미확인, True/False=확인됨.
+    # 기존 coupang_uid_required/coupang_matched 와 동일하게 nullable Boolean
+    # 삼중상태(None=UNKNOWN) 컨벤션을 그대로 따른다.
+    marq_vision: Optional[bool] = Field(
+        default=None, sa_column=Column(Boolean, nullable=True)
+    )
+
+    # 마켓별 IP Risk 개별 판정 — {market_id: ip_risk_level}.
+    # market_id 는 SambaForbiddenWord.market 과 동일 문자열 컨벤션
+    # ('coupang'/'smartstore'/'elevenst'/'lotteon' 등, markets.ts 기준).
+    # 예: {"coupang": "BLOCK", "lotteon": "BLOCK", "smartstore": "UNKNOWN"}
+    # 마켓마다 다른 등급을 가지는 실제 사례(CASE_DB 다수)가 있어 단일
+    # 스칼라 컬럼으로는 표현이 안 된다. 기존 markets(JSON 리스트, "이
+    # 브랜드를 잡은 마켓 이름 나열용") 필드와는 목적이 다르므로 별도 컬럼.
+    marketplace_risk: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+
+    # 이미지 위험 요약 — 자유텍스트. 구조화된 이미지 상태값
+    # (ORIGINAL/CUTOUT/CROPPED/AI_TRANSFORMED/DIRECT_PHOTO/UNKNOWN)은 브랜드
+    # 전체가 아니라 사건(case) 단위 속성이라 samba_brand_risk_case.image_state
+    # 에 둔다. 한 브랜드 안에서도 사건마다 원본/누끼/AI변환이 섞이므로
+    # 브랜드 레벨에서 단일 값으로 강제하면 정보가 손실된다.
+    image_risk_note: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # A | B | C | D | UNKNOWN (brand/risk_constants.CONFIDENCE_LEVELS)
+    # 근거 신뢰도 종합 요약. 개별 사건 신뢰도는 samba_brand_risk_case.confidence
+    # 에 있고, 이 컬럼은 브랜드 단위로 사람이 매긴 요약값이다.
+    confidence: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # evidence_count 컬럼은 의도적으로 만들지 않는다 — 사건 수는 항상
+    # samba_brand_risk_case 를 실시간 COUNT 해서 구한다. 수동 정수 컬럼은
+    # 반드시 실제 사건 수와 어긋나는 시점이 생긴다(soul.md 추측 금지 원칙).
+    # risk_repository.SambaBrandRiskCaseRepository.count_by_normalized_brand() 참고.
+
     # excel | coupang_api | manual — 이 행이 어디서 왔는지
     source: str = Field(
         default="manual", sa_column=Column(Text, nullable=False, index=True)

@@ -3,7 +3,7 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -16,6 +16,16 @@ from backend.utils.masking import mask_model_secrets
 router = APIRouter(prefix="/accounts", tags=["samba-accounts"])
 
 
+# 판매자ID/API키의 앞뒤 공백은 화면에서 안 보이는데, 헤더로 나가면 httpx 가
+# "Illegal header value" 로 요청 자체를 거부한다(ESM X-ESM-Seller-Id 등).
+# 폼 경로(from-store-form)는 credentials._clean 이 막고, 이 직접 API 경로는 여기서 막는다.
+_STRIP_FIELDS = ("seller_id", "business_name", "api_key", "api_secret")
+
+
+def _strip_or_none(v: Optional[str]) -> Optional[str]:
+    return v.strip() if isinstance(v, str) else v
+
+
 class AccountCreate(BaseModel):
     market_type: str
     seller_id: Optional[str] = None
@@ -24,6 +34,8 @@ class AccountCreate(BaseModel):
     api_secret: Optional[str] = None
     additional_fields: Optional[Any] = None
     is_active: bool = True
+
+    _strip = field_validator(*_STRIP_FIELDS)(_strip_or_none)
 
 
 class AccountUpdate(BaseModel):
@@ -34,6 +46,8 @@ class AccountUpdate(BaseModel):
     api_secret: Optional[str] = None
     additional_fields: Optional[Any] = None
     is_active: Optional[bool] = None
+
+    _strip = field_validator(*_STRIP_FIELDS)(_strip_or_none)
 
 
 def _get_service(session: AsyncSession):

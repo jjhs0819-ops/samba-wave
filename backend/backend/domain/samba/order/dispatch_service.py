@@ -40,6 +40,19 @@ _KOREAN_MARKET_MAP = {
 }
 
 
+def normalize_tracking_number(inv: str | None) -> str:
+    """송장번호 정규화 — 구분자(슬래시·하이픈·공백·점 등)를 제거하고 영숫자만 유지.
+
+    마켓 전송·저장·조회를 한 규칙으로 통일한다(get_tracking 의 `[^0-9A-Za-z]`
+    제거와 동일). 마켓 원장/택배사는 구분자 없는 번호를 기대하므로 슬래시·하이픈이
+    섞인 채 전송되면 등록 실패·오조회 위험.
+
+    주의: 국내 택배(숫자)뿐 아니라 크림/해외송장(HBL·EMS 등 영문+숫자)도 있으므로
+    숫자-only 로 깎지 않고 영문자는 보존한다.
+    """
+    return re.sub(r"[^0-9A-Za-z]", "", (inv or "").strip())
+
+
 async def _resolve_account_with_fallback(order, session: AsyncSession):
     """channel_id 직접 매칭 실패 시 channel_name + tenant_id + active 로 폴백.
 
@@ -120,7 +133,9 @@ async def send_invoice_to_market(
 
     market_type = (account.market_type or "").lower()
     courier = shipping_company or ""
-    tracking = tracking_number or ""
+    # 구분자(슬래시·하이픈·공백) 제거 — 모든 마켓 전송이 이 함수를 거치므로
+    # 여기서 한 번만 정규화하면 수동/자동/카톡 전송 전부 정제됨.
+    tracking = normalize_tracking_number(tracking_number)
 
     try:
         if market_type == "lotteon":

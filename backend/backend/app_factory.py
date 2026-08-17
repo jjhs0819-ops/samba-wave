@@ -167,6 +167,11 @@ def create_application() -> FastAPI:
         samba_order_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     app.include_router(samba_order_public_router, prefix="/api/v1/samba")
+    # R2 이미지 공개 프록시 — 마켓 서버가 우리 도메인으로 이미지를 받아가는 경로.
+    # 인증 의존성 없음(마켓이 헤더 없이 fetch) + ApiGatewayMiddleware 면제 등록됨.
+    from backend.api.v1.routers.samba.image_proxy import router as samba_img_router
+
+    app.include_router(samba_img_router, prefix="/api/v1/samba")
     app.include_router(
         samba_channel_router, prefix="/api/v1/samba", dependencies=samba_auth
     )

@@ -2034,14 +2034,46 @@ class LotteonClient:
         return result
 
     async def get_returns(self, days: int = 7) -> list[dict]:
-        """최근 N일 반품 클레임 조회.
+        """최근 N일 반품 클레임 조회 (returningOpenApi/returnRequestSearch).
 
-        실측(2026-05-19): 기존 구현은 cancellation API에 clmTpCd=RETN/EXCH 임의 파라미터를
-        붙여 호출했으나 롯데가 해당 파라미터를 무시하여 취소 데이터를 반품으로 잘못 적재했다.
-        진짜 반품 전용 엔드포인트(반품요청/접수 목록조회)는 별도 URL이며 추후 연동 필요.
-        그때까지 빈 리스트 반환 — 잘못된 분류로 사고 내는 것보다 안전한 쪽 우선.
+        복구(2026-07-29): 반품 전용 엔드포인트를 올바른 파라미터로 호출하도록 수정.
+        기존 코드는 잘못된 파라미터명(srchStDt 등)으로 호출해 error 2001([기간조회
+        시작일] 필수)이 나 빈 리스트를 반환했고, 그 결과 롯데ON 반품이 아예 수집되지
+        않아 취소로 오분류되거나 누락됐다(이용철 2026072419048395 등, ShopMine 대비
+        과소). 이 API는 취소 API와 동일하게 srchStrtDttm/srchEndDttm(KST, yyyymmddHHmmss)
+        을 쓰며, 응답 itemList 의 odTypCd=40(반품)만 채택한다. 조회내역 없음(3000)은
+        빈 리스트로 처리.
+
+        상태(odPrgsStepCd) — 실측: 23=반품 진행중(clmCmptDttm 없음), 27=반품완료
+        (clmCmptDttm 있음). status 파싱은 returns 라우터 _parse_lotteon_return 담당.
         """
-        return []
+        start_dt, end_dt = self._datetime_range(days)
+        try:
+            data = await self._call_api(
+                "POST",
+                "/v1/openapi/claim/v1/returningOpenApi/returnRequestSearch",
+                body={"srchStrtDttm": start_dt, "srchEndDttm": end_dt},
+            )
+        except LotteonApiError as e:
+            # 3000=조회내역 없음(정상), 그 외는 로그만 남기고 빈 리스트(수집 중단 방지)
+            if "3000" not in str(e):
+                logger.warning(f"[롯데ON] 반품(returnRequestSearch) 조회 실패(무시): {e}")
+            return []
+        raw_list = data.get("data") or []
+        if not isinstance(raw_list, list):
+            raw_list = []
+        result: list[dict] = []
+        for claim in raw_list:
+            od_no = claim.get("odNo", "")
+            clm_no = claim.get("clmNo", "")
+            for item in claim.get("itemList") or []:
+                # odTypCd: 40=반품 / 41=반품취소 — 진짜 반품(40)만 채택
+                if str(item.get("odTypCd", "") or "") != "40":
+                    continue
+                item["odNo"] = od_no
+                item["clmNo"] = clm_no
+                result.append(item)
+        return result
 
     async def get_exchanges(self, days: int = 7) -> list[dict]:
         """최근 N일 교환 클레임 조회.

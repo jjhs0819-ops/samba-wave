@@ -66,7 +66,7 @@ services:
       WEB_CONCURRENCY: "1"
       PROCESS_ROLE: api
       # 크림 섀도는 전용 프로세스(samba-kream, PROCESS_ROLE=kream)로 분리 — api 격리(503 방지)
-      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
+      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync,returns_sync"
       AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
       AUTOTUNE_QUEUE_CAP: "0"
       AUTOTUNE_QUEUE_CAP_PER_MARKET: "0"
@@ -90,7 +90,7 @@ services:
       READ_DB_HOST: postgres
       READ_DB_PORT: "5432"
       PROCESS_ROLE: worker
-      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync"
+      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync,returns_sync"
       # 8코어 활용 — worker 8개. 프로세스당 풀 축소(write 20, read 10 = 30)로
       # 8×30 + api(80) = 320 < max_connections 400 안에 들어옴.
       WORKER_REPLICAS: "8"
