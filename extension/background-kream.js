@@ -562,6 +562,42 @@ function pauseCollectPolling(ms, reason) {
     console.log(`[수집] 폴링 일시중지 ${Math.ceil(ms / 1000)}초: ${reason}`)
   }
 }
+
+// [2026-08-18] 사이트별 폴링 정지.
+//
+// 기존엔 SSG reCAPTCHA 1건에 pauseCollectPolling(300s) 를 불러 그 PC 의 폴링을
+// "통째로" 멈췄다. 그런데 SSG 담당 PC 는 다른 사이트도 겸한다
+// (27cc2c53=MUSINSA+SSG, 1ec58a10=SNKRDUNK+SSG). 결과적으로 SSG 가 한 번 튈
+// 때마다 무신사·스니덩크까지 5분씩 같이 멈췄다 — SSG 보호 효과는 0이고 남의
+// 사이트만 죽는 순손실.
+//
+// 이제 정지 대상을 사이트 단위로 좁힌다. 정지 중인 사이트는 X-Allowed-Sites
+// 헤더에서 빠지므로(background-core.js) 백엔드가 그 사이트 잡을 안 준다.
+// SSG 로 나가는 요청 빈도는 그대로 유지되고(=더 두드리지 않음), 다른 사이트만
+// 계속 돈다.
+const sitePausedUntil = Object.create(null)
+
+function pauseSiteCollect(site, ms, reason) {
+  if (!site) return pauseCollectPolling(ms, reason)
+  const key = String(site).toUpperCase()
+  const nextUntil = Date.now() + ms
+  if (nextUntil > (sitePausedUntil[key] || 0)) {
+    sitePausedUntil[key] = nextUntil
+    console.log(`[수집] ${site} 만 일시중지 ${Math.ceil(ms / 1000)}초: ${reason}`)
+  }
+}
+
+function getPausedSites() {
+  const now = Date.now()
+  const out = []
+  for (const k of Object.keys(sitePausedUntil)) {
+    if (sitePausedUntil[k] > now) out.push(k)
+    else delete sitePausedUntil[k]
+  }
+  return out
+}
+globalThis.pauseSiteCollect = pauseSiteCollect
+globalThis.getPausedSites = getPausedSites
 function resumeCollectPolling() {
   if (pollPausedUntil > Date.now()) {
     pollPausedUntil = 0

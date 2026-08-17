@@ -3690,7 +3690,8 @@ async function handleSourcingJob(job) {
           clearTimeout(hangTimer)
           cleanedUp = true
           if (_fast.blocked) {
-            pauseCollectPolling(60000, 'SSG 차단 감지(fetch)')
+            // SSG 만 쉰다 — 같은 PC 의 무신사/스니덩크는 계속 돈다.
+            pauseSiteCollect('SSG', 60000, 'SSG 차단 감지(fetch)')
           }
           await postResult('sourcing/collect-result', {
             requestId: job.requestId,
@@ -4199,8 +4200,11 @@ async function handleSourcingJob(job) {
         console.log(`[SSG] reCAPTCHA 차단 감지(재확인 완료): ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
         // 차단 감지됐는데도 곧바로 다음 잡을 계속 당겨오면 차단 중에 계속 두드리는
-        // 꼴이라 더 굳어질 위험 — 감지된 순간 전체 폴링 5분 멈춰서 식힌다.
-        pauseCollectPolling(300000, 'SSG reCAPTCHA 차단 감지')
+        // 꼴이라 더 굳어질 위험 — 감지된 순간 5분 멈춰서 식힌다.
+        // [2026-08-18] 단, 멈추는 대상은 SSG 뿐이다. 예전엔 전체 폴링을 멈춰
+        // 같은 PC 의 무신사(27cc2c53)·스니덩크(1ec58a10)까지 5분씩 같이 죽었다.
+        // SSG 를 두드리는 빈도는 그대로(=5분 휴식 유지), 남의 사이트만 살린다.
+        pauseSiteCollect('SSG', 300000, 'SSG reCAPTCHA 차단 감지')
       } else if (_pc.staffOnly) {
         // 임직원/사업자 회원 전용 — 일반 고객 구매 불가 → 백엔드에서 sold_out 처리하도록 명시적 신호 전달
         console.log(`[SSG] 임직원 전용 상품 감지 → staffOnly 신호 전송: ${job.productId}`)
