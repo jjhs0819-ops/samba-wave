@@ -2821,7 +2821,7 @@ async def _load_restock_guards() -> None:
         logger.info("[크림통합] 오등록 매물 블랙리스트 %d건", len(_g_used_blacklist))
 
 
-def _trade_ok(kid: str, name: str) -> bool:
+async def _trade_ok(kid: str, name: str) -> bool:
     """거래이력 게이트 — 거래≥1 필요 상품은 누적거래수≥1 이어야 등록 허용.
     비포켓몬 TCG 카드(원피스/유희왕/MTG/유니온아레나 등)는 SNKRDUNK 영문 카드명이라
     needs_trade 문자열검사가 못 잡음 → brand 로 확실히 판별(2026-07-31 사고 재발방지)."""
@@ -2836,13 +2836,70 @@ def _trade_ok(kid: str, name: str) -> bool:
     # NIKE 같은 브랜드가 "거래이력없음"으로 잘못 막히던 것 차단. 거래게이트는 TCG 전용.
     if _is_tcg_brand(br) and not _is_pokemon_brand(br):
         # 비포켓몬 TCG = 항상 거래≥1 필수(시세 불안정 → 무리한 입찰 시 소싱불가 손실)
-        return _g_trade_counts.get(str(kid), 0) >= 1
+        return await _trade_count_of(kid) >= 1
     if br and not _is_tcg_brand(br):
         return True  # 신발/의류 등 비TCG — 거래이력 게이트 대상 아님
     # 포켓몬/미상 카드 or 비카드 — 기존 name 기반(팩/박스 + 원피스/유희왕 문자열 폴백)
     if not needs_trade(name):
         return True
-    return _g_trade_counts.get(str(kid), 0) >= 1
+    return await _trade_count_of(kid) >= 1
+
+
+async def _trade_count_of(kid: str) -> int:
+    """누적 거래수 — 적재값에 없으면 **그 자리에서 판매자센터 API로 조회**한다.
+
+    [2026-08-17] 종전엔 `kream_trade_counts` 적재값만 읽었다. 공식 OpenAPI 는
+    total_sales 를 주지 않아(kream_official.py:268) 그 테이블이 원피스 2,433종 중
+    270종(11%)에서 멈춰 있었고, 조회한 적 없는 카드가 **0건으로 읽혀 전부 차단**됐다.
+      실측: 원피스 확정 표본 59종 중 응답 48종이 **전부 거래 1건 이상**
+            (799337=233 · 799338=101 · 799336=72)
+      원피스 3,751종에 입찰이 13건뿐이던 진짜 원인이고, 박스·카드팩도 같다.
+
+    판매자센터 business/products 화면이 쓰는 경로에 그 값이 그대로 있다:
+      GET partner-api/api/v1/products/?keyword={pid}&keyword_type=product_id
+        → items[0].trend_counter.total_sales_count.value  (화면 '누적 거래수')
+
+    게이트 대상만 부른다 — 비포켓몬 TCG + 팩·박스, 실측 2,779종(재고보유 1,356종).
+    전 상품(70만)을 훑을 이유가 없다. 결과는 캐시해 사이클 내 재조회를 막는다.
+    조회 실패는 0 이 아니라 **적재값 그대로**를 돌려준다 — 실패를 차단 근거로 쓰면
+    지금과 같은 대량 오차단이 다시 난다.
+    """
+    _k = str(kid)
+    _v = _g_trade_counts.get(_k)
+    if _v is not None:
+        return int(_v)
+    tok = await _partner_token()
+    if not tok:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(
+                "https://partner-api.kream.co.kr/api/v1/products/",
+                headers={
+                    "Authorization": f"Bearer {tok}",
+                    "User-Agent": "Mozilla/5.0",
+                    "Referer": "https://partner.kream.co.kr/business/products",
+                    "Accept": "application/json",
+                },
+                params={
+                    "cursor": 1,
+                    "per_page": 1,
+                    "keyword": _k,
+                    "keyword_type": "product_id",
+                },
+            )
+        if r.status_code != 200:
+            return 0
+        it = ((r.json() or {}).get("items") or [None])[0]
+        _tc = (
+            ((it or {}).get("trend_counter") or {}).get("total_sales_count") or {}
+        ).get("value")
+        if _tc is None:
+            return 0
+        _g_trade_counts[_k] = int(_tc)
+        return int(_tc)
+    except Exception:
+        return 0
 
 
 # 보관 신청 불가 판정된 (kid|opt) — keep 재시도로 불필요한 400 반복 안 하려 캐시.
@@ -4985,7 +5042,7 @@ async def _process_expired_asks(
             # [2026-08-06] 재게시 쿨다운 폐기 — 위 통합 리스톡과 동일 사유.
             if (
                 _key in _g_failed_posts
-                or not _trade_ok(kid, pname)
+                or not await _trade_ok(kid, pname)
                 or (kid, opt.replace(" ", "")) in _g_unfulfilled
             ):
                 c["guard"] += 1
@@ -6426,7 +6483,7 @@ async def run_kream_unified_once() -> dict:
                         continue
                     if _key_p in _g_failed_posts:
                         continue
-                    if not _trade_ok(_kid_p, _pn_p):
+                    if not await _trade_ok(_kid_p, _pn_p):
                         continue
                     if (str(_kid_p), _nm_p.replace(" ", "")) in _g_unfulfilled:
                         continue
@@ -6627,7 +6684,7 @@ async def run_kream_unified_once() -> dict:
                 # 거래이력<1 이면 애초에 등록되면 안 됨(체결 시 손해). 갱신 유지 대신 삭제.
                 # 이관 전/게이트구멍으로 잘못 입찰된 것 자동 정리 + 재발 방지. [2026-07-25]
                 # 안전장치: 거래카운트 로드 실패(빈 맵)면 전 팩/박스 대량삭제 위험 → 스킵.
-                if _g_trade_counts and not _trade_ok(kid, pname):
+                if not await _trade_ok(kid, pname):
                     counts["delete"] += 1
                     counts["gate_del"] = counts.get("gate_del", 0) + 1
                     pend_delete.append((kid, nm))
@@ -6668,7 +6725,7 @@ async def run_kream_unified_once() -> dict:
                 if _key in _g_failed_posts:
                     rs["failed"] += 1
                     _skip_note("실패쿨다운", kid, nm)
-                elif not _trade_ok(kid, pname):
+                elif not await _trade_ok(kid, pname):
                     rs["trade"] += 1
                     _skip_note("거래게이트", kid, nm, str(pname)[:20])
                 elif (str(kid), nm.replace(" ", "")) in _g_unfulfilled:
