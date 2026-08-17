@@ -43,7 +43,12 @@ export function useSettlement() {
   // [2026-08-03] '해외배송' 문자열이 있을 때만 차감해 신발 옵션(275, 240(US 5.5))이 전부
   // 빠졌다 — 정산=결제, 수수료율 0.0% 로 표시되던 버그.
   const getRevenue = (o: SambaOrder): number => {
-    const isKream = String(o.source_site || '').toUpperCase().includes('KREAM')
+    // [중요] 판정 기준은 **판매처**(source)다. source_site 는 소싱처라 쓰면 안 된다.
+    // 크림에서 소싱해 eBay 로 판 주문(source=ebay / source_site=KREAM)까지 크림 판매로
+    // 오인해 크림 수수료를 한 번 더 깎았다. eBay revenue 는 Finance API 실제 정산액
+    // (수수료·환전료 이미 차감)이라 여기서 또 빼면 이중 차감이다.
+    // 실측(2026-08-17): 98,595 → 8,820 추가 차감 → 89,775 로 표시, 실제 입금과 불일치.
+    const isKream = String(o.source || '').toUpperCase().includes('KREAM')
       || String(o.sales_channel_alias || '').toUpperCase().includes('KREAM')
     const rev = o.revenue || 0
     if (!isKream || rev <= 0) return rev

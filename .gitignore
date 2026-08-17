@@ -649,3 +649,4 @@ backend/scripts/set_musinsa_cookie_direct.py
 # DB/계정 백업 산출물 — 자격증명 포함 가능, 저장소에 두지 않는다 (2026-07-21)
 backups/*.json
 backups/*.sql
+deploy/local/.deploy.lock
