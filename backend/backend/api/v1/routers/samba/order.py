@@ -1417,8 +1417,12 @@ async def search_orders(
 
 @router.get("/by-date-range-paged", response_model=PaginatedOrdersResponse)
 async def list_orders_by_date_range_paged(
-    start: str = Query(..., description="start date YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    end: str = Query(..., description="end date YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    start: str = Query(
+        ..., description="start date YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
+    end: str = Query(
+        ..., description="end date YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=500),
     market_filter: str = Query(""),
@@ -1872,8 +1876,12 @@ async def export_orders_excel(
 
 @router.get("/analytics-aggregate")
 async def analytics_aggregate(
-    start: str = Query(..., description="시작일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    end: str = Query(..., description="종료일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    start: str = Query(
+        ..., description="시작일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
+    end: str = Query(
+        ..., description="종료일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
@@ -1954,8 +1962,12 @@ async def analytics_aggregate(
 
 @router.get("/by-date-range", response_model=list[SambaOrder])
 async def list_orders_by_date_range(
-    start: str = Query(..., description="시작일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
-    end: str = Query(..., description="종료일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    start: str = Query(
+        ..., description="시작일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
+    end: str = Query(
+        ..., description="종료일 YYYY-MM-DD", pattern=r"^\d{4}-\d{2}-\d{2}$"
+    ),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
@@ -6422,7 +6434,17 @@ async def sync_orders_from_markets(
                 # 활성 피드(get_orders 는 10~50 만 요청, 90 제외)에서 빠져 이 집합에 없으므로
                 # 정상 취소 검출엔 영향 없음.
                 _LO_ACTIVE_STEPS = {
-                    "10", "11", "12", "13", "14", "20", "24", "25", "30", "40", "50",
+                    "10",
+                    "11",
+                    "12",
+                    "13",
+                    "14",
+                    "20",
+                    "24",
+                    "25",
+                    "30",
+                    "40",
+                    "50",
                 }
                 _lo_active_od_nos = {
                     str(ro.get("odNo", ""))
@@ -8366,7 +8388,9 @@ async def sync_orders_from_markets(
                                     "source": "ssg",
                                     "product_id": str(_ret.get("itemId", "") or ""),
                                     "product_name": str(_ret.get("itemNm", "") or ""),
-                                    "product_option": str(_ret.get("uitemNm", "") or ""),
+                                    "product_option": str(
+                                        _ret.get("uitemNm", "") or ""
+                                    ),
                                     "customer_name": str(
                                         _ret.get("rcptpeNm", "")
                                         or _ret.get("ordpeNm", "")
@@ -12716,9 +12740,6 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         # 이미 있는 값이라 수집 시점에 바로 채운다.
         "product_image": str(item.get("logo_url", "") or ""),
         "product_option": item.get("properties", "") or "",
-        # POIZON은 주문 응답에 대표이미지 URL을 직접 내려줌 — 로컬 수집상품
-        # 매칭(market_product_nos)에 기대지 않고 바로 채워 "No IMG" 방지.
-        "product_image": item.get("logo_url", "") or "",
         "quantity": quantity,
         "sale_price": product_price,
         "revenue": revenue,
