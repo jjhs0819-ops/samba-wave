@@ -310,23 +310,37 @@ class EbayPlugin(MarketPlugin):
             }
 
         # 중복 상품 등록 방지 — 신규 등록(existing_no 없음)일 때만 체크.
-        # 같은 계정에 name_en 동일한 다른 상품이 이미 registered_accounts로 등록돼
-        # 있으면 스킵 (2026-07-13 잉어킹 62건 중복등록 → 정책위반 삭제 위험 사고 재발 방지).
+        # (2026-07-13 잉어킹 62건 중복등록 → 정책위반 삭제 위험 사고 재발 방지)
+        #
+        # [2026-08-17] 판별키를 품번(style_code) 우선으로 변경.
+        #   이름만 비교하면 TCG 카드에서 오차단이 난다. 예: 피카츄 V-UNION 3장
+        #   (S8A025-028 / S8A026-028 / S8A027-028)은 크림 상품명이 전부 같지만
+        #   서로 다른 카드다. "같은 이름"이 아니라 "같은 카드"를 막아야 한다.
+        #   품번이 없는 소싱처(번장 등)는 기존대로 name_en 으로 폴백한다.
         if not existing_no and session and account is not None:
             _acc_id = str(getattr(account, "id", "") or "")
             _self_id = product.get("id") if isinstance(product, dict) else None
             _name_en = product.get("name_en") or product.get("ebay_title")
-            if _acc_id and _self_id and _name_en:
+            _style = str(product.get("style_code") or "").strip()
+            if _acc_id and _self_id and (_style or _name_en):
                 from sqlalchemy import text as _sa_text
 
+                if _style and _style not in ("-",):
+                    _key_col, _key_val, _key_label = (
+                        "style_code",
+                        _style,
+                        f"품번 {_style}",
+                    )
+                else:
+                    _key_col, _key_val, _key_label = "name_en", _name_en, _name_en
                 _dup = await session.execute(
                     _sa_text(
-                        "SELECT id FROM samba_collected_product "
-                        "WHERE name_en = :name_en AND id != :self_id "
+                        f"SELECT id FROM samba_collected_product "  # noqa: S608 — 컬럼명은 위 분기 리터럴만
+                        f"WHERE {_key_col} = :key_val AND id != :self_id "
                         "AND registered_accounts::text LIKE :acc_pattern LIMIT 1"
                     ),
                     {
-                        "name_en": _name_en,
+                        "key_val": _key_val,
                         "self_id": _self_id,
                         "acc_pattern": f"%{_acc_id}%",
                     },
@@ -335,7 +349,7 @@ class EbayPlugin(MarketPlugin):
                 if _dup_row:
                     return {
                         "success": False,
-                        "message": f"중복 등록 차단 — 같은 상품({_name_en})이 이미 이 계정에 등록됨 ({_dup_row[0]})",
+                        "message": f"중복 등록 차단 — 같은 카드({_key_label})가 이미 이 계정에 등록됨 ({_dup_row[0]})",
                     }
 
         # Business Policy ID — 계정 extras 또는 samba_settings에서 조회.

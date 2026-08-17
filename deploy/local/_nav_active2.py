@@ -8,10 +8,12 @@ c = CDPConn(tab_id)
 c.call("Runtime.enable")
 c.call("Page.enable")
 c.call("Page.bringToFront")
-time.sleep(3)
+time.sleep(0.5)
+c.send("Page.navigate", {"url": "https://www.ebay.com/sh/lst/active"})
+time.sleep(4)
 r = c.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
 text = r.get("result", {}).get("result", {}).get("value", "") or ""
-with open("C:/tmp/ebay_active_list.txt", "w", encoding="utf-8") as f:
+with open("C:/tmp/ebay_active_list2.txt", "w", encoding="utf-8") as f:
     f.write(text)
 print("len", len(text))
 c.close()
