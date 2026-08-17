@@ -62,7 +62,9 @@ def test_한글_부분일치_유지의_대가():
     이건 매칭 방식이 아니라 금지어 목록에서 다룰 문제 — 의도적으로 남긴 동작이라
     바뀌면 알아채도록 테스트로 고정해 둔다.
     """
-    assert matches_forbidden("루스 컷라인 트랙 팬츠 - 알루미나 / JW0981", "루미나") is True
+    assert (
+        matches_forbidden("루스 컷라인 트랙 팬츠 - 알루미나 / JW0981", "루미나") is True
+    )
 
 
 def test_숫자포함_금지어도_경계적용():

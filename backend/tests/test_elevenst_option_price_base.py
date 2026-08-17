@@ -28,8 +28,7 @@ def test_활성옵션_있으면_최저가가_base():
 def test_전량_품절이어도_0원_옵션이_남는다():
     """실측 회귀: 하바이아나스 슬라이드 클래식(29,500) — 전 옵션 재고 0."""
     options = [
-        {"name": s, "price": 29500, "stock": 0}
-        for s in ("230", "240", "250", "270")
+        {"name": s, "price": 29500, "stock": 0} for s in ("230", "240", "250", "270")
     ]
     xml = _build_elevenst_option_xml(options, 0, None)
     prices = _opt_prices(xml)

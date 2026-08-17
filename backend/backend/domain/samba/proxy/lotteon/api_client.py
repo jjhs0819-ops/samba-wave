@@ -2057,7 +2057,9 @@ class LotteonClient:
         except LotteonApiError as e:
             # 3000=조회내역 없음(정상), 그 외는 로그만 남기고 빈 리스트(수집 중단 방지)
             if "3000" not in str(e):
-                logger.warning(f"[롯데ON] 반품(returnRequestSearch) 조회 실패(무시): {e}")
+                logger.warning(
+                    f"[롯데ON] 반품(returnRequestSearch) 조회 실패(무시): {e}"
+                )
             return []
         raw_list = data.get("data") or []
         if not isinstance(raw_list, list):

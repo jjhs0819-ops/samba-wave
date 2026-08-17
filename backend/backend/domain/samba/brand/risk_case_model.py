@@ -46,10 +46,14 @@ class SambaBrandRiskCase(SQLModel, table=True):
     normalized_brand: str = Field(sa_column=Column(Text, nullable=False, index=True))
 
     # 마켓 표기 원문 그대로 저장(예: "쿠팡", "롯데ON"). 표준화는 이후 과제.
-    marketplace: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    marketplace: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 신고 유형 (지재권/저작권/상표권/가품의심 등, 자유텍스트)
-    report_type: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    report_type: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 권리자 또는 대행사 (예: "데상트코리아", "법무법인 산음", "Marq Vision")
     rights_holder_or_agent: Optional[str] = Field(
@@ -57,32 +61,44 @@ class SambaBrandRiskCase(SQLModel, table=True):
     )
 
     # 접촉 경로 (메일/문자/전화/플랫폼 알림 등)
-    contact_channel: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    contact_channel: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 제보자/경험자 (예: "강지안 공유", "판매자 직접")
     reporter: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # DIRECT | RELAY | RUMOR (brand/risk_constants.EXPERIENCE_TYPES)
-    experience_type: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    experience_type: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # ORIGINAL | CUTOUT | CROPPED | AI_TRANSFORMED | DIRECT_PHOTO | UNKNOWN
     # (brand/risk_constants.IMAGE_STATES) — 이 사건에서 실제 쓰인 이미지 상태.
-    image_state: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    image_state: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 결과 (예: "판매중지", "계정정지→해제", "메일 수신만")
     result: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 계정 영향 (예: "계정정지 연결", "영향 없음")
-    account_impact: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    account_impact: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # A | B | C | D | UNKNOWN (brand/risk_constants.CONFIDENCE_LEVELS)
-    confidence: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    confidence: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 출처 (예: "RISK_CASE_DATABASE.md", "카카오톡 공유", "직접 확인")
     source: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
     # 원문 요약 — 사건 설명 그대로
-    raw_summary: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    raw_summary: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
 
     # 사건 발생일. 문서상 "미상"인 사건이 많아 nullable — 모르면 비워둔다
     # (추측으로 채우지 않는다).

@@ -633,9 +633,7 @@ def _normalize_composition(raw: Any) -> list[str]:
     if not isinstance(raw, (list, tuple)):
         return []
     if any(isinstance(t, (list, tuple)) for t in raw):
-        cands = [
-            _normalize_composition(t) for t in raw if isinstance(t, (list, tuple))
-        ]
+        cands = [_normalize_composition(t) for t in raw if isinstance(t, (list, tuple))]
         return [c for c in cands if c]
     return [t for t in raw if isinstance(t, str)]
 
@@ -1947,7 +1945,9 @@ class SambaShipmentService:
                         f"{_mk} 설정을 추가하거나, 해당 마켓을 판매하는 정책으로 상품을 옮기세요."
                     )
                 else:
-                    _err = "정책에 해당 계정이 없어 전송 불가 (정책 > 마켓 계정 설정 확인)"
+                    _err = (
+                        "정책에 해당 계정이 없어 전송 불가 (정책 > 마켓 계정 설정 확인)"
+                    )
                 await self.repo.update_async(
                     shipment.id,
                     status="failed",
@@ -2802,9 +2802,8 @@ class SambaShipmentService:
                     # 전 옵션 품절→마켓삭제 판정(위쪽)보다 반드시 뒤에 위치 — 캡이
                     # 삭제 오발동을 유발하지 않도록. options는 새 리스트로 교체(깊은 복사) —
                     # 얕은 복사(dict(product_dict))로 원본 product_dict/DB 오염 방지.
-                    if (
-                        market_type in _LOW_STOCK_SEND_CAP_MARKETS
-                        and acct_product.get("options")
+                    if market_type in _LOW_STOCK_SEND_CAP_MARKETS and acct_product.get(
+                        "options"
                     ):
                         _capped_opts = []
                         for _opt in acct_product["options"]:

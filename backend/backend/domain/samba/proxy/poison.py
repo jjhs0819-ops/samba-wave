@@ -181,7 +181,10 @@ class PoisonClient:
     # ------------------------------------------------------------------
 
     async def query_sku_by_article_number(
-        self, article_number: str, region: str | None = None, language: str | None = None
+        self,
+        article_number: str,
+        region: str | None = None,
+        language: str | None = None,
     ) -> list[dict[str, Any]]:
         """브랜드 공식품번으로 카탈로그 SKU 조회 → 사이즈별 globalSkuId 목록.
 

@@ -156,9 +156,7 @@ def downgrade() -> None:
         if _has_index("ix_brand_risk_case_tenant"):
             op.drop_index("ix_brand_risk_case_tenant", table_name=CASE_TABLE)
         if _has_index("ix_brand_risk_case_normalized_brand"):
-            op.drop_index(
-                "ix_brand_risk_case_normalized_brand", table_name=CASE_TABLE
-            )
+            op.drop_index("ix_brand_risk_case_normalized_brand", table_name=CASE_TABLE)
         op.drop_table(CASE_TABLE)
 
     if _has_index("ix_brand_restriction_ip_risk_level"):

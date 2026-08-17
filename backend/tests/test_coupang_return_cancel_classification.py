@@ -12,7 +12,9 @@ RELEASE_STOP_*(출고중지요청, 예: RELEASE_STOP_UNCHECKED) 이다 — 실�
 from __future__ import annotations
 
 
-def _effective_type(return_type: str, receipt_type: str = "", receipt_status: str = "") -> str:
+def _effective_type(
+    return_type: str, receipt_type: str = "", receipt_status: str = ""
+) -> str:
     """returns.py _sync_coupang_items 의 effective_type 표현식 동일.
 
     출고중지요청(receiptStatus=RELEASE_STOP_*/RU) 또는 CANCEL 카테고리
@@ -20,9 +22,7 @@ def _effective_type(return_type: str, receipt_type: str = "", receipt_status: st
     """
     rt = (receipt_type or "").upper()
     rs = (receipt_status or "").upper()
-    is_cancel_claim = (
-        rt == "CANCEL" or rs.startswith("RELEASE_STOP") or rs == "RU"
-    )
+    is_cancel_claim = rt == "CANCEL" or rs.startswith("RELEASE_STOP") or rs == "RU"
     return "cancel" if return_type == "return" and is_cancel_claim else return_type
 
 

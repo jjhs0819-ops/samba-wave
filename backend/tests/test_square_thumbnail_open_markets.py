@@ -7,7 +7,6 @@
 """
 
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
@@ -37,9 +36,7 @@ def _stub_image_service(monkeypatch):
 
 
 def _run(market_type, product):
-    return asyncio.run(
-        dispatcher._ensure_square_thumbnail(None, market_type, product)
-    )
+    return asyncio.run(dispatcher._ensure_square_thumbnail(None, market_type, product))
 
 
 @pytest.mark.parametrize(

@@ -249,7 +249,9 @@ async def run(
                 f"중복삭제 {_rm['dup_deleted']}",
             )
     except Exception as _rm_err:
-        logger.warning(f"[order_sync] {job.id} 반품 정합 유지보수 실패(무시): {_rm_err}")
+        logger.warning(
+            f"[order_sync] {job.id} 반품 정합 유지보수 실패(무시): {_rm_err}"
+        )
 
     # 주문폴러 발행 잡만 역마진/재고없음 자동판정 실행 (구 _run_direct_order_sync 이관,
     # 2026-06-26). 수동 '전체마켓 주문수집' 버튼(source 없음)은 기존대로 동작 무변경.

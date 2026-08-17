@@ -19,7 +19,7 @@ DB 에 연결이 안 되면 각 테스트는 실패가 아니라 skip 된다(환
 결함을 구분하기 위함).
 """
 
-from datetime import date, timezone, datetime
+from datetime import date
 from pathlib import Path
 import sys
 
@@ -94,12 +94,16 @@ class TestExistingBrandGuardRegression:
             guard = BrandGuardService(session)
             for brand, expected in self._BEFORE.items():
                 row = (
-                    await session.execute(
-                        select(SambaBrandRestriction).where(
-                            SambaBrandRestriction.brand == brand
+                    (
+                        await session.execute(
+                            select(SambaBrandRestriction).where(
+                                SambaBrandRestriction.brand == brand
+                            )
                         )
                     )
-                ).scalars().one()
+                    .scalars()
+                    .one()
+                )
                 result = await guard.check(
                     brand,
                     coupang_client=None,
@@ -148,7 +152,10 @@ class TestNewAxesExpressiveness:
     @pytest.mark.asyncio
     async def test_brooks_pattern_ip_risk_and_pre_auth_independent(self) -> None:
         """브룩스 실사례 패턴: ip_risk=NO_RISK_FOUND 이면서 coupang_pre_auth=REQUIRED."""
-        from backend.domain.samba.brand.model import SambaBrandRestriction, normalize_brand
+        from backend.domain.samba.brand.model import (
+            SambaBrandRestriction,
+            normalize_brand,
+        )
         from backend.domain.samba.brand.risk_constants import (
             COUPANG_PRE_AUTH_REQUIRED,
             IP_RISK_NO_RISK_FOUND,
@@ -184,7 +191,10 @@ class TestNewAxesExpressiveness:
     @pytest.mark.asyncio
     async def test_descente_marketplace_risk_per_market(self) -> None:
         """데상트 패턴: 마켓별로 다른 IP Risk 등급을 동시에 저장."""
-        from backend.domain.samba.brand.model import SambaBrandRestriction, normalize_brand
+        from backend.domain.samba.brand.model import (
+            SambaBrandRestriction,
+            normalize_brand,
+        )
         from backend.domain.samba.brand.risk_constants import (
             IP_RISK_BLOCK,
             IP_RISK_BLOCK_STRONG,
@@ -278,7 +288,10 @@ class TestLegacyConflictDetection:
         """레거시(forbidden_word 전체마켓 차단) + 신규축(NO_RISK_FOUND+REQUIRED)
         조합이면 LEGACY_CONFLICT 로 잡혀야 한다 — 실제 ARC`TERYX 패턴 재현."""
         from backend.domain.samba.brand.legacy_conflict import check_legacy_conflict
-        from backend.domain.samba.brand.model import SambaBrandRestriction, normalize_brand
+        from backend.domain.samba.brand.model import (
+            SambaBrandRestriction,
+            normalize_brand,
+        )
         from backend.domain.samba.brand.risk_constants import (
             COUPANG_PRE_AUTH_REQUIRED,
             IP_RISK_NO_RISK_FOUND,

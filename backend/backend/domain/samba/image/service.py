@@ -1515,7 +1515,12 @@ class ImageTransformService:
                     # 안 켜서, 정사각 대형이미지(1024x1024)가 need_downscale=False → 조기반환
                     # 으로 그대로 통과되던 누락. pad_square=False 호출부는 조건 불변(무회귀).
                     need_downscale = bool(
-                        (enforce_max_dim or pad_square or crop_square or not strict_pixel)
+                        (
+                            enforce_max_dim
+                            or pad_square
+                            or crop_square
+                            or not strict_pixel
+                        )
                         and max(w, h) > max_dim
                     )
                     over_bytes = len(image_bytes) > max_bytes
@@ -1587,10 +1592,9 @@ class ImageTransformService:
                     # 내용 왜곡·잘림 없이 짧은 변에 흰 여백만 추가해 N×N 정사각 생성.
                     # crop_square 요청이었는데 상한 초과로 크롭을 못 한 경우도 여기로 온다
                     # (정사각 자체는 만들어야 하므로).
-                    if (
-                        (pad_square or (crop_square and not _did_crop))
-                        and img.size[0] != img.size[1]
-                    ):
+                    if (pad_square or (crop_square and not _did_crop)) and img.size[
+                        0
+                    ] != img.size[1]:
                         _w3, _h3 = img.size
                         _side = max(_w3, _h3)
                         _sq = Image.new("RGB", (_side, _side), (255, 255, 255))
@@ -2137,7 +2141,12 @@ class ImageTransformService:
                                     img_url, client=_dl_client
                                 )
                                 transformed = await self._transform_image_ai(
-                                    provider, ai_key, ai_model_name, img, m2p_prompt, None
+                                    provider,
+                                    ai_key,
+                                    ai_model_name,
+                                    img,
+                                    m2p_prompt,
+                                    None,
                                 )
                                 new_url = await self._save_image(transformed, img_url)
                                 new_details.append(new_url)

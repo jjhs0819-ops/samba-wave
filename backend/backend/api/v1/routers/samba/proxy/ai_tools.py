@@ -419,7 +419,9 @@ async def transform_images(
     )
     mode = request.get("mode", "background")  # background | scene | model
     model_preset = request.get("model_preset", "female_v1")
-    provider = request.get("provider", "gemini")  # gemini | openai — 배경제거는 무관(rembg 고정)
+    provider = request.get(
+        "provider", "gemini"
+    )  # gemini | openai — 배경제거는 무관(rembg 고정)
 
     # 그룹 ID로 요청 시 해당 그룹의 상품 ID 조회
     if group_ids and not product_ids:

@@ -2711,7 +2711,9 @@ def _build_elevenst_option_xml(
     # 모든 옵션에 상품가만큼 추가금이 붙고, 11번가가 "옵션가격이 0원인 옵션이
     # 하나 이상이 있어야 합니다"(500) 로 등록을 거부한다.
     # (실측: 하바이아나스 5건 — 재고 1~2 뿐이라 캡에 전부 걸려 전송 실패)
-    _all_prices = [int(o.get("price") or 0) for o in options if int(o.get("price") or 0) > 0]
+    _all_prices = [
+        int(o.get("price") or 0) for o in options if int(o.get("price") or 0) > 0
+    ]
     if _active_prices:
         diff_base = min(_active_prices)
     elif _all_prices:

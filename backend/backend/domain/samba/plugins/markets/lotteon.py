@@ -1258,7 +1258,7 @@ async def _search_brand_no(client: Any, brand_name: str) -> str:
                 return str(brd_no)
             logger.info(
                 f"[롯데ON] 브랜드 정확일치 없음 ({candidate!r}) — "
-                f"후보 {[ (i.get('data', i) or {}).get('brnd_nm') for i in items[:5] ]}"
+                f"후보 {[(i.get('data', i) or {}).get('brnd_nm') for i in items[:5]]}"
             )
         except Exception as e:
             logger.warning(f"[롯데ON] 브랜드 검색 실패 ({candidate!r}): {e}")
@@ -2074,9 +2074,9 @@ class LotteonPlugin(MarketPlugin):
         try:
             from backend.core.config import settings as _cfg
 
-            _proxy_base = (
-                getattr(_cfg, "lotteon_image_proxy_base", "") or ""
-            ).rstrip("/")
+            _proxy_base = (getattr(_cfg, "lotteon_image_proxy_base", "") or "").rstrip(
+                "/"
+            )
             if _proxy_base:
                 from backend.domain.samba.image.service import ImageTransformService
 
@@ -2110,7 +2110,9 @@ class LotteonPlugin(MarketPlugin):
                                 _r = await _c.head(_probe)
                                 _proxy_alive = _r.status_code == 200
                         except Exception as _pe:
-                            logger.warning(f"[롯데ON] 프록시 확인 실패({_probe}): {_pe}")
+                            logger.warning(
+                                f"[롯데ON] 프록시 확인 실패({_probe}): {_pe}"
+                            )
                         if not _proxy_alive:
                             logger.warning(
                                 f"[롯데ON] 이미지 프록시 미가용 — R2 URL 그대로 전송한다"

@@ -73,9 +73,13 @@ def _claim_status_from_order(status: str | None, shipping_status: str | None) ->
     # shipping \uc774 '\ubc18\ud488\uc694\uccad/\uad50\ud658\uc694\uccad/\ucde8\uc18c\uc694\uccad'(\uc9c4\ud589\uc911)\uc774\uba74 completed \ub85c \uc624\ud310\ud558\uc9c0 \uc54a\ub294\ub2e4.
     if "\uac70\ubd80" in ship_text:  # \uac70\ubd80
         return "rejected"
-    if "\uc644\ub8cc" in ship_text or "\ub9c8\uac10" in ship_text:  # \ubc18\ud488\uc644\ub8cc/\ucde8\uc18c\uc644\ub8cc/\uad6c\ub9e4\ud655\uc815 \ub4f1
+    if (
+        "\uc644\ub8cc" in ship_text or "\ub9c8\uac10" in ship_text
+    ):  # \ubc18\ud488\uc644\ub8cc/\ucde8\uc18c\uc644\ub8cc/\uad6c\ub9e4\ud655\uc815 \ub4f1
         return "completed"
-    if "\uc694\uccad" in ship_text:  # \ubc18\ud488\uc694\uccad/\uad50\ud658\uc694\uccad/\ucde8\uc18c\uc694\uccad \u2192 \uc9c4\ud589\uc911
+    if (
+        "\uc694\uccad" in ship_text
+    ):  # \ubc18\ud488\uc694\uccad/\uad50\ud658\uc694\uccad/\ucde8\uc18c\uc694\uccad \u2192 \uc9c4\ud589\uc911
         return "requested"
     if status_text in {"cancelled", "returned", "exchanged"}:
         return "completed"

@@ -84,7 +84,9 @@ async def run(
             accs = [a for a in accs if a.id in _id_set]
 
         total = len(accs)
-        _add_job_log(job.id, f"전체마켓 반품교환 수집 시작 ({total}개 계정, 최근 {days}일)")
+        _add_job_log(
+            job.id, f"전체마켓 반품교환 수집 시작 ({total}개 계정, 최근 {days}일)"
+        )
 
         # 초기 진행률 fresh 세션 격리 (order_sync 와 동일, issue #562)
         try:
@@ -93,7 +95,9 @@ async def run(
                 await _init_repo.update_progress(job.id, 0, total)
                 await _init_s.commit()
         except Exception as _ie:
-            logger.warning(f"[returns_sync] {job.id} 초기 진행률 설정 실패(무시): {_ie}")
+            logger.warning(
+                f"[returns_sync] {job.id} 초기 진행률 설정 실패(무시): {_ie}"
+            )
 
         total_synced = 0
         all_results: list[dict[str, Any]] = []
@@ -250,7 +254,9 @@ async def run(
                     )
                 _add_job_log(job.id, "반품/주문 상태 정합 후처리 완료")
             except Exception as _fe:
-                logger.warning(f"[returns_sync] {job.id} finalize 후처리 실패(무시): {_fe}")
+                logger.warning(
+                    f"[returns_sync] {job.id} finalize 후처리 실패(무시): {_fe}"
+                )
                 _add_job_log(job.id, f"후처리 경고: {_fe}")
 
         _add_job_log(

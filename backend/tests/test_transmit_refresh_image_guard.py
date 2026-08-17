@@ -43,11 +43,11 @@ class TestTransmitRefreshImageGuard:
     def test_guard_applied_before_images_assignment(self) -> None:
         """가드가 images/detail_images 대입보다 앞에 있어야 실제로 막힌다."""
         i_guard = self.src.find("_img_locked")
-        i_assign = self.src.find('refresh_updates["images"] = refresh_result.new_images')
-        assert i_guard >= 0 and i_assign >= 0
-        assert i_guard < i_assign, (
-            "가드가 images 대입보다 뒤에 있어 실효가 없음"
+        i_assign = self.src.find(
+            'refresh_updates["images"] = refresh_result.new_images'
         )
+        assert i_guard >= 0 and i_assign >= 0
+        assert i_guard < i_assign, "가드가 images 대입보다 뒤에 있어 실효가 없음"
 
     def test_update_image_depends_on_guard(self) -> None:
         """_update_image 계산에 가드가 실제로 결합돼 있어야 한다."""

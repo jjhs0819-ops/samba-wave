@@ -31,8 +31,13 @@ def _rule():
     return SimpleNamespace(
         name_composition=["{상품명}"],
         market_name_compositions={"11st": CHAIN},
-        replacements=[], replace_mode="simultaneous", prefix="", suffix="",
-        dedup_enabled=False, market_prefixes=None, market_suffixes=None,
+        replacements=[],
+        replace_mode="simultaneous",
+        prefix="",
+        suffix="",
+        dedup_enabled=False,
+        market_prefixes=None,
+        market_suffixes=None,
     )
 
 

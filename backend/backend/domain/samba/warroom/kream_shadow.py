@@ -3398,19 +3398,83 @@ _PROD_CACHE_TTL = 90.0
 _g_prod_cache: dict[str, tuple[float, list]] = {}
 
 
+# [2026-08-17] 크림이 고친 상품명·사진을 **다시 가져오는 경로가 없었다.**
+# 매칭 시점 값을 resell_matches 에 박아두고 끝이라, 크림이 이름·사진을 바꿔도
+# 우리는 옛 값을 쓴다. 주문 화면(order.py)이 그 값으로 product_name 을 덮어써서
+# 주문에도 그대로 나간다.
+#   실측 644421: 크림이 '그레이'→'네이비'로 정정 + 사진 교체했는데 우리는 그레이 유지
+#   실측 주문 걸린 456종 중 251종이 크림 현재 이름·사진과 달랐다(색상까지 다른 것 20종)
+# 사이클이 어차피 GET /products/{id} 를 부르므로, 그 응답의 이름·사진을 같이 거둬
+# 사이클 말미에 한 번 반영한다 — 추가 호출 0.
+_g_prod_meta: dict[str, tuple[str, str, str]] = {}  # pid -> (name_ko, name_en, image)
+
+
+def _pick_main_image(d: dict) -> str:
+    for x in d.get("main_images") or []:
+        if isinstance(x, str) and x.startswith("http"):
+            return x
+        if isinstance(x, dict):
+            for k in ("url", "image", "src"):
+                if str(x.get(k) or "").startswith("http"):
+                    return str(x[k])
+    return ""
+
+
 async def _fetch_prod_options(h: dict, pid, fresh: bool = False) -> list:
-    """상품 옵션 전량(시세 동봉). 사이클 내 TTL 캐시."""
+    """상품 옵션 전량(시세 동봉). 사이클 내 TTL 캐시.
+
+    같은 응답에 있는 이름·사진도 _g_prod_meta 에 모아둔다(사이클 말미 DB 반영용).
+    """
     key = str(pid)
     if not fresh:
         hit = _g_prod_cache.get(key)
         if hit and (_now_ts() - hit[0]) < _PROD_CACHE_TTL:
             return hit[1]
     r = await _rq("GET", f"{KREAM_OPENAPI_BASE}/products/{pid}", headers=h)
-    opts = (r.json() or {}).get("options") or []
+    d = r.json() or {}
+    opts = d.get("options") or []
+    _ko = str(d.get("translated_name") or "").strip()
+    if _ko:
+        _g_prod_meta[key] = (_ko, str(d.get("name") or "").strip(), _pick_main_image(d))
     # 빈 응답은 캐시하지 않는다 — 일시 실패를 TTL 동안 굳히면 무경쟁 오판으로 이어진다
     if opts:
         _g_prod_cache[key] = (_now_ts(), opts)
     return opts
+
+
+async def _sync_kream_meta() -> None:
+    """사이클 중 받아둔 크림 이름·사진을 DB 에 반영한다 — 다른 값일 때만 UPDATE."""
+    if not _g_prod_meta:
+        return
+    from backend.db.orm import get_write_session  # noqa: F811
+
+    upd = 0
+    try:
+        async with get_write_session() as s:
+            for pid, (ko, en, img) in list(_g_prod_meta.items()):
+                r = await s.execute(
+                    _text(
+                        "UPDATE samba_collected_product SET resell_matches = "
+                        "  jsonb_set(jsonb_set(jsonb_set(resell_matches::jsonb, "
+                        "    '{kream,name_ko}', to_jsonb(CAST(:ko AS text))), "
+                        "    '{kream,name_en}', to_jsonb(CAST(:en AS text))), "
+                        "    '{kream,image}', to_jsonb(CAST(:img AS text)))::json, "
+                        # 갱신시각은 건드리지 않는다 — 리스톡 정렬(오래된 순) 기준이다
+                        "  updated_at = updated_at "
+                        "WHERE resell_matches->'kream'->>'product_id' = :k "
+                        "  AND (COALESCE(resell_matches->'kream'->>'name_ko','') <> :ko "
+                        "       OR (:img <> '' AND "
+                        "           COALESCE(resell_matches->'kream'->>'image','') <> :img))"
+                    ),
+                    {"ko": ko, "en": en, "img": img, "k": str(pid)},
+                )
+                upd += r.rowcount or 0
+            await s.commit()
+    except Exception as exc:
+        logger.warning("[크림통합] 크림 메타 동기화 실패(무시): %s", exc)
+        return
+    if upd:
+        logger.info("[크림통합] 크림 이름·사진 갱신 %d건", upd)
 
 
 @_timed("크림상품_rival")
@@ -5064,6 +5128,7 @@ async def run_kream_unified_once() -> dict:
     _g_skip_samples = {}
     _g_drop.clear()
     _g_prod_cache.clear()  # 상품 시세 캐시는 사이클 경계에서 반드시 비운다
+    _g_prod_meta.clear()  # 크림 이름·사진 수집분도 사이클 단위
     _g_retry_kids.clear()  # 사이클마다 새로 모은다(스캔완료 제외 대상)
     _g_rival_fail.clear()  # 경쟁가 조회 실패 사유 집계
     total_products = len(products)
@@ -6394,6 +6459,8 @@ async def run_kream_unified_once() -> dict:
             _g_post_audit.get("unknown", 0),
             _g_post_audit["rank1"] * 100.0 / max(1, _g_post_audit["n"]),
         )
+    # 사이클 중 받아둔 크림 이름·사진을 DB 에 반영(추가 호출 없음)
+    await _sync_kream_meta()
     # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
     if _g_unjudged:
         _scanned -= _g_unjudged
