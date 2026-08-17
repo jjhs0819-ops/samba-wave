@@ -247,6 +247,105 @@ async def _rank_of(h: dict, ask_id) -> int | None:  # noqa: D401
     return None
 
 
+async def _load_ranks_from_partner() -> int:
+    """파트너 API 목록으로 **전 입찰의 실순위를 한 번에** 적재한다.
+
+    [2026-08-17] 공식 OpenAPI `/asks` 목록은 live_rank 가 null 이라, 우리는 순위를
+    `내가격 <= 시장최저` 로 추정했다. 그 추정은 **동가를 전부 1등으로 센다** —
+    크림은 값이 같으면 먼저 넣은 쪽이 1등이라 동가의 상당수가 실제 2등이다.
+      실측(2026-08-17): 추정 1등 36,300 vs 실제 1등 35,059 · 2등 2,845 (7.5%)
+      그래서 판매자센터 화면 1등 33,500 과 내부 집계가 계속 어긋났다.
+    판매자센터가 쓰는 파트너 API `market/asks` 목록에는 live_rank 가 채워져 온다.
+    상품별 추가 조회(_fetch_ask_counts)도, 단건 순위 조회도 필요 없다 — 목록 페이징
+    한 번으로 전량을 받는다(실측 37,944건 / 759페이지 / 약 12분).
+    """
+    import datetime as _dt  # noqa: F811
+
+    tok = await _partner_token()
+    if not tok:
+        logger.info("[크림통합] 파트너 토큰 없음 — 실순위 일괄적재 생략(추정으로 폴백)")
+        return 0
+    _H = {
+        "Authorization": f"Bearer {tok}",
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://partner.kream.co.kr/",
+        "Accept": "application/json",
+    }
+    _today = _dt.date.today()
+    _PER = 50
+
+    def _p(page: int) -> dict:
+        # 판매자센터가 보내는 파라미터 전부 — 빠뜨리면 400 이다.
+        return {
+            "cursor": page,
+            "per_page": _PER,
+            "sort": "",
+            "start_date": "2020-01-01",
+            "end_date": str(_today),
+            "status": "live",
+            "order_id": "",
+            "product_name": "",
+            "model_number": "",
+            "brand_ids": "",
+            "date_column": "date_created",
+            "price_column": "sale_price",
+            "keyword": "",
+            "keyword_type": "product_id",
+            "option_names": "",
+            "product_id": "",
+        }
+
+    def _take(items) -> None:
+        for x in items or []:
+            _aid, _rk = x.get("id"), x.get("live_rank")
+            if _aid and _rk is not None:
+                _g_live_rank[str(_aid)] = int(_rk)
+
+    _t0 = _time_mod.time()
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(_MARKET_ASKS_URL, headers=_H, params=_p(1))
+            if r.status_code != 200:
+                logger.info(
+                    "[크림통합] 파트너 순위목록 HTTP %s — 추정으로 폴백", r.status_code
+                )
+                return 0
+            d = r.json() or {}
+            _take(d.get("items"))
+            _total = int(d.get("total") or 0)
+            _pages = (_total + _PER - 1) // _PER
+            _sem = asyncio.Semaphore(4)
+
+            async def _one(p: int):
+                async with _sem:
+                    for _ in range(3):
+                        try:
+                            rr = await c.get(_MARKET_ASKS_URL, headers=_H, params=_p(p))
+                            if rr.status_code == 200:
+                                return (rr.json() or {}).get("items") or []
+                        except Exception:
+                            await asyncio.sleep(1)
+                    return []
+
+            for i in range(2, _pages + 1, 40):
+                for items in await asyncio.gather(
+                    *[_one(p) for p in range(i, min(i + 40, _pages + 1))]
+                ):
+                    _take(items)
+    except Exception as exc:
+        logger.info("[크림통합] 파트너 순위목록 실패(무시): %s", str(exc)[:80])
+        return len(_g_live_rank)
+    _r2 = sum(1 for v in _g_live_rank.values() if v >= 2)
+    logger.info(
+        "[크림통합] 실순위 일괄적재 %d건 %.0f초 — 2등이하 %d건 (%.1f%%)",
+        len(_g_live_rank),
+        _time_mod.time() - _t0,
+        _r2,
+        _r2 * 100.0 / max(1, len(_g_live_rank)),
+    )
+    return len(_g_live_rank)
+
+
 async def _load_live_ranks(
     h: dict, asks: list, priority_ids: list | None = None
 ) -> None:
@@ -2197,6 +2296,10 @@ def _decide_price_action(
 
     act, target, is_nocomp = "유지", cur, False
     if rank1:
+        # [2026-08-17] 동가 2등은 여기 오지 않는다 — live_rank 를 파트너 목록에서
+        # 전량 적재하므로(_load_ranks_from_partner) rank1 판정이 실값으로 갈린다.
+        # rank>=2 는 아래 비1등 분기로 가서 `market_low - 1000` 으로 조정된다.
+        # 동가면 market_low == cur 이라 그 값이 정확히 'cur - 1000' 이 된다.
         if cur == min_price - 1000:
             act = "유지(동률)"
         elif cur < min_price:
@@ -4975,10 +5078,19 @@ async def run_kream_unified_once() -> dict:
     # [2026-08-03] 조정 전에 실순위부터 확인한다 — 공식 목록은 live_rank 를 안 주고,
     # lowest_* 는 내가 최저일 때 내 가격만 되비춰 '이미 밀린 입찰'을 못 찾았다.
     # 실측: 표본 40건 중 10건이 2등 이하. 로테이션으로 전량을 순차 커버한다.
+    # [2026-08-17] 파트너 목록으로 **전량 실순위를 먼저 채운다.** 여기서 채우면
+    # 아래 _load_live_ranks 의 로테이션·단건조회가 사실상 불필요해진다(_rank_of 가
+    # 캐시 적중). 동가 2등(실측 2,845건)을 추정으로 놓치던 것을 없애는 게 목적이다.
+    # 주의: _load_live_ranks 는 진입 시 _g_live_rank 를 비운다. 그래서 **먼저** 돌리고,
+    # 파트너 적재를 나중에 얹는다(순서를 바꾸면 적재분이 지워진다).
     try:
         await _load_live_ranks(h, asks)
     except Exception as _e:
         logger.warning("[크림통합] 실순위 조회 실패(기존 로직 진행): %s", str(_e)[:80])
+    try:
+        await _load_ranks_from_partner()
+    except Exception as _e:
+        logger.warning("[크림통합] 파트너 실순위 적재 실패(무시): %s", str(_e)[:80])
     rate = await _jpy_krw_rate()
     if rate <= 0:
         # 환율을 모르면 판정 전체가 틀린다 — 폴백으로 진행하지 않고 이번 사이클을 쉰다.
