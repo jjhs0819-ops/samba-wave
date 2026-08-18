@@ -33,6 +33,11 @@
 | `kream_ebay_sync.py` | 본체 — 크림 구매내역 읽어 시트 갱신 |
 | `cdp_sheet_helpers.py` | 웨일 CDP(9223) 연결 헬퍼 |
 
+> **`cdp_sheet_helpers.py` 는 `deploy/local/` 에도 같은 파일이 있다. 지우지 말 것.**
+> 그 폴더의 스크립트 **90개**가 `from cdp_sheet_helpers import CDPConn` 로 같은 폴더에서
+> 불러 쓴다(2026-08-18 에 이 파일만 옮겼다가 그쪽이 통째로 깨졌다). 양쪽은 같은 내용을
+> 유지하고, 고칠 일이 있으면 두 곳 다 고친다.
+
 `deploy/local/kream_ebay_watch_once.py` 는 **껍데기**다. 스케줄러가 그 경로를
 가리키는데 스케줄러 수정에 관리자 권한이 필요해(0x80070005) 경로를 못 바꿨다.
 그 파일은 이 폴더의 같은 이름 파일을 불러 실행할 뿐이니 로직을 거기 쓰지 말 것.
