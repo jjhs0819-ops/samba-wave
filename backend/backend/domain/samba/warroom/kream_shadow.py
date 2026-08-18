@@ -2544,6 +2544,11 @@ def _is_pokemon_brand(brand: str) -> bool:
 
 
 _g_unfulfilled: set[tuple[str, str]] = set()
+# 검수 통과까지 재입찰을 막을 상품(크림 product_id) — **귀금속 시범 대상만**.
+# 61809 = 구찌 인터로킹 브레이슬릿(스니덩크 apparels/47256).
+# 개체 단위 상품이라 소싱만 걸고 재입찰하면 같은 물건이 두 번 팔린다.
+# 전체 적용은 2026-08-19 에 되돌렸다 — 여기 넣은 것만 적용된다.
+_INSPECT_HOLD_KIDS = {"61809"}
 # 즉시판매 보류 [로컬 이식] — 직전 스냅샷엔 있었는데 지금 사라진 입찰=팔린 것. 주문폴링(랙)
 # 을 기다리지 않고 판매 즉시 재입찰 차단. 소싱완료(sourcing_order_number)되면 해제, 6h 만료.
 _SET_SNAPSHOT = "kream_ask_snapshot"
@@ -2611,6 +2616,12 @@ async def _detect_and_hold_sold(asks: list) -> None:
                             )
                         ).all()
                     }
+                # [2026-08-19] 귀금속 시범(_INSPECT_HOLD_KIDS)은 소싱주문번호가
+                # 생겨도 풀지 않는다. 크림 검수 통과(delivered) 전까지 유지해야
+                # 같은 개체가 두 번 팔리지 않는다. 다른 상품은 종전대로 해제.
+                fulfilled = {
+                    k for k in fulfilled if k.split("|", 1)[0] not in _INSPECT_HOLD_KIDS
+                }
                 hold = {k: v for k, v in hold.items() if k not in fulfilled}
             except Exception:
                 pass
@@ -2806,6 +2817,47 @@ async def _load_restock_guards() -> None:
                 _g_unfulfilled.add((str(kid), str(opt or "").replace(" ", "")))
     except Exception as exc:
         logger.warning("[크림통합] 거래이력/이행대기 로드 실패: %s", exc)
+    # [2026-08-19] **귀금속 시범 — 크림 61809(구찌 인터로킹 브레이슬릿)만.**
+    # 판매된 건은 소싱을 걸었더라도 크림 검수를 통과할 때까지 재입찰을 막는다.
+    # 종전 규칙(_detect_and_hold_sold)은 소싱주문번호만 생기면 보류를 풀어서,
+    # 크림에 도착도 검수도 안 끝난 상태로 같은 옵션에 다시 입찰이 들어갔다.
+    # 귀금속은 개체 단위라 그러면 같은 물건이 두 번 팔린다.
+    # 크림 판매주문 상태: delivering(보내는 중=검수 전) → delivered(도착·검수 완료).
+    # **다른 상품에는 적용하지 않는다** — 전체 적용은 2026-08-19 에 되돌렸다.
+    try:
+        _svc, _key, _sec = await _load_kream_creds()
+        if _svc and _key and _sec:
+            _oh = _headers(_svc, _key, _sec)
+            _n = 0
+            async with httpx.AsyncClient(timeout=25) as _c:
+                for _p in range(1, 40):
+                    _r = await _c.get(
+                        f"{KREAM_OPENAPI_BASE}/orders",
+                        headers=_oh,
+                        params={
+                            "page": _p,
+                            "per_page": _PER_PAGE,
+                            "order_status": "delivering",
+                        },
+                    )
+                    if _r.status_code != 200:
+                        break
+                    _items = (_r.json() or {}).get("items") or []
+                    for _o in _items:
+                        for _op in _o.get("order_products") or []:
+                            _k = str(_op.get("product_id") or "")
+                            if _k not in _INSPECT_HOLD_KIDS:
+                                continue
+                            _v = str(_op.get("option") or "").replace(" ", "")
+                            if _v:
+                                _g_unfulfilled.add((_k, _v))
+                                _n += 1
+                    if len(_items) < _PER_PAGE:
+                        break
+            if _n:
+                logger.info("[크림통합] 검수대기 보류(귀금속 시범) %d건", _n)
+    except Exception as exc:
+        logger.warning("[크림통합] 검수대기 로드 실패(무시): %s", exc)
     rp = await _load_setting_map(_SET_RECENT)
     _g_recent_posts.update(
         {k: float(v) for k, v in rp.items() if now - float(v) < _RECENT_TTL}
