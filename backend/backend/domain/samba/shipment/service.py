@@ -3395,11 +3395,25 @@ class SambaShipmentService:
             _seo_words.append(_w)
         seo_text = " ".join(_seo_words)
 
+        # ★2026-08-18 — 모델명이 상품명에 이미 들어 있으면 조합에서 생략한다.
+        # 롯데온은 소싱처 상품명 끝에 품번이 붙어 오는 경우가 대부분이라
+        # ({상품명} = "프로플레이어 테니스 심리스 반팔티 FS2RSH2391X_FGR"),
+        # style_code 를 채운 뒤 {모델명} 을 그대로 붙이면 같은 코드가 두 번 노출된다.
+        # 구분자(_ - 공백) 표기가 마켓에서 뒤바뀌므로 정규화해 비교한다.
+        _model_raw = str(product.get("style_code", "") or "")
+
+        def _norm_code(v: str) -> str:
+            return re.sub(r"[\s_.\-]+", "", str(v or "")).upper()
+
+        _model_val = _model_raw
+        if _model_raw and _norm_code(_model_raw) in _norm_code(product.get("name", "")):
+            _model_val = ""
+
         tag_map = {
             "{상품명}": product.get("name", ""),
             "{브랜드명}": product.get("brand", ""),
             "{브랜드명_영문}": _brand_en(product.get("brand", "")),
-            "{모델명}": product.get("style_code", ""),
+            "{모델명}": _model_val,
             "{사이트명}": product.get("source_site", ""),
             "{상품번호}": product.get("site_product_id", ""),
             "{검색키워드}": seo_text,
