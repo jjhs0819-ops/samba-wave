@@ -225,17 +225,22 @@ def fetch_bunjang_orders(max_pages=40):
                         it.get("orderStatus"), bool(o.get("hasReservedDeliveryService"))
                     ),
                     "price": "",
+                    "invoice": "",  # 배송 중이면 상세에서 채운다
                     "done": it.get("orderStatus") == "purchase_confirm",
                 }
             if not j.get("hasNext"):
                 break
 
-    # 총 결제금액은 상세에만 있다
+    # 총 결제금액과 송장번호는 상세에만 있다
     for oid, info in out.items():
         d = _fetch(conn, token, f"/api/order/v2/bun-pay-orders/buyer/{oid}")
-        amount = (((d or {}).get("data") or {}).get("payment") or {}).get("amount")
+        data = (d or {}).get("data") or {}
+        amount = (data.get("payment") or {}).get("amount")
         if amount:
             info["price"] = f"{int(amount):,}"
+        inv = ((data.get("delivery") or {}).get("invoice") or {}).get("invoiceNo")
+        if inv:
+            info["invoice"] = str(inv)
 
     conn.close()
     _close_tab(tab)

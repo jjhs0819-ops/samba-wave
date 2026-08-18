@@ -212,8 +212,62 @@ def fetch_price(conn, order_id_numeric):
         text = r.get("result", {}).get("result", {}).get("value", "") or ""
         m = re.search(r"최초 결제금액\s*\n+\s*([\d,]+)원", text)
         if m:
-            return m.group(1)
-    return None
+            # 송장 조회는 결제번호(O-OR)가 아니라 주문번호(B-LI)로 한다.
+            # 목록에는 B-LI 가 없고 이 상세 화면에만 있어서 같이 뽑아 둔다.
+            mb = re.search(r"주문번호\s*B-LI(\d+)", text)
+            return m.group(1), (mb.group(1) if mb else "")
+    return None, ""
+
+
+def fetch_tracking(conn, bid_numeric):
+    """배송 중인 건의 송장번호 — /api/m/bids/{주문번호} 의 tracking 에서 꺼낸다.
+
+    이 API 는 크림 웹이 인증을 붙여 부르는 것이라 우리가 직접 fetch 하면 막힌다
+    (상대경로는 SPA 라 404, 절대경로는 인증이 안 붙는다). 그래서 페이지 로드 전에
+    fetch 를 감싸두고, 페이지가 스스로 부른 응답을 가로챈다.
+
+    반환: ("304730174363", "CJ대한통운") / 못 찾으면 ("", "")
+    """
+    if not bid_numeric:
+        return "", ""
+    hook = """
+      (() => {
+        if (window.__kmHooked) return;
+        window.__kmHooked = true;
+        const of = window.fetch;
+        window.fetch = function (input, init) {
+          const url = (typeof input === 'string') ? input : (input && input.url) || '';
+          return of.apply(this, arguments).then(res => {
+            if (url.indexOf('/api/m/bids/') !== -1) {
+              res.clone().json().then(j => { window.__kmBid = j; }).catch(() => {});
+            }
+            return res;
+          });
+        };
+      })()
+    """
+    conn.call("Page.addScriptToEvaluateOnNewDocument", {"source": hook})
+    conn.send("Page.navigate", {"url": f"https://kream.co.kr/my/buying/{bid_numeric}"})
+    for wait in (2.5, 2.0, 2.0):
+        time.sleep(wait)
+        r = conn.call(
+            "Runtime.evaluate",
+            {
+                "expression": "JSON.stringify((window.__kmBid||{}).tracking||null)",
+                "returnByValue": True,
+            },
+        )
+        v = (r.get("result", {}).get("result", {}) or {}).get("value")
+        if v and v != "null":
+            try:
+                t = json.loads(v)
+            except Exception:
+                continue
+            return (
+                str(t.get("tracking_code") or ""),
+                str((t.get("logistics_company") or {}).get("name") or ""),
+            )
+    return "", ""
 
 
 MIN_EXPECTED_ORDERS = (
@@ -363,7 +417,7 @@ def match_delivered_to_ai(ws, newly_delivered):
         order_no, info = eligible[i]
         row = empty_slots[i]
         if order_no.startswith("O-OR"):
-            price = fetch_price(price_conn, order_no.replace("O-OR", ""))
+            price, _bid = fetch_price(price_conn, order_no.replace("O-OR", ""))
         else:
             price = info.get("price") or ""  # 번장 — 총 결제금액 이미 확보
         _now = time.localtime()
@@ -485,16 +539,23 @@ def main():
             continue
         y, m, dd = d.split("/")
         kdate = f"20{y}. {int(m)}. {int(dd)}"
+        # 배송 중인 건은 N열(배송상황)에 "배송 중" 대신 송장번호를 적는다.
+        # 그 전 단계는 아직 송장이 없으니 상태 문자열을 그대로 둔다.
+        invoice = ""
         if order_no.startswith("O-OR"):
             # 크림은 상세 페이지에서 결제금액을 읽어야 한다
             if not price_conn:
                 continue
-            price = fetch_price(price_conn, order_no.replace("O-OR", ""))
+            price, bid_no = fetch_price(price_conn, order_no.replace("O-OR", ""))
+            if info["status"] == "배송 중":
+                invoice, _company = fetch_tracking(price_conn, bid_no)
         else:
             price = info.get("price") or ""  # 번장 — 총 결제금액 이미 확보
-        kn_rows.append([kdate, order_no, price or "", info["status"]])
+            if info["status"] == bj.ST_IN_TRANSIT:
+                invoice = info.get("invoice") or ""
+        kn_rows.append([kdate, order_no, price or "", invoice or info["status"]])
         kn_card_ver.append(bool(info.get("card_ver")))
-        print(f"    {order_no}: {price}")
+        print(f"    {order_no}: {price}{' / 송장 ' + invoice if invoice else ''}")
 
     if price_conn:
         price_conn.close()
