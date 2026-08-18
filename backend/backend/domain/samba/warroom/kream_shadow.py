@@ -2611,12 +2611,6 @@ async def _detect_and_hold_sold(asks: list) -> None:
                             )
                         ).all()
                     }
-                # [2026-08-19] 소싱주문번호가 생겼다고 바로 풀지 않는다.
-                # 주문만 걸었을 뿐 크림 도착·검수 전이면 재입찰이 나가면 안 된다
-                # (재고 1개짜리가 두 번 팔린다). 검수대기(발송중)로 잡힌 건은 유지한다.
-                fulfilled = {
-                    k for k in fulfilled if tuple(k.split("|", 1)) not in _g_unfulfilled
-                }
                 hold = {k: v for k, v in hold.items() if k not in fulfilled}
             except Exception:
                 pass
@@ -2812,46 +2806,6 @@ async def _load_restock_guards() -> None:
                 _g_unfulfilled.add((str(kid), str(opt or "").replace(" ", "")))
     except Exception as exc:
         logger.warning("[크림통합] 거래이력/이행대기 로드 실패: %s", exc)
-    # [2026-08-19] **판매된 건은 크림 검수를 통과할 때까지 입찰에서 뺀다.**
-    # 종전엔 소싱주문번호만 생기면 보류가 풀렸다(_detect_and_hold_sold). 물건을
-    # 주문만 걸었을 뿐 크림에 도착도, 검수도 안 끝났는데 같은 옵션에 재입찰이 들어가
-    # 재고 1개짜리가 두 번 팔릴 수 있었다.
-    # 크림 판매주문 상태(order_status)는 delivering → delivered 로 간다.
-    #   delivering  우리가 크림으로 보내는 중 = 아직 검수 전  ← 여기는 막는다
-    #   delivered   크림 도착·검수 완료                        ← 여기서 풀린다
-    # 실측(2026-08-19): delivering 90건 / delivered 516건.
-    try:
-        _svc, _key, _sec = await _load_kream_creds()
-        if _svc and _key and _sec:
-            _oh = _headers(_svc, _key, _sec)
-            _n = 0
-            async with httpx.AsyncClient(timeout=25) as _c:
-                for _p in range(1, 40):
-                    _r = await _c.get(
-                        f"{KREAM_OPENAPI_BASE}/orders",
-                        headers=_oh,
-                        params={
-                            "page": _p,
-                            "per_page": _PER_PAGE,
-                            "order_status": "delivering",
-                        },
-                    )
-                    if _r.status_code != 200:
-                        break
-                    _items = (_r.json() or {}).get("items") or []
-                    for _o in _items:
-                        for _op in _o.get("order_products") or []:
-                            _k = str(_op.get("product_id") or "")
-                            _v = str(_op.get("option") or "").replace(" ", "")
-                            if _k and _v:
-                                _g_unfulfilled.add((_k, _v))
-                                _n += 1
-                    if len(_items) < _PER_PAGE:
-                        break
-            if _n:
-                logger.info("[크림통합] 검수대기(발송중) %d건 — 재입찰 보류", _n)
-    except Exception as exc:
-        logger.warning("[크림통합] 검수대기 로드 실패(무시): %s", exc)
     rp = await _load_setting_map(_SET_RECENT)
     _g_recent_posts.update(
         {k: float(v) for k, v in rp.items() if now - float(v) < _RECENT_TTL}
