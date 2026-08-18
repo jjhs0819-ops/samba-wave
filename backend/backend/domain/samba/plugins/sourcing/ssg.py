@@ -465,6 +465,37 @@ class SSGPlugin(SourcingPlugin):
                         _ext_msg = (_ext_result.get("error") or "").strip()
                     if _ext_result.get("blocked"):
                         _ext_msg = "SSG 차단됨 (reCAPTCHA) — 잠시 후 재시도 해주세요"
+                        # [2026-08-18] 차단 회신 즉시 그 PC 를 SSG 라우팅에서 뺀다.
+                        #
+                        # 확장앱은 차단을 감지하면 그 PC 의 SSG 폴링을 300초 멈춘다
+                        # (pauseSiteCollect). 그런데 백엔드는 그 사실을
+                        # _pc_site_poll_seen TTL(180초)이 지나야 "폴링 안 온다"고
+                        # 추론해서, 정지 300초 중 앞 180초 동안 그 PC 로 잡을 계속
+                        # 발행했다. 아무도 안 가져가니 전부 150초 타임아웃만 태운다
+                        # (실측 2026-08-18: 정지 중인 PC 로 6분간 SSG 잡 4건 발행).
+                        #
+                        # 사이트 전체 백오프(임계 30건)와는 별개다. 여기서 막는 건
+                        # "쉬는 PC 한 대"뿐이고, 나머지 PC 는 그대로 SSG 를 돈다.
+                        if _proc_dev:
+                            try:
+                                import time as _t
+
+                                from backend.api.v1.routers.samba.collector_autotune import (  # noqa: F811
+                                    _site_block_backoff_until as _sbbu,
+                                )
+
+                                _k = f"SSG|{_proc_dev}"
+                                _until = _t.time() + 300.0
+                                if _sbbu.get(_k, 0.0) < _until:
+                                    _sbbu[_k] = _until
+                                    logger.info(
+                                        "[SSG] 차단 회신 — %s 라우팅 300초 제외",
+                                        str(_proc_dev)[:20],
+                                    )
+                            except Exception as _e:
+                                logger.warning(
+                                    "[SSG] PC 라우팅 제외 실패(무시): %s", _e
+                                )
                     logger.warning(
                         f"[SSG] 갱신 실패 진단: {site_product_id} — "
                         f"{_ext_msg or '(사유 없음)'}"
