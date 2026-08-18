@@ -353,8 +353,35 @@ def calc_market_price(
     total_fee = m_fee + m_ad
     if total_fee > 0 and calc_price > 0:
         calc_price = math.ceil(calc_price / (1 - total_fee / 100))
+
+    # 마켓 "혜택가" 버퍼 (#742) — 롯데온 혜택가·L.POINT 처럼 마켓이 리스팅가를
+    # 깎아 보여주고 그 할인분을 "판매자가 부담"하는 경우가 있다. 이걸 계산에
+    # 안 넣으면 리스팅 마진이 9% 여도 실질은 3~4% 로 잠식된다(실사례: 롯데온
+    # 무신사 상품 수익률 3.4%). 깎일 만큼 미리 올려둬 의도한 정산이 남게 한다.
+    # 판매자부담 프로모션이 있는 마켓에만 설정(market_policies.{마켓}), 기본 0.
+    m_benefit = float(mp.get("benefitDiscountRate", 0) or 0)
+    if 0 < m_benefit < 100 and calc_price > 0:
+        calc_price = math.ceil(calc_price / (1 - m_benefit / 100))
+
     if common_extra > 0:
         calc_price += common_extra
+
+    # 최소 순마진율 바닥 (#742) — 수수료·광고비·혜택가 할인을 다 떼고도 수익률이
+    # 이 값 밑으로 안 내려가게 판매가를 끌어올린다. 없으면 저마진/역마진 주문이
+    # 그대로 나간다.
+    #   혜택가 = P*(1-b), 정산 = 혜택가*(1-f), 순이익 = 정산 - 원가
+    #   순이익/혜택가 >= r  →  P >= cost / [ (1-b) * (1 - f - r) ]
+    # 바닥이라 100원 단위 올림. 기준 원가는 순수 cost 만 쓴다(배송비·추가요금은
+    # 구매자 부담분이라 제외 — 이슈 검증표와 동일 기준).
+    min_margin_rate = float(pr.get("minMarginRate", 0) or 0)
+    if min_margin_rate > 0 and cost > 0:
+        _denom = (1 - m_benefit / 100) * (
+            1 - (total_fee / 100) - (min_margin_rate / 100)
+        )
+        if _denom > 0:
+            _floor_price = math.ceil((cost / _denom) / 100) * 100
+            if _floor_price > calc_price:
+                calc_price = _floor_price
     # 롯데홈쇼핑: 100원 단위 올림 — 내림 시 수수료 gross-up 결과가 정책마진 가드
     # 임계 바로 아래로 떨어져 마진미달 차단되는 비대칭 방지(#435).
     if market_type == "lottehome":
