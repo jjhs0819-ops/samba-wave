@@ -650,3 +650,4 @@ backend/scripts/set_musinsa_cookie_direct.py
 backups/*.json
 backups/*.sql
 deploy/local/.deploy.lock
+deploy/local/kream_ebay_watch.log

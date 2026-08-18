@@ -10,6 +10,17 @@ TAB_NAME = "크림매칭"
 CREDS_PATH = "C:/Users/canno/.claude/google-credentials.json"
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# [2026-08-18] 작업스케줄러가 1분마다 실행하는데 python.exe 라 매번 콘솔 창이
+# 깜빡였다. pythonw.exe 로 바꿔 창을 없앴는데, pythonw 는 sys.stdout 이 None 이라
+# print() 가 AttributeError 로 죽는다. 출력을 로그 파일로 돌려 창도 없애고
+# 기록도 남긴다(예전엔 창이 곧바로 닫혀 아무 기록도 안 남았다).
+if sys.stdout is None or sys.stderr is None:
+    _log = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kream_ebay_watch.log")
+    _fh = open(_log, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _fh
+    sys.stderr = _fh
+
 import kream_ebay_sync  # noqa: E402
 
 
