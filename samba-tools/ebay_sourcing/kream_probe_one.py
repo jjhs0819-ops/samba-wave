@@ -16,7 +16,11 @@ sys.path.insert(0, "/app/backend")
 
 TENANT = "tn_01KRX6H1Q97JGPXRPB011985QT"
 KV = "ma_01KXQCB67RZBBE99H8TM2J4K8J"
-GRADE_RE = re.compile(r"ungraded|psa|brg|bgs|cgc", re.I)
+# [최우선] 등록 대상은 **Ungraded 옵션뿐**이다.
+# PSA/BRG/BGS 등 등급카드는 등록하지 않는다. Ungraded 옵션이 아예 없는 상품도 제외.
+# (2026-08-17 사고: 등급 아무거나 통과시켜 Ungraded 없는 메로엣타를 BRG 9 가격
+#  150,000원으로 등록했다. 가격 기준도 Ungraded 옵션에서만 뽑아야 한다.)
+UNGRADED_RE = re.compile(r"ungraded", re.I)
 BAD_TITLE_RE = re.compile(
     r"booster|\bbox\b|\bpack\b|elite\s*trainer|\betb\b|\bkit\b|\bset\b|spinner|"
     r"\btin\b|\bbundle\b|\bcase\b|deck|starter|미개봉|부스터|박스|팩(?!\w)|세트|덱",
@@ -76,13 +80,13 @@ async def main():
                 out = {"ok": False, "reason": "밀봉/굿즈제목"}
             else:
                 opts = body.get("options") or []
-                if not any(GRADE_RE.search(str(o.get("name_display") or "")) for o in opts):
-                    out = {"ok": False, "reason": "등급옵션없음(카드아님)"}
+                ung = [o for o in opts if UNGRADED_RE.search(str(o.get("name_display") or ""))]
+                if not ung:
+                    out = {"ok": False, "reason": "Ungraded 옵션 없음"}
                 else:
+                    # 가격은 Ungraded 옵션에서만 뽑는다 — 등급카드 가격 혼입 금지
                     ask, fast = None, False
-                    for o in opts:
-                        if not GRADE_RE.search(str(o.get("name_display") or "")):
-                            continue
+                    for o in ung:
                         n, h = o.get("lowest_normal_price"), o.get("lowest_100_price")
                         if n:
                             ask, fast = n, False

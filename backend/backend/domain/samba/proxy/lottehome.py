@@ -1136,12 +1136,20 @@ class LotteHomeClient:
         }
 
     async def search_stock(self, goods_no: str = "") -> dict[str, Any]:
-        """재고 목록 조회."""
+        """재고 목록 조회.
+
+        goods_no 지정 시 search_type=goods_no 를 함께 보내야 단건으로 좁혀진다.
+        실측(2026-08-18): goods_no 만 단독으로 보내면 서버가 무시하고 전체
+        덤프(수만 건)를 그대로 반환한다 — search_type 동반 시 753byte 단건 응답.
+        """
         cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key, "goods_no": goods_no}
+        if goods_no:
+            params["search_type"] = "goods_no"
         return await self._call_api_auto_retry(
             "searchStockList.lotte",
             "GET",
-            {"subscriptionId": cert_key, "goods_no": goods_no},
+            params,
         )
 
     # ------------------------------------------------------------------
