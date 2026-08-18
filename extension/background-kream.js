@@ -575,7 +575,33 @@ function pauseCollectPolling(ms, reason) {
 // 헤더에서 빠지므로(background-core.js) 백엔드가 그 사이트 잡을 안 준다.
 // SSG 로 나가는 요청 빈도는 그대로 유지되고(=더 두드리지 않음), 다른 사이트만
 // 계속 돈다.
+//
+// [2026-08-18 중요] 이 상태는 반드시 storage 에 남겨야 한다.
+// MV3 서비스워커는 30초쯤 놀면 크롬이 죽였다가 필요할 때 다시 띄운다. 그때
+// 모듈 전역이 통째로 초기화되므로, 메모리에만 두면 "1시간 정지"를 걸어도 몇십
+// 초 뒤 되살아난 워커는 정지 사실을 모른 채 다시 잡을 받아 창을 띄운다
+// (실측 2026-08-18: 3,600초 정지 직후에도 SSG 팝업이 계속 떴다).
 const sitePausedUntil = Object.create(null)
+const _SITE_PAUSE_KEY = 'sitePausedUntil'
+
+// 워커가 되살아날 때 저장된 정지 상태를 복원한다.
+try {
+  chrome.storage.local.get(_SITE_PAUSE_KEY).then((d) => {
+    const saved = d && d[_SITE_PAUSE_KEY]
+    if (saved && typeof saved === 'object') {
+      const now = Date.now()
+      for (const k of Object.keys(saved)) {
+        if (saved[k] > now && saved[k] > (sitePausedUntil[k] || 0)) {
+          sitePausedUntil[k] = saved[k]
+        }
+      }
+    }
+  }).catch(() => {})
+} catch { /* 무시 */ }
+
+function _persistSitePause() {
+  try { chrome.storage.local.set({ [_SITE_PAUSE_KEY]: { ...sitePausedUntil } }) } catch { /* 무시 */ }
+}
 
 function pauseSiteCollect(site, ms, reason) {
   if (!site) return pauseCollectPolling(ms, reason)
@@ -583,6 +609,7 @@ function pauseSiteCollect(site, ms, reason) {
   const nextUntil = Date.now() + ms
   if (nextUntil > (sitePausedUntil[key] || 0)) {
     sitePausedUntil[key] = nextUntil
+    _persistSitePause()
     console.log(`[수집] ${site} 만 일시중지 ${Math.ceil(ms / 1000)}초: ${reason}`)
   }
 }
@@ -590,10 +617,12 @@ function pauseSiteCollect(site, ms, reason) {
 function getPausedSites() {
   const now = Date.now()
   const out = []
+  let changed = false
   for (const k of Object.keys(sitePausedUntil)) {
     if (sitePausedUntil[k] > now) out.push(k)
-    else delete sitePausedUntil[k]
+    else { delete sitePausedUntil[k]; changed = true }
   }
+  if (changed) _persistSitePause()
   return out
 }
 globalThis.pauseSiteCollect = pauseSiteCollect

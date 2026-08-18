@@ -316,6 +316,16 @@ let _abcLoginConfirmedAt = 0  // ABCmart 마지막 로그인 확인 시각 (ms) 
 // 단, 재확인 인터벌(5분) 경과 시 프로브 잡을 1회 통과시켜 쿠키 복구를 자동 감지한다
 // (drop이 _processJobWithCap 상류라 통과시키지 않으면 reportLoginSuccess가 영영 안 떠
 //  플래그가 영구 고착됨 → 백엔드 _musinsa_auth_lost_recent와 동일한 프로브 패턴).
+// [2026-08-18] MV3 워커 재시작 대비 — SSG 연속 차단 횟수 복원.
+try {
+  chrome.storage.local.get('_ssgBlockStreak').then((d) => {
+    const n = d && d._ssgBlockStreak
+    if (typeof n === 'number' && n > (globalThis._ssgBlockStreak || 0)) {
+      globalThis._ssgBlockStreak = n
+    }
+  }).catch(() => {})
+} catch { /* 무시 */ }
+
 let _musinsaCookieLostAt = 0
 let _musinsaCookieLostNotifiedAt = 0  // 데스크탑 경고 중복 차단 (ms)
 const _MUSINSA_NOTIFY_COOLDOWN_MS = 60 * 60 * 1000  // 1시간
@@ -3750,7 +3760,10 @@ async function handleSourcingJob(job) {
           cleanedUp = true
           // 한 건이라도 정상 회신되면 차단이 풀린 것 — 연속 카운터 리셋해
           // 휴식 시간을 즉시 기본값(5분)으로 되돌린다.
-          if (_fast.success || _fast.staffOnly) globalThis._ssgBlockStreak = 0
+          if (_fast.success || _fast.staffOnly) {
+            globalThis._ssgBlockStreak = 0
+            try { chrome.storage.local.set({ _ssgBlockStreak: 0 }) } catch {}
+          }
           if (_fast.blocked) {
             // SSG 만 쉰다 — 같은 PC 의 무신사/스니덩크는 계속 돈다.
             // 여기서도 연속 차단이면 휴식을 늘린다(아래 재확인 경로와 동일 규칙).
@@ -4278,6 +4291,10 @@ async function handleSourcingJob(job) {
         // 쉬는 게 아니라 계속 자극하는 꼴이라 차단이 더 길어진다.
         // 한 번이라도 성공하면 _ssgBlockStreak 이 0으로 리셋돼 즉시 5분으로 복귀.
         globalThis._ssgBlockStreak = (globalThis._ssgBlockStreak || 0) + 1
+        // 정지시간과 마찬가지로 카운터도 storage 에 남긴다 — MV3 워커가 죽었다
+        // 살아나면 전역이 초기화돼 연속 6회가 다시 1회로 떨어진다(휴식 1시간 →
+        // 5분으로 후퇴). 실측 2026-08-18.
+        try { chrome.storage.local.set({ _ssgBlockStreak: globalThis._ssgBlockStreak }) } catch {}
         const _ssgPauseMs = Math.min(
           300000 * Math.pow(2, globalThis._ssgBlockStreak - 1),
           3600000,
