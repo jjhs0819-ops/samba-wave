@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -67,6 +68,28 @@ def extract_credentials(account: Any) -> tuple[str, str]:
         or ""
     )
     return str(key), str(secret)
+
+
+# 소싱처가 공식 품번 뒤에 내부코드를 덧붙여 저장하는 경우가 있다
+# (KR7598_S_K, KE0662_K). 포이즌은 정확 일치만 지원해서 그대로 조회하면 통째로
+# 미매칭이 된다 — 실측에서 아디다스 오리지널 2,564건이 여기 걸렸다.
+_ARTICLE_SUFFIX = re.compile(r"(_[A-Z0-9]{1,4})+$")
+_ARTICLE_MIN_LEN = 6
+
+
+def article_number_candidates(style_code: str | None) -> list[str]:
+    """조회에 시도할 품번 후보 — 원본 먼저, 접미사를 뗀 정제본을 그 다음.
+
+    정제본이 너무 짧아지면(품번으로 보기 어려우면) 후보에서 뺀다.
+    """
+    s = (style_code or "").strip().upper()
+    if not s:
+        return []
+    out = [s]
+    cleaned = _ARTICLE_SUFFIX.sub("", s)
+    if cleaned != s and len(cleaned) >= _ARTICLE_MIN_LEN:
+        out.append(cleaned)
+    return out
 
 
 def poizon_fee(
@@ -340,6 +363,20 @@ class PoisonClient:
     # ------------------------------------------------------------------
     # 카탈로그 조회
     # ------------------------------------------------------------------
+
+    async def query_sku_by_article_number_any(
+        self, style_code: str, region: str | None = None
+    ) -> tuple[list[dict[str, Any]], str]:
+        """품번 후보를 순서대로 시도 — (SKU목록, 실제로 맞은 품번).
+
+        소싱처가 붙인 접미사(KR7598_S_K) 때문에 원본으로는 못 찾는 상품이 많다.
+        원본 → 접미사 제거본 순으로 시도하고, 어느 품번이 맞았는지 함께 돌려준다.
+        """
+        for cand in article_number_candidates(style_code):
+            skus = await self.query_sku_by_article_number(cand, region)
+            if skus:
+                return skus, cand
+        return [], ""
 
     async def query_sku_by_article_number(
         self, article_number: str, region: str | None = None

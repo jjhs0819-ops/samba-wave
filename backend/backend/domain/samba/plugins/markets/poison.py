@@ -25,6 +25,54 @@ def _normalize_size(text: str) -> str:
     return re.sub(r"\s+", "", s)
 
 
+# 사이즈 표기 우선순위 — 브랜드마다 주는 후보가 다르다.
+# 뉴발란스는 KR(225), 나이키 신발은 CHN(225)만, 나이키 의류는 JP M 만 준다.
+# 우선순위를 고정하지 않으면 먼저 들어온 표기가 이겨서 어느 체계로 매칭됐는지
+# 통제가 안 된다. KR(우리 옵션과 같은 체계)을 최우선으로 둔다.
+_SIZE_SOURCE_PRIORITY = {
+    "KR": 0,
+    "CHN": 1,
+    "CN": 1,
+    "EU": 2,
+    "SIZE": 3,
+    "US": 4,
+    "US MEN": 4,
+    "US WOMEN": 5,
+    "UK": 6,
+    "FR": 7,
+    "IT": 7,
+    "JP": 8,  # JP 알파벳 사이즈(JP M)는 KR 과 실측이 다를 수 있어 가장 나중
+}
+_SIZE_VALUE_PRIORITY = 50  # sizeValue 는 후보가 하나도 없을 때의 최후 수단
+
+
+def build_size_index(
+    sku_list: list[dict[str, Any]],
+) -> dict[str, tuple[dict[str, Any], str]]:
+    """사이즈 문자열 → (SKU, 매칭에 쓰인 표기체계).
+
+    같은 문자열을 여러 SKU·체계가 주장하면 우선순위가 높은 쪽이 이긴다.
+    어느 체계로 매칭됐는지 함께 돌려줘서 로그로 추적할 수 있게 한다.
+    """
+    best: dict[str, tuple[dict[str, Any], str, int]] = {}
+
+    def put(raw: Any, sku: dict[str, Any], source: str, prio: int) -> None:
+        key = _normalize_size(str(raw or ""))
+        if not key:
+            return
+        cur = best.get(key)
+        if cur is None or prio < cur[2]:
+            best[key] = (sku, source, prio)
+
+    for sku in sku_list:
+        for source, val in (sku.get("sizeCandidates") or {}).items():
+            src = str(source).strip().upper()
+            put(val, sku, str(source), _SIZE_SOURCE_PRIORITY.get(src, 9))
+        put(sku.get("sizeValue"), sku, "sizeValue", _SIZE_VALUE_PRIORITY)
+
+    return {k: (v[0], v[1]) for k, v in best.items()}
+
+
 class PoisonPlugin(MarketPlugin):
     market_type = "poison"
     policy_key = "포이즌"
@@ -145,21 +193,22 @@ class PoisonPlugin(MarketPlugin):
         client = PoisonClient(app_key=str(app_key), app_secret=str(app_secret))
 
         # 1. 카탈로그 SKU 조회 (사이즈별 globalSkuId)
-        sku_list = await client.query_sku_by_article_number(article_number)
+        #    소싱처가 품번 뒤에 내부코드를 붙인 경우가 많아 정제본까지 시도한다
+        sku_list, matched_article = await client.query_sku_by_article_number_any(
+            article_number
+        )
+        if matched_article and matched_article != article_number:
+            logger.info(
+                f"[POIZON] 품번 정제 매칭: {article_number} → {matched_article}"
+            )
+            article_number = matched_article
         if not sku_list:
             return {
                 "success": False,
                 "message": f"POIZON 카탈로그에 품번 '{article_number}' 없음 (등록 대상 아님)",
             }
 
-        size_index: dict[str, dict[str, Any]] = {}
-        for sku in sku_list:
-            keys = {_normalize_size(sku.get("sizeValue", ""))}
-            for cand in (sku.get("sizeCandidates") or {}).values():
-                keys.add(_normalize_size(cand))
-            for key in keys:
-                if key:
-                    size_index.setdefault(key, sku)
+        size_index = build_size_index(sku_list)
 
         # 이전 등록 매칭(사이즈별 sellerBiddingNo) — 오토튠 수정/취소용
         resell = product.get("resell_matches") or {}
@@ -187,8 +236,8 @@ class PoisonPlugin(MarketPlugin):
             if self._safe_int(opt.get("stock"), default=0) <= 0:
                 continue
             norm = _normalize_size((opt.get("name") or opt.get("size") or "").strip())
-            sku = size_index.get(norm)
-            gid = (sku or {}).get("globalSkuId")
+            matched = size_index.get(norm)
+            gid = (matched[0] if matched else {}).get("globalSkuId")
             if gid:
                 gate_ids.append(int(gid))
         market_map: dict[int, dict[str, Any]] = {}
@@ -205,7 +254,8 @@ class PoisonPlugin(MarketPlugin):
             stock = self._safe_int(opt.get("stock"), default=0)
             cost = self._safe_int(opt.get("cost")) or fallback_cost
             norm = _normalize_size(opt_name)
-            sku = size_index.get(norm)
+            matched = size_index.get(norm)
+            sku, size_source = matched if matched else ({}, "")
             prev_entry = prev_sizes.get(opt_name) or prev_sizes.get(norm) or {}
             bidding_no = str(prev_entry.get("biddingNo") or "")
             global_sku_id = (sku or {}).get("globalSkuId") or prev_entry.get(
@@ -260,7 +310,8 @@ class PoisonPlugin(MarketPlugin):
             logger.info(
                 f"[POIZON] 가격결정 {article_number}/{opt_name} 원가={int(cost)} "
                 f"목표={int(target)} 시세={market_price or '없음'} "
-                f"기존={prev_entry.get('price') or '없음'} → {price} ({decision.reason})"
+                f"기존={prev_entry.get('price') or '없음'} 사이즈체계={size_source or '-'} "
+                f"→ {price} ({decision.reason})"
             )
 
             if bidding_no:
