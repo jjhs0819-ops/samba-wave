@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# PC별 SSG 연속 차단 횟수 — 라우팅 제외 시간을 지수적으로 늘리는 데 쓴다.
+# 한 건이라도 정상 수집되면 그 PC 키를 지워 즉시 기본값(5분)으로 복귀한다.
+_SSG_BLOCK_STREAK: dict[str, int] = {}
+
 
 class SSGPlugin(SourcingPlugin):
     """SSG 소싱처 플러그인.
@@ -455,6 +459,11 @@ class SSGPlugin(SourcingPlugin):
                         detail["isOutOfStock"] = True
                         detail["isSoldOut"] = True
 
+            # 정상 수집됨 — 그 PC 의 연속 차단 기록을 지워 다음 차단 시 5분부터
+            # 다시 세게 한다(차단이 풀렸는데 긴 휴식이 남아 있으면 손해).
+            if detail and _proc_dev:
+                _SSG_BLOCK_STREAK.pop(_proc_dev, None)
+
             if not detail:
                 _ext_msg = ""
                 if isinstance(_ext_result, dict) and not _ext_result.get("success"):
@@ -484,13 +493,23 @@ class SSGPlugin(SourcingPlugin):
                                     _site_block_backoff_until as _sbbu,
                                 )
 
+                                # 연속 차단마다 제외 시간을 2배로(5→10→20→40→60분
+                                # 상한). 고정 5분이면 차단이 안 풀린 상태에서 5분마다
+                                # 영원히 노크한다 — 실측(2026-08-18) 25분간 한 PC 가
+                                # 6회 두드렸고 차단이 계속 유지됐다. 확장앱
+                                # (background-sourcing.js) 휴식 규칙과 동일하게 맞춘다.
                                 _k = f"SSG|{_proc_dev}"
-                                _until = _t.time() + 300.0
+                                _n = _SSG_BLOCK_STREAK.get(_proc_dev, 0) + 1
+                                _SSG_BLOCK_STREAK[_proc_dev] = _n
+                                _sec = min(300.0 * (2 ** (_n - 1)), 3600.0)
+                                _until = _t.time() + _sec
                                 if _sbbu.get(_k, 0.0) < _until:
                                     _sbbu[_k] = _until
                                     logger.info(
-                                        "[SSG] 차단 회신 — %s 라우팅 300초 제외",
+                                        "[SSG] 차단 회신 — %s 라우팅 %s초 제외(연속 %s회)",
                                         str(_proc_dev)[:20],
+                                        f"{int(_sec):,}",
+                                        f"{_n:,}",
                                     )
                             except Exception as _e:
                                 logger.warning(

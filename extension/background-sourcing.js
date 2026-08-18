@@ -3724,9 +3724,18 @@ async function handleSourcingJob(job) {
         if (_fast && (_fast.success || _fast.staffOnly || _fast.blocked)) {
           clearTimeout(hangTimer)
           cleanedUp = true
+          // 한 건이라도 정상 회신되면 차단이 풀린 것 — 연속 카운터 리셋해
+          // 휴식 시간을 즉시 기본값(5분)으로 되돌린다.
+          if (_fast.success || _fast.staffOnly) globalThis._ssgBlockStreak = 0
           if (_fast.blocked) {
             // SSG 만 쉰다 — 같은 PC 의 무신사/스니덩크는 계속 돈다.
-            pauseSiteCollect('SSG', 60000, 'SSG 차단 감지(fetch)')
+            // 여기서도 연속 차단이면 휴식을 늘린다(아래 재확인 경로와 동일 규칙).
+            globalThis._ssgBlockStreak = (globalThis._ssgBlockStreak || 0) + 1
+            pauseSiteCollect(
+              'SSG',
+              Math.min(60000 * Math.pow(2, globalThis._ssgBlockStreak - 1), 3600000),
+              `SSG 차단 감지(fetch, 연속 ${globalThis._ssgBlockStreak}회)`,
+            )
           }
           await postResult('sourcing/collect-result', {
             requestId: job.requestId,
@@ -4235,11 +4244,25 @@ async function handleSourcingJob(job) {
         console.log(`[SSG] reCAPTCHA 차단 감지(재확인 완료): ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
         // 차단 감지됐는데도 곧바로 다음 잡을 계속 당겨오면 차단 중에 계속 두드리는
-        // 꼴이라 더 굳어질 위험 — 감지된 순간 5분 멈춰서 식힌다.
+        // 꼴이라 더 굳어질 위험 — 감지된 순간 멈춰서 식힌다.
         // [2026-08-18] 단, 멈추는 대상은 SSG 뿐이다. 예전엔 전체 폴링을 멈춰
         // 같은 PC 의 무신사(27cc2c53)·스니덩크(1ec58a10)까지 5분씩 같이 죽었다.
-        // SSG 를 두드리는 빈도는 그대로(=5분 휴식 유지), 남의 사이트만 살린다.
-        pauseSiteCollect('SSG', 300000, 'SSG reCAPTCHA 차단 감지')
+        //
+        // 휴식 시간은 연속 차단마다 2배로 늘린다(5→10→20→40→60분 상한).
+        // 고정 5분이면 차단이 안 풀린 상태에서 5분마다 영원히 노크한다 —
+        // 실측(2026-08-18) 25분간 한 PC 가 6회 두드렸고 차단이 계속 유지됐다.
+        // 쉬는 게 아니라 계속 자극하는 꼴이라 차단이 더 길어진다.
+        // 한 번이라도 성공하면 _ssgBlockStreak 이 0으로 리셋돼 즉시 5분으로 복귀.
+        globalThis._ssgBlockStreak = (globalThis._ssgBlockStreak || 0) + 1
+        const _ssgPauseMs = Math.min(
+          300000 * Math.pow(2, globalThis._ssgBlockStreak - 1),
+          3600000,
+        )
+        pauseSiteCollect(
+          'SSG',
+          _ssgPauseMs,
+          `SSG reCAPTCHA 차단 감지(연속 ${globalThis._ssgBlockStreak}회)`,
+        )
       } else if (_pc.staffOnly) {
         // 임직원/사업자 회원 전용 — 일반 고객 구매 불가 → 백엔드에서 sold_out 처리하도록 명시적 신호 전달
         console.log(`[SSG] 임직원 전용 상품 감지 → staffOnly 신호 전송: ${job.productId}`)
