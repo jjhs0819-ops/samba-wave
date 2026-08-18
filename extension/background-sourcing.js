@@ -3707,6 +3707,30 @@ async function handleSourcingJob(job) {
     // 작업취소 직후 탭 생성 막기
     if (_sourcingForceStop) { clearTimeout(hangTimer); return }
 
+    // [2026-08-18] 쉬는 사이트 잡은 창을 열지 않고 즉시 반려한다.
+    //
+    // 차단으로 그 사이트를 쉬는 중(pauseSiteCollect)인데도 백엔드가 잡을 보내면,
+    // 기존 코드는 그대로 popup 창을 띄워 페이지를 렌더링했다. 어차피 차단이라
+    // 실패할 작업인데 사용자 화면 앞으로 창이 튀어나와 작업을 방해한다
+    // (실측 2026-08-18: 1시간 정지 중에도 팝업이 계속 떴다).
+    // 창을 안 여니 차단을 더 자극하지도 않는다.
+    try {
+      const _pausedNow = typeof getPausedSites === 'function' ? getPausedSites() : []
+      if (job.site && _pausedNow.includes(String(job.site).toUpperCase())) {
+        clearTimeout(hangTimer)
+        cleanedUp = true
+        console.log(`[소싱] ${job.site} 휴식 중 — 창 없이 반려: ${job.productId || ''}`)
+        await postResult('sourcing/collect-result', {
+          requestId: job.requestId,
+          // blocked:true 를 주면 안 된다 — 백엔드가 이걸 차단 신호로 세어
+          // 사이트 전체 백오프(임계 30건) 카운터를 부풀린다. 메시지에도 '차단'
+          // 단어를 넣지 않는다(_r_is_block 이 문자열로 판정).
+          data: { success: false, skipped: true, message: `${job.site} 휴식 중 — 건너뜀` },
+        })
+        return
+      }
+    } catch { /* 판단 실패 시 기존 경로 그대로 — 회귀 안전 */ }
+
     // ── SSG 상세: in-tab fetch 고속 경로 (2026-08-04) ─────────────────────
     // 기존엔 상품마다 popup 창을 새로 띄워 페이지를 통째로 렌더링했다. 그런데
     // 가격 데이터(resultItemObj / bestAmt / 카드혜택가 DOM)는 전부 itemView.ssg
