@@ -1067,6 +1067,27 @@ class EbayClient:
                     _cond_desc = str(
                         _ed.get("ebay_condition_description") or ""
                     ).strip()
+        # 자유서술이 없으면 TCG 싱글 기본 고지문을 넣는다.
+        # [2026-08-18] 설명란이 비어 있으면 구매자가 볼 수 있는 정보가 컨디션 라벨
+        # "Ungraded - Near mint or better" 뿐이라, 미세 흠집도 '설명과 다름' 클레임으로
+        # 이어진다(잉어킹 프로모 실제 클레임). 등급 미평가 카드의 판정 범위와
+        # 밀봉 발송 시 검수 불가 사실을 미리 고지해 분쟁 소지를 줄인다.
+        if (
+            not _cond_desc
+            and _is_tcg_card_category(category_id)
+            and str(inventory_item.get("condition", "")).startswith("USED")
+        ):
+            _cond_desc = (
+                "Ungraded card. Condition is assessed by eye, not by a professional "
+                "grading company. Cards are pack-pulled and may show minor factory "
+                "imperfections such as slight print lines, small surface marks or "
+                "light edge wear, which are normal for ungraded product and are "
+                "within the Near Mint or better range. If you request the item to be "
+                "shipped sealed/unopened, the card cannot be inspected before "
+                "shipping and its exact condition cannot be guaranteed. For a "
+                "guaranteed condition, please consider a professionally graded (PSA, "
+                "BGS, CGC) card."
+            )
         if _cond_desc and str(inventory_item.get("condition", "")).startswith("USED"):
             inventory_item["conditionDescription"] = _cond_desc[:1000]
 
