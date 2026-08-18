@@ -6,6 +6,7 @@ SSGClient를 통해 인프라 조회 + 상품 변환 + 등록/수정 처리.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
@@ -928,11 +929,24 @@ class SSGPlugin(MarketPlugin):
                     if "동일한 상품이 이미 존재" in msg and not existing_no:
                         _spl = str(product.get("id") or "")
                         _mine = ""
+                        # ★2026-08-18 정정: 1회 조회로 단정하면 안 된다.
+                        # 실측(350건 전수) 결과 이 응답의 97%(341건)는 방금 내가 등록에
+                        # 성공한 상품이었고, SSG 색인 지연 탓에 조회 API에 아직 안 떠서
+                        # "중복수집 충돌"로 오판됐다(그 중 337건은 DB 마커까지 정상).
+                        # → 지연 후 1회 재조회한다.
                         if _spl:
-                            try:
-                                _mine = await client.find_live_item_id_by_spl_ven(_spl)
-                            except Exception as _e:
-                                logger.warning(f"[SSG] 동일상품 응답 후 지문조회 실패: {_e}")
+                            for _try in range(2):
+                                try:
+                                    _mine = await client.find_live_item_id_by_spl_ven(_spl)
+                                except Exception as _e:
+                                    logger.warning(
+                                        f"[SSG] 동일상품 응답 후 지문조회 실패({_try + 1}/2): {_e}"
+                                    )
+                                    _mine = ""
+                                if _mine or _try == 1:
+                                    break
+                                # 색인 지연 대기 후 재조회
+                                await asyncio.sleep(5)
                         if _mine:
                             # 진짜 내 상품이 이미 등록돼 있던 케이스 — itemId 를 확보했으므로
                             # "__exists__" 가 아닌 실제 번호를 기록시킨다.
@@ -946,15 +960,40 @@ class SSGPlugin(MarketPlugin):
                                 "product_no": _mine,
                                 "data": result_data,
                             }
+                        # 재조회로도 못 찾음 — 내가 판매중지시킨 이력이 지문을 점유했는지 확인
+                        _stopped = ""
+                        if _spl:
+                            try:
+                                _stopped = await client.find_stopped_item_id_by_spl_ven(
+                                    _spl
+                                )
+                            except Exception as _e:
+                                logger.warning(f"[SSG] 판매중지 지문조회 실패: {_e}")
+                        if _stopped:
+                            logger.warning(
+                                f"[SSG] 동일상품 존재 — 내 판매중지분이 점유(itemId={_stopped}) "
+                                f"→ 재등록 불가: product={_spl}"
+                            )
+                            return {
+                                "success": False,
+                                "message": (
+                                    f"SSG 등록 실패: 내 판매중지 상품이 점유 중"
+                                    f"(itemId={_stopped}) — 재개 또는 정리 필요"
+                                ),
+                                "data": result_data,
+                            }
+                        # ★단정 금지 — 색인 지연/타 수집분 선점 어느 쪽인지 이 시점엔 확정 불가.
+                        # 예전 문구("중복 수집분 충돌 — 중복 상품 정리 필요")는 멀쩡한 재고를
+                        # 삭제 대상으로 오해하게 만들었다(2026-08-18 실측으로 오진 확인).
                         logger.warning(
-                            "[SSG] 동일상품 존재 — 내 지문 등록분 없음 = 동일 상품명의 다른 "
-                            f"수집상품이 선점(중복수집 충돌) → 미등록 실패로 기록: product={_spl}"
+                            "[SSG] 동일상품 존재 — 재조회로도 내 지문 미확인(색인 지연 또는 "
+                            f"타 수집분 선점) → 미등록으로 기록, 다음 회차 재확인: product={_spl}"
                         )
                         return {
                             "success": False,
                             "message": (
-                                "SSG 등록 실패: 동일 상품명이 이미 등록됨(중복 수집분 충돌) — "
-                                "중복 상품 정리 필요"
+                                "SSG 등록 실패: 동일 상품명 존재 — 내 등록분 미확인"
+                                "(색인 지연 가능, 다음 회차 재확인)"
                             ),
                             "_duplicate_name_conflict": True,
                             "data": result_data,

@@ -998,6 +998,18 @@ class DetailParsersMixin:
                 if code[:2] in BLACKLIST_PREFIX:
                     continue
                 return code
+
+        # ★2026-08-18 일반 폴백 — 브랜드별 패턴에 없는 소싱처(휠라·스파이더·반스·
+        # 나이키키즈/스윔 등)가 롯데온 미보유분의 대부분이었다(16,463건 중 14,197건이
+        # 상품명 끝에 코드를 갖고 있는데 패턴 미등록 탓에 미추출).
+        # 규칙: 영문 대문자로 시작 + 숫자 포함 + 6자 이상인 토큰(공백/괄호로 구분).
+        # 실측 검증(길이 6~17 전 구간)에서 오탐 없음.
+        GENERIC = r"(?:^|[ (])([A-Z][A-Z0-9]*[0-9][A-Z0-9_.\-]*)(?=[ )]|$)"
+        for m in re.finditer(GENERIC, name):
+            code = m.group(1)
+            if len(code) < 6 or code[:2] in BLACKLIST_PREFIX:
+                continue
+            return code
         return ""
 
     def _extract_season_from_name(self, name: str) -> str:
