@@ -8,6 +8,7 @@
 
 실행: python kream_ebay_sync.py
 """
+
 import sys
 import time
 import re
@@ -18,6 +19,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cdp_sheet_helpers import CDPConn  # noqa: E402
 
+import bunjang_orders as bj  # noqa: E402
 import gspread  # noqa: E402
 
 SHEET_ID = "1FM3smmTlsbxhN03CFCoK_Pp5byA9wTfpiQ66jOG0ohM"
@@ -26,14 +28,32 @@ CREDS_PATH = "C:/Users/canno/.claude/google-credentials.json"
 
 CDP_HOST, CDP_PORT = "localhost", 9223
 
+# [2026-08-18] 번개장터 구매건을 같은 K:N 구간에 섞어 넣는다.
+# 주문번호 형태로 구분되므로(크림 O-OR…·KPE…, 번장 숫자) 구분 열도, 상태 뒤의
+# 출처 꼬리표도 두지 않는다. 다만 "배송 중" 은 크림·번장이 같은 표기라
+# 상태 문자열만으로는 순서를 못 가른다 → 주문번호로 출처를 판별해 순위를 매긴다.
 STATUS_ORDER = {
-    "배송 중": 0,
-    "검수합격": 1,
-    "입고완료": 2,
-    "입고 대기": 2,
-    "발송완료": 3,
-    "대기 중": 4,
+    ("kream", "배송 중"): 0,
+    ("bunjang", "배송 중"): 1,
+    ("kream", "검수합격"): 2,
+    ("kream", "입고완료"): 3,
+    ("kream", "입고 대기"): 3,
+    ("kream", "발송완료"): 4,
+    ("bunjang", "배송준비중"): 5,
+    ("bunjang", "상품준비중"): 6,
+    ("bunjang", "결제완료"): 7,
+    ("kream", "대기 중"): 8,
 }
+
+
+def _is_bunjang(order_no):
+    """번장 주문번호는 순수 숫자, 크림은 O-OR…/KPE… 형태."""
+    return str(order_no).isdigit()
+
+
+def _sort_key(order_no, status):
+    src = "bunjang" if _is_bunjang(order_no) else "kream"
+    return STATUS_ORDER.get((src, status), 99)
 
 
 def find_kream_tab(url_contains):
@@ -51,7 +71,9 @@ def _open_kream_tab(url):
     """새 kream.co.kr 탭 CDP로 오픈 (/json/new PUT)."""
     import urllib.request
 
-    req = urllib.request.Request(f"http://{CDP_HOST}:{CDP_PORT}/json/new?{url}", method="PUT")
+    req = urllib.request.Request(
+        f"http://{CDP_HOST}:{CDP_PORT}/json/new?{url}", method="PUT"
+    )
     urllib.request.urlopen(req, timeout=10)
 
 
@@ -67,8 +89,13 @@ def find_any_kream_tabs(n=3, auto_open=False):
     def _list():
         resp = urllib.request.urlopen(f"http://{CDP_HOST}:{CDP_PORT}/json", timeout=10)
         tabs = json.loads(resp.read())
-        return [t["id"] for t in tabs if t.get("type") == "page" and "kream.co.kr" in t.get("url", "")
-                and "partner.kream.co.kr" not in t.get("url", "")]
+        return [
+            t["id"]
+            for t in tabs
+            if t.get("type") == "page"
+            and "kream.co.kr" in t.get("url", "")
+            and "partner.kream.co.kr" not in t.get("url", "")
+        ]
 
     ids = _list()
     if auto_open and len(ids) < n:
@@ -136,7 +163,10 @@ def fetch_kream_orders():
         c.send("Page.navigate", {"url": url})
         time.sleep(3)
         _scroll_to_load_all(c)
-        r = c.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
+        r = c.call(
+            "Runtime.evaluate",
+            {"expression": "document.body.innerText", "returnByValue": True},
+        )
         text = r.get("result", {}).get("result", {}).get("value", "") or ""
         c.close()
 
@@ -149,10 +179,16 @@ def fetch_kream_orders():
             if "잉어킹" not in b and "Magikarp" not in b:
                 continue
             m_date = re.search(r"(\d{2}/\d{2}/\d{2} \d{2}:\d{2})", b)
-            m_status = re.search(r"(발송완료|대기 중|검수합격|입고완료|입고 대기|배송 중|배송완료|취소완료)", b)
+            m_status = re.search(
+                r"(발송완료|대기 중|검수합격|입고완료|입고 대기|배송 중|배송완료|취소완료)",
+                b,
+            )
             all_orders[order_no] = {
                 "date": m_date.group(1) if m_date else "",
                 "status": m_status.group(1) if m_status else "",
+                # 옵션에 "Card Ver." 가 붙은 카드버전 — 시트에서 주문번호를 빨갛게 표시한다
+                # (예: "Ungraded A (Card Ver.) / 일반배송")
+                "card_ver": "Card Ver." in b,
             }
         print(f"    [{label}] 로드 완료")
     return all_orders
@@ -164,10 +200,15 @@ def fetch_price(conn, order_id_numeric):
     conn: 이미 열려있는 CDPConn (탭 하나를 계속 재사용 — 매번 새로 탭 찾으면
     직전 fetch_price가 이미 그 탭을 /my/order/xxx로 옮겨놔서 URL 매칭이 깨짐).
     """
-    conn.send("Page.navigate", {"url": f"https://kream.co.kr/my/order/{order_id_numeric}"})
+    conn.send(
+        "Page.navigate", {"url": f"https://kream.co.kr/my/order/{order_id_numeric}"}
+    )
     for wait in (1.8, 1.5, 1.5):  # 로딩 느릴 때 대비 최대 3회(합 4.8초) 재시도
         time.sleep(wait)
-        r = conn.call("Runtime.evaluate", {"expression": "document.body.innerText", "returnByValue": True})
+        r = conn.call(
+            "Runtime.evaluate",
+            {"expression": "document.body.innerText", "returnByValue": True},
+        )
         text = r.get("result", {}).get("result", {}).get("value", "") or ""
         m = re.search(r"최초 결제금액\s*\n+\s*([\d,]+)원", text)
         if m:
@@ -175,7 +216,9 @@ def fetch_price(conn, order_id_numeric):
     return None
 
 
-MIN_EXPECTED_ORDERS = 20  # 이보다 적게 읽히면 크림 탭/스크롤이 제대로 안 된 걸로 보고 중단(K:N 보호)
+MIN_EXPECTED_ORDERS = (
+    20  # 이보다 적게 읽히면 크림 탭/스크롤이 제대로 안 된 걸로 보고 중단(K:N 보호)
+)
 
 # 자동매칭 대상 최소 날짜 — 이보다 오래된 크림 배송완료건은 이 시트 추적범위(8/8~) 밖이라
 # 이미 다른 경로로 처리됐을 가능성이 높음(2026-08-13 7월건 오매칭 사고). 자동매칭 제외,
@@ -214,10 +257,27 @@ asyncio.run(main())
     tmp_local = "C:/tmp/_ebay_orders_query.py"
     with open(tmp_local, "w", encoding="utf-8") as f:
         f.write(query_script)
-    subprocess.run(["docker", "cp", tmp_local, "local-samba-api-1:/tmp/_ebay_orders_query.py"], check=True)
+    # [2026-08-18] pythonw 로 띄워도 docker 를 부를 때마다 콘솔 창이 깜빡였다.
+    # 작업스케줄러가 1분마다 도는 스크립트라 창이 계속 떠서 CREATE_NO_WINDOW 로 막는다.
+    _no_win = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+    subprocess.run(
+        ["docker", "cp", tmp_local, "local-samba-api-1:/tmp/_ebay_orders_query.py"],
+        check=True,
+        **_no_win,
+    )
     result = subprocess.run(
-        ["docker", "exec", "local-samba-api-1", "/app/backend/.venv/bin/python", "/tmp/_ebay_orders_query.py"],
-        capture_output=True, text=True, encoding="utf-8", check=True,
+        [
+            "docker",
+            "exec",
+            "local-samba-api-1",
+            "/app/backend/.venv/bin/python",
+            "/tmp/_ebay_orders_query.py",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+        **_no_win,
     )
     return json.loads(result.stdout.strip())
 
@@ -235,18 +295,40 @@ def append_new_ebay_orders(ws):
     rows = []
     for o in new_orders:
         for seq in range(1, o["quantity"] + 1):
-            rows.append([o["order_date"], o["order_number"], str(seq), "", "", "97.30%", "0", "", o["ship_by_at"]])
-    ws.update(range_name=f"A{last_row + 1}", values=rows, value_input_option="USER_ENTERED")
-    print(f"[0] 신규 이베이 주문 {len(new_orders)}건({len(rows)}행) 추가: "
-          f"{', '.join(o['order_number'] for o in new_orders)}")
+            rows.append(
+                [
+                    o["order_date"],
+                    o["order_number"],
+                    str(seq),
+                    "",
+                    "",
+                    "97.30%",
+                    "0",
+                    "",
+                    o["ship_by_at"],
+                ]
+            )
+    ws.update(
+        range_name=f"A{last_row + 1}", values=rows, value_input_option="USER_ENTERED"
+    )
+    print(
+        f"[0] 신규 이베이 주문 {len(new_orders)}건({len(rows)}행) 추가: "
+        f"{', '.join(o['order_number'] for o in new_orders)}"
+    )
 
 
 def match_delivered_to_ai(ws, newly_delivered):
     """배송완료건을 A:I 빈 슬롯(D열 공백)에 도착순으로 채움. D열에 값 있는 행은 무조건 건너뜀."""
-    eligible = [(no, info) for no, info in newly_delivered if info["date"] >= AUTO_MATCH_MIN_DATE]
+    eligible = [
+        (no, info)
+        for no, info in newly_delivered
+        if info["date"] >= AUTO_MATCH_MIN_DATE
+    ]
     skipped_old = len(newly_delivered) - len(eligible)
     if skipped_old:
-        print(f"    [주의] {skipped_old}건은 {AUTO_MATCH_MIN_DATE} 이전 주문이라 자동매칭 제외(수동확인 필요)")
+        print(
+            f"    [주의] {skipped_old}건은 {AUTO_MATCH_MIN_DATE} 이전 주문이라 자동매칭 제외(수동확인 필요)"
+        )
     if not eligible:
         return
 
@@ -264,29 +346,55 @@ def match_delivered_to_ai(ws, newly_delivered):
         return
 
     eligible.sort(key=lambda x: x[1]["date"])
+    # 번장 건은 가격이 이미 들어 있어 크림 탭이 없어도 처리할 수 있다.
+    need_kream = any(not _is_bunjang(no) for no, _ in eligible)
     price_tab = find_kream_tab("kream.co.kr/my/buying")
     price_conn = CDPConn(price_tab) if price_tab else None
-    if not price_conn:
+    if need_kream and not price_conn:
         print("    가격조회용 탭 없음 — 매칭 건너뜀")
         return
-    price_conn.call("Page.enable")
-    price_conn.call("Runtime.enable")
+    if price_conn:
+        price_conn.call("Page.enable")
+        price_conn.call("Runtime.enable")
 
     n = min(len(eligible), len(empty_slots))
     updates = []
     for i in range(n):
         order_no, info = eligible[i]
         row = empty_slots[i]
-        oid = order_no.replace("O-OR", "")
-        price = fetch_price(price_conn, oid)
+        if order_no.startswith("O-OR"):
+            price = fetch_price(price_conn, order_no.replace("O-OR", ""))
+        else:
+            price = info.get("price") or ""  # 번장 — 총 결제금액 이미 확보
         _now = time.localtime()
         today = f"{_now.tm_year}. {_now.tm_mon}. {_now.tm_mday}"
         updates.append({"range": f"D{row}:E{row}", "values": [[order_no, price or ""]]})
         updates.append({"range": f"H{row}", "values": [[today]]})
         print(f"    row{row} <- {order_no} ({price})")
-    price_conn.close()
+    if price_conn:
+        price_conn.close()
     ws.batch_update(updates, value_input_option="USER_ENTERED")
     print(f"[3] A:I 매칭 {n}건 완료 (빈슬롯 {len(empty_slots)}개 중)")
+
+
+RED = {"red": 0.8, "green": 0.0, "blue": 0.0}
+BLACK = {"red": 0.0, "green": 0.0, "blue": 0.0}
+
+
+def _paint_card_ver(ws, card_flags):
+    """K:N 의 주문번호(L열) 중 카드버전만 빨간 글씨로 칠한다.
+
+    크림 옵션이 "Ungraded A (Card Ver.)" 인 건이 대상. 시트를 매번 새로 쓰므로
+    먼저 전체를 검정으로 되돌린 뒤 해당 행만 빨갛게 한다(안 그러면 이전 실행의
+    빨간색이 엉뚱한 행에 남는다). card_flags 는 실제 기록된 행과 같은 순서다.
+    """
+    if not card_flags:
+        return
+    ws.format(f"L2:L{len(card_flags) + 1}", {"textFormat": {"foregroundColor": BLACK}})
+    reds = [i + 2 for i, is_card in enumerate(card_flags) if is_card]
+    for row in reds:
+        ws.format(f"L{row}", {"textFormat": {"foregroundColor": RED}})
+    print(f"    카드버전 {len(reds)}건 빨간색 표시")
 
 
 def main():
@@ -305,8 +413,10 @@ def main():
     print(f"    총 {len(orders)}건")
 
     if len(orders) < MIN_EXPECTED_ORDERS:
-        print(f"    [경고] {MIN_EXPECTED_ORDERS}건 미만 — 크림 탭을 못 읽은 것으로 판단, "
-              f"K:N 안 건드리고 중단")
+        print(
+            f"    [경고] {MIN_EXPECTED_ORDERS}건 미만 — 크림 탭을 못 읽은 것으로 판단, "
+            f"K:N 안 건드리고 중단"
+        )
         return
 
     # A:I 에 이미 매칭 확정된 크림주문번호 (D열) — 여기 있는 건 신규 배송완료로 다시 잡으면 안 됨
@@ -327,8 +437,29 @@ def main():
         else:
             still_pending.append((order_no, info))
 
-    print(f"[2] 신규 배송완료 {len(newly_delivered)}건, 미배송 {len(still_pending)}건 "
-          f"(A:I 기존 매칭 {len(ai_kream_orders)}건 제외)")
+    # ── 번개장터 구매건 [2026-08-18] ──
+    # 크림과 같은 규칙: 구매확정(=배송완료)된 건은 A:I 로 넘기고, 나머지는 K:N 에 섞는다.
+    # 번장은 API 로 받으므로 가격(총 결제금액)이 이미 들어 있어 상세 재조회가 필요 없다.
+    bj_orders = {}
+    try:
+        bj_orders = bj.fetch_bunjang_orders()
+        print(f"[1-2] 번장 주문 {len(bj_orders)}건")
+    except Exception as e:
+        print(f"    [경고] 번장 조회 실패(건너뜀): {e}")
+
+    ai_bj_orders = {v for v in ws.col_values(4) if v.isdigit()}
+    for oid, info in bj_orders.items():
+        if oid in ai_bj_orders:
+            continue  # 이미 이베이 표에 매칭 완료
+        if info["done"]:
+            newly_delivered.append((oid, info))
+        else:
+            still_pending.append((oid, info))
+
+    print(
+        f"[2] 신규 배송완료 {len(newly_delivered)}건, 미배송 {len(still_pending)}건 "
+        f"(A:I 기존 매칭 크림 {len(ai_kream_orders)} · 번장 {len(ai_bj_orders)}건 제외)"
+    )
 
     if newly_delivered:
         print("[3] A:I 빈 슬롯에 매칭 중...")
@@ -345,17 +476,25 @@ def main():
 
     # K:N 전체 새로 작성 (가격 포함)
     print("[4] K:N 섹션 재작성 (가격 포함)...")
-    still_pending.sort(key=lambda x: STATUS_ORDER.get(x[1]["status"], 9))
+    still_pending.sort(key=lambda x: _sort_key(x[0], x[1]["status"]))
     kn_rows = []
-    if price_conn:
-        for order_no, info in still_pending:
-            d = info["date"].split(" ")[0]  # 26/08/13
-            y, m, dd = d.split("/")
-            kdate = f"20{y}. {int(m)}. {int(dd)}"
-            oid = order_no.replace("O-OR", "")
-            price = fetch_price(price_conn, oid)
-            kn_rows.append([kdate, order_no, price or "", info["status"]])
-            print(f"    {order_no}: {price}")
+    kn_card_ver = []  # kn_rows 와 같은 순서 — 중간에 건너뛴 건이 있어도 안 어긋나게
+    for order_no, info in still_pending:
+        d = info["date"].split(" ")[0]  # 26/08/13
+        if not d:
+            continue
+        y, m, dd = d.split("/")
+        kdate = f"20{y}. {int(m)}. {int(dd)}"
+        if order_no.startswith("O-OR"):
+            # 크림은 상세 페이지에서 결제금액을 읽어야 한다
+            if not price_conn:
+                continue
+            price = fetch_price(price_conn, order_no.replace("O-OR", ""))
+        else:
+            price = info.get("price") or ""  # 번장 — 총 결제금액 이미 확보
+        kn_rows.append([kdate, order_no, price or "", info["status"]])
+        kn_card_ver.append(bool(info.get("card_ver")))
+        print(f"    {order_no}: {price}")
 
     if price_conn:
         price_conn.close()
@@ -364,6 +503,13 @@ def main():
     if kn_rows:
         ws.update(range_name="K2", values=kn_rows, value_input_option="USER_ENTERED")
     print(f"    {len(kn_rows)}행 반영")
+
+    # 카드버전(옵션에 "Card Ver.")은 주문번호를 빨간 글씨로 — 한눈에 구분하려고.
+    # 매번 K:N 을 통째로 다시 쓰므로 색도 매번 새로 칠한다(먼저 전부 검정으로 되돌린다).
+    try:
+        _paint_card_ver(ws, kn_card_ver)
+    except Exception as e:
+        print(f"    [경고] 카드버전 색상 표시 실패(건너뜀): {e}")
 
     print("DONE")
 

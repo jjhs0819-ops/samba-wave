@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """P5 체크박스 상시 감시(2초 간격) — 백그라운드로 계속 돌면서 클릭 몇 초 내로 반응."""
+
 import os
 import sys
 import time
@@ -27,7 +28,9 @@ def main():
             val = ws.acell("P5").value
             if str(val).strip().upper() in ("TRUE", "1"):
                 print("[loop] P5 감지 -> 실행", flush=True)
-                ws.update(range_name="P5", values=[[False]], value_input_option="USER_ENTERED")
+                ws.update(
+                    range_name="P5", values=[[False]], value_input_option="USER_ENTERED"
+                )
                 kream_ebay_sync.main()
                 print("[loop] 완료", flush=True)
         except Exception:

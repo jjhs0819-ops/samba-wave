@@ -2,6 +2,7 @@
 Whale이 --remote-allow-origins 플래그 없이 떠서 Origin 헤더 없는 연결만 허용됨
 (suppress_origin=True로 우회). 예전 raw socket 수제 프레이머는 부실해서
 mouseWheel 등 응답이 느린 이벤트에서 타임아웃/프레임깨짐이 있었음 — 이걸로 교체."""
+
 import json
 
 import websocket
