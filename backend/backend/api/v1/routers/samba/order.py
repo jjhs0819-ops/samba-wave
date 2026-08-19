@@ -8208,6 +8208,75 @@ async def sync_orders_from_markets(
                         f"[주문동기화] {label}: Finance 실제 정산 매칭 "
                         f"{matched}/{len(orders_data)}건"
                     )
+
+                    # [2026-08-19] 늦게 들어온 환불을 DB 기존 주문에 직접 반영.
+                    # 위 매칭은 이번 조회 구간(body.days)에 새로 불러온 주문에만 적용돼,
+                    # 주문일이 구간 밖인 옛 주문의 환불(카드 배송 7~14일 뒤 반품이 일반)은
+                    # 전부 버려졌다(잉어킹 8/6 주문 → 8/18 환불 미반영 실측).
+                    # REFUND 거래의 orderId 로 DB 를 직접 찾아 차감한다. 멱등 보장:
+                    # notes 에 환불 마커가 이미 있으면 건너뛴다.
+                    try:
+                        from sqlalchemy import text as sa_text  # noqa: F811
+
+                        _synced_ids = {od.get("ext_order_number") for od in orders_data}
+                        for tx in tx_list:
+                            if tx.get("transactionType") != "REFUND":
+                                continue
+                            _oid = tx.get("orderId", "") or ""
+                            if not _oid or _oid in _synced_ids:
+                                continue  # 이번 동기화 대상은 위에서 이미 반영됨
+                            _net = float((tx.get("amount") or {}).get("value", 0) or 0)
+                            if _net <= 0:
+                                continue
+                            _txid = tx.get("transactionId", "") or ""
+                            _marker = f"환불반영:{_txid or _oid}"
+                            _row = (
+                                (
+                                    await session.execute(
+                                        sa_text(
+                                            "SELECT id, revenue, COALESCE(notes,'') AS notes "
+                                            "FROM samba_order WHERE ext_order_number=:o "
+                                            "OR order_number=:o LIMIT 1"
+                                        ),
+                                        {"o": _oid},
+                                    )
+                                )
+                                .mappings()
+                                .first()
+                            )
+                            if not _row or _marker in _row["notes"]:
+                                continue
+                            _delta = int(
+                                round(
+                                    _net * ebay_exchange_rate * (1 - _EBAY_FX_FEE_RATE)
+                                )
+                            )
+                            await session.execute(
+                                sa_text(
+                                    "UPDATE samba_order SET revenue = revenue - :d, "
+                                    "notes = COALESCE(notes,'') || :n, updated_at = now() "
+                                    "WHERE id = :i"
+                                ),
+                                {
+                                    "d": _delta,
+                                    "n": (
+                                        f" | 부분환불 -${_net:.2f} @ "
+                                        f"{ebay_exchange_rate:.2f}원/USD - 환전 "
+                                        f"{_EBAY_FX_FEE_RATE * 100:.1f}% = -{_delta:,}원 "
+                                        f"({_marker})"
+                                    ),
+                                    "i": _row["id"],
+                                },
+                            )
+                            logger.info(
+                                f"[주문동기화] {label}: 과거 주문 환불 반영 "
+                                f"{_oid} -${_net:.2f} (-{_delta:,}원)"
+                            )
+                    except Exception as _late_rf_e:
+                        logger.warning(
+                            f"[주문동기화] {label}: 과거 주문 환불 반영 실패(무시): "
+                            f"{_late_rf_e}"
+                        )
                 except Exception as e:
                     logger.warning(
                         f"[주문동기화] {label}: Finance API 조회 실패 "
