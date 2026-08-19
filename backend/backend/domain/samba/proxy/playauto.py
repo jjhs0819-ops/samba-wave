@@ -34,18 +34,28 @@ def _truncate_to_bytes(text: str, max_bytes: int) -> str:
 # EMP 마스터 상품명은 연결된 전 쇼핑몰로 그대로 내려가므로, 한 몰이라도 거부하는
 # 문자는 마스터 단계에서 제거해야 그 몰만 통째로 실패하는 일이 없다.
 _NAME_DROP_CHARS = "'’ʼ\"“”`"  # 따옴표류 — 삭제(단어 안 쪼개짐)
-_NAME_SPACE_CHARS = ";|\\<>{}^~"  # 구분자류 — 공백 치환
+_NAME_SPACE_CHARS = ";:|\\<>{}^~"  # 구분자류 — 공백 치환
+# 슬래시만 하이픈 — 공백으로 바꾸면 "(P/Yellow)"가 "(P Yellow)"로 흩어져
+# 색상 표기가 두 단어로 읽힌다. GS이숍이 '/' 를 거부하므로 제거는 해야 한다.
+_NAME_DASH_CHARS = "/"
 
 
 def sanitize_prod_name(name: Any) -> str:
     """마켓 거부 특수문자를 제거한 상품명.
 
     따옴표류는 삭제한다 — 공백으로 바꾸면 "Levi's"가 "Levi s"로 쪼개진다.
-    나머지 구분자류는 공백으로 바꾸고 연속 공백을 접는다.
+    나머지 구분자류는 공백으로 바꾸고 연속 공백을 접는다. 슬래시만 하이픈이다.
+
+    GS이숍 금지문자는 : " < > | \\ / 다 — 하나라도 남으면 채널등록이
+    "상품명에는 :, ", <, >, |, \\, / 문자를 사용할 수 없습니다" 로 거부된다
+    (2026-08-18 다이나핏 202건, 소싱처 원문의 "정상가:159,000"·"(P/Yellow)" 표기).
+    #738 은 현대H몰만 보고 만들어 ':' 와 '/' 가 빠져 있었다.
     """
     text = str(name or "")
     for _c in _NAME_DROP_CHARS:
         text = text.replace(_c, "")
+    for _c in _NAME_DASH_CHARS:
+        text = text.replace(_c, "-")
     for _c in _NAME_SPACE_CHARS:
         text = text.replace(_c, " ")
     # 제어문자 제거 + 공백 정리
