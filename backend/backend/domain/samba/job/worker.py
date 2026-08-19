@@ -1221,6 +1221,14 @@ class JobWorker:
 
         try:
             # 수집: 별도 스레드 + 독립 이벤트 루프 (전송과 I/O 격리)
+            # 계정 락 보관 — 아래에서 DB 세션을 열기 전에 잡고, 함수 finally 에서 푼다.
+            # collect 처럼 락을 안 쓰는 경로도 finally 가 참조하므로 항상 정의해 둔다.
+            # '실제로 획득에 성공한' 락만 담는다 — asyncio.Lock.locked() 는 남이 쥐고
+            # 있어도 True 라, 부분 획득 상태에서 locked() 로 판단해 풀면 남의 락을
+            # 풀어버린다. 획득 직후 append 하는 방식이라 그 사고가 구조적으로 불가능.
+            # try 진입 첫 줄에 둔다 — job.id 접근이 DetachedInstanceError 를 던져도
+            # finally 의 reversed(_held_locks) 가 NameError 로 원래 예외를 가리지 않게.
+            _held_locks: list = []
             _job_id = job.id
             _job_type = job.job_type
             _job_payload = job.payload or {}
@@ -1331,6 +1339,42 @@ class JobWorker:
             # 전송 + 기타: 직접 실행 (인메모리 로그 공유)
             _job_id = job.id
             _job_type = job.job_type
+
+            # 계정 락은 DB 세션을 열기 '전에' 잡는다 (2026-08-19).
+            # 락 대기는 순수 대기라 DB 가 전혀 필요 없는데, 예전처럼 세션 안에서 기다리면
+            # 그동안 커넥션이 'idle in transaction' 으로 묶여 스냅샷을 붙잡는다 — 운영
+            # 실측 58~77개가 수십 초~분 단위로 고착돼 죽은 튜플 회수를 막고 있었다.
+            # 락을 밖으로 빼면 트랜잭션이 열려 있는 구간이 실제 전송(1~10초)만 남고,
+            # 아래 main session.commit() 주석이 말하는 pool_recycle(60s) 만료 사고도 준다.
+            # 획득 순서는 종전과 같이 계정ID 정렬 순서라 교착 위험은 변하지 않는다.
+            _want_locks: list = []
+            if _job_type in ("transmit", "autotune_transmit"):
+                _tx_accounts = sorted(
+                    set(self._extract_transmit_account_ids(_job_payload))
+                )
+                # playauto/lottehome은 API stateless → 동일 계정 병렬 허용, lock 불필요
+                _need_lock = _job_type == "transmit" or not any(
+                    self._acc_market_type_cache.get(a) in ("playauto", "lottehome")
+                    for a in _tx_accounts
+                )
+                if _need_lock:
+                    _want_locks = [
+                        self._get_transmit_account_lock(account_id)
+                        for account_id in _tx_accounts
+                    ]
+            elif _job_type == "delete_market":
+                _dm_accounts = sorted(
+                    set(self._extract_transmit_account_ids(_job_payload))
+                )
+                _want_locks = [
+                    self._get_delete_account_lock(account_id)
+                    for account_id in _dm_accounts
+                ]
+
+            for _lock in _want_locks:
+                await _lock.acquire()
+                _held_locks.append(_lock)
+
             async with get_write_session() as session:
                 repo = SambaJobRepository(session)
                 # detached 객체 대신 현재 세션에서 job 재조회
@@ -1344,50 +1388,17 @@ class JobWorker:
 
                 try:
                     if _job_type in ("transmit", "autotune_transmit"):
+                        # 계정 락은 세션 밖(_held_locks)에서 이미 획득했다.
                         _tx_token = _current_transmit_job_id.set(_job_id)
-                        _tx_accounts = sorted(
-                            set(self._extract_transmit_account_ids(_job_payload))
-                        )
-                        # playauto/lottehome은 API stateless → 동일 계정 병렬 허용, lock 불필요
-                        _need_lock = _job_type == "transmit" or not any(
-                            self._acc_market_type_cache.get(a)
-                            in ("playauto", "lottehome")
-                            for a in _tx_accounts
-                        )
-                        _tx_locks = (
-                            [
-                                self._get_transmit_account_lock(account_id)
-                                for account_id in _tx_accounts
-                            ]
-                            if _need_lock
-                            else []
-                        )
                         try:
-                            for _lock in _tx_locks:
-                                await _lock.acquire()
                             await self._run_transmit(fresh_job, repo, session)
                         finally:
-                            for _lock in reversed(_tx_locks):
-                                if _lock.locked():
-                                    _lock.release()
                             _current_transmit_job_id.reset(_tx_token)
                     elif _job_type == "delete_market":
                         _dm_token = _current_transmit_job_id.set(_job_id)
-                        _dm_accounts = sorted(
-                            set(self._extract_transmit_account_ids(_job_payload))
-                        )
-                        _dm_locks = [
-                            self._get_delete_account_lock(account_id)
-                            for account_id in _dm_accounts
-                        ]
                         try:
-                            for _lock in _dm_locks:
-                                await _lock.acquire()
                             await self._run_delete_market(fresh_job, repo, session)
                         finally:
-                            for _lock in reversed(_dm_locks):
-                                if _lock.locked():
-                                    _lock.release()
                             _current_transmit_job_id.reset(_dm_token)
                     elif _job_type == "refresh":
                         await self._run_stub(fresh_job, repo, "갱신")
@@ -1437,6 +1448,10 @@ class JobWorker:
                             f"[잡워커] 잡 상태 갱신 실패 (running 고착 가능): {_job_id} — {fail_exc}"
                         )
         finally:
+            # 계정 락 해제 — 세션 밖에서 잡았으므로 여기서 확실히 푼다.
+            # 내가 획득한 것만 담겨 있으므로 조건 없이 역순으로 푼다.
+            for _lock in reversed(_held_locks):
+                _lock.release()
             self._active_job_ids.discard(_job_id)
             self._active_tasks.pop(_job_id, None)
             self._active_transmit_accounts.pop(_job_id, None)
