@@ -219,6 +219,19 @@ async def musinsa_set_cookie(
     await _set_setting(write_session, "musinsa_cookie", body.cookie)
 
     # refresher가 우선 참조하는 복수 쿠키 풀에도 머지 (중복 제거 + 최신 맨 앞)
+    #
+    # ★상한 필수 (2026-08-19). 예전엔 상한 없이 append 만 해서 확장앱이 쿠키를
+    # 갱신할 때마다 항목이 하나씩 쌓였고, 운영에서 이 설정값 하나가 **165MB**까지
+    # 자랐다. 이 엔드포인트는 매 호출마다 그 전체를 복호화→JSON 파싱→직렬화→암호화
+    # →재저장하므로, 165MB 를 동기로 처리하며 API 이벤트루프를 통째로 세웠다.
+    # (samba_settings 가 54행에 2.5GB 인 것도, WAL 이 45초마다 600MB 씩 쏟아져
+    #  체크포인트가 폭주한 것도 같은 뿌리다.)
+    #
+    # 풀의 용도는 refresher 의 쿠키 로테이션(cookie_idx % len)이고, 원래 설계는
+    # sourcing_account._sync_cookies 처럼 '활성 무신사 계정당 1개'다(현재 2개).
+    # 20 이면 계정 수의 10배라 로테이션에 충분하고, 초과분은 어차피 만료된
+    # 옛 세션 쿠키다. 풀이 비어도 _sync_cookies 가 계정에서 다시 채운다.
+    _COOKIE_POOL_MAX = 20
     try:
         raw = await _get_setting(write_session, "musinsa_cookies")
         existing: list[str] = []
@@ -226,7 +239,9 @@ async def musinsa_set_cookie(
             parsed = json.loads(raw) if isinstance(raw, str) else raw
             if isinstance(parsed, list):
                 existing = [c for c in parsed if isinstance(c, str) and c]
-        merged = [body.cookie] + [c for c in existing if c != body.cookie]
+        merged = ([body.cookie] + [c for c in existing if c != body.cookie])[
+            :_COOKIE_POOL_MAX
+        ]
         await _set_setting(write_session, "musinsa_cookies", json.dumps(merged))
     except Exception as exc:  # pragma: no cover — fallback 실패해도 단수는 저장됨
         logger.warning(f"[set-cookie] musinsa_cookies 풀 갱신 실패 (무시): {exc}")
