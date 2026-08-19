@@ -2128,11 +2128,15 @@ class SambaShipmentService:
 
                 # 카페24/롯데홈쇼핑/GS샵은 플러그인 내부에서 자체 카테고리를 결정하므로 매핑 없어도 허용.
                 # (GS샵: execute()가 소싱카테고리 기반 gsshop_category_map으로 prdClsCd|sectId 자동매칭)
+                # 포이즌은 카탈로그(globalSkuId) 매칭 방식이라 마켓 카테고리 개념 자체가 없다
+                # (_validate_category 가 "0" 반환). 이 게이트에 걸려 오토튠 전송이 전량
+                # "카테고리 매핑 없음"으로 스킵되던 문제 — 라이브 입찰 355건 미연동 원인.
                 if not category_id and market_type not in (
                     "playauto",
                     "cafe24",
                     "lottehome",
                     "gsshop",
+                    "poison",
                 ):
                     res["error"] = "카테고리 매핑 없음"
                     logger.warning(
@@ -2144,7 +2148,14 @@ class SambaShipmentService:
                 _lotteon_like = market_type in ("lotteon", "ssg")
                 if (
                     market_type
-                    not in ("coupang", "playauto", "cafe24", "lottehome", "gsshop")
+                    not in (
+                        "coupang",
+                        "playauto",
+                        "cafe24",
+                        "lottehome",
+                        "gsshop",
+                        "poison",
+                    )
                     and not _lotteon_like
                     and not str(category_id).isdigit()
                 ):
@@ -2227,10 +2238,17 @@ class SambaShipmentService:
                                 "soldout_fallback"
                             ):
                                 # 실제 삭제(DELETE 200) 시에만 registered_accounts 제거
+                                # ★포이즌 제외 — 입찰 취소일 뿐 상품 삭제가 아니다.
+                                # 등록에서 빼면 오토튠 스캔 대상에서 사라져 재입고 시
+                                # 자동 재등록(manual_listing)이 영영 안 걸린다.
                                 try:
-                                    _prod = await SambaCollectedProductRepository(
-                                        self.session
-                                    ).get_async(product_id)
+                                    _prod = (
+                                        None
+                                        if market_type == "poison"
+                                        else await SambaCollectedProductRepository(
+                                            self.session
+                                        ).get_async(product_id)
+                                    )
                                     if _prod:
                                         new_reg = [
                                             a
@@ -4082,11 +4100,13 @@ class SambaShipmentService:
                                 f"[ESM 크로스매핑] {other}({other_id}) → {account.market_type}({category_id})"
                             )
                 # 카페24/롯데홈쇼핑/GS샵은 카테고리 매핑 없이 플러그인 내부에서 자동 처리
+                # 포이즌은 카탈로그(globalSkuId) 매칭이라 마켓 카테고리 자체가 없음
                 if not category_id and account.market_type not in (
                     "playauto",
                     "cafe24",
                     "lottehome",
                     "gsshop",
+                    "poison",
                 ):
                     new_result[account_id] = "failed"
                     new_errors[account_id] = "카테고리 매핑 없음"

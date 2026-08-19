@@ -2571,6 +2571,22 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         # 삭제 성공한 계정 → registered_accounts/market_product_nos 정리
                                         if _ok_del_ids:
                                             _cycle_deleted_pids.add(r.product_id)
+                                            # ★포이즌 예외 — _delete_poison 은 '상품 삭제'가
+                                            # 아니라 '입찰 취소'다. biddingNo 만 비워두면 재입고
+                                            # 시 execute() 가 '기존 입찰 없음 → manual_listing'
+                                            # 분기를 타 자동 재등록되는데, registered_accounts
+                                            # 에서 빼버리면 오토튠 스캔 대상에서 사라져 영영
+                                            # 재등록되지 않는다 → 등록 상태를 유지한다.
+                                            _purge_ids = [
+                                                _d
+                                                for _d in _ok_del_ids
+                                                if getattr(
+                                                    _account_cache.get(_d),
+                                                    "market_type",
+                                                    "",
+                                                )
+                                                != "poison"
+                                            ]
                                             _orig_reg = list(
                                                 product.registered_accounts or []
                                             )
@@ -2582,14 +2598,14 @@ async def _site_autotune_loop(device_id: str, site: str):
                                             _new_reg = [
                                                 a
                                                 for a in _orig_reg
-                                                if a not in _ok_del_ids
+                                                if a not in _purge_ids
                                             ]
                                             _new_mnos = {
                                                 k: v
                                                 for k, v in _orig_mnos.items()
                                                 if not any(
                                                     k == d or k.startswith(f"{d}_")
-                                                    for d in _ok_del_ids
+                                                    for d in _purge_ids
                                                 )
                                             }
                                             # 등록된 모든 마켓 삭제 성공 → 상품 자체 삭제
