@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from backend.domain.samba.plugins.markets.poison import (
     has_live_bidding,
+    merge_poison_sizes,
     should_skip_non_primary,
 )
 
@@ -80,3 +81,47 @@ def test_취소된_입찰만_남았으면_비primary_신규로_보고_스킵한�
             "sizes": {"275": {"biddingNo": "1512", "status": "cancelled"}},
         }
     )
+
+
+# ── 사이즈 매핑 병합 (2026-08-19 유실 사고) ─────────────────────
+def test_실패한_사이즈의_기존_biddingNo는_보존된다():
+    """시세 게이트로 M/L 이 스킵되고 XL 만 성공해도 M/L 입찰번호가 남아야 한다."""
+    prev = {
+        "M": {"biddingNo": "1001", "price": 100000},
+        "L": {"biddingNo": "1002", "price": 100000},
+        "XL": {"biddingNo": "1003", "price": 100000},
+    }
+    new = {"XL": {"biddingNo": "1003", "price": 98000}}
+    merged = merge_poison_sizes(prev, new)
+    assert merged["M"]["biddingNo"] == "1001"
+    assert merged["L"]["biddingNo"] == "1002"
+    assert merged["XL"]["price"] == 98000
+
+
+def test_전량_실패해도_기존_매핑이_남는다():
+    prev = {"275": {"biddingNo": "1001"}}
+    assert merge_poison_sizes(prev, {}) == prev
+
+
+def test_취소_성공한_사이즈만_biddingNo가_비워진다():
+    prev = {"270": {"biddingNo": "1001"}, "275": {"biddingNo": "1002"}}
+    merged = merge_poison_sizes(prev, {}, cancelled=["270"])
+    assert "biddingNo" not in merged["270"]
+    assert merged["270"]["status"] == "cancelled"
+    assert merged["275"]["biddingNo"] == "1002"
+
+
+def test_취소분을_뺀_나머지가_살아있으면_여전히_라이브다():
+    merged = merge_poison_sizes(
+        {"270": {"biddingNo": "1001"}, "275": {"biddingNo": "1002"}},
+        {},
+        cancelled=["270"],
+    )
+    assert has_live_bidding({"sizes": merged})
+
+
+def test_전량_취소되면_라이브가_아니다():
+    merged = merge_poison_sizes(
+        {"270": {"biddingNo": "1001"}}, {}, cancelled=["270"]
+    )
+    assert not has_live_bidding({"sizes": merged})

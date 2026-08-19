@@ -81,6 +81,27 @@ def should_skip_non_primary(poison_match: Any) -> bool:
     return not has_live_bidding(poison_match)
 
 
+def merge_poison_sizes(
+    prev: Any, new: dict[str, Any], cancelled: list[str] | None = None
+) -> dict[str, Any]:
+    """기존 사이즈 매핑에 이번 결과를 병합한다.
+
+    통째 교체하면 시세 게이트 스킵·API 거부로 일부만 성공했을 때 나머지 사이즈의
+    biddingNo 가 사라진다 → 다음 사이클이 신규 등록으로 오판(91800500 중복 거부),
+    품절이 나도 취소할 번호가 없어 오버셀. 실제 유실 사고로 확인됨(2026-08-19).
+    """
+    merged: dict[str, Any] = {}
+    if isinstance(prev, dict):
+        merged.update({k: v for k, v in prev.items()})
+    merged.update(new or {})
+    for size in cancelled or []:
+        entry = dict(merged.get(size) or {})
+        entry.pop("biddingNo", None)
+        entry["status"] = "cancelled"
+        merged[size] = entry
+    return merged
+
+
 def build_size_index(
     sku_list: list[dict[str, Any]],
 ) -> dict[str, tuple[dict[str, Any], str]]:
@@ -258,6 +279,7 @@ class PoisonPlugin(MarketPlugin):
         )
         results: list[dict[str, Any]] = []
         new_sizes: dict[str, Any] = {}
+        cancelled_sizes: list[str] = []
 
         # 시세 게이트용 사이즈별 시장가 — 재고 있는 사이즈만 일괄 조회(상품당 1~2회)
         min_profit = await self._load_min_profit(session, product)
@@ -304,6 +326,8 @@ class PoisonPlugin(MarketPlugin):
                     r = await client.cancel_listing(bidding_no)
                     r["size"] = opt_name
                     results.append(r)
+                    if r.get("success"):
+                        cancelled_sizes.append(opt_name)
                 continue
 
             target = await self._compute_bid_price(
@@ -378,7 +402,13 @@ class PoisonPlugin(MarketPlugin):
 
         # resell_matches.poison 저장 (사이즈별 biddingNo) — 다음 오토튠 수정/취소 키
         await self._save_poison_match(
-            session, product.get("id"), article_number, new_sizes, _time.time()
+            session,
+            product.get("id"),
+            article_number,
+            new_sizes,
+            _time.time(),
+            cancelled_sizes=cancelled_sizes,
+            prev_sizes=prev_sizes,
         )
 
         ok_count = sum(1 for r in results if r.get("success"))
@@ -502,8 +532,20 @@ class PoisonPlugin(MarketPlugin):
         article_number: str,
         sizes: dict[str, Any],
         ts: float,
+        cancelled_sizes: list[str] | None = None,
+        prev_sizes: dict[str, Any] | None = None,
     ) -> None:
-        """resell_matches.poison 에 사이즈별 biddingNo 매칭 저장 (타 플랫폼 키 보존)."""
+        """resell_matches.poison 에 사이즈별 biddingNo 매칭 저장 (타 플랫폼 키 보존).
+
+        ★sizes 는 **병합**한다. 이번 호출에서 성공한 사이즈만 담긴 dict 로 통째
+        교체하면, 시세 게이트 스킵·API 거부 등으로 일부만 성공했을 때 나머지 사이즈의
+        biddingNo 가 DB 에서 사라진다. 그러면 다음 사이클은 '기존 입찰 없음'으로 보고
+        신규 등록을 시도해 91800500(중복)으로 막히고, 품절이 나도 취소할 번호가 없어
+        오버셀로 이어진다. 실제로 라이브 입찰 6건이 이 경로로 유실됐다(2026-08-19).
+
+        취소에 성공한 사이즈만 명시적으로 status='cancelled' 처리하고 biddingNo 를 비운다
+        (재입고 시 execute 가 신규 manual_listing 분기를 타게 하는 기존 규약 유지).
+        """
         if not product_id:
             return
         from backend.domain.samba.collector.repository import (
@@ -516,12 +558,17 @@ class PoisonPlugin(MarketPlugin):
             if not row:
                 return
             rm = dict(row.resell_matches or {})
+            _prev_raw = (rm.get("poison") or {}).get("sizes")
+            if not isinstance(_prev_raw, dict):
+                _prev_raw = prev_sizes if isinstance(prev_sizes, dict) else {}
+            merged = merge_poison_sizes(_prev_raw, sizes, cancelled_sizes)
+            _has_live = has_live_bidding({"sizes": merged})
             rm["poison"] = {
                 # 상품관리 UI(resellRows)가 읽는 키 — 등록된 사이즈 있으면 매칭표시
-                "product_id": article_number if sizes else "",
-                "confidence": 100 if sizes else 0,
+                "product_id": article_number if _has_live else "",
+                "confidence": 100 if _has_live else 0,
                 "articleNumber": article_number,
-                "sizes": sizes,
+                "sizes": merged,
                 "updated_at": int(ts),
             }
             row.resell_matches = rm
