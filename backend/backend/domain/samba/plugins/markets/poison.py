@@ -277,6 +277,16 @@ class PoisonPlugin(MarketPlugin):
         fallback_cost = self._safe_int(product.get("cost")) or self._safe_int(
             product.get("sale_price")
         )
+        # 옵션가 불균일 대응 — 무신사 등은 같은 상품이라도 사이즈마다 판매가가 다르다
+        # (할인 적용 PLUS 옵션 vs 정가 NORMAL 옵션). product.cost 는 최저옵션가 기준이라
+        # 비싼 옵션을 그 원가로 등록하면 팔리는 순간 확정 역마진이 난다.
+        # (2026-08-19 IY7278 실사고: 원가 53,990 으로 89,000 등록 → 실매입 109,000, -35,000)
+        _opt_prices = [
+            self._safe_int(o.get("price"))
+            for o in options
+            if isinstance(o, dict) and self._safe_int(o.get("price")) > 0
+        ]
+        min_opt_price = min(_opt_prices) if _opt_prices else 0
         results: list[dict[str, Any]] = []
         new_sizes: dict[str, Any] = {}
         cancelled_sizes: list[str] = []
@@ -304,7 +314,13 @@ class PoisonPlugin(MarketPlugin):
         for opt in options:
             opt_name = (opt.get("name") or opt.get("size") or "").strip()
             stock = self._safe_int(opt.get("stock"), default=0)
-            cost = self._safe_int(opt.get("cost")) or fallback_cost
+            cost = self._safe_int(opt.get("cost"))
+            if not cost:
+                cost = fallback_cost
+                _op = self._safe_int(opt.get("price"))
+                if _op and min_opt_price and _op > min_opt_price:
+                    # 최저옵션 대비 비싼 옵션 — 같은 할인율로 실매입가를 환산한다
+                    cost = int(round(fallback_cost * _op / min_opt_price))
             norm = _normalize_size(opt_name)
             matched = size_index.get(norm)
             sku, size_source = matched if matched else ({}, "")
@@ -350,6 +366,16 @@ class PoisonPlugin(MarketPlugin):
                 unit=1000,
             )
             if decision.skipped:
+                # 이미 걸려 있는 입찰이면 반드시 내린다 — 안 내리면 수익이 안 나는
+                # 가격표가 그대로 살아남아 계속 팔린다(2026-08-19 IY7278 사고).
+                if bidding_no:
+                    c = await client.cancel_listing(bidding_no)
+                    if c.get("success"):
+                        cancelled_sizes.append(opt_name)
+                    logger.info(
+                        f"[POIZON] 게이트 탈락 입찰 취소 {article_number}/{opt_name} "
+                        f"원가={int(cost)} → {c.get('message')}"
+                    )
                 results.append(
                     {
                         "size": opt_name,
