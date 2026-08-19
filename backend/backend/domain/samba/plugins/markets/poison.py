@@ -377,9 +377,11 @@ class PoisonPlugin(MarketPlugin):
                     global_sku_id=int(global_sku_id),
                 )
                 if r.get("success"):
+                    # 수정은 새 입찰번호를 재발급한다 — 응답에 오면 그것으로 갈아끼운다.
+                    # (없으면 no_change 등 기존 번호 유지 케이스)
                     new_sizes[opt_name] = {
                         "globalSkuId": int(global_sku_id),
-                        "biddingNo": bidding_no,
+                        "biddingNo": str(r.get("sellerBiddingNo") or "") or bidding_no,
                         "price": price,
                         "qty": stock,
                     }

@@ -81,3 +81,32 @@ async def test_그밖의_에러는_실패로_남는다(monkeypatch):
 
     assert r["success"] is False
     assert "order" in r["message"]
+
+
+@pytest.mark.asyncio
+async def test_수정_성공시_새_입찰번호를_돌려준다(monkeypatch):
+    """수정은 기존 입찰을 내리고 새 번호로 재발급한다 — 안 받으면 다음 사이클이 깨진다."""
+
+    async def fake_post(path, business):
+        return {"code": 200, "data": {"sellerBiddingNo": "151220034899120694"}}
+
+    c = _client()
+    monkeypatch.setattr(c, "_post", fake_post)
+    r = await c.update_listing(seller_bidding_no="151220034897187964",
+                               price=155000, quantity=1)
+
+    assert r["success"] is True
+    assert r["sellerBiddingNo"] == "151220034899120694"
+
+
+@pytest.mark.asyncio
+async def test_no_change면_새_번호가_없다(monkeypatch):
+    async def fake_post(path, business):
+        return {"code": 20900016, "msg": "same"}
+
+    c = _client()
+    monkeypatch.setattr(c, "_post", fake_post)
+    r = await c.update_listing(seller_bidding_no="1512", price=1000, quantity=1)
+
+    assert r["success"] is True
+    assert not r.get("sellerBiddingNo")

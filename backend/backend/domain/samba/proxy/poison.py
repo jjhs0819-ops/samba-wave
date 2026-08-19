@@ -528,7 +528,17 @@ class PoisonClient:
 
         data = await self._post(self.PATH_UPDATE_LISTING, business)
         if data.get("code") == 200:
-            return {"success": True, "message": "POIZON 입찰 수정 완료", "data": data}
+            # ★수정은 기존 입찰을 내리고 **새 sellerBiddingNo 로 재발급**한다
+            # (라이브 실측 2026-08-19: 수정 후 DB 번호는 마켓에서 사라지고 같은 SKU 에
+            # 새 번호가 생겼다). 새 번호를 안 받아 저장하면 다음 사이클 수정도, 품절
+            # 취소도 없는 번호로 호출돼 실패한다 → 오버셀.
+            payload = data.get("data") or {}
+            return {
+                "success": True,
+                "sellerBiddingNo": str(payload.get("sellerBiddingNo") or ""),
+                "message": "POIZON 입찰 수정 완료",
+                "data": data,
+            }
         if data.get("code") == self.CODE_UPDATE_NO_CHANGE:
             # 이미 원하는 값 — 성공으로 처리해야 오토튠이 실패로 마킹하고 매 사이클 재시도하지 않는다
             return {
