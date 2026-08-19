@@ -22,6 +22,7 @@ SUPPORTED_SOURCING_SITES = [
     {"id": "KREAM", "name": "크림", "group": "리셀"},
     {"id": "SNKRDUNK", "name": "스니덩크", "group": "리셀"},
     {"id": "BUNJANG", "name": "번개장터", "group": "리셀"},
+    {"id": "DAANGN", "name": "당근마켓", "group": "리셀"},
     {"id": "Nike", "name": "나이키", "group": "스포츠"},
     {"id": "Adidas", "name": "아디다스", "group": "스포츠"},
     {"id": "ABCmart", "name": "ABC마트", "group": "신발"},
