@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from backend.core.httpx_ssl import install_shared_ssl_context
 from backend.api.v1.routers.auth import router as auth_router
 from backend.api.v1.routers.ebay import router as ebay_router
 from backend.api.v1.routers.license import router as license_router
@@ -88,6 +89,11 @@ from slowapi.middleware import SlowAPIMiddleware
 
 def create_application() -> FastAPI:
     """Create and configure FastAPI application with API routes."""
+
+    # httpx SSL 컨텍스트 공유 — 라우터/백그라운드 루프가 클라이언트를 만들기 전에
+    # 반드시 먼저 설치해야 한다. 미설치 시 클라이언트 생성마다 CA 번들을 새로
+    # 파싱하며 42ms 씩 이벤트루프를 정지시킨다(2026-08-19 전 화면 지연 원인).
+    install_shared_ssl_context()
 
     app = FastAPI(
         title="Backend API",
