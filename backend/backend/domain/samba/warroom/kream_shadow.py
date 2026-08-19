@@ -613,8 +613,8 @@ async def _brand_reg_rates(
                         # 바로 아래에서 잘려 "빠진 브랜드"가 생겼다.
                         "GROUP BY m.br ORDER BY 2 DESC LIMIT :n"
                     ),
-                    # 원가 상한은 정책값(kreamMaxCostJpy). 25만엔 하드코딩이면 정책이
-                    # 35만이어도 25만~35만 구간이 집계에서 빠져 등록률이 왜곡된다.
+                    # 원가 상한은 정책값(kreamMaxCostJpy) 하나만 쓴다.
+                    # 코드에 숫자를 박으면 정책과 어긋나 집계 구간이 통째로 빠진다.
                     {"n": limit, "maxc": int(POLICY["max_cost_jpy"])},
                 )
             ).all()
@@ -871,9 +871,13 @@ POLICY = {
     "forwarding_fee": 8000,  # 배대지비용 — 원
     "box_pack_margin_rate": 0,  # 박스/카드팩(PSA제외 실링) 원가 추가마진율(%) — 정책설정
     "non_card_margin_rate": 5,  # 나머지(신발/의류) 원가 추가마진율(%) — 정책설정, 하드코딩 금지
-    # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외. 로컬 봇의 25만엔 원칙.
-    # 초고가 카드(수백만엔)에 입찰이 걸리면 체결 시 그 값으로 소싱해야 해 치명적.
-    "max_cost_jpy": 250000,
+    # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외.
+    # **값은 정책관리(kreamMaxCostJpy)에서만 온다. 여기에 숫자를 적지 마라.**
+    # 종전엔 기본값이 박혀 있어 실제 정책과 어긋났고, 그 숫자를 운영값으로
+    # 착각해 잘못 보고하는 일이 반복됐다.
+    # 정책을 못 읽었을 때 0 을 쓰면 "모든 원가가 상한 초과"가 되어 전량 삭제로
+    # 이어지므로, 사실상 무한대로 두어 **상한 미적용**이 되게 한다.
+    "max_cost_jpy": 10**12,
     # [2026-08-16] 조정 데드밴드 폐기 — 정책값까지 제거했다.
     # 크림은 1,000원 차이로 순위가 갈린다. 생략한 그 금액이 곧 1등과 2등의 차이라
     # '아낀 호출'보다 잃은 순위가 크다. 조정은 판정이 시키는 대로 전부 실행한다.
@@ -1597,6 +1601,30 @@ async def _execute_update(cli, h, ask_id, target, cur, is_nocomp, pid, opt) -> t
         _note_fail(f"예외 {type(exc).__name__}: {str(exc)[:80]}")
         logger.warning("[크림섀도] PATCH 실패 ask=%s: %s", ask_id, exc)
         return "error", None
+
+
+def over_cost(price_jpy) -> bool:
+    """입찰 최고 원가(정책값 kreamMaxCostJpy) 초과인가 — **상한 판정은 여기 하나만 쓴다.**
+
+    [2026-08-19] 종전엔 이 비교가 코드 8곳에 흩어져 있었고 경로마다 처리가 달랐다.
+    특히 신발 경로는 '오염 가드'(5,000~300,000엔)가 **먼저** 걸려서, 상한을 크게
+    넘는 원가가 hold 로 빠지고 그 아래 삭제 코드에 도달하지 못했다.
+    그 결과 고액 입찰이 영구 방치됐다 — 실측(2026-08-19) 300만원 초과 1,196건,
+    9,989,000원대 629건, 최고 99,988,000원.
+
+    값은 정책관리에서만 온다. 코드에 숫자를 박지 마라(기본값과 실제 정책이 어긋나
+    잘못된 값을 운영값으로 착각하는 일이 반복됐다).
+    """
+    try:
+        cap = int(POLICY.get("max_cost_jpy") or 0)
+    except Exception:
+        return False
+    if cap <= 0:
+        return False  # 정책을 못 읽었으면 상한 미적용(전량 삭제 방지)
+    try:
+        return int(price_jpy or 0) > cap
+    except Exception:
+        return False
 
 
 def calc_base(
@@ -4270,18 +4298,22 @@ async def _process_shoe_asks(
             # [2026-08-13] 상한을 300,000 으로 박아둬 정책(kreamMaxCostJpy=350,000)보다
             # 낮았다. 30만~35만엔 원가는 정책상 정상인데 여기서 먼저 hold 로 막혀
             # 갱신도 삭제도 안 됐다. 정책값과 300,000 중 큰 쪽을 쓴다.
-            if price and not (5000 <= price <= max(300000, POLICY["max_cost_jpy"])):
-                c["hold"] += 1
-                continue
-            # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
-            # [2026-08-13] 종전엔 continue 로 갱신 대상에서 빼기만 해서, 원가가 오른 뒤
-            # 상한을 넘긴 입찰이 영구 방치됐다(실측: 구찌 696883 이 4,152,000원으로 생존).
-            # 체결되면 상한 초과 원가로 소싱해야 하므로 방치가 제일 위험한 처리다.
-            if price > POLICY["max_cost_jpy"]:
+            # 입찰 최고 원가(정책값) 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
+            # [2026-08-19] 아래 '오염 가드'보다 **먼저** 본다. 종전엔 순서가 반대라
+            # 상한을 크게 넘는 원가가 오염 가드에 먼저 걸려 hold 로 빠졌고, 그 아래
+            # 삭제 코드에 도달하지 못해 고액 입찰이 영구 방치됐다.
+            #   실측(2026-08-19): 300만원 초과 입찰 1,196건 생존.
+            #   9,989,000원대 629건 · 최고 99,988,000원.
+            # 체결되면 그 값으로 소싱해야 하므로 방치가 제일 위험하다.
+            if price and over_cost(price):
                 c["overcost"] = c.get("overcost", 0) + 1
                 if _EXEC_SHOE and a.get("id"):
                     _pend_del.append((a.get("id"), kid, opt))
                     c["del_overcost"] = c.get("del_overcost", 0) + 1
+                continue
+            # 오염 가드 — 신발 원가 상식범위 밖이면 조정/삭제 모두 보류(수집 파싱오류 방어)
+            if price and not (5000 <= price <= max(300000, POLICY["max_cost_jpy"])):
+                c["hold"] += 1
                 continue
             price = _guard_jpy(kid, opt, price)
             if stock <= 0 or price <= 0:
@@ -4668,7 +4700,7 @@ async def _process_box_restock(
             # [2026-08-03] 급락 가드도 실제 옵션 키로 — 고정 문자열이면 옵션별 직전가가
             # 한 칸에 뒤섞여 가드가 엉뚱한 값을 비교한다.
             jpy = _guard_jpy(kid, opt or "해외배송", int(box["price"]))
-            if jpy > POLICY["max_cost_jpy"]:
+            if over_cost(jpy):
                 c["overcost"] += 1
                 continue
             if not opt:
@@ -4831,9 +4863,13 @@ async def _process_box_asks(
                         return ("delete", a, 0, False)
                     price = int(box["price"])
                 price = _guard_jpy(kid, opt, price)
-                # 입찰 최고 원가 초과 — 갱신 대상서 제외(로컬 25만엔 원칙). 삭제는 안 함.
-                if price > POLICY["max_cost_jpy"]:
-                    return ("overcost", a, 0, False)
+                # 입찰 최고 원가(정책값) 초과 — **이미 걸린 입찰은 지운다.**
+                # [2026-08-19] 종전엔 "갱신 대상서 제외, 삭제는 안 함" 이었다. 그래서
+                # 원가가 상한을 넘긴 뒤에도 입찰이 그대로 살아 영구 방치됐다.
+                # 다른 경로(신발·카드·박스)는 이미 삭제하는데 이 갱신 경로만 달랐다.
+                # 체결되면 상한 초과 원가로 소싱해야 하므로 방치가 제일 위험하다.
+                if over_cost(price):
+                    return ("delete", a, 0, False)
                 cur = int(a.get("price") or 0)
                 _floor_map[(kid, opt)] = calc_min_price(
                     price, rate, True, False, fee_kind="overseas"
@@ -5016,7 +5052,6 @@ async def _process_expired_asks(
 
     _now = _now_ts()
     _sur_shoe = POLICY["non_card_margin_rate"]
-    maxc = POLICY["max_cost_jpy"]
     processed = 0
     async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
         for (kid, opt), a in cand:
@@ -5084,7 +5119,7 @@ async def _process_expired_asks(
             if price <= 0 or stock <= 0:
                 c["nocost"] += 1
                 continue
-            if price > maxc:
+            if over_cost(price):
                 c["overcost"] += 1
                 continue
             # 급락 가드(직전가 대비 폭락 → 저가 재입찰 방지)
@@ -5647,7 +5682,7 @@ async def run_kream_unified_once() -> dict:
                                 )
                             )
                             continue
-                        if _pr > POLICY["max_cost_jpy"]:
+                        if over_cost(_pr):
                             r["rows"].append(
                                 (
                                     "delete",
@@ -5736,7 +5771,7 @@ async def run_kream_unified_once() -> dict:
                     # 양말 ¥1,390 · 티셔츠 ¥2,490 처럼 대부분 5,000엔 미만이다
                     # (실측: 이 가드에 6,450 옵션이 걸려 등록 불가).
                     # 헐값 이상치는 아래 _ANOMALY_FLOOR(시장최저의 70% 미만 차단)가 맡는다.
-                    if _pr > POLICY["max_cost_jpy"]:
+                    if over_cost(_pr):
                         _drop("원가상한초과", kid, _nm, f"{_pr}")
                         continue
                     # [2026-08-06] 비카드 리스톡도 **_decide_price_action 하나로** 판정한다.
@@ -5875,7 +5910,7 @@ async def run_kream_unified_once() -> dict:
                 # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
                 # 원가가 오른 뒤 상한을 넘긴 입찰이 영구 방치됐다. 체결되면 상한 초과
                 # 원가로 소싱해야 하므로 등록 차단과 삭제를 한 판정으로 묶는다.
-                if price > POLICY["max_cost_jpy"]:
+                if over_cost(price):
                     r["rows"].append(
                         (
                             "delete" if has_ask else "overcost",
@@ -6161,7 +6196,7 @@ async def run_kream_unified_once() -> dict:
                 # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
                 # 원가가 오른 뒤 상한을 넘긴 입찰이 영구 방치됐다. 체결되면 상한 초과
                 # 원가로 소싱해야 하므로 등록 차단과 삭제를 한 판정으로 묶는다.
-                if price > POLICY["max_cost_jpy"]:
+                if over_cost(price):
                     r["rows"].append(
                         (
                             "delete" if has_ask else "overcost",
