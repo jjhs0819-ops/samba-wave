@@ -174,6 +174,28 @@ def _progress() -> None:
     _g_last_progress = _time_mod.time()
 
 
+async def _finalize_heartbeat(max_sec: int = 1800) -> None:
+    """마무리 단계 전용 진행 신호 [2026-08-20].
+
+    판정이 끝난 뒤 구간(_sync_kream_meta·_rival_low_retry·고시등록·설정저장 …)은
+    **단일 호출 하나가 20분을 넘길 수 있는데 그 안에 진행 신호가 없다.** 그래서
+    사이클이 매번 완주 직전 워치독에 잘렸다 — 조정·등록은 이미 다 나간 뒤라
+    실익은 남지만 완주 기록도 슬랙 알림도 영영 안 나온다.
+      실측 905회차: 판정완료 12,375초 → 1,213초 무진행 → 재기동
+            906회차: 판정완료  3,665초 → 1,211초 무진행 → 재기동 (사이클 길이 무관)
+    max_sec 상한을 둔다 — 마무리가 그보다 오래 끌면 그건 진짜 멈춤이므로
+    하트비트를 끊어 워치독이 정상적으로 잡게 한다.
+    """
+    _slept = 0
+    try:
+        while _slept < max_sec:
+            await asyncio.sleep(30)
+            _slept += 30
+            _progress()
+    except asyncio.CancelledError:
+        pass
+
+
 def _start_watchdog() -> None:
     """사이클 진입 시 1회. 데몬 스레드라 프로세스 종료를 막지 않는다."""
     global _g_watchdog_on
@@ -6742,6 +6764,8 @@ async def run_kream_unified_once() -> dict:
         )
         _exec_bg.clear()
     logger.info("[크림통합] STAGE 조회·판정 완료 %.0f초", _stage_t.time() - _t_stage)
+    # 마무리 단계 진행 신호 — 아래 단계들은 단일 호출이 길어 워치독이 오진한다.
+    _hb_fin = asyncio.create_task(_finalize_heartbeat())
     _mrep = _meter_report()
     if _mrep:
         logger.info("[크림통합] API 소요 — %s", _mrep)
@@ -6764,6 +6788,7 @@ async def run_kream_unified_once() -> dict:
             _g_post_audit["rank1"] * 100.0 / max(1, _g_post_audit["n"]),
         )
     # 사이클 중 받아둔 크림 이름·사진을 DB 에 반영(추가 호출 없음)
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _sync_kream_meta()
     # 판정까지 간 것만 '봤다'로 남긴다 — 못 본 건 다음 사이클에 다시 뽑힌다.
     if _g_unjudged:
@@ -6781,7 +6806,9 @@ async def run_kream_unified_once() -> dict:
     # 등록까지 끝나야 저장하므로, 중간에 죽으면 다음 사이클이 같은 슬라이스를 다시 잡는다.
 
     # [Step 5] 리스톡 가드 상태 로드 + 실행대기 수집(순차 — 가드상태 race 방지)
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _load_restock_guards()
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _detect_and_hold_sold(asks)  # 즉시판매 보류(스냅샷) → _g_unfulfilled 합류
     import time as _t  # noqa: F811
 
@@ -6917,6 +6944,7 @@ async def run_kream_unified_once() -> dict:
     # 로그는 실행 진행 중 5건마다 DB flush — 사이클 끝까지 안 기다리고 UI에 즉시 노출.
     exec_patch = exec_post = exec_del = exec_fail = exec_revert = 0
     registered_lines: list = []  # 슬랙 리스톡 섹션 — 실제 등록된 (상품 옵션 가격) 줄
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _flush_logs_to_db()  # 분류 결과 먼저 노출(실행 시작 전)
     logger.info(
         "[크림통합] STAGE 실행(삭제/갱신/등록) 시작 %.0f초경과",
@@ -6977,18 +7005,22 @@ async def run_kream_unified_once() -> dict:
                     _nc_block,
                 )
 
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _exec_pending(ecli, h, _dels, [], _ec)
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _flush_logs_to_db()
             logger.info(
                 "[크림통합] STAGE 실행-갱신 %d건 시작 (%.0f초경과)",
                 len(pend_renew),
                 _stage_t.time() - _t_stage,
             )
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _exec_pending(ecli, h, [], _upds, _ec)
             exec_del = _ec.get("del", 0)
             exec_patch = _ec.get("patch", 0)
             exec_revert = _ec.get("revert", 0)
             exec_fail = _ec.get("fail", 0) + _miss_del
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _flush_logs_to_db()
             logger.info(
                 "[크림통합] STAGE 실행-등록 %d건 시작 (%.0f초경과)",
@@ -7046,6 +7078,7 @@ async def run_kream_unified_once() -> dict:
                             _ok, _rs = await _exec_create_ask(ecli, h, _kid, _tg, _nm)
                     if _ok:
                         exec_post += 1
+                        _progress()  # 워치독 — 마무리 단계도 진행이다
                         await _audit_post(ecli, h, _kid, _nm, _tg, _pre)
                         # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
                         registered_lines.append(f"{str(_pn)[:20]} {_nm} {_tg:,}원")
@@ -7069,17 +7102,23 @@ async def run_kream_unified_once() -> dict:
             await asyncio.gather(
                 *[_do_post(b1, b2, b3, b4) for b1, b2, b3, b4 in pend_restock]
             )
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _flush_logs_to_db()
+        _progress()  # 워치독 — 마무리 단계도 진행이다
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
+        _progress()  # 워치독 — 마무리 단계도 진행이다
         await _save_setting_map(_SET_FAILED, _g_failed_posts)
     # [2026-08-16] 스캔목록 저장 폐기 — 순환은 '재고보유 + updated_at 오래된 순'
     # 정렬이 담당한다. 판정한 상품은 실시간 원가/재고 되쓰기로 updated_at 이 밀려
     # 자연히 뒤로 간다. 별도 상태를 저장할 이유가 없다.
     # (남아 있던 값은 다음 로드에서 안 읽으므로 그대로 둬도 무해하다)
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
     )  # 2연속 대기 상태는 섀도서도 유지
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _save_setting_map(_SET_LIMIT, _g_limit_cd)  # 입찰제한 쿨다운 유지
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _save_setting_map(_SET_GUARD, _g_price_guard)  # 급락 가드 직전가 유지
 
     # ── [A] 박스(해외배송) 갱신/삭제 — 전역 ask 대상(배치 무관). _EXEC_BOX 게이트.
@@ -7222,9 +7261,12 @@ async def run_kream_unified_once() -> dict:
     # **뒤에** 생긴다. 여기서 다시 저장하지 않으면 다음 사이클 _load_restock_guards 가
     # 옛 값을 되살려 miss 가 영원히 1 에 머물고 등록이 한 건도 안 나간다.
     # (2026-08-03 실측: 미검출 161 → 163 반복, 등록 0)
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _save_setting_map(_SET_MISS, _g_miss_counts)
     if box_rs.get("post") or box_rs.get("fail"):
+        _progress()  # 워치독 — 마무리 단계도 진행이다
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
+        _progress()  # 워치독 — 마무리 단계도 진행이다
         await _save_setting_map(_SET_FAILED, _g_failed_posts)
     if box_rs.get("cand") or box_rs.get("trade") or box_rs.get("soldout"):
         logger.info(
@@ -7312,7 +7354,9 @@ async def run_kream_unified_once() -> dict:
             f"(품절{expired['nocost']:,} 상한{expired['overcost']:,} 가드{expired['guard']:,})",
         )
         if _EXECUTE and (expired["post"] or expired["fail"]):
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _save_setting_map(_SET_RECENT, _g_recent_posts)
+            _progress()  # 워치독 — 마무리 단계도 진행이다
             await _save_setting_map(_SET_FAILED, _g_failed_posts)
         # 슬랙/완료로그 집계 합산 — 만료 재입찰도 신규등록으로 표기.
         registered_lines.extend(expired["lines"])
@@ -7358,7 +7402,9 @@ async def run_kream_unified_once() -> dict:
         f"삭제{counts['delete']:,} 원가상한초과{counts.get('overcost', 0):,} / 실행 갱신{exec_patch:,} 등록{exec_post:,} 삭제{exec_del:,} "
         f"복귀{exec_revert:,}{_fail_tag(exec_fail)} (리스톡탐색 {min(_unified_offset, rest_total):,}/{rest_total:,})",
     )
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _flush_logs_to_db()
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _write_back_db_options(db_updates)  # 실시간 원가/재고 → DB 되쓰기
     # 활성사이클 표시용 — 진행/총을 '이번 사이클 처리수'로 통일(가격변동≤진행 정합).
     # 리스톡탐색 offset(3000/23813)은 사이클 완료 로그에 별도 표기(활성사이클 idx 와 혼동 방지).
@@ -7371,6 +7417,7 @@ async def run_kream_unified_once() -> dict:
         + box.get("delete", 0)
         + shoe.get("delete", 0)
     )
+    _progress()  # 워치독 — 마무리 단계도 진행이다
     await _save_kream_cycle_status(
         int(min(_unified_offset, rest_total)),  # idx = 리스톡탐색 진행
         int(rest_total or _processed),  # total = 리스톡 대상 총수
@@ -7539,6 +7586,8 @@ async def run_kream_unified_once() -> dict:
             f"/사이클상한 {_PRICE_DEL_CAP:,}"
             + (f" · 대기 {_pdskip:,}건(다음 사이클)" if _pdskip else "")
         )
+    _progress()  # 워치독 — 마무리 단계도 진행이다
+    _hb_fin.cancel()  # 마무리 끝 — 하트비트 종료
     await _send_slack(_pre + _restock_sec + _msg)
     return {
         "ok": True,
