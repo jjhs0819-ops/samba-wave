@@ -1688,6 +1688,51 @@ async def _sourcing_job_cleanup_loop() -> None:
             )
 
 
+_monitor_event_retention_task: asyncio.Task | None = None
+
+
+async def _monitor_event_retention_loop() -> None:
+    """모니터 이벤트 보존정책 — 10분 주기로 보존기간 지난 행을 배치 상한까지 삭제.
+
+    samba_monitor_event 에는 정리 로직이 아예 없어 2026-08-19 기준 12.8M행/17GB 까지
+    자랐다(97.6%가 오토튠의 price_changed). 밀린 1,000만 건을 한 번에 지우면 운영이
+    멈추므로 사이클마다 상한(기본 20,000)까지만 지우고 빠진다 — 여러 사이클에 걸쳐
+    천천히 소진되는 자기제한 방식이다.
+    """
+    from backend.db.orm import get_write_session
+    from backend.domain.samba.warroom.retention import purge_expired_monitor_events
+    from backend.shutdown_state import is_shutting_down
+
+    _log = logging.getLogger("backend.lifecycle")
+    while not is_shutting_down():
+        await asyncio.sleep(600)
+        if is_shutting_down():
+            break
+        try:
+            async with get_write_session() as session:
+                purged = await purge_expired_monitor_events(session)
+            if purged["total"]:
+                _log.info(
+                    "[monitor-retention] 삭제 %s건 (고빈도 %s / 기타 %s)",
+                    purged["total"],
+                    purged["high_volume"],
+                    purged["other"],
+                )
+        except Exception as exc:
+            # 정리는 부가 기능 — 실패해도 다른 유지보수 루프를 멈추지 않는다.
+            _log.warning("[monitor-retention] 삭제 실패(무시): %s", exc)
+
+
+async def _start_monitor_event_retention() -> None:
+    global _monitor_event_retention_task
+    _monitor_event_retention_task = asyncio.create_task(
+        _monitor_event_retention_loop(), name="monitor-event-retention"
+    )
+    logging.getLogger("backend.lifecycle").info(
+        "[lifecycle] 모니터 이벤트 보존정책 워커 시작"
+    )
+
+
 async def _start_sourcing_job_cleanup() -> None:
     global _sourcing_job_cleanup_task
     _sourcing_job_cleanup_task = asyncio.create_task(_sourcing_job_cleanup_loop())
@@ -2276,6 +2321,7 @@ async def lifespan(app: FastAPI):
         await _start_lottehome_ghost_reconciler()
         await _start_tracking_dispatch_sweep()
         await _start_soldout_cleanup()
+        await _start_monitor_event_retention()
         worker_runtime = WorkerRuntime(
             worker=None, worker_task=None, watchdog_task=None
         )
