@@ -2333,7 +2333,12 @@ def _decide_price_action(
         elif cur < min_price:
             act, target = "마진미달인상", min_price
         elif market_low > 0 and cur < market_low - 1000:
-            target = max(market_low - 1000, min_price)
+            # [2026-08-19] **시세를 따라가도 무경쟁 상한(no_comp_eff)은 넘지 않는다.**
+            # 경쟁자가 아예 없을 때 올리는 한도가 원가+무경쟁마진인데, 위에 비싼 호가가
+            # 하나 걸려 있다는 이유로 그 한도를 무제한 넘어서던 것이 이 줄이었다.
+            # 크림에는 팔 생각 없이 자리만 채운 호가가 있어(실측 846948: 원가 ¥19,486 에
+            # 해외최저 9,899,000) 그걸 그대로 따라가 989만원짜리 입찰이 만들어졌다.
+            target = max(min(market_low - 1000, no_comp_eff), min_price)
             act = "경쟁추종인상" if target > cur else "유지"
         elif truly_nocomp and cur < no_comp_eff:
             if cooldown_hit:
@@ -2389,11 +2394,29 @@ def _decide_price_action(
             # 삭제와 등록이 같은 판정기를 쓰므로 리스톡 재등록도 함께 막혀 영구 손실이었다.
             return "1등불가삭제", 0, True, False
         else:
-            target = max(market_target, min_price)
+            # [2026-08-19] 여기에도 무경쟁 상한을 씌운다. 바로 위 `market_target == 0`
+            # (경쟁자 없음) 가지는 이미 no_comp 를 쓰는데, 경쟁자가 있는 이 가지만
+            # 상한 없이 `시장최저 - 1틱` 을 그대로 썼다. 시세가 허수면 그 값이 곧
+            # 입찰가가 된다(실측 2026-08-19: 300만원 초과 1,194건, 최고 99,988,000원).
+            # 상한을 씌워도 market_target 보다 낮으므로 1등 판정은 그대로 유지된다.
+            target = max(min(market_target, no_comp), min_price)
         act = "no_rank1추종" if cur != target else "유지"
+
+    # [2026-08-19] **정상가 복원.** 1등이면서 무경쟁 상한을 넘는 값이 걸려 있으면
+    # 규칙대로 다시 계산한 값(no_comp_eff)으로 되돌린다. 값을 깎는 게 아니라,
+    # 규칙상 나올 수 없는 값이 만들어져 있던 것을 원래대로 고치는 것이다.
+    #   원인: 시세추종 두 분기에 상한이 빠져 있어 허수 호가를 그대로 따라갔다.
+    #         (실측 846948: 원가 ¥19,486 / 상한 247,000 인데 입찰 9,899,000 — 40배)
+    # 2026-08-05 에 폐기한 '과가격하향'과는 다르다. 그건 "경쟁자가 없으니 더 받는다"는
+    # 정상 범위의 값을 깎는 것이었고, 이건 상한 밖의 잘못된 값을 규칙 안으로 넣는 것이다.
+    # `target >= cur` 일 때만 손댄다 — 이미 다른 사유로 내려가는 중이면 그쪽을 따른다.
+    _restored = False
+    if rank1 and cur > no_comp_eff >= min_price and target >= cur:
+        act, target, is_nocomp, _restored = "정상가복원", no_comp_eff, True, True
 
     if fixed:  # 지정가(사용자 확정가)
         target, act = fixed, ("지정가" if fixed != cur else "유지")
+        _restored = False
     adjusting = act not in ("유지", "유지(동률)", "무경쟁인상(쿨다운보류)")
     # 하향 20% 캡 — 단, **1순위를 잡는 조정은 면제**한다. [2026-08-13]
     # 판정은 1등 가격(market_low - 틱)을 정확히 내는데 캡이 그걸 도로 끌어올려
@@ -2404,10 +2427,23 @@ def _decide_price_action(
     # 아래 데드밴드에는 같은 1순위 예외가 이미 있는데(_gains_rank1) 이 층만 빠져 있었다.
     # 헐값 방어는 바로 다음 줄 _ANOMALY_FLOOR(시장최저의 70% 미만 차단)가 그대로 맡고,
     # 마진 하한(min_price) 이상만 면제하므로 손실 위험은 없다.
+    # 정상가 복원은 캡을 면제한다. 캡은 '시장가 오판으로 인한 급락'을 막는 장치인데,
+    # 복원값은 원가에서 나온 확정값이라 오판이 아니다. 캡에 걸리면 40배짜리를 20%씩
+    # 깎느라 17사이클(사이클 약 1시간)이 걸려 사실상 방치된다.
     _r1_now = market_low > 0 and 0 < target <= market_low and not rank1
-    if adjusting and target < cur and not (_r1_now and target >= min_price):
+    if (
+        adjusting
+        and target < cur
+        and not _restored
+        and not (_r1_now and target >= min_price)
+    ):
         target = max(target, int(cur * (1 - _DROP_CAP)))
-    if adjusting and market_low > 0 and target < market_low * _ANOMALY_FLOOR:
+    # [2026-08-19] 헐값 판정의 기준을 **시장최저와 무경쟁 상한 중 낮은 쪽**으로 잡는다.
+    # 바로 위에서 무경쟁 상한을 씌우면 목표가가 시장최저보다 한참 낮아지는데(허수 호가
+    # 9,899,000 ↔ 상한 247,000), 그걸 시장최저와 비교하면 '헐값'으로 오판해 조정 자체가
+    # 막혔다. 상한까지 올린 값은 원가+무경쟁마진이라 헐값일 수 없다.
+    _floor_ref = min(market_low, no_comp) if no_comp > 0 else market_low
+    if adjusting and _floor_ref > 0 and target < _floor_ref * _ANOMALY_FLOOR:
         act, target, adjusting = "이상감지차단", cur, False
     # ── 천원 단위 정규화 [필수] — 크림은 1,000원 단위만 허용("천원 단위로 입력하세요" 400).
     # 시장최저(-1000/-5000)·하향캡(cur×0.8)·지정가 경로에서 비(非)천원 값이 나와 PATCH가
