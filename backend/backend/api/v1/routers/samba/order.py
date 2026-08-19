@@ -7193,6 +7193,26 @@ async def sync_orders_from_markets(
                         {"nums": _po_cancel_nos},
                     )
                     _po_known_cancels = {r[0] for r in _po_rows}
+                # 품번(article_number) → (삼바 상품ID, 원가) 역인덱스.
+                # 주문은 skuId(9자리)를 주는데 등록 시 저장한 값은 globalSkuId(11자리)라
+                # 서로 매칭되지 않는다. 주문에 함께 오는 article_number 가 우리
+                # style_code 와 같으므로 이것을 매칭 키로 쓴다.
+                _po_sku_map: dict[str, tuple[str, float]] = {}
+                try:
+                    _po_map_rows = await session.execute(
+                        _po_text(
+                            "SELECT id, cost, upper(style_code) FROM samba_collected_product "
+                            "WHERE (resell_matches::jsonb)->'poison'->'sizes' IS NOT NULL "
+                            "  AND (resell_matches::jsonb)->'poison'->'sizes' <> '{}'::jsonb "
+                            "  AND style_code IS NOT NULL AND style_code <> ''"
+                        )
+                    )
+                    for _r in _po_map_rows:
+                        if _r[2]:
+                            _po_sku_map.setdefault(str(_r[2]), (_r[0], _r[1] or 0))
+                except Exception as _me:
+                    logger.warning(f"[주문동기화] POIZON 품번 역인덱스 실패: {_me}")
+
                 _po_held = 0
                 _po_dropped = 0
                 for ro in raw_orders:
@@ -7205,7 +7225,9 @@ async def sync_orders_from_markets(
                     ):
                         _po_dropped += 1
                         continue
-                    orders_data.append(_parse_poison_order(ro, account["id"], label))
+                    orders_data.append(
+                        _parse_poison_order(ro, account["id"], label, _po_sku_map)
+                    )
                 if _po_held or _po_dropped:
                     logger.info(
                         f"[주문동기화] {label}: POIZON 취소가능 창 내 보류 "
@@ -12711,8 +12733,16 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     }
 
 
-def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
-    """POIZON(得物) 주문 데이터 → SambaOrder dict 변환."""
+def _parse_poison_order(
+    item: dict, account_id: str, label: str, sku_map: dict | None = None
+) -> dict:
+    """POIZON(得物) 주문 데이터 → SambaOrder dict 변환.
+
+    sku_map: 품번(article_number) → (삼바 상품ID, 원가) 역인덱스.
+    주문의 sku_id 와 등록 시 저장한 globalSkuId 는 체계가 달라 매칭되지 않으므로
+    주문에 함께 오는 article_number 를 키로 쓴다. 이게 없으면 원가가 0 으로 남아
+    마진·정산 집계가 전부 어긋난다.
+    """
     from backend.utils import kst_str_to_utc
 
     # 주문 상태 코드(order_status, int) → 내부 status 매핑
@@ -12769,6 +12799,21 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
     _order_no = str(item.get("order_no", "") or "")
     _currency = str(item.get("currency", "") or "")
 
+    # 등록 시 저장한 globalSkuId 로 원래 삼바 상품을 되찾는다.
+    # 못 찾으면 원가 0 으로 남아 정산이 어긋나므로 경고를 남긴다.
+    _matched_pid = None
+    _matched_cost = 0
+    _art = str(item.get("article_number", "") or "").strip().upper()
+    if sku_map and _art:
+        _hit = sku_map.get(_art)
+        if _hit:
+            _matched_pid, _matched_cost = _hit[0], int(_hit[1] or 0)
+    if not _matched_pid:
+        logger.warning(
+            f"[주문동기화] POIZON {_order_no}: 삼바 상품 매칭 실패 "
+            f"(품번={_art or '없음'}) — 원가 0 으로 저장됨"
+        )
+
     return {
         "channel_id": account_id,
         "channel_name": label,
@@ -12778,12 +12823,13 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         # 원본 식별자 보존 (메모 컬럼)
         "shipment_id": str(item.get("seller_bidding_no", "") or ""),
         "product_id": str(item.get("spu_id", "") or item.get("sku_id", "") or ""),
+        "collected_product_id": _matched_pid,
         "product_name": item.get("title", "") or "",
         "product_option": item.get("properties", "") or "",
         "quantity": quantity,
         "sale_price": product_price,
         "revenue": revenue,
-        "cost": 0,
+        "cost": _matched_cost,
         "status": status,
         "shipping_status": ship_label,
         "customer_name": customer_name,
