@@ -50,21 +50,29 @@ def extract_credentials(account: Any) -> tuple[str, str]:
     """
     if account is None:
         return "", ""
-    extras = getattr(account, "additional_fields", None)
+    # 호출부에 따라 ORM 객체이거나 dict(row) 이다 — 둘 다 받는다
+    if isinstance(account, dict):
+        extras = account.get("additional_fields")
+        top_key = account.get("api_key") or ""
+        top_secret = account.get("api_secret") or ""
+    else:
+        extras = getattr(account, "additional_fields", None)
+        top_key = getattr(account, "api_key", "") or ""
+        top_secret = getattr(account, "api_secret", "") or ""
     if not isinstance(extras, dict):
         extras = {}
     key = (
         extras.get("appKey")
         or extras.get("apiKey")
         or extras.get("app_key")
-        or getattr(account, "api_key", "")
+        or top_key
         or ""
     )
     secret = (
         extras.get("appSecret")
         or extras.get("apiSecret")
         or extras.get("app_secret")
-        or getattr(account, "api_secret", "")
+        or top_secret
         or ""
     )
     return str(key), str(secret)

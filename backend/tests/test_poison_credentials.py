@@ -51,3 +51,15 @@ def test_없으면_빈문자열():
 
 def test_additional_fields가_dict가_아니어도_안전():
     assert extract_credentials(_Acc("이상한값")) == ("", "")
+
+
+def test_dict_계정도_지원한다():
+    # 주문 동기화 경로는 계정을 dict(row)로 다룬다 — 여기서도 apiKey 를 읽어야 한다
+    acc = {"additional_fields": {"apiKey": "K", "apiSecret": "S"},
+           "api_key": None, "api_secret": None}
+    assert extract_credentials(acc) == ("K", "S")
+
+
+def test_dict_최상위_컬럼_폴백():
+    acc = {"additional_fields": {}, "api_key": "TK", "api_secret": "TS"}
+    assert extract_credentials(acc) == ("TK", "TS")

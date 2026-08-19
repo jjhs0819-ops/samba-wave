@@ -6226,18 +6226,9 @@ async def sync_orders_from_markets(
                 return _aid, await _c.get_orders(days=days)
 
             elif _mtype == "poison":
-                _app_key = (
-                    _extr.get("app_key", "")
-                    or _extr.get("appKey", "")
-                    or acc["api_key"]
-                    or ""
-                )
-                _app_secret = (
-                    _extr.get("app_secret", "")
-                    or _extr.get("appSecret", "")
-                    or acc["api_secret"]
-                    or ""
-                )
+                from backend.domain.samba.proxy.poison import extract_credentials
+
+                _app_key, _app_secret = extract_credentials(acc)
                 if not _app_key or not _app_secret:
                     return _aid, None
                 from backend.domain.samba.proxy.poison import PoisonClient
@@ -7149,20 +7140,13 @@ async def sync_orders_from_markets(
                     )
 
             elif market_type == "poison":
-                from backend.domain.samba.proxy.poison import PoisonClient
+                from backend.domain.samba.proxy.poison import (
+                    PoisonClient,
+                    extract_credentials,
+                )
 
-                app_key = (
-                    extras.get("app_key", "")
-                    or extras.get("appKey", "")
-                    or account["api_key"]
-                    or ""
-                )
-                app_secret = (
-                    extras.get("app_secret", "")
-                    or extras.get("appSecret", "")
-                    or account["api_secret"]
-                    or ""
-                )
+                # 계정마다 키 필드명이 달라(appKey/apiKey/app_key) 공통 함수로 통일
+                app_key, app_secret = extract_credentials(account)
                 if not app_key or not app_secret:
                     results.append(
                         {
