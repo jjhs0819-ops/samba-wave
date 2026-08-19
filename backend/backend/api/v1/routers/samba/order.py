@@ -8084,6 +8084,18 @@ async def sync_orders_from_markets(
                 # sell.finances scope 필요. 방금 들어온 주문은 거래 미확정 상태라 매핑 없을 수 있음
                 try:
                     tx_list = await ebay_client.get_transactions(days=body.days)
+                    # [2026-08-19] 부분환불 미반영 수정 — get_transactions 기본이
+                    # SALE 만 조회해 REFUND 거래가 정산에서 빠졌다(잉어킹 $42 부분환불
+                    # 후에도 정산 103,541원 그대로). REFUND 는 bookingEntry=DEBIT 라
+                    # 아래 누적 로직이 자동으로 차감 처리한다.
+                    try:
+                        tx_list += await ebay_client.get_transactions(
+                            days=body.days, transaction_type="REFUND"
+                        )
+                    except Exception as _rf_e:
+                        logger.warning(
+                            f"[주문동기화] {label}: REFUND 거래 조회 실패(무시): {_rf_e}"
+                        )
                     # Finance API 응답 필드:
                     #   amount                = net (이미 수수료 차감된 값)
                     #   totalFeeBasisAmount   = gross (판매가)
