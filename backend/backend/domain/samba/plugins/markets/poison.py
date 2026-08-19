@@ -46,6 +46,41 @@ _SIZE_SOURCE_PRIORITY = {
 _SIZE_VALUE_PRIORITY = 50  # sizeValue 는 후보가 하나도 없을 때의 최후 수단
 
 
+def has_live_bidding(poison_match: Any) -> bool:
+    """이미 POIZON 에 살아있는 내 입찰이 있는가 (사이즈별 biddingNo 보유)."""
+    if not isinstance(poison_match, dict):
+        return False
+    sizes = poison_match.get("sizes")
+    if not isinstance(sizes, dict):
+        return False
+    for entry in sizes.values():
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("biddingNo") or "") and entry.get("status") != "cancelled":
+            return True
+    return False
+
+
+def should_skip_non_primary(poison_match: Any) -> bool:
+    """최저가 소싱처가 아니라 '신규 등록'을 건너뛸 상품인지.
+
+    같은 품번이 소싱처마다 별도상품으로 존재해 전부 등록하면 POIZON 중복 listing 이
+    된다. 그래서 최저가 소싱처(is_primary)만 등록한다 — 단 이건 **신규 등록** 억제용이다.
+
+    이미 내가 등록한 입찰이 있으면 무조건 통과시킨다. 등록 직후 _save_poison_match 가
+    product_id 를 채우는데, is_primary 를 채우는 코드는 아직 어디에도 없어서(라이브
+    355건 전량 키 없음) 기등록분이 여기서 영구 차단됐다. 그 결과 오토튠이 가격·재고를
+    한 번도 반영하지 못하고 오버셀/역마진에 노출됐다.
+    """
+    if not isinstance(poison_match, dict):
+        return False
+    if not poison_match.get("product_id"):
+        return False
+    if poison_match.get("is_primary") is True:
+        return False
+    return not has_live_bidding(poison_match)
+
+
 def build_size_index(
     sku_list: list[dict[str, Any]],
 ) -> dict[str, tuple[dict[str, Any], str]]:
@@ -175,15 +210,10 @@ class PoisonPlugin(MarketPlugin):
                 "message": "POIZON 매칭용 품번(style_code)이 없습니다.",
             }
 
-        # 최저가 소싱처(is_primary)만 등록 — 같은 품번이 소싱처마다 별도상품으로 존재,
-        # 전부 등록하면 POIZON 중복 listing. 매칭됐는데 primary 아니면 스킵.
+        # 최저가 소싱처(is_primary)만 신규 등록 — 기등록분(라이브 입찰 보유)은 통과.
         _resell = product.get("resell_matches") or {}
         _pm = _resell.get("poison") if isinstance(_resell, dict) else None
-        if (
-            isinstance(_pm, dict)
-            and _pm.get("product_id")
-            and _pm.get("is_primary") is not True
-        ):
+        if should_skip_non_primary(_pm):
             return {
                 "success": False,
                 "skip": True,
