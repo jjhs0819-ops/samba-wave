@@ -483,6 +483,9 @@ class PoisonClient:
     # 입찰 수정 / 취소 / 최저가 조회 (오토튠 변동 대응용)
     # ------------------------------------------------------------------
 
+    # 수정 요청 값이 현재 입찰과 완전히 같을 때 오는 코드 — 실패가 아니라 no-op.
+    CODE_UPDATE_NO_CHANGE = 20900016
+
     async def update_listing(
         self,
         *,
@@ -491,13 +494,28 @@ class PoisonClient:
         quantity: int,
         global_sku_id: int | None = None,
         old_quantity: int | None = None,
+        country_code: str = "KR",
+        currency: str | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
         """기존 입찰(sellerBiddingNo)의 가격/재고 수정 (Update Manual Listing).
 
         price 는 통화 최소단위 정수 (KRW=원).
+
+        ★공통 필드(language/timeZone/countryCode/deliveryCountryCode/currency/
+        refererSource)는 등록(manual_listing)과 마찬가지로 **필수**다. 빼면 요청이
+        비즈니스 로직에 닿기도 전에 500080002(Invalid request parameter(s))로 거부된다.
+        라이브 실측(2026-08-19): 이 필드들 없이는 전 건 500080002, 넣으면 20900016
+        (동일값이라 수정 불필요)까지 도달 — 즉 그동안 오토튠의 가격·재고 수정이
+        단 한 건도 마켓에 반영되지 않았다.
         """
         business: dict[str, Any] = {
+            "language": self.language,
+            "timeZone": self.time_zone,
+            "countryCode": country_code,
+            "deliveryCountryCode": country_code,
+            "currency": currency or self.currency,
+            "refererSource": "pop",
             "requestId": request_id or str(uuid.uuid4()),
             "sellerBiddingNo": str(seller_bidding_no),
             "price": int(price),
@@ -511,6 +529,14 @@ class PoisonClient:
         data = await self._post(self.PATH_UPDATE_LISTING, business)
         if data.get("code") == 200:
             return {"success": True, "message": "POIZON 입찰 수정 완료", "data": data}
+        if data.get("code") == self.CODE_UPDATE_NO_CHANGE:
+            # 이미 원하는 값 — 성공으로 처리해야 오토튠이 실패로 마킹하고 매 사이클 재시도하지 않는다
+            return {
+                "success": True,
+                "message": "POIZON 입찰 변경 없음(현재값과 동일)",
+                "data": data,
+                "no_change": True,
+            }
         return {
             "success": False,
             "message": (
