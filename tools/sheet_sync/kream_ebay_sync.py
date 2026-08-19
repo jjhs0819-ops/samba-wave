@@ -28,6 +28,10 @@ CREDS_PATH = "C:/Users/canno/.claude/google-credentials.json"
 
 CDP_HOST, CDP_PORT = "localhost", 9223
 
+# 시트 글자색 — 카드버전 주문번호를 빨갛게 표시할 때 쓴다.
+RED = {"red": 0.8, "green": 0.0, "blue": 0.0}
+BLACK = {"red": 0.0, "green": 0.0, "blue": 0.0}
+
 # [2026-08-18] 번개장터 구매건을 같은 K:N 구간에 섞어 넣는다.
 # 주문번호 형태로 구분되므로(크림 O-OR…·KPE…, 번장 숫자) 구분 열도, 상태 뒤의
 # 출처 꼬리표도 두지 않는다. 다만 "배송 중" 은 크림·번장이 같은 표기라
@@ -290,7 +294,7 @@ async def main():
     conn = await asyncpg.connect(host='postgres', port=5432, user='samba',
         password='09aac90f3fb8c4394ad2d6062b1a5910', database='samba', ssl=False)
     rows = await conn.fetch('''
-        SELECT order_number, quantity, created_at, ship_by_at
+        SELECT order_number, quantity, created_at, ship_by_at, product_name
         FROM samba_order
         WHERE source='ebay' AND product_name ILIKE '%Magikarp%'
           AND status NOT IN ('cancelled','cancel_requested','refunded','returned')
@@ -302,7 +306,12 @@ async def main():
     for r in rows:
         # 이베이가 shipByDate 아직 안 준 신규주문 — created_at+7일로 대체(다른 주문들 실측 패턴)
         ship_by = r["ship_by_at"] or (r["created_at"] + datetime.timedelta(days=7))
+        # 상품명에 "Card Ver" 가 있으면 카드버전 — 크림 쪽과 같은 규칙.
+        #   Pokemon TCG Mega Festa 2026 Promo Card Magikarp (Card Ver)  ← 카드
+        #   Pokemon Card Magikarp Promo (Korean)                        ← 팩(밀봉)
+        _cv = "card ver" in str(r["product_name"] or "").lower()
         out.append({"order_number": r["order_number"], "quantity": r["quantity"],
+                     "card_ver": _cv,
                      "ship_by_at": ship_by.strftime("%Y. %-m. %-d"),
                      "order_date": r["created_at"].astimezone(kst).strftime("%Y. %-m. %-d")})
     print(json.dumps(out, ensure_ascii=False))
@@ -336,6 +345,29 @@ asyncio.run(main())
     return json.loads(result.stdout.strip())
 
 
+def _paint_ebay_card_ver(ws, db_orders):
+    """이베이 주문번호(B열) 중 카드버전만 빨간 글씨로 — 크림(L열)과 같은 표시.
+
+    판별은 상품명의 "Card Ver" 다.
+      Pokemon TCG Mega Festa 2026 Promo Card Magikarp (Card Ver)  ← 카드
+      Pokemon Card Magikarp Promo (Korean)                        ← 팩(밀봉)
+    신규 행만 칠하면 이미 시트에 있던 주문이 빠지므로 B열 전체를 훑어 칠한다.
+    같은 주문번호가 수량만큼 여러 행에 걸쳐 있어 행 단위로 맞춘다.
+    """
+    cards = {o["order_number"] for o in db_orders if o.get("card_ver")}
+    if not cards:
+        return
+    try:
+        b_col = ws.col_values(2)
+        rows = [i for i, v in enumerate(b_col, 1) if v.strip() in cards]
+        for row in rows:
+            ws.format(f"B{row}", {"textFormat": {"foregroundColor": RED}})
+        if rows:
+            print(f"    이베이 카드버전 {len(rows)}행 빨간색 표시")
+    except Exception as e:
+        print(f"    [경고] 이베이 카드버전 색상 표시 실패(건너뜀): {e}")
+
+
 def append_new_ebay_orders(ws):
     """DB에 있는데 시트 B열에 없는 이베이 주문 -> 맨 아래 수량만큼 행 추가."""
     existing_b = {v for v in ws.col_values(2) if v.strip()}
@@ -343,12 +375,16 @@ def append_new_ebay_orders(ws):
     new_orders = [o for o in db_orders if o["order_number"] not in existing_b]
     if not new_orders:
         print("[0] 신규 이베이 주문 없음")
+        _paint_ebay_card_ver(ws, db_orders)
         return
     a_col = ws.col_values(1)
     last_row = len(a_col)
     rows = []
+    card_rows = []  # 카드버전 행 번호 — 주문번호를 빨갛게 칠한다
     for o in new_orders:
         for seq in range(1, o["quantity"] + 1):
+            if o.get("card_ver"):
+                card_rows.append(last_row + 1 + len(rows))
             rows.append(
                 [
                     o["order_date"],
@@ -365,6 +401,7 @@ def append_new_ebay_orders(ws):
     ws.update(
         range_name=f"A{last_row + 1}", values=rows, value_input_option="USER_ENTERED"
     )
+    _paint_ebay_card_ver(ws, db_orders)
     print(
         f"[0] 신규 이베이 주문 {len(new_orders)}건({len(rows)}행) 추가: "
         f"{', '.join(o['order_number'] for o in new_orders)}"
@@ -429,10 +466,6 @@ def match_delivered_to_ai(ws, newly_delivered):
         price_conn.close()
     ws.batch_update(updates, value_input_option="USER_ENTERED")
     print(f"[3] A:I 매칭 {n}건 완료 (빈슬롯 {len(empty_slots)}개 중)")
-
-
-RED = {"red": 0.8, "green": 0.0, "blue": 0.0}
-BLACK = {"red": 0.0, "green": 0.0, "blue": 0.0}
 
 
 def _paint_card_ver(ws, card_flags):
