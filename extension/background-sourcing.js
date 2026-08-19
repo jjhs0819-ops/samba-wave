@@ -3290,7 +3290,41 @@ async function _checkAbcmartLoggedInByApi(productId, site) {
 // 열려 있는 SSG 탭 컨텍스트에서 실행하므로 쿠키·TLS·Akamai 토큰을 그대로 사용한다.
 // 실패(탭 없음/차단/파싱 불가)하면 null 을 반환해 기존 popup 경로로 폴백한다.
 const SSG_FETCH_TAB_URL = 'https://department.ssg.com/item/itemView.ssg?itemId=1000633600861&siteNo=6009'
+// 작업탭 식별용 — 이 상품번호가 URL 에 있으면 우리가 만든 탭이다(사용자가 직접
+// 열어 둔 SSG 탭은 건드리지 않는다).
+const SSG_FETCH_TAB_ID_MARK = 'itemId=1000633600861'
 let _ssgFetchTabId = null
+
+// [2026-08-19] 탭 id 도 storage 에 남긴다.
+// MV3 워커는 30초쯤 놀면 죽었다가 다시 뜨는데, 그때 _ssgFetchTabId 가 null 이
+// 된다. 그러면 "내가 만든 작업탭"을 잊고 새로 만들어, SSG 탭이 끝없이 쌓였다
+// (실측 2026-08-19: 사용자 화면에 itemView 탭이 계속 열림).
+const _SSG_TAB_KEY = '_ssgFetchTabId'
+try {
+  chrome.storage.local.get(_SSG_TAB_KEY).then((d) => {
+    const v = d && d[_SSG_TAB_KEY]
+    if (_ssgFetchTabId == null && typeof v === 'number') _ssgFetchTabId = v
+  }).catch(() => {})
+} catch { /* 무시 */ }
+
+function _setSsgFetchTabId(id) {
+  _ssgFetchTabId = id
+  try { chrome.storage.local.set({ [_SSG_TAB_KEY]: id }) } catch { /* 무시 */ }
+}
+
+// 작업탭은 1개만 남기고 나머지는 닫는다 — 이미 쌓인 것도 이 경로에서 정리된다.
+async function _closeExtraSsgFetchTabs(keepId) {
+  try {
+    const all = await chrome.tabs.query({ url: '*://department.ssg.com/*' })
+    const extras = all.filter(
+      (t) => t.id !== keepId && String(t.url || '').includes(SSG_FETCH_TAB_ID_MARK),
+    )
+    for (const t of extras) {
+      try { await chrome.tabs.remove(t.id) } catch { /* 이미 닫힘 */ }
+    }
+    if (extras.length) console.log(`[SSG] 남은 작업탭 ${extras.length}개 정리`)
+  } catch { /* 무시 */ }
+}
 
 // [2026-08-18] 잠든 탭(status='unloaded') 대응.
 //
@@ -3328,7 +3362,7 @@ async function _getSsgFetchTab() {
         if (await _wakeTabIfNeeded(_ssgFetchTabId)) return _ssgFetchTabId
       }
     } catch { /* 닫힘 — 아래에서 재생성 */ }
-    _ssgFetchTabId = null
+    _setSsgFetchTabId(null)
   }
   // 사용자가 이미 열어둔 SSG 탭이 있으면 그걸 빌려 쓴다.
   // 단, "깨어 있는" 탭을 먼저 고른다. 전부 잠들었으면 하나를 깨워서 쓴다.
@@ -3338,7 +3372,8 @@ async function _getSsgFetchTab() {
       const live = found.find((t) => t.status === 'complete' && !t.discarded)
       const pick = live || found[0]
       if (await _wakeTabIfNeeded(pick.id)) {
-        _ssgFetchTabId = pick.id
+        _setSsgFetchTabId(pick.id)
+        await _closeExtraSsgFetchTabs(pick.id)
         return _ssgFetchTabId
       }
       // 깨우기 실패 — 아래에서 새 탭 생성
@@ -3346,8 +3381,9 @@ async function _getSsgFetchTab() {
   } catch { /* 무시 */ }
   // 없으면 백그라운드 탭 1개만 생성해 계속 재사용한다(상품마다 만들지 않음).
   const tab = await chrome.tabs.create({ url: SSG_FETCH_TAB_URL, active: false })
-  _ssgFetchTabId = tab.id
+  _setSsgFetchTabId(tab.id)
   await waitForTabLoad(_ssgFetchTabId, 30000)
+  await _closeExtraSsgFetchTabs(tab.id)
   return _ssgFetchTabId
 }
 
