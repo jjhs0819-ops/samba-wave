@@ -5102,6 +5102,12 @@ async def _process_expired_asks(
             if site == "ONITSUKA":
                 c["onitsuka"] += 1
                 continue
+            # 유니클로·GU 재입찰 영구 차단 [2026-08-19 지시] — 되살리면 안 됨.
+            # 한국 카드로 결제가 안 되는 소싱처라 팔려도 이행할 수 없다. 종전엔 기존
+            # 입찰 삭제만 얘기하고 **등록 경로를 막지 않아** 사이클마다 다시 등록됐다.
+            if site in ("UNIQLO", "GU"):
+                c["uniqlo_gu"] = c.get("uniqlo_gu", 0) + 1
+                continue
             # 거래게이트(needs_trade)는 한글 팩/박스도 보므로 한글명 우선(영문만 쓰면
             # 'Premium Champion Pack' 이 게이트 통과해 팩/박스 재입찰되던 버그). [2026-07-25]
             pname = str(a.get("product_name_kr") or a.get("product_name") or "")
@@ -5674,6 +5680,12 @@ async def run_kream_unified_once() -> dict:
                 #   실측(2026-08-07, 30h): 반복 등록 143건, 최다 11회.
                 #   예) kid 22830 opt 295 — 실시간 255~285(295 없음) 인데 DB 재고1.
                 # 조회 실패는 DB 폴백 금지(통화사고 이력) — 이번 회차 건너뛰고 다음에 재시도.
+                # 유니클로·GU 신규 등록 영구 차단 [2026-08-19 지시] — 되살리면 안 됨.
+                # 한국 카드로 결제가 안 되는 소싱처라 팔려도 이행할 수 없다.
+                # 갱신 경로에만 차단을 넣고 이 등록 경로를 빼면 사이클마다 다시 등록된다.
+                if (prod.get("site") or "") in ("UNIQLO", "GU"):
+                    _drop("유니클로·GU 등록차단", kid, prod.get("name") or "")
+                    return r
                 try:
                     _live_sz = await _fetch_live_sizes_by_site(
                         scli, prod.get("site") or "SNKRDUNK", str(snkr_id)
