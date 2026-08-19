@@ -71,9 +71,15 @@ export default function ReturnsPage() {
   // 주문관리에서 `/samba/returns?order_number=주문번호` 로 새 탭 진입 시
   // 해당 주문의 반품/교환만 표시 (날짜 범위 무시). 마운트 1회만 시드.
   const searchParams = useSearchParams()
-  const [orderNumberFilter, setOrderNumberFilter] = useState('')
-  const seededRef = useRef(false)
+  // 주문탭 [반품/교환] 새 탭 진입(?order_number=...)은 첫 렌더에서 바로 필터를 채운다.
+  // 예전처럼 ''로 시작해 useEffect 로 채우면 마운트 직후 '필터 없는' 목록 요청이 먼저
+  // 나가고, 그 응답이 늦게 도착하면 주문번호 필터 결과를 덮어써 대상 주문이 화면에서
+  // 사라졌다(사장님 지적: 검색을 한 번 더 눌러야 보임).
+  const seedOrderNumber = searchParams.get('order_number')?.trim() ?? ''
+  const [orderNumberFilter, setOrderNumberFilter] = useState(seedOrderNumber)
+  const seededRef = useRef(Boolean(seedOrderNumber))
   useEffect(() => {
+    // 폴백 — 첫 렌더에 검색 파라미터가 아직 안 붙는 렌더링 경로 대비.
     if (seededRef.current) return
     const q = searchParams.get('order_number')?.trim()
     if (q) {
@@ -160,7 +166,12 @@ export default function ReturnsPage() {
   const [searchText, setSearchText] = useState('')
   const [marketFilter, setMarketFilter] = useState('')
 
+  // 목록 요청 일련번호 — 필터를 연달아 바꾸거나 새 탭 진입처럼 요청이 겹칠 때,
+  // 먼저 보낸 요청이 늦게 도착해 최신 결과를 덮어쓰는 것을 막는다.
+  const loadSeqRef = useRef(0)
+
   const load = useCallback(async () => {
+    const seq = ++loadSeqRef.current
     setLoading(true)
     // 주문번호 필터 진입 시 날짜 범위는 보내지 않음 — 해당 주문 전체 반품/교환을 잡기 위함
     const onf = orderNumberFilter.trim()
@@ -177,10 +188,14 @@ export default function ReturnsPage() {
       // 주문번호 시드 진입(주문탭 [반품/교환] 새 탭)일 때만 강제 백필 — 방금 취소요청한
       // 주문이 재검색 없이 첫 로드에 바로 뜨도록 (요청 #10). 일반 진입은 기존 스로틀 유지.
       onf ? { forceBackfill: true } : undefined,
-    ).catch(() => [])
-    const st = await returnApi.getStats().catch(() => ({}))
-    setReturns(data)
-    setStats(st)
+      // 실패를 빈 배열로 바꾸지 않는다 — 일시적 오류에 목록이 통째로 비어
+      // '데이터 없음'처럼 보이던 문제 방지. null 이면 기존 목록을 그대로 둔다.
+    ).catch(() => null)
+    const st = await returnApi.getStats().catch(() => null)
+    // 내가 최신 요청이 아니면 반영하지 않는다(늦게 온 옛 응답이 최신을 덮어쓰는 것 차단).
+    if (seq !== loadSeqRef.current) return
+    if (data !== null) setReturns(data)
+    if (st !== null) setStats(st)
     setLoading(false)
   }, [filterStatus, filterType, customStart, customEnd, orderNumberFilter,pageSize])
 
