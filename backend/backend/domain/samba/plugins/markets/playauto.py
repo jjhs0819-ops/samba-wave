@@ -25,6 +25,64 @@ _r2_client_cache: dict[str, tuple] = {}
 # 이미지 매직 헤더 (JPEG/PNG/GIF/WebP·BMP) — 이 목록에 없으면 이미지가 아니다
 _IMAGE_MAGIC_PREFIXES = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF", b"BM")
 
+# ── 신규등록 경합 차단 (2026-08-20 코오롱 48건 복제 사고) ────────────────────
+# 사전 중복조회(find_master_code_by_name)와 register 사이에 잠금이 없어서, 같은
+# 상품을 두 흐름이 몇 초 차이로 처리하면 **둘 다 '없음'으로 통과**해 EMP 복제본이
+# 두 개 생긴다(전형적 TOCTOU). 워커의 계정 락은 playauto 를 "API stateless" 라며
+# 명시적으로 제외하고 있어(job/worker.py `_need_lock`) 동시 진입이 실제로 열려 있다.
+#
+# 실측(8/19 코오롱 777건 전송): 복제쌍 48개, 생성 간격 2~6초 33개·21~29초 13개.
+# 발생 시각이 14:51~15:09 에 몰렸는데 그 구간이 OOM 재기동이 가장 잦던 때다 —
+# 재개될 때마다 같은 구간을 다시 처리해 경합 확률이 폭증했다.
+#
+# ① 이름 단위 락으로 '조회 → 등록'을 원자화한다.
+# ② 방금 등록한 이름은 프로세스 메모리에 남긴다 — EMP 목록 API 가 갓 만든 상품을
+#    즉시 보여주지 않으면(인덱싱 지연) 락만으로는 두 번째가 또 통과한다.
+_REGISTER_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+_RECENT_REGISTERED: dict[tuple[str, str], tuple[float, str]] = {}
+_RECENT_REGISTERED_TTL = 900.0
+
+
+def _register_lock(api_key: str, prod_name: str) -> asyncio.Lock:
+    """계정×상품명 단위 등록 락 — 같은 상품의 동시 신규등록을 직렬화."""
+    key = (str(api_key or ""), str(prod_name or ""))
+    lock = _REGISTER_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _REGISTER_LOCKS[key] = lock
+        # 이름이 무한정 쌓이지 않도록 상한 — 초과 시 잠기지 않은 것부터 버린다
+        if len(_REGISTER_LOCKS) > 20000:
+            for k in [k for k, v in _REGISTER_LOCKS.items() if not v.locked()][:10000]:
+                _REGISTER_LOCKS.pop(k, None)
+    return lock
+
+
+def _recent_registered(api_key: str, prod_name: str) -> str:
+    """방금 이 프로세스가 등록한 상품의 MasterCode — 없으면 ""."""
+    import time as _time
+
+    key = (str(api_key or ""), str(prod_name or ""))
+    hit = _RECENT_REGISTERED.get(key)
+    if not hit:
+        return ""
+    if _time.monotonic() - hit[0] > _RECENT_REGISTERED_TTL:
+        _RECENT_REGISTERED.pop(key, None)
+        return ""
+    return hit[1]
+
+
+def _mark_registered(api_key: str, prod_name: str, master_code: str) -> None:
+    import time as _time
+
+    if not master_code:
+        return
+    _RECENT_REGISTERED[(str(api_key or ""), str(prod_name or ""))] = (
+        _time.monotonic(),
+        str(master_code),
+    )
+    if len(_RECENT_REGISTERED) > 50000:
+        _RECENT_REGISTERED.clear()
+
 
 def _looks_like_image(head: bytes) -> bool:
     """응답 첫 바이트가 실제 이미지인지 판정.
@@ -226,41 +284,62 @@ class PlayAutoPlugin(MarketPlugin):
                     # 정제본으로만 조회하면 EMP엔 원본명으로 있는 상품을 못 찾아
                     # 복제본이 새로 생긴다 (이름이 유일 키인 구조).
                     _raw_name = str(product.get("name", "")).strip()
-                    _dup_code = ""
-                    try:
-                        _dup_code = await client.find_master_code_by_name(_prod_name)
-                        if not _dup_code and _raw_name and _raw_name != _prod_name:
-                            _dup_code = await client.find_master_code_by_name(_raw_name)
-                            if _dup_code:
-                                logger.info(
-                                    "[플레이오토] 레거시 원본명으로 기등록 발견 — "
-                                    f"재연결: {_raw_name[:30]}"
+                    # 조회~등록을 이름 단위 락으로 원자화 — 락이 없으면 같은 상품을
+                    # 두 흐름이 동시에 '없음' 판정하고 각자 등록해 복제본이 생긴다
+                    # (2026-08-20 코오롱 48건). 락 밖에서 조회하던 것을 안으로 옮긴다.
+                    async with _register_lock(client.api_key, _prod_name):
+                        # ① 이 프로세스가 방금 등록한 이름인가 — EMP 목록 API 가
+                        #    갓 만든 상품을 바로 안 보여줘도 여기서 잡힌다.
+                        _dup_code = _recent_registered(client.api_key, _prod_name)
+                        if _dup_code:
+                            logger.warning(
+                                "[플레이오토] 직전 등록분 재연결(경합 차단): "
+                                f"{_prod_name[:30]} → {_dup_code}"
+                            )
+                        # ② EMP 실목록 조회 (정제명 → 레거시 원본명 순)
+                        if not _dup_code:
+                            try:
+                                _dup_code = await client.find_master_code_by_name(
+                                    _prod_name
                                 )
-                    except Exception as _pre_e:
-                        logger.warning(
-                            f"[플레이오토] 중복 사전조회 실패(등록 계속): {_pre_e}"
-                        )
-                    if _dup_code:
-                        logger.warning(
-                            f"[플레이오토] 중복등록 방지 — 기등록 재연결: "
-                            f"{_prod_name[:30]} → {_dup_code}"
-                        )
-                        return {
-                            "success": True,
-                            "product_no": _dup_code,
-                            "message": "플레이오토 기등록 재연결 (중복등록 차단)",
-                            "data": {"market_product_no": _dup_code},
-                        }
-                    logger.info("[플레이오토] 신규 등록(POST)")
-                    # register 시도 후에는 성공·실패·타임아웃 불문 이름캐시를
-                    # 비운다 — EMP에 상품이 만들어졌을 수 있는데 60초 캐시가
-                    # 살아 있으면 초 단위 재시도의 사전 중복조회가 그걸 못 보고
-                    # 통과해 복제본이 쌓인다(2026-08-06 데상트 189건: 복제 간격
-                    # 6초 < TTL 60초). finally라 타임아웃 예외 경로도 덮는다.
-                    try:
-                        results = await client.register_product([emp_data])
-                    finally:
-                        client.invalidate_name_master_cache()
+                                if (
+                                    not _dup_code
+                                    and _raw_name
+                                    and _raw_name != _prod_name
+                                ):
+                                    _dup_code = await client.find_master_code_by_name(
+                                        _raw_name
+                                    )
+                                    if _dup_code:
+                                        logger.info(
+                                            "[플레이오토] 레거시 원본명으로 기등록 발견 — "
+                                            f"재연결: {_raw_name[:30]}"
+                                        )
+                            except Exception as _pre_e:
+                                logger.warning(
+                                    f"[플레이오토] 중복 사전조회 실패(등록 계속): {_pre_e}"
+                                )
+                        if _dup_code:
+                            logger.warning(
+                                f"[플레이오토] 중복등록 방지 — 기등록 재연결: "
+                                f"{_prod_name[:30]} → {_dup_code}"
+                            )
+                            return {
+                                "success": True,
+                                "product_no": _dup_code,
+                                "message": "플레이오토 기등록 재연결 (중복등록 차단)",
+                                "data": {"market_product_no": _dup_code},
+                            }
+                        logger.info("[플레이오토] 신규 등록(POST)")
+                        # register 시도 후에는 성공·실패·타임아웃 불문 이름캐시를
+                        # 비운다 — EMP에 상품이 만들어졌을 수 있는데 60초 캐시가
+                        # 살아 있으면 초 단위 재시도의 사전 중복조회가 그걸 못 보고
+                        # 통과해 복제본이 쌓인다(2026-08-06 데상트 189건: 복제 간격
+                        # 6초 < TTL 60초). finally라 타임아웃 예외 경로도 덮는다.
+                        try:
+                            results = await client.register_product([emp_data])
+                        finally:
+                            client.invalidate_name_master_cache()
 
             if not results:
                 return {
@@ -274,6 +353,14 @@ class PlayAutoPlugin(MarketPlugin):
 
             if status == "true":
                 master_code = msg if not existing_no else existing_no
+                # 신규등록 성공분은 프로세스 메모리에 남긴다 — 뒤이어 같은 이름이
+                # 들어오면 EMP 목록 반영을 기다리지 않고 바로 재연결로 빠진다.
+                if not existing_no:
+                    _mark_registered(
+                        client.api_key,
+                        str(emp_data.get("ProdName", "")).strip(),
+                        str(master_code or "").strip(),
+                    )
                 # 신규등록인데 EMP가 성공(status=true)만 주고 MasterCode(msg)를
                 # 비워 주는 경우가 있다(실측 56건). 빈 코드로 저장되면 이후 수정/
                 # 품절/삭제가 전부 불가 → status=true(EMP가 명시한 확정 성공)일
@@ -289,6 +376,7 @@ class PlayAutoPlugin(MarketPlugin):
                         logger.error(f"[플레이오토] 마스터코드 회수 조회 실패: {_rc_e}")
                         master_code = ""
                     if master_code:
+                        _mark_registered(client.api_key, _prod_name, master_code)
                         logger.info(
                             f"[플레이오토] 코드 미회신 → 이름조회로 회수: "
                             f"{_prod_name[:30]} → {master_code}"
