@@ -60,7 +60,10 @@ def set_clipboard_image(path):
         f"$i=[System.Drawing.Image]::FromFile('{path}'); "
         "[System.Windows.Forms.Clipboard]::SetImage($i); $i.Dispose()"
     )
-    subprocess.run(["pwsh", "-NoProfile", "-Command", ps], capture_output=True, timeout=60)
+    subprocess.run(
+        ["pwsh", "-NoProfile", "-Command", ps],
+        capture_output=True, timeout=60, creationflags=0x08000000,  # 창 팝업 방지
+    )
 
 
 def newest_download(before):
@@ -121,10 +124,17 @@ def main():
     c.call("Runtime.enable")
     c.call("Page.bringToFront")
 
-    # [중요] 새 채팅을 만들지 않는다.
-    # 건당 '새 채팅'을 누르면 대화 목록이 수백 개로 불어나 사용자의 기존 기록이 밀려난다.
-    # 대신 지금 열려 있는 한 채팅 안에서 계속 이어 붙이고, 생성 완료 판정은
-    # '전송 직전 이미지 개수' 를 기준선으로 삼아 증가를 감지하는 방식으로 처리한다.
+    # [2026-08-20 방침 확정] 같은 탭 안에서 '건당 새 채팅'.
+    # 한 채팅 연속 사용은 첨부 누적·혼합, 포스트잇 누락, 직전 카드 재생성 등
+    # 오염 사고가 반복됨(실측 다수). 탭은 절대 늘리지 않는다.
+    js(
+        c,
+        "(function(){var b=[...document.querySelectorAll('button,a')]"
+        ".filter(x=>/새 채팅|New chat/i.test((x.innerText||'')+(x.getAttribute('aria-label')||''))"
+        "&&x.getBoundingClientRect().width>0);"
+        "if(b.length){b[0].click();return true;}return false;})()",
+    )
+    time.sleep(4)
 
     # 입력창 포커스
     js(c, "(function(){var e=document.querySelector('[contenteditable=\"true\"]'); if(e){e.focus();} return !!e;})()")
