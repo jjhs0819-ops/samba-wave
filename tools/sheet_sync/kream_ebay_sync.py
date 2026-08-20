@@ -586,7 +586,14 @@ def main():
             price = info.get("price") or ""  # 번장 — 총 결제금액 이미 확보
             if info["status"] == bj.ST_IN_TRANSIT:
                 invoice = info.get("invoice") or ""
-        kn_rows.append([kdate, order_no, price or "", invoice or info["status"]])
+        # [2026-08-20] 송장번호는 **문자열로 넣는다.** USER_ENTERED 로 쓰면 구글시트가
+        # 순수 숫자 송장(92889408614)을 숫자로 해석해 천 단위 콤마를 찍는다
+        # (실측: "92,889,408,614" · 번장 "460,444,071,684"). 앞에 작은따옴표를 붙이면
+        # 시트가 텍스트로 강제하고 화면에는 따옴표가 보이지 않는다.
+        _n = invoice or info["status"]
+        if invoice and str(invoice).replace("-", "").isdigit():
+            _n = "'" + str(invoice)
+        kn_rows.append([kdate, order_no, price or "", _n])
         kn_card_ver.append(bool(info.get("card_ver")))
         print(f"    {order_no}: {price}{' / 송장 ' + invoice if invoice else ''}")
 

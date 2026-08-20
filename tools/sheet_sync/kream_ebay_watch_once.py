@@ -32,13 +32,23 @@ def main():
     sh = gc.open_by_key(SHEET_ID)
     ws = sh.worksheet(TAB_NAME)
 
-    val = ws.acell("P5").value
-    triggered = str(val).strip().upper() in ("TRUE", "1")
-    if not triggered:
+    # [2026-08-20] 체크박스 위치를 **자동으로 찾는다.** 종전엔 "P5" 를 박아둬서
+    # 시트에서 행이 하나만 밀려도 영영 반응하지 않았다(실측: 체크박스가 P6 로
+    # 내려가 있었고 스크립트는 계속 빈 P5 를 읽었다). 같은 사고가 2026-08-14 에도
+    # 있었다 — 위치를 고정하지 말고 P열에서 체크된 칸을 찾는다.
+    cells = ws.get("P1:P20") or []
+    hit = 0
+    for i, row in enumerate(cells, start=1):
+        v = (row[0] if row else "").strip().upper()
+        if v in ("TRUE", "1"):
+            hit = i
+            break
+    if not hit:
         return
 
-    print("[watch] P5 체크됨 -> 실행")
-    ws.update(range_name="P5", values=[[False]], value_input_option="USER_ENTERED")
+    addr = "P%d" % hit
+    print("[watch] %s 체크됨 -> 실행" % addr)
+    ws.update(range_name=addr, values=[[False]], value_input_option="USER_ENTERED")
     kream_ebay_sync.main()
 
 

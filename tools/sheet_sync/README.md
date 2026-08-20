@@ -15,7 +15,8 @@
 ```
 시트      주문처리 (1FM3smmTlsbxhN03CFCoK_Pp5byA9wTfpiQ66jOG0ohM)
 탭        크림매칭 (gid 129447601)
-방아쇠    P5 체크박스 — 체크하면 TRUE, 스크립트가 읽고 다시 FALSE 로 되돌림
+방아쇠    P열 체크박스 — 체크하면 TRUE, 스크립트가 읽고 다시 FALSE 로 되돌림
+          **위치를 고정하지 않는다.** P1:P20 에서 체크된 칸을 찾는다(아래 참조)
 실행      작업 스케줄러 `kream-ebay-watch` 가 1분마다 pythonw 로 watch_once 실행
 인증      서비스 계정 키 C:/Users/canno/.claude/google-credentials.json
 ```
@@ -69,3 +70,22 @@ kream-ebay-watch   1분마다 · pythonw · deploy/local/kream_ebay_watch_once.p
 
 창이 뜨는 다른 작업(`SambaDBBackup`, `SambaSnkrKreamBackup`)은 `-WindowStyle Hidden`
 이 빠져 있다. 바꾸려면 **관리자 권한 PowerShell** 이 필요하다.
+
+
+## 체크박스 위치를 고정하지 마라 [2026-08-20]
+
+"P5 를 눌러도 반응이 없다" 는 신고가 반복된다. 두 번 다 같은 원인이었다.
+
+- 2026-08-14: 탭이 옮겨져 실행 실패
+- 2026-08-20: **체크박스가 P6 로 내려가 있었다.** 스크립트는 빈 P5 만 읽어
+  영영 트리거되지 않았고, 사용자가 눌러둔 TRUE 가 P6 에 그대로 남아 있었다.
+
+시트는 사람이 행을 넣고 빼므로 셀 주소가 움직인다. 그래서 `watch_once` 는
+`P1:P20` 을 읽어 **체크된 첫 칸**을 찾아 쓴다. 새 스크립트를 만들 때도 주소를
+박지 말 것.
+
+진단 순서:
+1. `Get-ScheduledTaskInfo -TaskName kream-ebay-watch` — LastTaskResult 0 이면 스케줄러는 정상
+2. `kream_ebay_watch.log` 마지막 시각 — P5 가 FALSE 면 아무것도 안 찍히는 게 정상이라
+   "로그가 멈췄다" 만으로는 고장이 아니다
+3. **시트에서 P열 값을 직접 읽어본다** — 여기서 위치 어긋남이 드러난다
