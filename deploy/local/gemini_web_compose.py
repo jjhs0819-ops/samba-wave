@@ -130,13 +130,34 @@ def main():
     js(c, "(function(){var e=document.querySelector('[contenteditable=\"true\"]'); if(e){e.focus();} return !!e;})()")
     time.sleep(0.5)
 
-    # 사진 2장 순서대로 붙여넣기
-    for p in (REF, normalize(card_path)):
-        set_clipboard_image(p)
-        time.sleep(0.8)
-        js(c, "(function(){var e=document.querySelector('[contenteditable=\"true\"]'); if(e){e.focus();} })()")
-        paste(c)
-        time.sleep(4)  # 업로드 대기
+    # 사진 2장 순서대로 붙여넣기 — [최우선] 붙여넣기 성공을 매번 검증한다.
+    # 클립보드 복사/붙여넣기가 조용히 실패하면 프롬프트만 전송되고, 제미나이가
+    # 직전 맥락의 카드를 새로 생성해 15건이 전부 릴리에로 오염된 사고(2026-08-20).
+    ATTACH_CNT = (
+        "[...document.querySelectorAll('button')].filter(x=>"
+        "/첨부파일 닫기|첨부 닫기/i.test(x.getAttribute('aria-label')||'')"
+        "&&x.getBoundingClientRect().width>0).length"
+    )
+    for idx, p in enumerate((REF, normalize(card_path)), 1):
+        attached = False
+        for attempt in range(3):
+            set_clipboard_image(p)
+            time.sleep(0.8)
+            js(c, "(function(){var e=document.querySelector('[contenteditable=\"true\"]'); if(e){e.focus();} })()")
+            paste(c)
+            # 업로드 완료 = 첨부 개수가 idx 에 도달할 때까지 대기(최대 20초)
+            for _ in range(10):
+                time.sleep(2)
+                if (js(c, ATTACH_CNT) or 0) >= idx:
+                    attached = True
+                    break
+            if attached:
+                break
+            print(f"  ..붙여넣기 재시도 {idx}번째 사진 (시도 {attempt + 1})", flush=True)
+        if not attached:
+            print(f"FAIL PASTE {idx}번째 사진 첨부 실패 — 전송 중단")
+            c.close()
+            sys.exit(3)
 
     # 프롬프트 입력 + 전송
     safe = PROMPT.replace("'", "\\'")
@@ -150,7 +171,13 @@ def main():
     # 한 채팅을 계속 쓰므로 항상 맨 아래를 보고 있어야 새 결과가 렌더된다
     js(c, "window.scrollTo(0, document.body.scrollHeight)")
     time.sleep(0.5)
-    before_imgs = count_imgs(c)  # 전송 직전 기준선 (첨부 썸네일 제외된 값)
+    # [중요] 기준선은 '개수'가 아니라 'src 집합'이다.
+    # 개수 기준은 스크롤/레이아웃으로 렌더 폭이 흔들리면 새 이미지 없이도 증가해,
+    # 직전 카드의 사진을 새 결과로 오인해 집어간다(2026-08-19 실측: 서로 다른
+    # 카드 11쌍이 같은 사진으로 등록되는 사고).
+    before_srcs = js(c, "JSON.stringify([...document.querySelectorAll('img')].map(i=>i.src).filter(s=>s.startsWith('blob:')))") or "[]"
+    import json as _json
+    before_set = set(_json.loads(before_srcs))
     for t in ("keyDown", "keyUp"):
         c.call(
             "Input.dispatchKeyEvent",
@@ -159,12 +186,26 @@ def main():
 
     # 결과 이미지 생성 대기 — 웹앱은 API보다 훨씬 느리고 편차가 크다.
     # 실측: 보통 1~5분, 혼잡할 땐 15분 초과. 짧게 잡으면 멀쩡한 생성을 버리게 된다.
+    new_src = None
     deadline = time.time() + 1500
     while time.time() < deadline:
         js(c, "window.scrollTo(0, document.body.scrollHeight)")
-        if count_imgs(c) > before_imgs:
+        cur = _json.loads(js(
+            c,
+            "JSON.stringify([...document.querySelectorAll('img')]"
+            ".filter(i=>i.src.startsWith('blob:')&&i.getBoundingClientRect().width>=300)"
+            ".map(i=>i.src))",
+        ) or "[]")
+        fresh = [s for s in cur if s not in before_set]
+        if fresh:
+            new_src = fresh[-1]
             time.sleep(3)  # 렌더 안정화
             break
+        tail = js(c, "document.body.innerText.slice(-400)") or ""
+        if "이미지를 생성할 수 없" in tail:
+            print("FAIL LIMIT 일일 이미지 한도 소진")
+            c.close()
+            sys.exit(2)
         time.sleep(2)
     else:
         print("FAIL 생성 타임아웃")
@@ -177,19 +218,18 @@ def main():
     #   - fetch(blob:): CSP 에 막혀 'Failed to fetch'
     #   - canvas: 결과 img 의 src 가 blob:(동일 출처)라 캔버스가 오염되지 않아 통과한다.
     #     (과거 실패했던 건 src 가 lh3.googleusercontent.com 인 교차출처 케이스였다)
+    # 반드시 '이번에 새로 생긴 src' 그 요소만 캡처한다 (마지막 요소 X)
     data_url = None
     for _ in range(45):
         data_url = js(
             c,
-            "(function(){try{var a=(" + BIG_IMG_JS + ")"
-            # 아직 디코딩 안 된 자리표시 이미지를 잡으면 캔버스가 null 을 뱉는다.
-            # 실제로 로드가 끝난 것만 후보로 남긴다.
-            ".filter(i=>i.complete&&i.naturalWidth>=512);"
-            "if(!a.length)return null;var im=a[a.length-1];"
+            "(function(s){try{var im=[...document.querySelectorAll('img')].find(i=>i.src===s);"
+            "if(!im||!im.complete||im.naturalWidth<512)return null;"
             "var cv=document.createElement('canvas');"
             "cv.width=im.naturalWidth;cv.height=im.naturalHeight;"
             "cv.getContext('2d').drawImage(im,0,0);"
-            "return cv.toDataURL('image/png');}catch(e){return 'ERR:'+e.message;}})()",
+            "return cv.toDataURL('image/png');}catch(e){return 'ERR:'+e.message;}})"
+            f"({_json.dumps(new_src)})",
         )
         if data_url and data_url.startswith("data:image"):
             break
