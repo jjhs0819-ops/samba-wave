@@ -174,7 +174,7 @@ def _progress() -> None:
     _g_last_progress = _time_mod.time()
 
 
-async def _finalize_heartbeat(max_sec: int = 1800) -> None:
+async def _finalize_heartbeat(max_sec: int = 10800) -> None:
     """마무리 단계 전용 진행 신호 [2026-08-20].
 
     판정이 끝난 뒤 구간(_sync_kream_meta·_rival_low_retry·고시등록·설정저장 …)은
@@ -185,6 +185,12 @@ async def _finalize_heartbeat(max_sec: int = 1800) -> None:
             906회차: 판정완료  3,665초 → 1,211초 무진행 → 재기동 (사이클 길이 무관)
     max_sec 상한을 둔다 — 마무리가 그보다 오래 끌면 그건 진짜 멈춤이므로
     하트비트를 끊어 워치독이 정상적으로 잡게 한다.
+
+    [2026-08-21] 상한을 30분 → **3시간**으로 늘린다. 30분은 너무 짧았다 —
+    마무리 단계(조정·등록 실행 + 메타 동기화 + 설정 저장)는 조정이 수천 건이면
+    50분을 넘긴다. 상한에 걸려 하트비트가 스스로 멎자 워치독이 그때부터 시간을
+    재서 또 잘랐다(실측: 판정완료 06:47:27 → 워치독 07:37:32, 무진행 1,204초).
+    내가 넣은 안전장치가 오히려 원인이었다.
     """
     _slept = 0
     try:
