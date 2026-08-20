@@ -136,6 +136,27 @@ def main():
     )
     time.sleep(4)
 
+    # [최우선] 새 채팅으로 전환해도 입력창의 첨부는 그대로 유지된다(실측 2026-08-20).
+    # 시작 시 반드시 첨부·텍스트를 전부 비운다. 안 비우면 이전 건의 첨부가 이월·누적돼
+    # 여러 카드가 한 요청에 섞이고, 첨부 개수 검증도 잔여물 때문에 헛통과한다.
+    for _ in range(12):
+        n = js(
+            c,
+            "(function(){var b=[...document.querySelectorAll('button')]"
+            ".filter(x=>/첨부파일 닫기|첨부 닫기/i.test(x.getAttribute('aria-label')||'')"
+            "&&x.getBoundingClientRect().width>0);"
+            "if(!b.length)return 0;b[0].click();return 1;})()",
+        )
+        if not n:
+            break
+        time.sleep(0.7)
+    js(
+        c,
+        "(function(){var e=document.querySelector('[contenteditable=\"true\"]');"
+        "if(e){e.focus();e.innerText='';e.dispatchEvent(new InputEvent('input',{bubbles:true}));}})()",
+    )
+    time.sleep(0.5)
+
     # 입력창 포커스
     js(c, "(function(){var e=document.querySelector('[contenteditable=\"true\"]'); if(e){e.focus();} return !!e;})()")
     time.sleep(0.5)
