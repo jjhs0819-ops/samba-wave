@@ -120,6 +120,8 @@ node_modules/.package-lock.json
 *.backup
 # *.json
 *.csv
+# BUYMA 마스터데이터 — 매핑모듈(buyma_mapping.py)이 런타임 로드하는 데이터라 커밋 필요
+!backend/backend/domain/samba/proxy/buyma_master/*.csv
 *.jsonl
 *.zip
 *.dump

@@ -923,6 +923,20 @@ async def _delete_cafe24(
     return await plugin.delete(session, product_no, account)
 
 
+async def _delete_buyma(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """BUYMA 상품 삭제 — 플러그인 delete() 위임 (PS-API control=delete)."""
+    from backend.domain.samba.plugins.markets.buyma import BuymaPlugin
+
+    product_no = product.get("market_product_no", {}).get("buyma", "")
+    if not product_no:
+        return {"success": True, "message": "바이마 상품번호 없음 (건너뜀)"}
+    return await BuymaPlugin().delete(session, product_no, account)
+
+
 async def _delete_gmarket(
     session: AsyncSession,
     product: dict[str, Any],
@@ -1244,6 +1258,7 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "lottehome": _delete_lottehome,
     "gsshop": _delete_gsshop,
     "cafe24": _delete_cafe24,
+    "buyma": _delete_buyma,
     "playauto": _delete_playauto,
     "gmarket": _delete_gmarket,
     "auction": _delete_auction,

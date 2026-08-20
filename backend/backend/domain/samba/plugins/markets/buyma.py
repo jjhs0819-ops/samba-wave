@@ -121,27 +121,14 @@ class BuymaPlugin(MarketPlugin):
     required_fields = ["name", "sale_price"]
 
     async def _load_auth(self, session, account) -> dict | None:
-        """바이마는 인증 불필요 — 항상 빈 dict 반환.
+        """PS-API creds 로드 (accessToken/client_id/secret/storeId/sandbox).
 
-        CSV 생성 방식이므로 API 인증이 없다.
-        account의 additional_fields를 settings로 전달.
+        토큰이 있으면 API 등록 경로, 없으면 CSV 폴백. account가 없으면 _no_auth.
         """
-        settings: dict[str, Any] = {}
-        if account:
-            extras = account.additional_fields or {}
-            if extras.get("storeId"):
-                settings["storeId"] = extras["storeId"]
-            # 바이마 계정별 설정 (구매지, 발송지 등)
-            for key in (
-                "buyingCountry",
-                "shippingCountry",
-                "deliveryMethod",
-                "deliveryDays",
-            ):
-                if extras.get(key):
-                    settings[key] = extras[key]
-        # 빈 dict라도 반환 (None이면 base에서 인증 실패 처리)
-        return settings if settings else {"_no_auth": True}
+        from backend.domain.samba.account.credentials import buyma_creds
+
+        creds = buyma_creds(account) if account else {}
+        return creds if creds else {"_no_auth": True}
 
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         """BuymaClient.transform_product 위임."""
@@ -206,8 +193,34 @@ class BuymaPlugin(MarketPlugin):
             }
 
         settings = creds if creds and "_no_auth" not in creds else {}
-        client = BuymaClient(seller_id=settings.get("storeId", ""))
 
+        # PS-API 경로: 액세스 토큰이 있으면 실제 API 등록 (카테고리는 상품필드로 내부매핑)
+        token = settings.get("accessToken", "")
+        if token:
+            from backend.domain.samba.proxy.buyma import BuymaApiClient
+
+            client = BuymaApiClient(
+                token,
+                sandbox=bool(settings.get("sandbox")),
+                client_id=settings.get("clientId", ""),
+                client_secret=settings.get("clientSecret", ""),
+            )
+            res = await client.register_product(product, control="publish")
+            if res.get("success"):
+                return {
+                    "success": True,
+                    "data": res,
+                    "productNo": res.get("reference_number") or product.get("id") or "",
+                    "message": res.get("message", ""),
+                }
+            return {
+                "success": False,
+                "message": res.get("message", ""),
+                "error_type": res.get("error_type", "api_error"),
+            }
+
+        # 폴백: 토큰 없으면 기존 CSV 방식
+        client = BuymaClient(seller_id=settings.get("storeId", ""))
         try:
             result = await client.register_product(product, category_id)
             return {
@@ -231,35 +244,24 @@ class BuymaPlugin(MarketPlugin):
         정식 PS-API 승인 후 상품삭제 엔드포인트로 실제 반영한다. 현재는 API 미설정 시
         조용한 no-op 대신 '보류'를 명시 반환 — 오토튠 로그로 수동 처리 대상이 드러난다.
         """
-        extras = (account.additional_fields or {}) if account else {}
-        api_key = extras.get("apiKey")
-        api_secret = extras.get("apiSecret")
+        from backend.domain.samba.account.credentials import buyma_creds
 
-        if not (api_key and api_secret):
+        creds = buyma_creds(account) if account else {}
+        token = creds.get("accessToken", "")
+        if not token:
             logger.info(
-                "[바이마] 삭제 요청 product_no=%s — 정식 PS-API 미설정, 수동 처리 대기",
+                "[바이마] 삭제 요청 product_no=%s — PS-API 토큰 없음, 수동 처리 대기",
                 product_no,
             )
             return {
                 "success": False,
-                "message": (
-                    "바이마 정식 PS-API 미설정 — 삭제 보류. "
-                    "API 승인 후 자동 삭제, 그 전에는 바이마에서 수동 삭제 필요."
-                ),
+                "message": "바이마 PS-API 토큰 미설정 — 삭제 보류(수동 삭제 필요).",
                 "error_type": "api_not_ready",
             }
 
-        # TODO(정식 PS-API 승인 후): 상품삭제 엔드포인트 호출로 실제 반영.
-        #   from backend.domain.samba.proxy.buyma import BuymaClient
-        #   return await BuymaClient(seller_id=extras.get("storeId", ""),
-        #                            api_key=api_key, api_secret=api_secret
-        #                            ).delete_product(product_no)
-        logger.warning(
-            "[바이마] 삭제 엔드포인트 미구현(PS-API 문서 대기) — product_no=%s",
-            product_no,
-        )
-        return {
-            "success": False,
-            "message": "바이마 PS-API 상품삭제 엔드포인트 미구현(문서 대기)",
-            "error_type": "not_implemented",
-        }
+        from backend.domain.samba.proxy.buyma import BuymaApiClient
+
+        client = BuymaApiClient(token, sandbox=bool(creds.get("sandbox")))
+        res = await client.set_control(str(product_no), "delete")
+        logger.info("[바이마] 삭제(control=delete) product_no=%s → %s", product_no, res)
+        return res

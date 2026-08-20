@@ -224,6 +224,27 @@ def toss_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
     }
 
 
+def buyma_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
+    """BUYMA PS-API — client_id/secret(컬럼) + OAuth 토큰(oauth 컬럼) + storeId/sandbox.
+
+    apiKey 칸 = client_id, apiSecret 칸 = client_secret (설정폼 매핑).
+    액세스/리프레시 토큰은 OAuth 콜백이 oauth_access_token/oauth_refresh_token 컬럼에 저장.
+    """
+    if account is None:
+        return {}
+    ext = _extras(account)
+    return {
+        "clientId": account.api_key or "",
+        "clientSecret": account.api_secret or "",
+        "accessToken": account.oauth_access_token or "",
+        "refreshToken": account.oauth_refresh_token or "",
+        "storeId": account.seller_id or ext.get("storeId", ""),
+        "sandbox": bool(ext.get("sandbox", False)),
+        "buyingCountry": ext.get("buyingCountry", "韓国"),
+        "shippingCountry": ext.get("shippingCountry", "韓国"),
+    }
+
+
 # 마켓 → 빌더 매핑 — 동적 디스패치용
 CRED_BUILDERS = {
     "lotteon": lotteon_creds,
@@ -244,6 +265,7 @@ CRED_BUILDERS = {
     "kream": kream_creds,
     "musinsa": musinsa_creds,
     "toss": toss_creds,
+    "buyma": buyma_creds,
 }
 
 
@@ -281,6 +303,8 @@ _FORM_TO_COLUMNS: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] 
     "kream": ("apiKey", "apiSecret", None),
     "musinsa": (None, None, None),
     "toss": ("apiKey", "apiSecret", None),
+    # BUYMA PS-API: apiKey칸=client_id, apiSecret칸=client_secret, storeId=셀러ID
+    "buyma": ("apiKey", "apiSecret", "storeId"),
 }
 
 
