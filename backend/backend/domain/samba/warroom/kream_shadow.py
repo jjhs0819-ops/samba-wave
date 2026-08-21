@@ -2286,16 +2286,6 @@ def _decide_price_action(
     """갱신 결정 — 반환 (act, target, adjusting, is_nocomp).
     로컬 _kream_ask_adjust rank1유도+5분기+rank2추종+안전장치 이식.
     is_box=True(박스/카드팩/신발) → 배송비 900엔. surcharge_rate 로 추가마진 분류 지정."""
-    # [2026-08-21] 스니덩크에서 살 수 없는 사이즈는 **입찰 자체를 막는다.**
-    # 크림 여성·주니어 라인(`240(US 5.5)`·`250(7Y)`)은 스니덩크 일반 `240` 과 다른
-    # 제품이라 주문이 들어와도 그 물건을 못 산다. 이미 걸린 건은 지우고(2,673건·11.8억)
-    # 여기서 신규·조정 모두 차단한다. 삭제로 보내 남아 있는 것도 정리되게 한다.
-    if unbuyable_option(opt):
-        return (
-            ("삭제(구매불가옵션)", 0, True, False)
-            if cur > 0
-            else ("유지", cur, False, False)
-        )
     is_card = opt.upper().startswith("PSA")
     # 수수료 분류: PSA 낱장=무료 / 해외배송(박스·카드팩)=overseas / 신발·의류=item.
     # 호출부가 fee_kind 를 안 주면 미반영(기존 동작) — floor_map 과 어긋나지 않게 같은 값을 넘긴다.
@@ -3864,17 +3854,40 @@ async def _exec_delete_ask(
 
 _SHOE_OPT_RE = re.compile(r"\d{3}(\.\d)?$")
 
-# 크림 여성·주니어 라인 옵션 — **입찰 금지** [2026-08-21]
-# 크림은 여성/주니어를 `240(US 5.5)` · `250(7Y)` · `130(5K)` 처럼 mm 뒤에 US·Y·K 를
-# 병기한다. 스니덩크의 `240` 은 일반(남성) 라인이라 **같은 240mm 라도 다른 제품**이고,
-# 주문이 들어와도 그 사이즈를 살 수 없다(사용자 신고: 크림 242183 ↔ 스니덩크 FB9149-101).
-# 실측 2026-08-21: 이 형태로 걸린 입찰 2,673건 · 11.8억원 — 전량 삭제했다.
-_UNBUYABLE_OPT_RE = re.compile(r"\((?:US\s|W|M)|\([0-9.]+[YK]\)", re.I)
+# 같은 mm 가 두 옵션으로 갈리는 크림 상품 — **등록 금지** [2026-08-21]
+#
+# 크림은 사이즈가 겹치는 구간을 `240(US 5.5)` · `240(US 6)` 처럼 US 를 병기해 **두 옵션**
+# 으로 나눈다. 스니덩크는 `24cm` 하나뿐이라 그 매물이 어느 쪽인지 알 수 없다 — 팔리면
+# 반드시 한쪽은 틀린 사이즈를 보내게 되고 검수에서 반려된다.
+#   (사용자 신고: 크림 242183 ↔ 스니덩크 FB9149-101)
+# 두 사이트의 CM↔US 대조표는 동일하다(스니덩크 sneakerSizeGuide 실측):
+#   23.5cm→US 4.5 / 23.5cm→US 5 / 24cm→US 5.5 / 24cm→US 6 …
+#
+# **모양(괄호·US·Y)으로 막으면 안 된다.** `250(7Y)` 처럼 그 mm 가 하나뿐이면 스니덩크
+# `25cm` 와 1:1 이라 정상 거래된다. 실측 2026-08-21(표본 400상품): 괄호표기 377건 중
+# **111건(29%)이 단독** — 모양 기준 차단은 이만큼을 헛되이 버렸다.
+_OPT_MM_RE = re.compile(r"^(\d{3,4})")
 
 
-def unbuyable_option(opt: str) -> bool:
-    """스니덩크에서 살 수 없는 크림 전용 사이즈 표기인가."""
-    return bool(_UNBUYABLE_OPT_RE.search(str(opt or "")))
+def ambiguous_size_option(opt: str, all_opts: list | None) -> bool:
+    """크림 옵션 목록 안에서 이 옵션의 mm 가 둘 이상으로 갈리는가.
+
+    all_opts 가 없으면 판정하지 않는다(False) — 모르는 것을 위험으로 단정해
+    정상 입찰까지 지우는 쪽이 더 나쁘다. 판정은 옵션 목록을 가진 등록 경로에서 한다.
+    """
+    m = _OPT_MM_RE.match(str(opt or "").strip())
+    if not m or not all_opts:
+        return False
+    mm = m.group(1)
+    n = 0
+    for o in all_opts:
+        nm = o.get("name") if isinstance(o, dict) else o
+        m2 = _OPT_MM_RE.match(str(nm or "").strip())
+        if m2 and m2.group(1) == mm:
+            n += 1
+            if n >= 2:
+                return True
+    return False
 
 
 # 신발 사이즈별 신품 최저가 — 상품페이지 SSR 내장 JSON. 카드(apparels 숫자ID)와 ID공간이
@@ -5896,6 +5909,15 @@ async def run_kream_unified_once() -> dict:
                         # "상품 정보가 변경되어..." 로 실패만 소모한다.
                         _drop("크림옵션없음", kid, _nm)
                         continue
+                    # [2026-08-21] 크림이 같은 mm 를 두 옵션(`240(US 5.5)`·`240(US 6)`)
+                    # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
+                    # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
+                    # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
+                    if ambiguous_size_option(
+                        str(_popt.get("name") or _nm), _kream_opts_cache
+                    ):
+                        _drop("사이즈중복(US분기)", kid, _nm)
+                        continue
                     _nm = str(_popt.get("name") or _nm)  # 크림 실제 옵션명으로 등록
                     _act, _tgt, _adj, _isnc = _decide_price_action(
                         0,
@@ -6158,6 +6180,27 @@ async def run_kream_unified_once() -> dict:
                             (
                                 "skip",
                                 "리스톡보류(옵션매칭실패)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
+                    # [2026-08-21] 크림이 같은 mm 를 두 옵션(`240(US 5.5)`·`240(US 6)`)
+                    # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
+                    # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
+                    # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
+                    if ambiguous_size_option(
+                        str(_copt.get("name") or nm), _card_opts_cache
+                    ):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(사이즈중복)",
                                 kid,
                                 nm,
                                 0,
@@ -6442,6 +6485,27 @@ async def run_kream_unified_once() -> dict:
                             (
                                 "skip",
                                 "리스톡보류(옵션매칭실패)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
+                    # [2026-08-21] 크림이 같은 mm 를 두 옵션(`240(US 5.5)`·`240(US 6)`)
+                    # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
+                    # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
+                    # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
+                    if ambiguous_size_option(
+                        str(_copt.get("name") or nm), _card_opts_cache
+                    ):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(사이즈중복)",
                                 kid,
                                 nm,
                                 0,
