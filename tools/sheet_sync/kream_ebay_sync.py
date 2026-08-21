@@ -125,9 +125,17 @@ def _scroll_to_load_all(c, max_wheel=60, settle_checks=4):
     prev_len = -1
     stable = 0
     for _ in range(max_wheel):
+        # [2026-08-21] 휠 이벤트(Input.dispatchMouseEvent) → **JS 스크롤로 교체**.
+        # 웨일 창이 최소화·비활성이면 입력 이벤트에 응답을 아예 안 줘서 CDP 호출이
+        # 그대로 멎는다(실측: Runtime.evaluate 0.2초 정상 ↔ 휠 무응답 → 타임아웃).
+        # 그 탓에 P5 를 눌러도 "체크만 풀리고 아무 일도 안 일어남" 이 반복됐다.
+        # window.scrollTo 는 창 상태와 무관하게 동작하고 무한스크롤도 똑같이 걸린다.
         c.call(
-            "Input.dispatchMouseEvent",
-            {"type": "mouseWheel", "x": 400, "y": 400, "deltaX": 0, "deltaY": 2500},
+            "Runtime.evaluate",
+            {
+                "expression": "window.scrollTo(0, document.body.scrollHeight)",
+                "returnByValue": True,
+            },
         )
         time.sleep(0.4)
         r = c.call(

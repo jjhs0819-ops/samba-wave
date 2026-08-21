@@ -9,7 +9,10 @@ import websocket
 
 
 class CDPConn:
-    def __init__(self, tab_id, host="localhost", port=9223, timeout=30):
+    # [2026-08-21] 타임아웃 30초 → 180초. 웨일에 탭이 20개 넘게 열려 있으면 CDP 응답이
+    # 느려져 WebSocketTimeoutException 으로 죽는다(P5 는 이미 FALSE 로 되돌린 뒤라
+    # 체크만 풀리고 작업은 안 되는 상태가 된다).
+    def __init__(self, tab_id, host="localhost", port=9223, timeout=180):
         url = f"ws://{host}:{port}/devtools/page/{tab_id}"
         self.ws = websocket.WebSocket()
         self.ws.connect(url, suppress_origin=True, timeout=timeout)

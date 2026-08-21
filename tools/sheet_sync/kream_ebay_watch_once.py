@@ -49,7 +49,16 @@ def main():
     addr = "P%d" % hit
     print("[watch] %s 체크됨 -> 실행" % addr)
     ws.update(range_name=addr, values=[[False]], value_input_option="USER_ENTERED")
-    kream_ebay_sync.main()
+    try:
+        kream_ebay_sync.main()
+    except Exception as exc:
+        # [2026-08-21] 실행 도중 죽으면 체크를 **되돌려 놓는다.** 종전엔 P5 를 먼저
+        # FALSE 로 내린 뒤 죽어서, 사용자가 보기엔 "눌렀는데 아무 일도 안 일어남"
+        # 이었고 다음 폴링도 트리거되지 않아 영영 실행되지 않았다.
+        # (실측: 웨일 탭 21개 → CDP WebSocketTimeoutException 으로 중단)
+        print("[watch] 실행 실패 -> %s 체크 복구: %s" % (addr, exc))
+        ws.update(range_name=addr, values=[[True]], value_input_option="USER_ENTERED")
+        raise
 
 
 if __name__ == "__main__":
