@@ -127,8 +127,8 @@ def test_label_is_idempotent():
     # 재동기화 때마다 원본 properties 에서 다시 만들므로 KR 이 중복 누적되지 않는다
     item = {"properties": "EU 44.5", "sku_id": 12345}
     index = {"S:12345": 285}
-    assert _option_label(item, index) == _option_label(item, index) == (
-        "EU 44.5 · KR 285"
+    assert (
+        _option_label(item, index) == _option_label(item, index) == ("EU 44.5 · KR 285")
     )
 
 
@@ -141,9 +141,11 @@ class TestWiring:
         assert "_po_kr = await _fetch_poison_kr_sizes(" in src, (
             "POIZON 동기화 루프에서 한국사이즈 프리페치 누락"
         )
-        assert "_parse_poison_order(\n                            ro, account[\"id\"], label, kr_sizes=_po_kr\n                        )" in src, (
-            "_parse_poison_order 에 kr_sizes 전달 누락"
-        )
+        # ruff 줄바꿈에 따라 한 줄/여러 줄이 왔다갔다하므로 공백은 정규식으로 흡수
+        assert re.search(
+            r'_parse_poison_order\(\s*ro,\s*account\["id"\],\s*label,\s*kr_sizes=_po_kr\s*\)',
+            src,
+        ), "_parse_poison_order 에 kr_sizes 전달 누락"
 
     def test_parser_uses_option_label(self) -> None:
         src = ORDER_PY.read_text(encoding="utf-8")

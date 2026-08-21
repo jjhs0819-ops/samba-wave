@@ -7156,14 +7156,10 @@ async def sync_orders_from_markets(
                 # 주문에는 EU 표기만 들어오는데 소싱처는 mm 표기라, 살 때마다
                 # 포이즌 사이즈표를 눈으로 대조해야 했다. 포이즌이 SKU 별 대조표를
                 # 주므로 품번 단위로 한 번씩만 조회해 옵션 옆에 mm 을 같이 적는다.
-                _po_kr = await _fetch_poison_kr_sizes(
-                    poison_client, _po_pending, label
-                )
+                _po_kr = await _fetch_poison_kr_sizes(poison_client, _po_pending, label)
                 for ro in _po_pending:
                     orders_data.append(
-                        _parse_poison_order(
-                            ro, account["id"], label, kr_sizes=_po_kr
-                        )
+                        _parse_poison_order(ro, account["id"], label, kr_sizes=_po_kr)
                     )
                 if _po_held or _po_dropped:
                     logger.info(
@@ -12780,7 +12776,9 @@ def _poison_size_token(text: str) -> str:
     return parts[-1].upper() if parts else ""
 
 
-async def _fetch_poison_kr_sizes(client, orders: list[dict], label: str) -> dict[str, int]:
+async def _fetch_poison_kr_sizes(
+    client, orders: list[dict], label: str
+) -> dict[str, int]:
     """포이즌 주문들의 한국 사이즈(mm)를 품번 단위로 조회해 조회용 인덱스로 만든다.
 
     주문 응답(properties)에는 EU 표기만 있고 사이즈 대조표가 없다. 카탈로그 조회가
