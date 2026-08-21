@@ -2286,6 +2286,16 @@ def _decide_price_action(
     """갱신 결정 — 반환 (act, target, adjusting, is_nocomp).
     로컬 _kream_ask_adjust rank1유도+5분기+rank2추종+안전장치 이식.
     is_box=True(박스/카드팩/신발) → 배송비 900엔. surcharge_rate 로 추가마진 분류 지정."""
+    # [2026-08-21] 스니덩크에서 살 수 없는 사이즈는 **입찰 자체를 막는다.**
+    # 크림 여성·주니어 라인(`240(US 5.5)`·`250(7Y)`)은 스니덩크 일반 `240` 과 다른
+    # 제품이라 주문이 들어와도 그 물건을 못 산다. 이미 걸린 건은 지우고(2,673건·11.8억)
+    # 여기서 신규·조정 모두 차단한다. 삭제로 보내 남아 있는 것도 정리되게 한다.
+    if unbuyable_option(opt):
+        return (
+            ("삭제(구매불가옵션)", 0, True, False)
+            if cur > 0
+            else ("유지", cur, False, False)
+        )
     is_card = opt.upper().startswith("PSA")
     # 수수료 분류: PSA 낱장=무료 / 해외배송(박스·카드팩)=overseas / 신발·의류=item.
     # 호출부가 fee_kind 를 안 주면 미반영(기존 동작) — floor_map 과 어긋나지 않게 같은 값을 넘긴다.
@@ -3853,6 +3863,20 @@ async def _exec_delete_ask(
 
 
 _SHOE_OPT_RE = re.compile(r"\d{3}(\.\d)?$")
+
+# 크림 여성·주니어 라인 옵션 — **입찰 금지** [2026-08-21]
+# 크림은 여성/주니어를 `240(US 5.5)` · `250(7Y)` · `130(5K)` 처럼 mm 뒤에 US·Y·K 를
+# 병기한다. 스니덩크의 `240` 은 일반(남성) 라인이라 **같은 240mm 라도 다른 제품**이고,
+# 주문이 들어와도 그 사이즈를 살 수 없다(사용자 신고: 크림 242183 ↔ 스니덩크 FB9149-101).
+# 실측 2026-08-21: 이 형태로 걸린 입찰 2,673건 · 11.8억원 — 전량 삭제했다.
+_UNBUYABLE_OPT_RE = re.compile(r"\((?:US\s|W|M)|\([0-9.]+[YK]\)", re.I)
+
+
+def unbuyable_option(opt: str) -> bool:
+    """스니덩크에서 살 수 없는 크림 전용 사이즈 표기인가."""
+    return bool(_UNBUYABLE_OPT_RE.search(str(opt or "")))
+
+
 # 신발 사이즈별 신품 최저가 — 상품페이지 SSR 내장 JSON. 카드(apparels 숫자ID)와 ID공간이
 # 완전히 달라(/v1/apparels/{cid} 는 엉뚱한 의류 반환) 신발은 이 경로가 유일. 인증 불필요.
 _SHOE_SIZE_RE = re.compile(r'"sizeName":"([^"]+)"[^}]*\},"minNewListingPrice":(\d+)')
