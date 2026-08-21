@@ -7141,6 +7141,7 @@ async def sync_orders_from_markets(
                     _po_known_cancels = {r[0] for r in _po_rows}
                 _po_held = 0
                 _po_dropped = 0
+                _po_pending: list[dict] = []
                 for ro in raw_orders:
                     if is_buyer_cancelable(ro):
                         _po_held += 1
@@ -7151,7 +7152,19 @@ async def sync_orders_from_markets(
                     ):
                         _po_dropped += 1
                         continue
-                    orders_data.append(_parse_poison_order(ro, account["id"], label))
+                    _po_pending.append(ro)
+                # 주문에는 EU 표기만 들어오는데 소싱처는 mm 표기라, 살 때마다
+                # 포이즌 사이즈표를 눈으로 대조해야 했다. 포이즌이 SKU 별 대조표를
+                # 주므로 품번 단위로 한 번씩만 조회해 옵션 옆에 mm 을 같이 적는다.
+                _po_kr = await _fetch_poison_kr_sizes(
+                    poison_client, _po_pending, label
+                )
+                for ro in _po_pending:
+                    orders_data.append(
+                        _parse_poison_order(
+                            ro, account["id"], label, kr_sizes=_po_kr
+                        )
+                    )
                 if _po_held or _po_dropped:
                     logger.info(
                         f"[주문동기화] {label}: POIZON 취소가능 창 내 보류 "
@@ -10994,6 +11007,19 @@ async def sync_orders_from_markets(
                         update_fields["product_name"] = order_data["product_name"]
                     if order_data.get("product_option") and not existing.product_option:
                         update_fields["product_option"] = order_data["product_option"]
+                    elif (
+                        order_data.get("product_option")
+                        and existing.product_option
+                        and order_data["product_option"] != existing.product_option
+                        and order_data["product_option"].startswith(
+                            existing.product_option
+                        )
+                    ):
+                        # 기존 표기 뒤에 정보만 덧붙는 경우는 갱신한다 — 포이즌
+                        # 한국사이즈('EU 44.5' → 'EU 44.5 · KR 285')가 이미 수집된
+                        # 주문에도 소급 반영되도록. 앞부분이 그대로일 때만 허용해
+                        # 다른 값으로 덮어쓰는 일은 없다.
+                        update_fields["product_option"] = order_data["product_option"]
                     new_source_site = str(order_data.get("source_site") or "").strip()
                     existing_source_site = str(existing.source_site or "").strip()
                     if new_source_site and not existing_source_site:
@@ -12744,7 +12770,101 @@ def _parse_lotteon_order(item: dict, account_id: str, label: str) -> dict:
     }
 
 
-def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
+def _poison_size_token(text: str) -> str:
+    """포이즌 옵션 문자열에서 사이즈 토큰만 뽑는다.
+
+    'EU 흰색 녹색 EU 35.5' → '35.5', 'EU 46' → '46', '화이트 S' → 'S'.
+    색상·구성이 앞에 붙고 사이즈가 맨 뒤에 오는 표기라 마지막 토큰을 쓴다.
+    """
+    parts = [p for p in re.split(r"\s+", str(text or "").strip()) if p]
+    return parts[-1].upper() if parts else ""
+
+
+async def _fetch_poison_kr_sizes(client, orders: list[dict], label: str) -> dict[str, int]:
+    """포이즌 주문들의 한국 사이즈(mm)를 품번 단위로 조회해 조회용 인덱스로 만든다.
+
+    주문 응답(properties)에는 EU 표기만 있고 사이즈 대조표가 없다. 카탈로그 조회가
+    SKU 별 사이즈 후보를 주므로 **품번 하나당 1회**만 호출하고(같은 품번 주문이
+    여러 건이어도 호출은 1번), skuId·globalSkuId·사이즈문자열 세 키로 찾을 수 있게
+    펼쳐 둔다. 조회 실패는 무시한다 — 사이즈 표기는 부가정보라 주문 수집을
+    막아선 안 된다.
+    """
+    from backend.domain.samba.proxy.poison import kr_size_mm
+
+    articles = {
+        str(o.get("article_number") or "").strip()
+        for o in orders
+        if str(o.get("article_number") or "").strip()
+    }
+    index: dict[str, int] = {}
+    for art in articles:
+        try:
+            skus = await client.query_sku_by_article_number(art)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"[주문동기화] {label}: POIZON 사이즈 조회 실패 품번={art} — {e}"
+            )
+            continue
+        for sku in skus:
+            mm = kr_size_mm(sku.get("sizeCandidates"))
+            if not mm:
+                continue
+            if sku.get("skuId"):
+                index[f"S:{sku['skuId']}"] = mm
+            if sku.get("globalSkuId"):
+                index[f"G:{sku['globalSkuId']}"] = mm
+            # skuId 가 주문의 sku_id 와 다른 체계일 때를 대비한 사이즈문자열 폴백
+            for raw_size in (
+                sku.get("sizeValue"),
+                (sku.get("sizeCandidates") or {}).get("EU"),
+            ):
+                token = _poison_size_token(str(raw_size or ""))
+                if token:
+                    index.setdefault(f"A:{art}|{token}", mm)
+    if articles:
+        logger.info(
+            f"[주문동기화] {label}: POIZON 한국사이즈 조회 품번 {len(articles)}개 → "
+            f"매칭키 {len(index)}개"
+        )
+    return index
+
+
+def _poison_kr_size(item: dict, kr_sizes: dict[str, int] | None) -> int | None:
+    """주문 1건에 해당하는 한국 사이즈(mm) — skuId 우선, 없으면 사이즈문자열 매칭."""
+    index = kr_sizes or {}
+    if not index:
+        return None
+    sku_id = item.get("sku_id")
+    keys = []
+    if sku_id:
+        keys += [f"S:{sku_id}", f"G:{sku_id}"]
+    art = str(item.get("article_number") or "").strip()
+    token = _poison_size_token(str(item.get("properties") or ""))
+    if art and token:
+        keys.append(f"A:{art}|{token}")
+    for key in keys:
+        if key in index:
+            return index[key]
+    return None
+
+
+def _poison_option_label(item: dict, kr_sizes: dict[str, int] | None) -> str:
+    """주문 옵션 표기 — 포이즌 원본(EU) 옆에 소싱용 한국 사이즈(mm)를 덧붙인다.
+
+    'EU 44.5' → 'EU 44.5 · KR 285'. 포이즌이 그 SKU 의 한국 사이즈를 주지 않으면
+    (EU 만 있는 SPU 가 실제로 있다) 원본 그대로 둔다 — 임의 환산표로 채우면
+    오구매가 나므로 비워두는 편이 맞다.
+    """
+    option = item.get("properties", "") or ""
+    mm = _poison_kr_size(item, kr_sizes)
+    if not mm:
+        return option
+    return f"{option} · KR {mm}" if option else f"KR {mm}"
+
+
+def _parse_poison_order(
+    item: dict, account_id: str, label: str, kr_sizes: dict[str, int] | None = None
+) -> dict:
     """POIZON(得物) 주문 데이터 → SambaOrder dict 변환."""
     from datetime import UTC
 
@@ -12820,7 +12940,7 @@ def _parse_poison_order(item: dict, account_id: str, label: str) -> dict:
         # 사후 보강(PUT)에 의존해 반영까지 시차가 있었는데, generic_list 응답에
         # 이미 있는 값이라 수집 시점에 바로 채운다.
         "product_image": str(item.get("logo_url", "") or ""),
-        "product_option": item.get("properties", "") or "",
+        "product_option": _poison_option_label(item, kr_sizes),
         "quantity": quantity,
         "sale_price": product_price,
         "revenue": revenue,
