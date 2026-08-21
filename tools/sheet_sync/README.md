@@ -89,3 +89,36 @@ kream-ebay-watch   1분마다 · pythonw · deploy/local/kream_ebay_watch_once.p
 2. `kream_ebay_watch.log` 마지막 시각 — P5 가 FALSE 면 아무것도 안 찍히는 게 정상이라
    "로그가 멈췄다" 만으로는 고장이 아니다
 3. **시트에서 P열 값을 직접 읽어본다** — 여기서 위치 어긋남이 드러난다
+
+## P5 를 눌러도 반응이 없다 — 원인 3가지 [2026-08-21 갱신]
+
+증상은 같아도 원인이 매번 달랐다. **아래 순서로 확인**하면 빠르다.
+
+1. **체크박스 위치가 밀렸다** (2026-08-14, 2026-08-20)
+   → 지금은 `P1:P20` 에서 체크된 칸을 자동으로 찾으므로 재발하지 않는다.
+
+2. **웨일 창이 최소화·비활성** (2026-08-21) ← 가장 최근 원인
+   창이 활성 상태가 아니면 웨일이 **입력 이벤트에 응답을 안 준다.**
+   `Input.dispatchMouseEvent`(휠)가 무응답 → CDP 타임아웃 → 스크립트 사망.
+   같은 탭에서 `Runtime.evaluate` 는 0.2초로 멀쩡하다(그래서 "탭은 정상"으로 보인다).
+   → `window.scrollTo` 로 교체해 해결. **앞으로 입력 이벤트를 쓰지 마라.**
+
+3. **크림 buying 탭이 먹통**
+   `pending` / `finished` 탭 두 개가 다 있어야 한다. 하나가 죽었으면 닫고 새로 연다:
+   ```python
+   urllib.request.Request("http://127.0.0.1:9223/json/new?" + url, method="PUT")  # GET 은 405
+   ```
+
+**진단 명령** (순서대로):
+```bash
+# ① 스케줄러 — LastTaskResult 0 이면 정상
+powershell -Command "Get-ScheduledTaskInfo -TaskName kream-ebay-watch"
+# ② 로그 마지막 예외
+tail -30 tools/sheet_sync/kream_ebay_watch.log
+# ③ 시트 P열 실제 값
+# ④ CDP 탭 목록 — my/buying 이 pending·finished 둘 다 있는지
+curl -s http://127.0.0.1:9223/json
+```
+
+실행 중 예외가 나면 체크를 True 로 되돌리므로(2026-08-21), 실패해도 다음 폴링에서
+자동 재시도된다. "체크만 풀리고 아무 일도 안 일어남" 은 이제 안 생긴다.
