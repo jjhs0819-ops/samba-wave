@@ -3890,6 +3890,32 @@ def ambiguous_size_option(opt: str, all_opts: list | None) -> bool:
     return False
 
 
+def sizing_conflict_option(kream_name: str, opt: str, all_opts=None) -> bool:
+    """크림이 국가 사이즈를 못박은 상품에 일본 표기 물건을 넣는가 [2026-08-21].
+
+    크림은 상품명 끝에 `- KR Sizing` / `- US Sizing` 을 박아 그 나라 표기 물건만 받는다.
+    스니덩크 물건은 일본 내수라 옵션이 `JP S/M/L` 이고, 실물 라벨에 KR 줄 자체가 없다
+    (사용자 실물 확인: adidas 트랙탑 — ASIA/中國/AU·NZ/J/US 만 있고 KR 없음).
+    같은 옷이라도 표기가 한 단계씩 어긋나(KR XL = ASIA L = JP L) **검수에서 불합격**한다.
+      실측 2026-08-20: 크림 343492(KR Sizing) ↔ 스니덩크 403152(JP S~XL) 실제 반려.
+      같은 조합 511건, 그중 232건이 이미 입찰(약 9,200만원) — 전량 정리했다.
+
+    대체 크림 상품으로 옮길 수도 없다 — 같은 옷의 KR Sizing 아닌 상품이 크림에 없다.
+    매칭 삽입 도구(`_brand_insert.sizing_conflict`)가 확정을 막지만, 확정이 다른 경로로
+    뚫리면 그대로 등록되므로 **등록 경로에서도 막는다.**
+    """
+    kn = str(kream_name or "").upper()
+    if "KR SIZING" not in kn and "US SIZING" not in kn:
+        return False
+    blob = str(opt or "")
+    if all_opts:
+        try:
+            blob += " " + " ".join(str(x or "") for x in all_opts)
+        except Exception:
+            pass
+    return "JP " in blob.upper()
+
+
 # 신발 사이즈별 신품 최저가 — 상품페이지 SSR 내장 JSON. 카드(apparels 숫자ID)와 ID공간이
 # 완전히 달라(/v1/apparels/{cid} 는 엉뚱한 의류 반환) 신발은 이 경로가 유일. 인증 불필요.
 _SHOE_SIZE_RE = re.compile(r'"sizeName":"([^"]+)"[^}]*\},"minNewListingPrice":(\d+)')
@@ -5770,6 +5796,7 @@ async def run_kream_unified_once() -> dict:
                     0,
                 )
                 _kream_opts_cache = None  # 상품당 크림 옵션 1회 조회 캐시
+                _kream_name_a = ""  # 사이즈 국가 게이트용 크림 상품명
                 for _nm, _d in (prod.get("db_opts") or {}).items():
                     _lv = _live_opt(_live_sz, _nm) or {}
                     _st, _pr = int(_lv.get("stock") or 0), int(_lv.get("price") or 0)
@@ -5896,9 +5923,9 @@ async def run_kream_unified_once() -> dict:
                             _pr_resp = await _rq(
                                 "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
                             )
-                            _kream_opts_cache = (_pr_resp.json() or {}).get(
-                                "options"
-                            ) or []
+                            _pr_j = _pr_resp.json() or {}
+                            _kream_opts_cache = _pr_j.get("options") or []
+                            _kream_name_a = str(_pr_j.get("name") or "")
                         # 옵션 매칭도 공용 매처로 통일 — 크림 접미('240(US 5.5)')·지역접두
                         # ('JP S')·cm 표기를 한 곳에서 흡수한다.
                         _popt = _match_kream_option(_nm, _kream_opts_cache)
@@ -5913,6 +5940,15 @@ async def run_kream_unified_once() -> dict:
                     # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
                     # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
                     # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
+                    # [2026-08-21] 크림이 `- KR Sizing`/`- US Sizing` 으로 국가를 못박은
+                    # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
+                    # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
+                    # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
+                    if sizing_conflict_option(
+                        _kream_name_a, _nm, list((prod.get("db_opts") or {}).keys())
+                    ):
+                        _drop("사이즈국가불일치(JP↔KR)", kid, _nm)
+                        continue
                     if ambiguous_size_option(
                         str(_popt.get("name") or _nm), _kream_opts_cache
                     ):
@@ -6021,6 +6057,7 @@ async def run_kream_unified_once() -> dict:
             r["db_update"] = (snkr_id, _new_opts, _new_cost)
             # 크림 옵션(최저가) 조회 캐시 — 상품당 1회. 리스톡 신규등록에서 1등 판정에 쓴다.
             _card_opts_cache: list | None = None
+            _kream_name_cache: str = ""  # 사이즈 국가 게이트용 크림 상품명
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
@@ -6163,7 +6200,9 @@ async def run_kream_unified_once() -> dict:
                             _cr = await _rq(
                                 "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
                             )
-                            _card_opts_cache = (_cr.json() or {}).get("options") or []
+                            _cr_j = _cr.json() or {}
+                            _card_opts_cache = _cr_j.get("options") or []
+                            _kream_name_cache = str(_cr_j.get("name") or "")
                         _copt = _match_kream_option(nm, _card_opts_cache)
                     except Exception:
                         _copt = None
@@ -6194,6 +6233,27 @@ async def run_kream_unified_once() -> dict:
                     # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
                     # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
                     # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
+                    # [2026-08-21] 크림이 `- KR Sizing`/`- US Sizing` 으로 국가를 못박은
+                    # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
+                    # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
+                    # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
+                    if sizing_conflict_option(
+                        _kream_name_cache, nm, list((prod.get("db_opts") or {}).keys())
+                    ):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(사이즈국가불일치)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     if ambiguous_size_option(
                         str(_copt.get("name") or nm), _card_opts_cache
                     ):
@@ -6328,6 +6388,7 @@ async def run_kream_unified_once() -> dict:
             r["db_update"] = (snkr_id, _new_opts, _new_cost)
             # 크림 옵션(최저가) 조회 캐시 — 상품당 1회. 리스톡 신규등록에서 1등 판정에 쓴다.
             _card_opts_cache: list | None = None
+            _kream_name_cache: str = ""  # 사이즈 국가 게이트용 크림 상품명
             # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
             for nm in ("PSA 10", "PSA 9"):
                 d = live.get(nm) or {}
@@ -6468,7 +6529,9 @@ async def run_kream_unified_once() -> dict:
                             _cr = await _rq(
                                 "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
                             )
-                            _card_opts_cache = (_cr.json() or {}).get("options") or []
+                            _cr_j = _cr.json() or {}
+                            _card_opts_cache = _cr_j.get("options") or []
+                            _kream_name_cache = str(_cr_j.get("name") or "")
                         _copt = _match_kream_option(nm, _card_opts_cache)
                     except Exception:
                         _copt = None
@@ -6499,6 +6562,27 @@ async def run_kream_unified_once() -> dict:
                     # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
                     # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
                     # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
+                    # [2026-08-21] 크림이 `- KR Sizing`/`- US Sizing` 으로 국가를 못박은
+                    # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
+                    # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
+                    # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
+                    if sizing_conflict_option(
+                        _kream_name_cache, nm, list((prod.get("db_opts") or {}).keys())
+                    ):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(사이즈국가불일치)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     if ambiguous_size_option(
                         str(_copt.get("name") or nm), _card_opts_cache
                     ):
