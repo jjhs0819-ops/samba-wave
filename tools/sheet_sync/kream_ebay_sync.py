@@ -171,7 +171,8 @@ def fetch_kream_orders():
         c = CDPConn(tab_id)
         c.call("Runtime.enable")
         c.call("Page.enable")
-        c.call("Input.enable")
+        # [2026-08-21] Input.enable 제거 — 휠 이벤트를 JS 스크롤로 바꿔서 입력 도메인이
+        # 필요 없고, 웨일 창이 비활성이면 이 호출 자체가 무응답이라 여기서 멎었다.
         c.send("Page.navigate", {"url": url})
         time.sleep(3)
         _scroll_to_load_all(c)
