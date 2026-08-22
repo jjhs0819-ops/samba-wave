@@ -56,3 +56,106 @@ def test_실사고_IY7278_M은_게이트에서_걸러진다():
     assert before.price == 89000
     # 그 가격의 실제 순이익 = 확정손실
     assert 89000 - poizon_fee(89000) - 109000 == -35000
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-22 재발: 위 환산은 PoisonPlugin.execute() 안에만 있는데, 오토튠이
+# 상품 대표원가 기준으로 "가격 변동 없음"이라 판단해 execute() 를 아예 호출하지
+# 않아 환산·취소가 한 번도 돌지 않았다.
+#   [오토튠][가격스킵] JI0080 포이즌: expected=83600==last=83600, cost_now=73990
+# 실사고: JI0080 은 220/285/290 만 149,000(브랜드배송)이고 나머지는 73,990 인데
+# 220 이 109,000 에 걸린 채로 남아 주문이 들어왔다(정산 94,000 - 실매입 149,000).
+# → 라이브 입찰가와 옵션 실매입가를 직접 비교해 손실 입찰을 찾아내야 한다.
+# ---------------------------------------------------------------------------
+
+
+def test_손실입찰_판별_JI0080_220_290():
+    from backend.domain.samba.proxy.poison import find_losing_bids
+
+    options = [
+        {"name": "220", "price": 149000, "stock": 99},
+        {"name": "230", "price": 73990, "stock": 99},
+        {"name": "285", "price": 149000, "stock": 99},
+        {"name": "290", "price": 149000, "stock": 99},
+    ]
+    sizes = {
+        "220": {"price": 109000, "biddingNo": "1"},
+        "230": {"price": 95000, "biddingNo": "2"},
+        "285": {"price": 174000, "biddingNo": "3"},
+        "290": {"price": 109000, "biddingNo": "4"},
+    }
+    losing = find_losing_bids(cost=73990, options=options, sizes=sizes)
+    # 220/290: 109,000 - 수수료 15,000 - 실매입 149,000 = -55,000
+    # 285: 174,000 - 17,400 - 149,000 = +7,600 → 손실 아님
+    # 230: 95,000 - 15,000 - 73,990 = +6,010 → 손실 아님
+    assert sorted(losing) == ["220", "290"]
+
+
+def test_옵션가_균일하면_손실입찰_없음():
+    from backend.domain.samba.proxy.poison import find_losing_bids
+
+    # 미즈노형: cost 가 할인 매입가라 옵션가보다 낮다. 환산하면 오판이 난다.
+    options = [{"name": "260", "price": 206990, "stock": 9}]
+    sizes = {"260": {"price": 230000, "biddingNo": "1"}}
+    assert find_losing_bids(cost=177420, options=options, sizes=sizes) == []
+
+
+def test_취소된_입찰은_대상_아님():
+    from backend.domain.samba.proxy.poison import find_losing_bids
+
+    options = [
+        {"name": "220", "price": 149000, "stock": 99},
+        {"name": "230", "price": 73990, "stock": 99},
+    ]
+    # biddingNo 없음(=이미 취소) → 손실이어도 다시 전송할 이유가 없다
+    sizes = {"220": {"price": 109000, "status": "cancelled"}}
+    assert find_losing_bids(cost=73990, options=options, sizes=sizes) == []
+
+
+def test_입찰가_없으면_판정하지_않는다():
+    from backend.domain.samba.proxy.poison import find_losing_bids
+
+    options = [
+        {"name": "220", "price": 149000, "stock": 99},
+        {"name": "230", "price": 73990, "stock": 99},
+    ]
+    sizes = {"220": {"biddingNo": "1"}}
+    assert find_losing_bids(cost=73990, options=options, sizes=sizes) == []
+
+
+def test_이미_취소된_입찰은_취소성공으로_본다():
+    """포이즌이 'Listing has been canceled.' 를 code!=200 으로 돌려준다.
+
+    실패로 처리하면 호출부가 DB 의 biddingNo 를 지우지 않아 라이브에 없는 번호가
+    영구히 남고, 손실 입찰 감지가 매 사이클 헛취소를 반복한다(2026-08-22 IY7278).
+    """
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from backend.domain.samba.proxy.poison import PoisonClient
+
+    c = PoisonClient(app_key="K", app_secret="S")
+    with patch.object(
+        PoisonClient,
+        "_post",
+        new=AsyncMock(return_value={"code": 500080004, "msg": "Listing has been canceled."}),
+    ):
+        r = asyncio.run(c.cancel_listing("151220034897237952"))
+    assert r["success"] is True
+    assert r.get("already_cancelled") is True
+
+
+def test_진짜_취소실패는_실패로_남는다():
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from backend.domain.samba.proxy.poison import PoisonClient
+
+    c = PoisonClient(app_key="K", app_secret="S")
+    with patch.object(
+        PoisonClient,
+        "_post",
+        new=AsyncMock(return_value={"code": 500080002, "msg": "Invalid request parameter(s)"}),
+    ):
+        r = asyncio.run(c.cancel_listing("1"))
+    assert r["success"] is False

@@ -110,6 +110,69 @@ def poizon_fee(
     return min(max(price * rate, fee_min), fee_max)
 
 
+def option_real_cost(fallback_cost: int, opt_price: int, min_opt_price: int) -> int:
+    """옵션(사이즈)별 실매입가 — 대표원가 x (해당옵션가 / 최저옵션가).
+
+    무신사 등은 같은 상품이라도 사이즈마다 판매가가 다르다(할인 적용 PLUS 옵션 vs
+    정가 NORMAL 옵션). 상품 대표원가는 최저옵션가 기준이라 비싼 옵션을 그 원가로
+    등록하면 팔리는 순간 확정 역마진이 난다.
+
+    옵션가가 전부 같으면 대표원가 그대로 — cost 가 할인 매입가인 상품(미즈노
+    177,420 vs 옵션가 206,990 등)을 역마진으로 오판하지 않기 위함이다.
+    """
+    if opt_price and min_opt_price and opt_price > min_opt_price:
+        return int(round(fallback_cost * opt_price / min_opt_price))
+    return int(fallback_cost)
+
+
+def find_losing_bids(
+    *,
+    cost: int,
+    options: list[dict[str, Any]] | None,
+    sizes: dict[str, Any] | None,
+    min_profit: int = 0,
+    rate: float = POISON_FEE_RATE,
+    fee_min: int = POISON_FEE_MIN,
+    fee_max: int = POISON_FEE_MAX,
+) -> list[str]:
+    """지금 걸려 있는 입찰 중 팔리면 손해인 사이즈 목록.
+
+    오토튠은 상품 대표원가로 계산한 판매가가 그대로면 전송을 스킵한다. 포이즌은
+    사이즈별 입찰이라 그 비교로는 옵션별 원가 문제를 영영 못 잡고, 손해나는
+    가격표가 살아남아 계속 팔린다(2026-08-21 JI0080/220 주문 사고).
+    라이브 입찰가와 옵션 실매입가를 직접 비교해 손실 입찰을 찾아낸다.
+
+    min_profit=0 이면 순손실만 잡는다(등록 게이트의 이익 하한은 execute 가 처리).
+    """
+    if not options or not isinstance(sizes, dict) or cost <= 0:
+        return []
+    prices = [
+        int(o.get("price") or 0)
+        for o in options
+        if isinstance(o, dict) and int(o.get("price") or 0) > 0
+    ]
+    if not prices or max(prices) == min(prices):
+        return []
+    min_opt = min(prices)
+    opt_map = {
+        str(o.get("name") or o.get("size") or "").strip(): int(o.get("price") or 0)
+        for o in options
+        if isinstance(o, dict)
+    }
+    losing: list[str] = []
+    for size, entry in sizes.items():
+        if not isinstance(entry, dict) or not entry.get("biddingNo"):
+            continue  # 이미 취소된 사이즈는 다시 건드릴 이유가 없다
+        bid = int(entry.get("price") or 0)
+        opt_price = opt_map.get(str(size), 0)
+        if bid <= 0 or opt_price <= min_opt:
+            continue
+        real = option_real_cost(cost, opt_price, min_opt)
+        if bid - poizon_fee(bid, rate, fee_min, fee_max) - real < min_profit:
+            losing.append(str(size))
+    return losing
+
+
 @dataclass
 class BidDecision:
     """게이트 판정 결과."""
@@ -572,12 +635,21 @@ class PoisonClient:
         )
         if data.get("code") == 200:
             return {"success": True, "message": "POIZON 입찰 취소 완료", "data": data}
+        _msg = str(data.get("msg") or data.get("message") or "")
+        if "has been cancel" in _msg.lower():
+            # 이미 내려간 입찰 — 실패로 처리하면 호출부가 DB 마커(biddingNo)를 그대로 둬서
+            # 라이브에 없는 번호가 영구히 남고, 그걸 손실 입찰로 다시 감지해 매 사이클
+            # 헛취소를 반복한다(2026-08-22 IY7278). 목표 상태와 같으므로 성공으로 본다.
+            return {
+                "success": True,
+                "message": "POIZON 입찰 이미 취소됨",
+                "already_cancelled": True,
+                "data": data,
+            }
         return {
             "success": False,
             "message": (
-                data.get("msg")
-                or data.get("message")
-                or f"POIZON 입찰 취소 실패(code={data.get('code')})"
+                _msg or f"POIZON 입찰 취소 실패(code={data.get('code')})"
             ),
             "data": data,
         }

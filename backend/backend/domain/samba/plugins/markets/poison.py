@@ -202,7 +202,7 @@ class PoisonPlugin(MarketPlugin):
         """
         import time as _time
 
-        from backend.domain.samba.proxy.poison import PoisonClient
+        from backend.domain.samba.proxy.poison import PoisonClient, option_real_cost
 
         app_key = (
             creds.get("app_key") or creds.get("appKey") or creds.get("apiKey") or ""
@@ -316,11 +316,10 @@ class PoisonPlugin(MarketPlugin):
             stock = self._safe_int(opt.get("stock"), default=0)
             cost = self._safe_int(opt.get("cost"))
             if not cost:
-                cost = fallback_cost
-                _op = self._safe_int(opt.get("price"))
-                if _op and min_opt_price and _op > min_opt_price:
-                    # 최저옵션 대비 비싼 옵션 — 같은 할인율로 실매입가를 환산한다
-                    cost = int(round(fallback_cost * _op / min_opt_price))
+                # 최저옵션 대비 비싼 옵션 — 같은 할인율로 실매입가를 환산한다
+                cost = option_real_cost(
+                    fallback_cost, self._safe_int(opt.get("price")), min_opt_price
+                )
             norm = _normalize_size(opt_name)
             matched = size_index.get(norm)
             sku, size_source = matched if matched else ({}, "")

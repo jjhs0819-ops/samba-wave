@@ -3078,15 +3078,63 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         )
                                         continue
 
+                                    # 포이즌은 사이즈별 입찰이라 상품 대표가 비교만으로는
+                                    # 옵션별 원가 문제를 영영 못 잡는다. 옵션가가 사이즈마다
+                                    # 다른 상품(무신사 PLUS/NORMAL 혼재)은 대표원가가 최저옵션가
+                                    # 기준이라, 비싼 사이즈가 그 원가로 등록된 채 대표가가 그대로면
+                                    # "가격 변동 없음"으로 스킵돼 손해나는 가격표가 계속 팔린다.
+                                    # (2026-08-21 JI0080/220 주문 사고: 정산 94,000 - 실매입 149,000)
+                                    # 라이브 입찰가와 옵션 실매입가를 직접 비교해, 손실 입찰이
+                                    # 남아 있으면 대표가가 같아도 전송한다. execute 가 상향 또는
+                                    # 취소하고 나면 다음 사이클엔 조건이 풀려 반복 전송도 없다.
+                                    _poison_losing: list[str] = []
+                                    if market_type == "poison" and not _price_blocked:
+                                        try:
+                                            from backend.domain.samba.proxy.poison import (
+                                                find_losing_bids,
+                                            )
+
+                                            _pz_rm = (
+                                                getattr(product, "resell_matches", None)
+                                                or {}
+                                            )
+                                            _pz = (
+                                                _pz_rm.get("poison")
+                                                if isinstance(_pz_rm, dict)
+                                                else None
+                                            ) or {}
+                                            _poison_losing = find_losing_bids(
+                                                cost=int(new_cost or 0),
+                                                options=(
+                                                    r.new_options
+                                                    or getattr(product, "options", None)
+                                                ),
+                                                sizes=_pz.get("sizes"),
+                                            )
+                                        except Exception as _pz_e:
+                                            log.warning(
+                                                "[오토튠][포이즌] 손실입찰 판별 실패 %s: %s",
+                                                r.product_id,
+                                                _pz_e,
+                                            )
+                                    if _poison_losing:
+                                        log.info(
+                                            "[오토튠][포이즌] %s: 손실 입찰 %s → 대표가 동일이나 재전송",
+                                            _prod_label,
+                                            ",".join(_poison_losing),
+                                        )
+
                                     if (
                                         expected_price != last_price
                                         or _has_failed_mark
                                         or _price_stale
+                                        or _poison_losing
                                     ) and not _price_blocked:
                                         if (
                                             _price_stale
                                             and expected_price == last_price
                                             and not _has_failed_mark
+                                            and not _poison_losing
                                         ):
                                             # cost 미세변동으로 price_changed_at 갱신됐으나
                                             # 마켓 판매가 동일 → 재전송 불필요, skip
@@ -3152,6 +3200,7 @@ async def _site_autotune_loop(device_id: str, site: str):
                                         if (
                                             _disp_old == _disp_new
                                             and not _has_failed_mark
+                                            and not _poison_losing
                                         ):
                                             log.info(
                                                 "[오토튠][표시가동일스킵] %s acc=%s: "
