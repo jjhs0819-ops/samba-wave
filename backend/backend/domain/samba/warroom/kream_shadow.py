@@ -3943,6 +3943,41 @@ def ambiguous_size_option(opt: str, all_opts: list | None) -> bool:
     return False
 
 
+_JUNIOR_RE = re.compile(r"\(\s*[0-9.]+\s*[YK]", re.I)
+
+
+def junior_size_option(kream_opt: str, snkr_opts=None) -> bool:
+    """크림이 주니어·유아로 못박은 사이즈인데 소싱처는 그 구분이 없는가 [2026-08-23].
+
+    크림은 키즈 라인을 `230(4Y)` · `150(7K)` 처럼 mm 뒤에 Y(youth)·K(kids)를 붙여
+    **성인 사이즈와 다른 옵션**으로 판다. 스니덩크는 같은 신발을 `230` · `150` 처럼
+    cm 로만 주고 Y/K 구분을 하지 않는다(사이즈 가이드조차 없다).
+    그래서 스니덩크에서 그 mm 를 사도 **주니어 물건인지 확인할 방법이 없고**,
+    성인 물건이 오면 크림 검수에서 불합격한다.
+
+    실측 2026-08-23 (사용자 반려 신고에서 출발):
+      크림 492811 `225(3.5Y)` (GS) Nike Dunk Low ↔ 스니덩크 FQ7674-100
+        스니덩크 sizeName = 22.5cm · 23cm · 23.5cm · 24cm … (Y 표기 없음)
+      Y/K 입찰 387건(1억 773만원)의 대응 스니덩크 243건을 전수 대조한 결과
+      **Y/K 표기를 가진 상품이 0건** 이었다. 100% 가 같은 위험을 안고 있다.
+
+    `ambiguous_size_option` 은 크림 옵션 목록 안의 mm 중복만 봐서, `225(3.5Y)` 처럼
+    그 mm 가 하나뿐인 주니어 옵션을 통과시켰다 — 이 함수가 그 구멍을 막는다.
+
+    소싱처 옵션에 같은 Y/K 표기가 있으면(장래에 표기가 생기면) 막지 않는다.
+    """
+    if not _JUNIOR_RE.search(str(kream_opt or "")):
+        return False
+    try:
+        blob = " ".join(
+            str(x if not isinstance(x, dict) else x.get("name") or "")
+            for x in (snkr_opts or [])
+        )
+    except Exception:
+        blob = str(snkr_opts or "")
+    return not re.search(r"[0-9.]+\s*[YK]", blob, re.I)
+
+
 def sizing_conflict_option(kream_name: str, opt: str, all_opts=None) -> bool:
     """크림이 국가 사이즈를 못박은 상품에 일본 표기 물건을 넣는가 [2026-08-21].
 
@@ -5997,6 +6032,15 @@ async def run_kream_unified_once() -> dict:
                     # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
                     # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
                     # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
+                    # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
+                    # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
+                    # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
+                    if junior_size_option(
+                        str(_popt.get("name") or _nm),
+                        list((prod.get("db_opts") or {}).keys()),
+                    ):
+                        _drop("주니어사이즈(Y/K 대응없음)", kid, _nm)
+                        continue
                     if sizing_conflict_option(
                         _kream_name_a, _nm, list((prod.get("db_opts") or {}).keys())
                     ):
@@ -6290,6 +6334,27 @@ async def run_kream_unified_once() -> dict:
                     # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
                     # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
                     # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
+                    # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
+                    # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
+                    # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
+                    if junior_size_option(
+                        str(_copt.get("name") or nm),
+                        list((prod.get("db_opts") or {}).keys()),
+                    ):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(주니어사이즈)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     if sizing_conflict_option(
                         _kream_name_cache, nm, list((prod.get("db_opts") or {}).keys())
                     ):
@@ -6619,6 +6684,27 @@ async def run_kream_unified_once() -> dict:
                     # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
                     # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
                     # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
+                    # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
+                    # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
+                    # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
+                    if junior_size_option(
+                        str(_copt.get("name") or nm),
+                        list((prod.get("db_opts") or {}).keys()),
+                    ):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(주니어사이즈)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     if sizing_conflict_option(
                         _kream_name_cache, nm, list((prod.get("db_opts") or {}).keys())
                     ):
