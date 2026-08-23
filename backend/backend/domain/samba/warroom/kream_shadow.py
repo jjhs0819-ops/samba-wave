@@ -1044,6 +1044,36 @@ async def _load_policy() -> None:
         )
 
 
+# ── 매칭 블랙리스트 [2026-08-23] ──────────────────────────────────────────
+# `kream_snkr_rejected` 는 검수 화면이 후보를 거를 때만 쓰였고 **등록 경로는 보지
+# 않았다.** 그래서 블랙리스트에 올려도 매칭이 살아 있으면 그대로 등록됐다
+# (사용자 지적: 크림 8180 사이즈 불일치 반려 후 차단 요청).
+# 사이클 시작 시 한 번 읽어 (스니덩크id, 크림pid) 쌍으로 들고 있는다.
+_g_rejected: set = set()
+
+
+async def _load_rejected() -> int:
+    """매칭 블랙리스트 로드. 반환=건수. 실패해도 사이클은 계속한다(빈 셋)."""
+    global _g_rejected
+    try:
+        async with get_read_session() as s:
+            rows = (
+                await s.execute(
+                    _text("SELECT snkr_id, kream_pid FROM kream_snkr_rejected")
+                )
+            ).all()
+        _g_rejected = {(str(a), str(b)) for a, b in rows}
+    except Exception as exc:
+        logger.warning("[크림섀도] 매칭 블랙리스트 조회 실패(빈 셋 사용): %s", exc)
+        _g_rejected = set()
+    return len(_g_rejected)
+
+
+def is_rejected_match(snkr_id, kream_pid) -> bool:
+    """이 조합이 매칭 블랙리스트에 올라 있는가."""
+    return (str(snkr_id or ""), str(kream_pid or "")) in _g_rejected
+
+
 async def _load_cooldown() -> set:
     """무경쟁 인상 쿨다운 — samba_settings 'kream_nocomp_cooldown'({pid|opt: epoch}) 24h 내만."""
     try:
@@ -5419,6 +5449,8 @@ async def run_kream_unified_once() -> dict:
         return {"ok": False, "reason": f"fetch_error: {exc}"}
 
     await _load_policy()
+    _n_rej = await _load_rejected()
+    logger.info("[크림섀도] 매칭 블랙리스트 %s건 로드", f"{_n_rej:,}")
     _fail_reasons.clear()  # 사이클 단위 실패사유 집계
     global _g_price_guard
     _g_price_guard = await _load_setting_map(_SET_GUARD)  # 급락 가드 직전가 로드
@@ -6035,6 +6067,11 @@ async def run_kream_unified_once() -> dict:
                     # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
                     # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
                     # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
+                    # [2026-08-23] 매칭 블랙리스트(kream_snkr_rejected) —
+                    # 검수에서 걸러낸 조합은 매칭이 되살아나도 등록하지 않는다.
+                    if is_rejected_match(prod.get("snkr_id"), kid):
+                        _drop("매칭블랙리스트", kid, _nm)
+                        continue
                     if junior_size_option(
                         str(_popt.get("name") or _nm),
                         list((prod.get("db_opts") or {}).keys()),
@@ -6337,6 +6374,23 @@ async def run_kream_unified_once() -> dict:
                     # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
                     # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
                     # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
+                    # [2026-08-23] 매칭 블랙리스트(kream_snkr_rejected) —
+                    # 검수에서 걸러낸 조합은 매칭이 되살아나도 등록하지 않는다.
+                    if is_rejected_match(prod.get("snkr_id"), kid):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(매칭블랙리스트)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     if junior_size_option(
                         str(_copt.get("name") or nm),
                         list((prod.get("db_opts") or {}).keys()),
@@ -6687,6 +6741,23 @@ async def run_kream_unified_once() -> dict:
                     # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
                     # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
                     # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
+                    # [2026-08-23] 매칭 블랙리스트(kream_snkr_rejected) —
+                    # 검수에서 걸러낸 조합은 매칭이 되살아나도 등록하지 않는다.
+                    if is_rejected_match(prod.get("snkr_id"), kid):
+                        r["rows"].append(
+                            (
+                                "skip",
+                                "리스톡보류(매칭블랙리스트)",
+                                kid,
+                                nm,
+                                0,
+                                0,
+                                False,
+                                prod["name"],
+                                False,
+                            )
+                        )
+                        continue
                     if junior_size_option(
                         str(_copt.get("name") or nm),
                         list((prod.get("db_opts") or {}).keys()),
