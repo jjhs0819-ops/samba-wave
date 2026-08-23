@@ -890,42 +890,91 @@ async def _buy_watch(snapshot: list) -> str:
 
 
 # 가격정책 — 로컬 _kream_ask_adjust.py POLICY 포팅(동일 기본값). 추후 마진설정 API 로 교체 가능.
-POLICY = {
-    "min_margin_amount": 9000,
-    "competitive_margin_rate": 13,
-    "no_competition_margin_rate": 31,
-    "shipping_fee_card": 300,  # 스니덩크 배송비(카드) — 엔화
-    "shipping_fee_box": 900,  # 스니덩크 배송비(박스) — 엔화
-    "forwarding_fee": 8000,  # 배대지비용 — 원
-    "box_pack_margin_rate": 0,  # 박스/카드팩(PSA제외 실링) 원가 추가마진율(%) — 정책설정
-    "non_card_margin_rate": 5,  # 나머지(신발/의류) 원가 추가마진율(%) — 정책설정, 하드코딩 금지
+# ═══════════════════════════════════════════════════════════════════════════
+# 마진·수수료 정책 — **값은 전부 정책관리(가디정책) KREAM 탭에서만 온다.**
+#
+# [2026-08-23] 여기에 있던 기본 숫자를 **전량 제거**했다.
+#   종전 기본값(9,000 · 13% · 31% · 5%)이 실제 운영값(8,000 · 8% · 24% · 10%)과
+#   전부 달랐다. 정책 로드가 한 번이라도 실패하면 그 숫자로 등록·조정이 나가고,
+#   코드를 읽는 쪽은 그 값을 운영값으로 착각해 잘못된 분석·보고를 반복했다.
+#   (실제로 이 기본값을 근거로 "경쟁마진 13%를 낮추자"는 무의미한 제안을 냈다 —
+#    운영값은 이미 8% 였다.)
+#
+# **여기에 숫자를 적지 마라.** None 은 "아직 정책을 못 읽었다"는 뜻이고,
+# require_policy() 가 그 상태에서 등록·조정을 막는다. 값이 없으면 헐값 등록이나
+# 전량 삭제로 이어지므로, 모르는 채 계산하느니 멈추는 쪽이 안전하다.
+#
+# 예외 하나 — max_cost_jpy 는 "상한 미적용"이 안전한 방향이라 무한대를 둔다.
+# ═══════════════════════════════════════════════════════════════════════════
+POLICY: dict = {
+    "min_margin_amount": None,  # kreamMinMarginAmount — 원
+    "competitive_margin_rate": None,  # kreamCompetitiveMarginRate — %
+    "no_competition_margin_rate": None,  # kreamNoCompetitionMarginRate — %
+    "shipping_fee_card": None,  # kreamShippingFeeCard — 엔(스니덩크→배대지)
+    "shipping_fee_box": None,  # kreamShippingFeeBox — 엔
+    "forwarding_fee": None,  # kreamForwardingFee — 원(배대지비용)
+    "box_pack_margin_rate": None,  # kreamBoxPackMarginRate — %(박스·카드팩 추가)
+    "non_card_margin_rate": None,  # kreamNonCardMarginRate — %(신발·의류 추가)
     # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외.
-    # **값은 정책관리(kreamMaxCostJpy)에서만 온다. 여기에 숫자를 적지 마라.**
-    # 종전엔 기본값이 박혀 있어 실제 정책과 어긋났고, 그 숫자를 운영값으로
-    # 착각해 잘못 보고하는 일이 반복됐다.
-    # 정책을 못 읽었을 때 0 을 쓰면 "모든 원가가 상한 초과"가 되어 전량 삭제로
-    # 이어지므로, 사실상 무한대로 두어 **상한 미적용**이 되게 한다.
+    # 0 을 쓰면 "모든 원가가 상한 초과"가 되어 전량 삭제로 이어지므로,
+    # 못 읽었을 때는 사실상 무한대로 두어 **상한 미적용**이 되게 한다.
     "max_cost_jpy": 10**12,
     # [2026-08-16] 조정 데드밴드 폐기 — 정책값까지 제거했다.
     # 크림은 1,000원 차이로 순위가 갈린다. 생략한 그 금액이 곧 1등과 2등의 차이라
     # '아낀 호출'보다 잃은 순위가 크다. 조정은 판정이 시키는 대로 전부 실행한다.
-    # ── 크림 판매수수료(정산 차감분) [2026-08-02] ──
-    # 해외배송(박스·카드팩): 기본 1,370원 + 판매가 3.3%  ※3.3% 는 3%+VAT 가 이미 포함된 값
-    "overseas_base_fee": 1370,
-    "overseas_fee_rate": 3.3,
-    # 신발/의류/시계: (기본 2,500원 + 판매가 5.6%) × VAT 1.1 = 2,750 + 6.16%
-    # 요율은 판매등급별(L5 5.50 / L4 5.60 / L3 5.70 / L2 5.85 / L1 6.00) — 정책에서 주입
-    "item_fee_base": 2500,
-    "item_fee_rate": 5.6,
-    "item_fee_vat": 10,
+    # ── 크림 판매수수료(정산 차감분) ──
+    # 해외배송(박스·카드팩): kreamOverseasBaseFee + 판매가 kreamOverseasFeeRate%
+    "overseas_base_fee": None,
+    "overseas_fee_rate": None,
+    # 신발/의류/시계: (kreamItemFeeBase + 판매가 등급요율%) × VAT
+    # 등급요율은 kreamSellerLevel 에서 도출(L5 5.50 / L4 5.60 / L3 5.70 / L2 5.85 / L1 6.00)
+    "item_fee_base": None,
+    "item_fee_rate": None,
+    "item_fee_vat": None,
     # PSA 낱장 카드는 수수료 무료 → 별도 값 없음
 }
+
+# 정책이 반드시 채워야 하는 키 — 하나라도 None 이면 등록·조정을 하지 않는다.
+_REQUIRED_POLICY_KEYS = (
+    "min_margin_amount",
+    "competitive_margin_rate",
+    "no_competition_margin_rate",
+    "shipping_fee_card",
+    "shipping_fee_box",
+    "forwarding_fee",
+    "box_pack_margin_rate",
+    "non_card_margin_rate",
+    "overseas_base_fee",
+    "overseas_fee_rate",
+    "item_fee_base",
+    "item_fee_rate",
+    "item_fee_vat",
+)
+
+
+def missing_policy_keys() -> list:
+    """아직 정책에서 못 받은 키 목록. 비어 있어야 정상."""
+    return [k for k in _REQUIRED_POLICY_KEYS if POLICY.get(k) is None]
+
+
+def require_policy() -> None:
+    """정책 미로드 상태에서 가격 계산을 못 하게 막는다.
+
+    기본값으로 조용히 계산하면 실제 정책과 다른 가격이 나가고, 그게 손실로 이어진다.
+    """
+    miss = missing_policy_keys()
+    if miss:
+        raise RuntimeError(
+            "크림 마진정책 미로드 — 정책관리(가디정책) KREAM 탭 확인 필요: "
+            + ", ".join(miss)
+        )
 
 
 async def _load_policy() -> None:
     """정책관리 KREAM 탭 설정을 DB(SambaPolicy.market_policies)서 읽어 POLICY 갱신.
     로컬 루프(_kream_ask_adjust)가 라이브 정책을 쓰므로 섀도도 동일 소스여야 target 일치.
-    실패해도 기본값 유지."""
+    [2026-08-23] 실패하면 값을 None 으로 남긴다 — 기본값 폴백 없음.
+    require_policy() 가 그 상태에서 가격 계산을 막는다."""
     try:
         from sqlmodel import select
 
@@ -936,63 +985,63 @@ async def _load_policy() -> None:
         for (mp,) in rows:
             if isinstance(mp, dict) and isinstance(mp.get("KREAM"), dict):
                 k = mp["KREAM"]
+                # [2026-08-23] 기본값 폴백 제거 — 정책에 없는 키는 None 으로 남겨
+                # require_policy() 가 등록·조정을 막게 한다. 종전엔 POLICY[...] 로
+                # 폴백해, 정책에 값이 없으면 코드 기본값(실제와 다름)이 조용히 쓰였다.
+                _lv = k.get("kreamSellerLevel")
                 POLICY.update(
                     {
-                        "min_margin_amount": k.get(
-                            "kreamMinMarginAmount", POLICY["min_margin_amount"]
-                        ),
-                        "competitive_margin_rate": k.get(
-                            "kreamCompetitiveMarginRate",
-                            POLICY["competitive_margin_rate"],
-                        ),
+                        "min_margin_amount": k.get("kreamMinMarginAmount"),
+                        "competitive_margin_rate": k.get("kreamCompetitiveMarginRate"),
                         "no_competition_margin_rate": k.get(
-                            "kreamNoCompetitionMarginRate",
-                            POLICY["no_competition_margin_rate"],
+                            "kreamNoCompetitionMarginRate"
                         ),
-                        "shipping_fee_card": k.get(
-                            "kreamShippingFeeCard", POLICY["shipping_fee_card"]
-                        ),
-                        "shipping_fee_box": k.get(
-                            "kreamShippingFeeBox", POLICY["shipping_fee_box"]
-                        ),
-                        "forwarding_fee": k.get(
-                            "kreamForwardingFee", POLICY["forwarding_fee"]
-                        ),
-                        "box_pack_margin_rate": k.get(
-                            "kreamBoxPackMarginRate", POLICY["box_pack_margin_rate"]
-                        ),
-                        "non_card_margin_rate": k.get(
-                            "kreamNonCardMarginRate", POLICY["non_card_margin_rate"]
-                        ),
-                        "max_cost_jpy": k.get(
-                            "kreamMaxCostJpy", POLICY["max_cost_jpy"]
-                        ),
-                        # 판매수수료 — 정책관리 값 우선, 없으면 기본값 [2026-08-02]
-                        "overseas_base_fee": k.get(
-                            "kreamOverseasBaseFee", POLICY["overseas_base_fee"]
-                        ),
-                        "overseas_fee_rate": k.get(
-                            "kreamOverseasFeeRate", POLICY["overseas_fee_rate"]
-                        ),
-                        "item_fee_base": k.get(
-                            "kreamItemFeeBase", POLICY["item_fee_base"]
-                        ),
-                        # 등급율은 판매등급에서 도출(margin-policy 엔드포인트와 동일 표)
+                        "shipping_fee_card": k.get("kreamShippingFeeCard"),
+                        "shipping_fee_box": k.get("kreamShippingFeeBox"),
+                        "forwarding_fee": k.get("kreamForwardingFee"),
+                        "box_pack_margin_rate": k.get("kreamBoxPackMarginRate"),
+                        "non_card_margin_rate": k.get("kreamNonCardMarginRate"),
+                        # 상한만 예외 — 못 받으면 '상한 미적용'이 안전한 방향이다.
+                        "max_cost_jpy": k.get("kreamMaxCostJpy") or 10**12,
+                        "overseas_base_fee": k.get("kreamOverseasBaseFee"),
+                        "overseas_fee_rate": k.get("kreamOverseasFeeRate"),
+                        "item_fee_base": k.get("kreamItemFeeBase"),
+                        # 등급요율은 판매등급에서 도출(margin-policy 엔드포인트와 동일 표)
                         "item_fee_rate": {
                             5: 5.50,
                             4: 5.60,
                             3: 5.70,
                             2: 5.85,
                             1: 6.00,
-                        }.get(int(k.get("kreamSellerLevel", 4) or 4), 5.60),
-                        "item_fee_vat": k.get(
-                            "kreamItemFeeVat", POLICY["item_fee_vat"]
-                        ),
+                        }.get(int(_lv), None)
+                        if _lv is not None
+                        else None,
+                        "item_fee_vat": k.get("kreamItemFeeVat"),
                     }
                 )
+                _miss = missing_policy_keys()
+                if _miss:
+                    logger.error(
+                        "[크림섀도] 마진정책에 빠진 값 %s — 등록·조정 중단됨. "
+                        "정책관리(가디정책) KREAM 탭을 채워라.",
+                        ", ".join(_miss),
+                    )
+                else:
+                    logger.info(
+                        "[크림섀도] 마진정책 로드 — 최소마진 %s원 · 경쟁 %s%% · "
+                        "무경쟁 %s%% · 비카드추가 %s%% · 박스추가 %s%%",
+                        f"{int(POLICY['min_margin_amount']):,}",
+                        POLICY["competitive_margin_rate"],
+                        POLICY["no_competition_margin_rate"],
+                        POLICY["non_card_margin_rate"],
+                        POLICY["box_pack_margin_rate"],
+                    )
                 return
     except Exception as exc:
-        logger.warning("[크림섀도] 마진정책 조회 실패, 기본값 유지: %s", exc)
+        logger.error(
+            "[크림섀도] 마진정책 조회 실패 — 등록·조정 중단됨(기본값 폴백 없음): %s",
+            exc,
+        )
 
 
 async def _load_cooldown() -> set:
@@ -1666,6 +1715,7 @@ def calc_base(
     추가마진율(%)만큼 원가 가산 — 정책값 사용(하드코딩 금지).
       · surcharge_rate 명시: 호출부가 분류(PSA=0 / 박스·카드팩 / 신발·의류)해서 넘김
       · 미지정: PSA면 0, 비PSA는 박스/카드팩으로 간주(box_pack_margin_rate)"""
+    require_policy()  # 정책 미로드 상태로 원가를 만들어내지 않는다 [2026-08-23]
     ship_jpy = POLICY["shipping_fee_box"] if is_box else POLICY["shipping_fee_card"]
     if surcharge_rate is None:
         surcharge_rate = 0 if is_card else POLICY["box_pack_margin_rate"]
@@ -1684,6 +1734,8 @@ def gross_up_kream_fee(net: float, fee_kind: str | None) -> float:
                       = 2,750 + 판매가×6.16%
     fee_kind 미지정이면 수수료 미반영(기존 동작 그대로) — 분류가 모호한 호출부 보호.
     """
+    if fee_kind in ("overseas", "item"):
+        require_policy()  # 수수료도 정책값이다 [2026-08-23]
     if fee_kind == "overseas":
         fixed = float(POLICY["overseas_base_fee"])
         rate_pct = float(POLICY["overseas_fee_rate"])
@@ -1706,6 +1758,7 @@ def calc_min_price(
     surcharge_rate: float | None = None,
     fee_kind: str | None = None,
 ) -> int:
+    require_policy()  # 정책 미로드 상태로 값을 만들어내지 않는다 [2026-08-23]
     base = calc_base(price_jpy, rate, is_box, is_card, surcharge_rate)
     margin = max(
         float(POLICY["min_margin_amount"]),
