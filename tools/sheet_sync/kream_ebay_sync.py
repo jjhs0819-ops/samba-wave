@@ -417,8 +417,17 @@ def append_new_ebay_orders(ws):
     )
 
 
-def match_delivered_to_ai(ws, newly_delivered):
-    """배송완료건을 A:I 빈 슬롯(D열 공백)에 도착순으로 채움. D열에 값 있는 행은 무조건 건너뜀."""
+def match_delivered_to_ai(ws, newly_delivered, db_orders=None):
+    """배송완료건을 A:I 빈 슬롯(D열 공백)에 도착순으로 채움. D열에 값 있는 행은 무조건 건너뜀.
+
+    [2026-08-23] **카드버전끼리, 팩버전끼리만 붙인다.**
+    종전엔 날짜순으로 빈 칸에 차례로 밀어넣기만 해서 카드가 팩 자리에, 팩이 카드
+    자리에 들어갔다(사용자 신고). card_ver 값은 양쪽 다 갖고 있었는데 빨간 글씨를
+    칠하는 데만 쓰고 매칭에서는 보지 않았다.
+      크림/번장 : 옵션에 "Card Ver." → card_ver=True
+      이베이    : 상품명에 "Card Ver" → card_ver=True
+    종류가 안 맞으면 붙이지 않고 남긴다 — 잘못 붙이느니 비워 두는 쪽이 낫다.
+    """
     eligible = [
         (no, info)
         for no, info in newly_delivered
@@ -432,15 +441,28 @@ def match_delivered_to_ai(ws, newly_delivered):
     if not eligible:
         return
 
+    # 이베이 주문번호 → 카드버전 여부
+    ebay_card = {
+        str(o.get("order_number") or ""): bool(o.get("card_ver"))
+        for o in (db_orders or [])
+    }
+
     ai = ws.get("A2:I1000")
-    empty_slots = []
+    empty_slots = []  # (행번호, 그 행이 카드버전인가)
+    unknown_slot = 0
     for i, r in enumerate(ai):
         row = i + 2
-        b = r[1] if len(r) > 1 else ""
-        d = r[3] if len(r) > 3 else ""
-        if b.strip() and not d.strip():
-            empty_slots.append(row)
+        b = (r[1] if len(r) > 1 else "").strip()
+        d = (r[3] if len(r) > 3 else "").strip()
+        if not b or d:
+            continue
+        if b not in ebay_card:
+            unknown_slot += 1  # 종류를 모르는 행 — 오매칭 위험이라 쓰지 않는다
+            continue
+        empty_slots.append((row, ebay_card[b]))
 
+    if unknown_slot:
+        print(f"    [주의] 카드/팩 판별 불가 {unknown_slot:,}행은 자동매칭 제외")
     if not empty_slots:
         print("    빈 슬롯 없음 — 매칭 건너뜀")
         return
@@ -457,11 +479,21 @@ def match_delivered_to_ai(ws, newly_delivered):
         price_conn.call("Page.enable")
         price_conn.call("Runtime.enable")
 
-    n = min(len(eligible), len(empty_slots))
+    # 카드끼리 · 팩끼리 짝짓는다. 남는 쪽은 그대로 둔다.
+    def _take(is_card):
+        srcs = [x for x in eligible if bool(x[1].get("card_ver")) is is_card]
+        dsts = [r for r, c in empty_slots if c is is_card]
+        return list(zip(srcs, dsts))
+
+    pairs = _take(True) + _take(False)
+    left_src = len(eligible) - len(pairs)
+    if left_src:
+        print(f"    [주의] {left_src:,}건은 같은 종류(카드/팩)의 빈 슬롯이 없어 보류")
+    n = len(pairs)
     updates = []
     for i in range(n):
-        order_no, info = eligible[i]
-        row = empty_slots[i]
+        (order_no, info), row = pairs[i]
+        _kind = "카드" if info.get("card_ver") else "팩"
         if order_no.startswith("O-OR"):
             price, _bid = fetch_price(price_conn, order_no.replace("O-OR", ""))
         else:
@@ -470,7 +502,7 @@ def match_delivered_to_ai(ws, newly_delivered):
         today = f"{_now.tm_year}. {_now.tm_mon}. {_now.tm_mday}"
         updates.append({"range": f"D{row}:E{row}", "values": [[order_no, price or ""]]})
         updates.append({"range": f"H{row}", "values": [[today]]})
-        print(f"    row{row} <- {order_no} ({price})")
+        print(f"    row{row} <- {order_no} [{_kind}] ({price})")
     if price_conn:
         price_conn.close()
     ws.batch_update(updates, value_input_option="USER_ENTERED")
@@ -560,7 +592,8 @@ def main():
     if newly_delivered:
         print("[3] A:I 빈 슬롯에 매칭 중...")
         try:
-            match_delivered_to_ai(ws, newly_delivered)
+            # 카드/팩을 갈라 붙이려면 이베이 주문의 종류를 알아야 한다 [2026-08-23]
+            match_delivered_to_ai(ws, newly_delivered, fetch_new_ebay_orders())
         except Exception as e:
             print(f"    [경고] A:I 매칭 실패(건너뜀): {e}")
 

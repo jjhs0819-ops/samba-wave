@@ -37,6 +37,7 @@ ST_IN_TRANSIT = "배송 중"
 ST_SHIP_READY = "배송준비중"
 ST_ITEM_READY = "상품준비중"
 ST_PAID = "결제완료"
+ST_DELIVERED = "배송완료"  # delivery_completed — 구매확정 직전 단계
 ST_DONE = "구매확정"
 
 
@@ -157,17 +158,30 @@ def _fetch(conn, token, path):
     return json.loads(d["body"])
 
 
+# 번장 orderStatus → 시트 표기 [2026-08-23]
+# 매핑에 없는 값을 그대로 흘려보내 `delivery_completed` 가 영문 그대로 시트에
+# 박혔다. 아는 값은 전부 여기 적고, 모르는 값이 오면 눈에 띄게 표시한다.
+_STATUS_MAP = {
+    "in_transit": ST_IN_TRANSIT,
+    "payment_received": ST_PAID,
+    "delivery_completed": ST_DELIVERED,
+    "purchase_confirm": ST_DONE,
+}
+
+# 배송이 끝난 상태 — 이베이 주문건에 매칭할 대상이다(K:N 대기열에 남기지 않는다).
+DELIVERED_STATUSES = ("delivery_completed", "purchase_confirm")
+
+
 def _sheet_status(order_status, has_reserved):
-    if order_status == "in_transit":
-        return ST_IN_TRANSIT
     if order_status == "ship_ready":
         # 화면 문구가 갈리는 기준 — 배송예약이 잡혀 있으면 '배송 준비 중'
         return ST_SHIP_READY if has_reserved else ST_ITEM_READY
-    if order_status == "payment_received":
-        return ST_PAID
-    if order_status == "purchase_confirm":
-        return ST_DONE
-    return order_status
+    hit = _STATUS_MAP.get(order_status)
+    if hit:
+        return hit
+    # 모르는 상태 — 영문을 그대로 두면 시트에서 원인을 못 찾는다.
+    print(f"    [경고] 번장 orderStatus 미매핑: {order_status}")
+    return f"미매핑({order_status})"
 
 
 def fetch_bunjang_orders(max_pages=40):
@@ -226,7 +240,10 @@ def fetch_bunjang_orders(max_pages=40):
                     ),
                     "price": "",
                     "invoice": "",  # 배송 중이면 상세에서 채운다
-                    "done": it.get("orderStatus") == "purchase_confirm",
+                    # [2026-08-23] 배송완료도 '끝난 건'이다. 종전엔 purchase_confirm
+                    # 만 봐서, 배송이 끝났는데 구매확정 전인 주문이 이베이 매칭으로
+                    # 넘어가지 못하고 K:N 대기열에 계속 남았다.
+                    "done": it.get("orderStatus") in DELIVERED_STATUSES,
                 }
             if not j.get("hasNext"):
                 break
