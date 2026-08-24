@@ -340,10 +340,10 @@ class TwentyNineCMClient:
         new_original_price = self._safe_int(
             detail_data.get("consumerPrice")
         ) or self._safe_int(detail_data.get("sellPrice"))
-        new_sale_price = self._safe_int(detail_data.get("sellPrice")) or (
-            new_original_price
-        )
         new_cost = self._compute_cost(detail_data, coupons)
+        # 판매가 = 화면 노출가. sellPrice 는 화면에 안 뜨므로 쓰지 않는다
+        # (_build_detail 주석 참조 — 실측 30건).
+        new_sale_price = new_cost or new_original_price
 
         new_options = self._normalize_options(detail_data)
         is_sold_out = self._is_sold_out(detail_data, new_options)
@@ -639,8 +639,14 @@ class TwentyNineCMClient:
     ) -> dict:
         brand = detail_data.get("frontBrand") or {}
         consumer = self._safe_int(detail_data.get("consumerPrice"))
-        sale = self._safe_int(detail_data.get("sellPrice")) or consumer
         cost = self._compute_cost(detail_data, coupons)
+        # 판매가 = 화면에 크게 노출되는 최종가(= 노출가). sellPrice 는 쓰지 않는다.
+        # 29CM 상세는 consumerPrice / sellPrice / internalDisplayPrice 3단인데
+        # 화면은 정가(consumerPrice, 취소선)와 노출가만 보여주고 sellPrice 는
+        # 어디에도 안 띄운다 [실측 30건]. 예: 1659305 = 48,000 / 42,000 / 33,600
+        # → 화면은 48,000 과 33,600 만 노출. sellPrice 를 판매가로 쓰면 마켓에
+        # 사이트 어디에도 없는 가격이 올라간다.
+        sale = cost or self._safe_int(detail_data.get("sellPrice")) or consumer
         options = self._normalize_options(detail_data)
         images = [
             self._to_image_url(im.get("imageUrl") or "")
