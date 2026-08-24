@@ -988,10 +988,70 @@ async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
         logger.warning("[startup] 테트리스 보드 캐시 워밍업 전체 실패: %s", exc)
 
 
+async def _purge_unmatched_snkr_loop() -> None:
+    """크림 짝이 없는 스니덩크 상품 주기 삭제 [2026-08-25 지시].
+
+    검수화면 ③④(재고O/X + 크림미매칭)에 해당하는 것들 — 크림에 팔 짝이 없으니
+    보관할 이유가 없다. 매칭 해제·검수 거부가 날 때마다 계속 새로 생기므로
+    손으로 치우지 않고 6시간마다 자동으로 지운다.
+
+    거부(kream_snkr_rejected)된 매칭은 없는 것으로 친다(검수화면과 같은 기준).
+    **입찰이 살아있는 건은 건드리지 않는다** — 지우면 크림에 입찰만 남고
+    관리 주체가 사라져 유령 입찰이 된다.
+    """
+    _log = logging.getLogger("backend.lifecycle")
+    await asyncio.sleep(600)  # 기동 직후 혼잡 회피
+    cond = """
+        source_site='SNKRDUNK'
+        AND CASE WHEN EXISTS (
+              SELECT 1 FROM kream_snkr_rejected rj
+              WHERE rj.snkr_id = site_product_id
+                AND rj.kream_pid = resell_matches->'kream'->>'product_id')
+            THEN '' ELSE COALESCE(resell_matches->'kream'->>'product_id','') END = ''
+        AND COALESCE((
+              SELECT count(*) FROM jsonb_array_elements(
+                  COALESCE(resell_matches->'kream_candidates','[]'::jsonb)) cd
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM kream_snkr_rejected rj
+                  WHERE rj.snkr_id = site_product_id
+                    AND rj.kream_pid = cd->>'product_id')), 0) = 0
+        AND NOT EXISTS (
+              SELECT 1 FROM kream_live_asks la
+              WHERE la.product_id = resell_matches->'kream'->>'product_id')
+    """
+    while True:
+        try:
+            from sqlalchemy import text as _sa_text
+
+            from backend.db.orm import get_write_session
+
+            async with get_write_session() as ws:
+                res = await ws.execute(
+                    _sa_text(
+                        "DELETE FROM samba_collected_product WHERE id IN ("
+                        "  SELECT id FROM samba_collected_product WHERE "
+                        + cond
+                        + "  LIMIT 5000)"
+                    )
+                )
+                await ws.commit()
+                if res.rowcount:
+                    _log.info(
+                        "[크림정리] 크림 짝 없는 스니덩크 %s건 삭제",
+                        f"{res.rowcount:,}",
+                    )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            _log.warning("[크림정리] 실패(무시): %s", exc)
+        await asyncio.sleep(6 * 3600)
+
+
 async def _start_tetris_sync_scheduler() -> None:
     global _tetris_sync_task, _pc_sync_task, _pc_cleanup_task, _daemon_poll_watch_task
 
     _tetris_sync_task = asyncio.create_task(_tetris_sync_loop())
+    asyncio.create_task(_purge_unmatched_snkr_loop())
     _pc_sync_task = asyncio.create_task(_pc_sync_loop())
     _pc_cleanup_task = asyncio.create_task(_pc_cleanup_loop())
     _daemon_poll_watch_task = asyncio.create_task(_daemon_poll_watch_loop())

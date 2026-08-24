@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SAMBA-WAVE",
-  "version": "2.14.82",
+  "version": "2.14.83",
   "description": "무재고 위탁판매 솔루션 - 무신사/KREAM/소싱처 수집 + 송장 자동전송 + 적립금 + 리뷰 자동작성 + 마켓 점수·품절률 수집 + 가구매 장바구니",
   "permissions": [
     "cookies",
@@ -21,6 +21,8 @@
     "webNavigation"
   ],
   "host_permissions": [
+    "https://*.29cm.co.kr/*",
+    "https://29cm.co.kr/*",
     "https://*.musinsa.com/*",
     "https://*.bunjang.co.kr/*",
     "https://bunjang.co.kr/*",
@@ -94,6 +96,16 @@
       ],
       "js": [
         "content-snkrdunk-session.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.29cm.co.kr/mypage",
+        "https://www.29cm.co.kr/mypage/*"
+      ],
+      "js": [
+        "content-29cm-session.js"
       ],
       "run_at": "document_idle"
     },

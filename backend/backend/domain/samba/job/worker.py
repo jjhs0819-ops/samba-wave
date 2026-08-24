@@ -2627,6 +2627,7 @@ class JobWorker:
             "NAVERSTORE",
             "SNKRDUNK",
             "THEHYUNDAI",
+            "29CM",
         }
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
@@ -5547,6 +5548,15 @@ class JobWorker:
             )
 
             client = TheHyundaiSourcingClient()
+        elif site == "29CM":
+            # 29CM — curl_cffi 직접 호출. httpx 는 Cloudflare TLS 지문 차단으로 전부 403.
+            # 로그인 쿠키가 있으면 실어 보낸다(계정 기준 수집).
+            from backend.domain.samba.plugins.sourcing.twentyninecm import (
+                get_29cm_cookie,
+            )
+            from backend.domain.samba.proxy.twentyninecm import TwentyNineCMClient
+
+            client = TwentyNineCMClient(await get_29cm_cookie())
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -6306,6 +6316,60 @@ class JobWorker:
                     f"{len(_thehyundai_details)}/{len(new_items)}건 성공"
                 )
 
+        # 29CM: 저장 전 4건 병렬로 상세 선취합 (THEHYUNDAI 패턴).
+        # 병렬을 더 올리면 Cloudflare 가 403 을 낸다(실측) — 4 + 0.3s 간격 유지.
+        _29cm_details: dict[str, dict[str, Any]] = {}
+        if site == "29CM" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] 29CM 상세 선취합 시작: {len(new_items)}건 (4건 병렬)"
+                )
+                _29_BATCH = 4
+                for batch_start in range(0, len(new_items), _29_BATCH):
+                    from backend.domain.samba.emergency import (
+                        is_collect_cancel_requested as _icc_29,
+                        is_emergency_stopped as _ies_29,
+                    )
+
+                    if _icc_29() or _ies_29() or await repo.is_cancelled(job.id):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                    batch = new_items[batch_start : batch_start + _29_BATCH]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(str(it.get("site_product_id", "")))
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] 29CM 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _29cm_details[pid] = det
+                    done = min(batch_start + _29_BATCH, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                        job_type="collect",
+                    )
+                    await asyncio.sleep(0.3)
+                logger.info(
+                    f"[잡워커] 29CM 상세 선취합 완료: "
+                    f"{len(_29cm_details)}/{len(new_items)}건 성공"
+                )
+
         # GSShop: 선취합 + 카테고리 필터 (검색 결과에 이름/카테고리 없으므로 상세 조회 필수)
         _gsshop_details: dict[str, dict[str, Any]] = {}
         if site == "GSShop" and client:
@@ -6777,6 +6841,9 @@ class JobWorker:
             # THEHYUNDAI: 선취합된 상세 데이터 사용
             if site == "THEHYUNDAI" and p_id in _thehyundai_details:
                 detail = _thehyundai_details[p_id]
+            # 29CM: 선취합된 상세 데이터 사용
+            if site == "29CM" and p_id in _29cm_details:
+                detail = _29cm_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: 선취합 미스 시 폴백 조회
             if (
@@ -6875,7 +6942,16 @@ class JobWorker:
             # SSG 카드혜택가는 결제금액 7만원 이상에서만 적용 — 7만원 미만 단품은 카드할인을
             # 못 받으므로 판매가(카드할인 전 표시가)를 원가로 한다(#430).
             _ssg_list_price = int(detail.get("salePrice", 0) or 0) or sale_price
-            if site == "THEHYUNDAI":
+            if site == "29CM":
+                # 29CM 원가 = 상세의 노출가(internalDisplayPrice, 쿠폰 반영 최종가) 정본.
+                # 쿠폰 목록으로 직접 계산하면 안 된다 — canDownload 가 사용 자격을
+                # 보장하지 않아 원가를 낮게 잡는다(twentyninecm.py 주석 참조).
+                cost = (
+                    int(detail.get("cost", 0) or 0)
+                    or int(item.get("cost", 0) or 0)
+                    or sale_price
+                )
+            elif site == "THEHYUNDAI":
                 # 더현대 원가 = 상세 new_cost(카드즉시할인 반영 최저가) 정본.
                 # 상세 누락 시 검색 표시가(cost=salePrice) → sale_price 폴백.
                 cost = (

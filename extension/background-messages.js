@@ -42,6 +42,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 
+  if (msg.type === 'TWENTYNINECM_SYNC_COOKIE') {
+    // 29CM 로그인 쿠키 → 백엔드. 계정별 쿠폰 자격이 달라 계정 기준 수집이 필요하다.
+    ;(async () => {
+      try {
+        const cookies = await chrome.cookies.getAll({ domain: '29cm.co.kr' })
+        const seen = {}
+        for (const c of cookies) {
+          if (c.value) seen[c.name] = c.value
+        }
+        const cookieStr = Object.keys(seen).map(k => `${k}=${seen[k]}`).join('; ')
+        if (!cookieStr) {
+          sendResponse({ ok: false, reason: 'no-cookie' })
+          return
+        }
+        // 29CM 로그인 아이디 — 계정 매칭용(없으면 백엔드가 풀에만 저장)
+        let loginId = ''
+        try {
+          const me = await fetch('https://user-api.29cm.co.kr/api/v4/users/me', { credentials: 'include' })
+          if (me.ok) {
+            const j = await me.json()
+            loginId = (j && j.data && j.data.loginId) || ''
+          }
+        } catch (e) { /* 로그인 아님 — 무시 */ }
+
+        const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
+        const base = proxyUrl || SambaBackgroundCore.DEFAULT_PROXY_URL
+        const res = await SambaBackgroundCore.apiFetch(
+          `${base}${SambaBackgroundCore.API_PREFIX}/29cm/set-cookie`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cookie: cookieStr, loginId, expired: msg.loggedIn === false }),
+          }
+        )
+        sendResponse({ ok: res.ok })
+      } catch (e) {
+        sendResponse({ ok: false, reason: String(e) })
+      }
+    })()
+    return true
+  }
+
   // content_script(삼바 프론트엔드 페이지)가 deviceId를 요청할 때 응답
   if (msg.type === 'GET_DEVICE_ID') {
     ;(async () => {

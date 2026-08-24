@@ -550,6 +550,8 @@ _SOURCING_CDN_HOSTS: tuple[str, ...] = (
     "gsshop.com",
     "hmall.com",  # 현대홈쇼핑
     "thehyundai.com",  # 현대백화점
+    "29cm.co.kr",  # 29CM
+    "img.29cm.co.kr",
     "musinsa.com",  # 무신사
     "msscdn.net",
     "elandrs.com",  # 이랜드

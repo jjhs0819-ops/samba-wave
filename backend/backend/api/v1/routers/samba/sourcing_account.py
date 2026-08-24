@@ -66,6 +66,11 @@ def _normalize_sourcing_site_name(site_name: str | None) -> str:
         "더현대닷컴": "THEHYUNDAI",
         "현대백화점": "THEHYUNDAI",
         "HITHEHYUNDAI": "THEHYUNDAI",
+        # 29CM — 표기 흔들림 흡수(숫자/영문 혼용 사이트명)
+        "29CM": "29CM",
+        "29센티미터": "29CM",
+        "이십구센티": "29CM",
+        "29": "29CM",
     }
     return alias_map.get(compact, raw)
 
