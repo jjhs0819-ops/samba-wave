@@ -12,6 +12,7 @@ ship_order 라우터(수동 마켓전송 버튼)와 dispatch_to_market(자동 di
 
 from __future__ import annotations
 
+import asyncio
 import re
 
 from sqlalchemy import select
@@ -959,7 +960,11 @@ async def _send_poison(order, account, courier, tracking, session):
     """
     from sqlalchemy import text as _text
 
-    from backend.domain.samba.proxy.poison import PoisonClient, extract_credentials
+    from backend.domain.samba.proxy.poison import (
+        PoisonClient,
+        extract_credentials,
+        interpret_ship_response,
+    )
 
     app_key, app_secret = extract_credentials(account)
     if not app_key or not app_secret:
@@ -994,27 +999,22 @@ async def _send_poison(order, account, courier, tracking, session):
         carrier=carrier_cd,
         carrier_name=None if carrier_cd is not None else (courier or None),
     )
-    if resp.get("code") != 200:
-        return False, (
-            f"POIZON 송장 전송 실패: code={resp.get('code')} "
-            f"{str(resp.get('msg') or resp.get('message') or '')[:120]}"
+    ok, message, retryable = interpret_ship_response(resp, str(order.order_number))
+    if retryable:
+        # 포이즌쪽 일시 조회 실패(500030003) — 같은 요청을 그대로 다시 보내면 통과한다
+        logger.info(f"[송장전송][POIZON] 일시 실패 재시도: {message}")
+        await asyncio.sleep(2)
+        resp = await client.ship_order(
+            order_nos,
+            tracking,
+            carrier=carrier_cd,
+            carrier_name=None if carrier_cd is not None else (courier or None),
         )
+        ok, message, _ = interpret_ship_response(resp, str(order.order_number))
+    if not ok:
+        return False, message
     data = resp.get("data") or {}
     ok_list = {str(x) for x in (data.get("success_order_no_list") or [])}
-    failed = data.get("failed_item_list") or []
-    # 이 주문 자체가 실패 목록에 있으면 실패 처리
-    _self_failed = next(
-        (
-            f
-            for f in (failed if isinstance(failed, list) else [failed])
-            if str((f or {}).get("orderNo")) == str(order.order_number)
-        ),
-        None,
-    )
-    if _self_failed:
-        return False, (
-            f"POIZON 송장 전송 실패: {str(_self_failed.get('failedMsg') or '')[:120]}"
-        )
 
     # 성공한 형제 주문(합배송)도 송장전송완료로 갱신
     for ono, oid in sibling_map.items():
@@ -1031,4 +1031,4 @@ async def _send_poison(order, account, courier, tracking, session):
         await session.commit()
 
     extra = f" (합배송 {len(order_nos)}건)" if len(order_nos) > 1 else ""
-    return True, f"POIZON 송장 전송 완료{extra}"
+    return True, f"{message}{extra}"

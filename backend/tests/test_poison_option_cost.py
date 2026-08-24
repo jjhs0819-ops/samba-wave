@@ -159,3 +159,84 @@ def test_진짜_취소실패는_실패로_남는다():
     ):
         r = asyncio.run(c.cancel_listing("1"))
     assert r["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# 2026-08-24 송장 전송: 포이즌이 목표 상태(이미 발송됨)를 실패 코드로 돌려줘
+# 삼바가 ship_failed 로 남기고, 사장님이 재전송을 눌러도 영원히 실패로 보였다.
+# cancel_listing 의 "Listing has been canceled." 와 같은 사상으로 성공 처리한다.
+# 일시 오류(500030003 Failed to fetch data)는 재시도 대상으로 구분한다.
+# ---------------------------------------------------------------------------
+
+
+def test_이미_발송된_주문은_성공으로_본다():
+    from backend.domain.samba.proxy.poison import interpret_ship_response
+
+    ok, msg, retry = interpret_ship_response(
+        {"code": 6000026, "msg": "This order has been shipped."}, "21315191653953299"
+    )
+    assert ok is True
+    assert retry is False
+
+
+def test_일시오류는_재시도_대상():
+    from backend.domain.samba.proxy.poison import interpret_ship_response
+
+    ok, msg, retry = interpret_ship_response(
+        {"code": 500030003, "msg": "Failed to fetch data"}, "21315191653953299"
+    )
+    assert ok is False
+    assert retry is True
+
+
+def test_정상_발송_성공():
+    from backend.domain.samba.proxy.poison import interpret_ship_response
+
+    ok, msg, retry = interpret_ship_response(
+        {
+            "code": 200,
+            "msg": "Successful",
+            "data": {"success_order_no_list": ["21315191653953299"]},
+        },
+        "21315191653953299",
+    )
+    assert ok is True
+    assert retry is False
+
+
+def test_합배송_실패목록에_내_주문이_있으면_실패():
+    from backend.domain.samba.proxy.poison import interpret_ship_response
+
+    ok, msg, retry = interpret_ship_response(
+        {
+            "code": 200,
+            "data": {
+                "success_order_no_list": ["999"],
+                "failed_item_list": [
+                    {"orderNo": "21315191653953299", "failedMsg": "invalid state"}
+                ],
+            },
+        },
+        "21315191653953299",
+    )
+    assert ok is False
+
+
+def test_실패목록의_이미발송도_성공으로_본다():
+    from backend.domain.samba.proxy.poison import interpret_ship_response
+
+    ok, msg, retry = interpret_ship_response(
+        {
+            "code": 200,
+            "data": {
+                "failed_item_list": [
+                    {
+                        "orderNo": "21315191653953299",
+                        "failedMsg": "This order has been shipped.",
+                    }
+                ]
+            },
+        },
+        "21315191653953299",
+    )
+    assert ok is True

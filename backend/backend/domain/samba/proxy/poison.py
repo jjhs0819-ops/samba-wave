@@ -110,6 +110,52 @@ def poizon_fee(
     return min(max(price * rate, fee_min), fee_max)
 
 
+# 송장 전송 응답 — 목표 상태와 같은데 실패 코드로 오는 케이스
+_SHIP_ALREADY_MARKERS = ("has been shipped", "already shipped")
+# 포이즌 내부 조회 실패 — 같은 요청을 그대로 다시 보내면 통과한다(2026-08-24 실측)
+_SHIP_RETRYABLE_CODES = {500030003}
+
+
+def interpret_ship_response(
+    resp: dict[str, Any], order_no: str
+) -> tuple[bool, str, bool]:
+    """Ship Order([100]) 응답 해석 → (성공, 메시지, 재시도할만한가).
+
+    포이즌은 이미 발송처리된 주문에 code=6000026 "This order has been shipped." 를
+    준다. 이걸 실패로 다루면 삼바 주문이 ship_failed 로 굳고, 재전송을 눌러도
+    영원히 실패로 보인다 — 목표 상태와 같으므로 성공으로 본다
+    (2026-08-24 포이즌 주문 21315191653953299).
+
+    code=500030003 "Failed to fetch data" 는 포이즌쪽 일시 조회 실패로, 같은
+    요청을 다시 보내면 통과한다. 재시도 대상으로 구분해 호출부가 한 번 더 보낸다.
+    """
+    code = resp.get("code")
+    msg = str(resp.get("msg") or resp.get("message") or "")
+    if code != 200:
+        low = msg.lower()
+        if any(m in low for m in _SHIP_ALREADY_MARKERS):
+            return True, "POIZON 이미 발송처리된 주문", False
+        return (
+            False,
+            f"POIZON 송장 전송 실패: code={code} {msg[:120]}",
+            code in _SHIP_RETRYABLE_CODES,
+        )
+
+    data = resp.get("data") or {}
+    failed = data.get("failed_item_list") or []
+    if not isinstance(failed, list):
+        failed = [failed]
+    mine = next(
+        (f for f in failed if str((f or {}).get("orderNo")) == str(order_no)), None
+    )
+    if mine:
+        fmsg = str(mine.get("failedMsg") or "")
+        if any(m in fmsg.lower() for m in _SHIP_ALREADY_MARKERS):
+            return True, "POIZON 이미 발송처리된 주문", False
+        return False, f"POIZON 송장 전송 실패: {fmsg[:120]}", False
+    return True, "POIZON 송장 전송 완료", False
+
+
 def option_real_cost(fallback_cost: int, opt_price: int, min_opt_price: int) -> int:
     """옵션(사이즈)별 실매입가 — 대표원가 x (해당옵션가 / 최저옵션가).
 
