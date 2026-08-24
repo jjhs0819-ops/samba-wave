@@ -925,16 +925,43 @@ async def snkrdunk_compare_all_public(
             -- [2026-08-06] 거부한 쌍이 확정 자리에 되살아난 경우도 없는 것으로 취급한다.
             -- 재매칭 배치가 거부를 못 보고 다시 붙인 건이 실측 3건 있었다. 여기서 가려야
             -- 검수 화면에 다시 뜨지 않는다(원본 resell_matches 는 배치가 정리).
+            --
+            -- [2026-08-25] 가릴 때는 **크림 필드 전부** 가린다. 종전엔 product_id 만
+            -- 비우고 이름·이미지는 그대로 내려보내, 거부된 551건이 '크림 미매칭'(cat3/4)
+            -- 으로 분류되면서 화면에는 크림 상품 사진이 같이 뜨는 모순이 있었다.
+            -- cat3/4 는 스니덩크만 보여야 한다.
             CASE WHEN EXISTS (
                 SELECT 1 FROM kream_snkr_rejected rj
                 WHERE rj.snkr_id = site_product_id
                   AND rj.kream_pid = resell_matches->'kream'->>'product_id'
             ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'product_id', '') END AS kream_id,
-            COALESCE(resell_matches->'kream'->>'name_ko', '') AS kream_name_ko,
-            COALESCE(resell_matches->'kream'->>'name_en', '') AS kream_name_en,
-            COALESCE(resell_matches->'kream'->>'image', '') AS kream_image,
-            COALESCE(resell_matches->'kream'->>'style_code', '') AS kream_style_code,
-            (COALESCE(resell_matches->'kream'->>'verified', '') = 'true') AS verified,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'name_ko', '') END AS kream_name_ko,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'name_en', '') END AS kream_name_en,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'image', '') END AS kream_image,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'style_code', '') END AS kream_style_code,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN false
+                 ELSE (COALESCE(resell_matches->'kream'->>'verified', '') = 'true')
+            END AS verified,
             -- 이상감지 승인(리스톡 허용) — 사용자가 검수페이지에서 확인 후 체크
             (COALESCE(resell_matches->'kream'->>'anomaly_ok', '') = 'true') AS anomaly_ok,
             -- 이상감지 차단됨 — 봇이 저가위험으로 등록/갱신 막은 상품(검수페이지 필터용)

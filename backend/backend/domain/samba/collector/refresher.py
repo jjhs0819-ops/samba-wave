@@ -48,6 +48,7 @@ SITE_CONCURRENCY: dict[str, int] = {
     "NAVERSTORE": 5,
     "SNKRDUNK": 2,
     "THEHYUNDAI": 3,  # 더현대Hi — 보수치, 차단 흔적 없으나 백화점 API 부담 고려
+    "29CM": 3,  # Cloudflare 뒤 — curl_cffi 우회 중이라 보수적으로
 }
 # 오토튠 전용 동시성 오버라이드 (값 없으면 SITE_CONCURRENCY 기본값 사용)
 # 24시간 백그라운드 실행 → 차단 방지를 위해 일반 갱신/수집보다 보수적 운영
@@ -109,6 +110,7 @@ SITE_BASE_INTERVAL: dict[str, float] = {
     "NAVERSTORE": 0,
     "SNKRDUNK": 0,
     "THEHYUNDAI": 0,  # 전 사이트 0 정책. 차단 시 _site_intervals 자동 2배 backoff
+    "29CM": 0,
 }
 # 소싱처별 최소 인터벌 (초)
 SITE_MIN_INTERVAL: dict[str, float] = {
@@ -129,6 +131,7 @@ SITE_MIN_INTERVAL: dict[str, float] = {
     "NAVERSTORE": 0,
     "SNKRDUNK": 0.5,
     "THEHYUNDAI": 0,
+    "29CM": 0,
 }
 # 소싱처별 인터벌 복원 스텝 (성공 시 감소량)
 SITE_INTERVAL_STEP: dict[str, float] = {
@@ -149,6 +152,7 @@ SITE_INTERVAL_STEP: dict[str, float] = {
     "NAVERSTORE": 0.3,
     "SNKRDUNK": 0.3,
     "THEHYUNDAI": 0.3,
+    "29CM": 0.3,
 }
 # KREAM 확장앱 대기 타임아웃 (초)
 KREAM_TIMEOUT = 90
@@ -1784,6 +1788,9 @@ SITE_PARSERS: dict[str, Any] = {
     # THEHYUNDAI 는 플러그인이 자체 refresh 구현. 단, env var gate 로 플러그인이
     # 미등록인 운영 환경에서 DB에 더현대 row가 있을 때 폴백으로 무해하게 처리.
     "THEHYUNDAI": _parse_generic_stub,
+    # 29CM 은 플러그인이 자체 refresh 구현(TwentyNineCMClient.refresh_product).
+    # 여기 스텁은 플러그인 조회 실패 시 폴백 경로일 뿐이다.
+    "29CM": _parse_generic_stub,
 }
 
 
