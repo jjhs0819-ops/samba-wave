@@ -3816,10 +3816,26 @@ async function handleSourcingJob(job) {
           })
           return
         }
-        console.log(`[SSG] in-tab fetch 미확보 → popup 폴백: ${job.productId}`)
+        console.log(`[SSG] in-tab fetch 미확보 — 이번 회차 건너뜀: ${job.productId}`)
       } catch (e) {
-        console.log(`[SSG] in-tab fetch 오류 → popup 폴백: ${e?.message || e}`)
+        console.log(`[SSG] in-tab fetch 오류 — 이번 회차 건너뜀: ${e?.message || e}`)
       }
+      // [2026-08-23] SSG 는 popup 폴백을 쓰지 않는다.
+      //
+      // 폴백은 focused:true 팝업 창을 띄운다(카드혜택가 AJAX 가 백그라운드에서
+      // 발화하지 않아 그렇게 만들었다). 그래서 in-tab fetch 가 실패할 때마다
+      // 사용자 화면 앞으로 창이 튀어나와 하루 종일 작업을 방해했다.
+      // SSG 는 in-tab fetch 로 값이 전부 나오는 것이 실증돼 있고(2026-08-04),
+      // 실패하는 경우는 대개 차단이라 팝업으로 다시 열어도 어차피 실패한다.
+      // 그래서 폴백 대신 이번 회차만 건너뛴다 — 다음 사이클에 다시 시도한다.
+      // (ABCmart/GrandStage 는 팝업이 실제로 필요해 그대로 둔다.)
+      clearTimeout(hangTimer)
+      cleanedUp = true
+      await postResult('sourcing/collect-result', {
+        requestId: job.requestId,
+        data: { success: false, skipped: true, message: 'SSG 값 미확보 — 다음 회차 재시도' },
+      })
+      return
     }
 
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
