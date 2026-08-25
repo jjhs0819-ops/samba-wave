@@ -917,9 +917,19 @@ class SourcingQueue:
                 # 블랙홀되던 문제(SSG 실주문 3.5분 dispatched 무응답 실측) 차단.
                 # 건강한 데몬이 재처리. tracking 만 스코프(price collection 은 기존 동작 유지).
                 # 정상 tracking 처리(로그인 15s + 추출 90s + 여유)는 180s 안에 끝나 false 재취득 없음.
+                # [2026-08-25] detail 잡도 재취득 허용 — 임계 60초.
+                # SSG 실측(24h): 만료 1,675건이 전부 "dispatch 는 받았는데 결과 미반환"
+                # 이었다(한번도 안 잡힌 건 16건뿐). 즉 큐 대기가 아니라, 잡을 집어간 PC 가
+                # 결과를 안 돌려주고 잡을 물고 있다가 TTL 180초에 버려지는 구조였다.
+                # 그 결과 완료 1,022 / 만료 1,663 (유실률 62%), 야간 완료율 5%까지 떨어져
+                # 등록상품 33,547건 한 바퀴에 2주~한 달이 걸렸다.
+                # 정상 처리는 dispatch 후 p50 3.2초 / p90 19초라 60초 임계면 멀쩡한 잡을
+                # 뺏지 않는다. 결과가 두 번 와도 호출자 Future 는 하나뿐이라 안전하다.
                 "(status = 'pending' OR (status = 'dispatched' "
-                "AND job_type = 'tracking' "
-                "AND dispatched_at < now() - interval '180 seconds'))",
+                "AND ((job_type = 'tracking' "
+                "AND dispatched_at < now() - interval '180 seconds') "
+                "OR (job_type = 'detail' "
+                "AND dispatched_at < now() - interval '60 seconds'))))",
                 "expires_at > now()",
             ]
             params: dict[str, Any] = {}
@@ -939,9 +949,16 @@ class SourcingQueue:
 
             # owner 필터
             if device_id:
+                # [2026-08-25] 재취득 대상(dispatched 60s+ detail)은 owner 를 무시한다.
+                # SSG 잡은 owner 로 특정 PC 에 묶이는데, 실측상 그 PC(76290318…)는
+                # 24시간 SSG 0건 처리였고 실제 처리는 다른 PC(27cc2c53…, 887건)가 했다.
+                # owner 를 그대로 두면 죽은 PC 몫이 계속 만료되기만 한다.
+                # 첫 배정은 기존 owner 정책 그대로 — 60초를 넘겨 방치된 잡만 개방한다.
                 conditions.append(
                     "(owner_device_id IS NULL OR owner_device_id = '' "
-                    "OR owner_device_id = :device_id)"
+                    "OR owner_device_id = :device_id "
+                    "OR (status = 'dispatched' AND job_type = 'detail' "
+                    "AND dispatched_at < now() - interval '60 seconds'))"
                 )
                 params["device_id"] = device_id
             else:
