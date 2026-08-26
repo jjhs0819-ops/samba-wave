@@ -94,6 +94,18 @@ export default function OrderInfoCell(props: Props) {
     if (host.includes('ssg.com')) return 'SSG'
     if (host.includes('lotteon.com')) return 'LOTTEON'
     if (host.includes('gsshop.com')) return 'GSShop'
+    // [2026-08-26] 누락분 보강 — 배지가 안 뜨던 소싱처들.
+    // 렉스몬드는 도메인이 둘이다: 수집 URL 은 okmall.com(구 OK몰),
+    // 구매/상품 링크는 rexmonde.com 으로 나가는 건이 섞여 있어 둘 다 본다.
+    if (host.includes('okmall.com') || host.includes('rexmonde.com')) return 'REXMONDE'
+    if (host.includes('elandmall.com')) return 'ElandMall'
+    if (host.includes('ssfshop.com')) return 'SSF'
+    if (host.includes('snkrdunk.com')) return 'SNKRDUNK'
+    if (host.includes('bunjang.co.kr') || host.includes('m.bunjang.co.kr')) return 'BUNJANG'
+    if (host.includes('thehyundai.com')) return 'THEHYUNDAI'
+    if (host.includes('danawa.com')) return 'DANAWA'
+    if (host.includes('adidas.co.kr')) return 'Adidas'
+    if (host.includes('onitsukatiger.com')) return 'ONITSUKA'
     return ''
   })()
   // 두 배지는 완전 별개 차원 — 항상 함께 표시.
