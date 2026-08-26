@@ -625,8 +625,11 @@ async def _brand_reg_rates(
                         "    AND jsonb_typeof(cp.options::jsonb)='array'),"
                         "kb AS (SELECT DISTINCT kid, br FROM m),"
                         "bid AS ("
+                        # [2026-08-26] 이 계정 몫만 센다 — 계정이 둘이라
+                        # 안 가리면 남의 입찰까지 '등록됨'으로 집계된다.
                         "  SELECT kb.br, COUNT(*) n FROM kream_live_asks a"
-                        "  JOIN kb ON kb.kid = a.product_id GROUP BY kb.br)"
+                        "  JOIN kb ON kb.kid = a.product_id"
+                        "  WHERE a.account_group = :grp GROUP BY kb.br)"
                         "SELECT m.br,"
                         "       COUNT(*) FILTER (WHERE m.stk > 0"
                         "         AND m.pr BETWEEN 5000 AND :maxc) tot,"
@@ -643,7 +646,11 @@ async def _brand_reg_rates(
                     ),
                     # 원가 상한은 정책값(kreamMaxCostJpy) 하나만 쓴다.
                     # 코드에 숫자를 박으면 정책과 어긋나 집계 구간이 통째로 빠진다.
-                    {"n": limit, "maxc": int(POLICY["max_cost_jpy"])},
+                    {
+                        "n": limit,
+                        "maxc": int(POLICY["max_cost_jpy"]),
+                        "grp": _active_group,
+                    },
                 )
             ).all()
         if not rows:
@@ -767,13 +774,16 @@ async def _count_cat1_verified_unreg() -> int:
           AND NOT (
             COALESCE(p.resell_matches->'kream'->>'product_id','') <> ''
             AND p.resell_matches->'kream'->>'product_id'
-                IN (SELECT product_id FROM kream_live_asks)
+                -- [2026-08-26] 이 계정 입찰만 '등록됨'으로 친다. 안 가리면
+                -- 일본에 이미 넣은 상품을 중국이 '등록 완료'로 보고 건너뛴다.
+                IN (SELECT product_id FROM kream_live_asks
+                    WHERE account_group = :grp)
           )
         """
     )
     try:
         async with get_read_session() as s:
-            return int((await s.execute(sql)).scalar() or 0)
+            return int((await s.execute(sql, {"grp": _active_group})).scalar() or 0)
     except Exception as exc:
         logger.warning("[크림통합] cat1 확인·미등록 집계 실패(무시): %s", exc)
         return -1
@@ -1309,11 +1319,27 @@ async def _write_live_asks_snapshot(asks: list) -> None:
         from backend.db.orm import get_write_session
 
         async with get_write_session() as s:
-            await s.execute(_text("TRUNCATE kream_live_asks"))
+            # [2026-08-26] 계정 컬럼 — 계정이 둘이 되면서 **TRUNCATE 가 치명적**이 됐다.
+            # 중국 사이클이 돌 때 전체를 지우면 일본 입찰 27,654건이 통째로 날아가
+            # 검수페이지가 전부 '미등록'으로 뒤집힌다(2026-07-22 동결 사고와 같은 증상).
+            # 그래서 **그 계정 몫만** 지우고 다시 넣는다.
             await s.execute(
                 _text(
-                    "INSERT INTO kream_live_asks (product_id, option, price, updated_at) "
-                    "VALUES (:k, :o, :p, NOW())"
+                    "ALTER TABLE kream_live_asks "
+                    "ADD COLUMN IF NOT EXISTS account_group text NOT NULL DEFAULT 'JP'"
+                )
+            )
+            await s.execute(
+                _text("DELETE FROM kream_live_asks WHERE account_group = :g"),
+                {"g": _active_group},
+            )
+            for r in rows:
+                r["g"] = _active_group
+            await s.execute(
+                _text(
+                    "INSERT INTO kream_live_asks "
+                    "(product_id, option, price, account_group, updated_at) "
+                    "VALUES (:k, :o, :p, :g, NOW())"
                 ),
                 rows,
             )
