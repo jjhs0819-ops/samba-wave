@@ -912,13 +912,22 @@ POLICY: dict = {
     "no_competition_margin_rate": None,  # kreamNoCompetitionMarginRate — %
     "shipping_fee_card": None,  # kreamShippingFeeCard — 엔(스니덩크→배대지)
     "shipping_fee_box": None,  # kreamShippingFeeBox — 엔
-    "forwarding_fee": None,  # kreamForwardingFee — 원(배대지비용)
+    "forwarding_fee": None,  # kreamForwardingFee — 원(일본 배대지비용)
+    # [2026-08-26] 중국 배대지는 일본과 요금이 다르다(일본 8,000 / 중국 8,500 실측).
+    # 소싱 그룹별로 원가에 얹는 값이 달라져 손익분기가 갈리므로 정책값을 분리한다.
+    # 값이 없으면 forwarding_fee(일본값)로 떨어진다 — 중국 정책 미설정 시에도
+    # 계산이 멈추지 않게 하되, 실제 운영 전에 반드시 정책관리에서 채워야 한다.
+    "forwarding_fee_cn": None,  # kreamForwardingFeeCn — 원(중국 배대지비용)
     "box_pack_margin_rate": None,  # kreamBoxPackMarginRate — %(박스·카드팩 추가)
     "non_card_margin_rate": None,  # kreamNonCardMarginRate — %(신발·의류 추가)
     # 입찰 최고 원가(엔) — 이 값 초과 상품은 갱신·리스톡 모두 제외.
     # 0 을 쓰면 "모든 원가가 상한 초과"가 되어 전량 삭제로 이어지므로,
     # 못 읽었을 때는 사실상 무한대로 두어 **상한 미적용**이 되게 한다.
     "max_cost_jpy": 10**12,
+    # [2026-08-26] 중국 소싱(식화)은 원가가 위안이라 엔 상한을 그대로 쓸 수 없다
+    # (¥683 을 엔 상한 350,000 과 비교하면 아무것도 안 걸린다 = 상한 무력화).
+    # 통화별로 상한을 따로 둔다. 미설정 시 상한 미적용(전량 삭제 방지 방향).
+    "max_cost_cny": 10**12,
     # [2026-08-16] 조정 데드밴드 폐기 — 정책값까지 제거했다.
     # 크림은 1,000원 차이로 순위가 갈린다. 생략한 그 금액이 곧 1등과 2등의 차이라
     # '아낀 호출'보다 잃은 순위가 크다. 조정은 판정이 시키는 대로 전부 실행한다.
@@ -970,6 +979,28 @@ def require_policy() -> None:
         )
 
 
+async def _group_account_id(group: str | None = None) -> str:
+    """소싱 그룹에 물린 크림 계정 id. 계정별 정책을 고를 때 쓴다."""
+    hint = str(_ACCOUNT_GROUPS.get(group or _active_group, {}).get("label_hint") or "")
+    if not hint:
+        return ""
+    try:
+        async with get_read_session() as s:
+            row = (
+                await s.execute(
+                    _text(
+                        "SELECT id FROM samba_market_account "
+                        "WHERE market_type='kream' AND is_active = true "
+                        "AND account_label LIKE :hint ORDER BY is_default DESC LIMIT 1"
+                    ),
+                    {"hint": f"%{hint}%"},
+                )
+            ).first()
+        return str(row[0]) if row else ""
+    except Exception:
+        return ""
+
+
 async def _load_policy() -> None:
     """정책관리 KREAM 탭 설정을 DB(SambaPolicy.market_policies)서 읽어 POLICY 갱신.
     로컬 루프(_kream_ask_adjust)가 라이브 정책을 쓰므로 섀도도 동일 소스여야 target 일치.
@@ -982,9 +1013,20 @@ async def _load_policy() -> None:
 
         async with get_read_session() as s:
             rows = (await s.execute(select(SambaPolicy.market_policies))).all()
+        # [2026-08-26] 계정별 정책 — 일본/중국 계정은 배대지비·원가상한·마진이 다르다.
+        # KREAM 정책 안에 `byAccount: {계정ID: {...덮어쓸 키}}` 가 있으면 현재 그룹의
+        # 계정 것을 공통값 위에 얹는다. 없으면 종전대로 공통값만 쓴다(하위호환).
+        _acct_id = await _group_account_id(_active_group)
         for (mp,) in rows:
             if isinstance(mp, dict) and isinstance(mp.get("KREAM"), dict):
-                k = mp["KREAM"]
+                k = dict(mp["KREAM"])
+                _by = k.get("byAccount")
+                if (
+                    _acct_id
+                    and isinstance(_by, dict)
+                    and isinstance(_by.get(_acct_id), dict)
+                ):
+                    k.update(_by[_acct_id])
                 # [2026-08-23] 기본값 폴백 제거 — 정책에 없는 키는 None 으로 남겨
                 # require_policy() 가 등록·조정을 막게 한다. 종전엔 POLICY[...] 로
                 # 폴백해, 정책에 값이 없으면 코드 기본값(실제와 다름)이 조용히 쓰였다.
@@ -999,10 +1041,12 @@ async def _load_policy() -> None:
                         "shipping_fee_card": k.get("kreamShippingFeeCard"),
                         "shipping_fee_box": k.get("kreamShippingFeeBox"),
                         "forwarding_fee": k.get("kreamForwardingFee"),
+                        "forwarding_fee_cn": k.get("kreamForwardingFeeCn"),
                         "box_pack_margin_rate": k.get("kreamBoxPackMarginRate"),
                         "non_card_margin_rate": k.get("kreamNonCardMarginRate"),
                         # 상한만 예외 — 못 받으면 '상한 미적용'이 안전한 방향이다.
                         "max_cost_jpy": k.get("kreamMaxCostJpy") or 10**12,
+                        "max_cost_cny": k.get("kreamMaxCostCny") or 10**12,
                         "overseas_base_fee": k.get("kreamOverseasBaseFee"),
                         "overseas_fee_rate": k.get("kreamOverseasFeeRate"),
                         "item_fee_base": k.get("kreamItemFeeBase"),
@@ -1723,7 +1767,10 @@ def over_cost(price_jpy) -> bool:
     잘못된 값을 운영값으로 착각하는 일이 반복됐다).
     """
     try:
-        cap = int(POLICY.get("max_cost_jpy") or 0)
+        # [2026-08-26] 소싱 그룹의 통화 상한을 쓴다. 중국분(위안)에 엔 상한을 대면
+        # ¥683 vs 350,000 처럼 비교가 무의미해져 상한이 통째로 무력화된다.
+        _key = "max_cost_cny" if _active_group == "CN" else "max_cost_jpy"
+        cap = int(POLICY.get(_key) or 0)
     except Exception:
         return False
     if cap <= 0:
@@ -1750,7 +1797,24 @@ def calc_base(
     if surcharge_rate is None:
         surcharge_rate = 0 if is_card else POLICY["box_pack_margin_rate"]
     eff_jpy = price_jpy * (1 + surcharge_rate / 100)
-    return (eff_jpy + ship_jpy) * rate + POLICY["forwarding_fee"]
+    return (eff_jpy + ship_jpy) * rate + _forwarding_fee()
+
+
+def _forwarding_fee(group: str | None = None) -> float:
+    """소싱 그룹의 배대지비(원). 미지정이면 현재 사이클 그룹을 따른다.
+
+    [2026-08-26] 일본 8,000 / 중국 8,500 으로 요금이 다르다. 한 값으로 계산하면
+    중국분 손익이 500원씩 부풀려져 최소마진 경계에서 오판이 난다(실측: 슈퍼스타
+    240mm 가 +8,492원 → 실제 +7,992원으로 최소마진 미달로 뒤집혔다).
+    """
+    # 계정별 정책(byAccount)이 forwarding_fee 를 이미 그룹 값으로 덮어쓴 상태다.
+    # forwarding_fee_cn 은 byAccount 를 안 쓰는 구성에서의 폴백으로만 남긴다.
+    g = group or _active_group
+    if g == "CN":
+        cn = POLICY.get("forwarding_fee_cn")
+        if cn is not None:
+            return float(cn)
+    return float(POLICY["forwarding_fee"])
 
 
 def gross_up_kream_fee(net: float, fee_kind: str | None) -> float:
@@ -1809,17 +1873,38 @@ def domestic_cap(low_norm: int, tariff_threshold: int) -> int:
     return int(cap // 1000 * 1000)
 
 
-async def _load_kream_creds() -> tuple[str, str, str]:
+async def _load_kream_creds(group: str | None = None) -> tuple[str, str, str]:
+    """크림 계정 인증정보. group 이 주어지면 **그 소싱 그룹의 계정**을 고른다.
+
+    [2026-08-26] 종전엔 `LIMIT 1` 로 아무 계정이나 집었다. 계정이 하나뿐일 땐 문제가
+    없었지만 중국 계정이 추가되면서, 일본 상품 사이클이 중국 계정 인증으로 돌아
+    남의 입찰을 자기 것으로 보고 덮어쓸 수 있게 됐다. 그룹별로 계정을 고정한다.
+
+    계정 구분은 account_label 의 표식('일본'/'중국')으로 한다. 못 찾으면 기본 계정
+    (is_default)으로 떨어지되, 그룹을 명시했는데 못 찾은 경우는 **빈 값을 돌려
+    호출부가 사이클을 건너뛰게** 한다 — 엉뚱한 계정으로 도는 것보다 안 도는 게 낫다.
+    """
+    hint = ""
+    if group:
+        hint = str(_ACCOUNT_GROUPS.get(group, {}).get("label_hint") or "")
+    sql = (
+        "SELECT api_key, api_secret, additional_fields::jsonb AS af "
+        "FROM samba_market_account "
+        "WHERE market_type='kream' AND is_active = true "
+    )
+    params: dict = {}
+    if hint:
+        sql += "AND account_label LIKE :hint "
+        params["hint"] = f"%{hint}%"
+    sql += "ORDER BY is_default DESC LIMIT 1"
     async with get_read_session() as s:
-        row = (
-            await s.execute(
-                _text(
-                    "SELECT api_key, api_secret, additional_fields::jsonb AS af "
-                    "FROM samba_market_account WHERE market_type='kream' LIMIT 1"
-                )
-            )
-        ).first()
+        row = (await s.execute(_text(sql), params)).first()
     if not row:
+        if hint:
+            logger.warning(
+                "[크림통합] '%s' 계정 없음 — 해당 그룹 사이클 스킵(계정 오용 방지)",
+                hint,
+            )
         return "", "", ""
     af = row[2] or {}
     if isinstance(af, str):
@@ -1827,10 +1912,12 @@ async def _load_kream_creds() -> tuple[str, str, str]:
             af = json.loads(af)
         except Exception:
             af = {}
+    # 복붙 공백이 섞이면 헤더 생성 단계에서 LocalProtocolError 로 죽는다
+    # (중국 계정 시크릿 끝 공백으로 '백엔드 연결실패'가 났다). 항상 strip.
     return (
-        str(af.get("apiService") or ""),
-        str(row[0] or af.get("apiKey") or ""),
-        str(row[1] or af.get("apiSecret") or ""),
+        str(af.get("apiService") or "").strip(),
+        str(row[0] or af.get("apiKey") or "").strip(),
+        str(row[1] or af.get("apiSecret") or "").strip(),
     )
 
 
@@ -2083,6 +2170,34 @@ def _mounts():
 # 품번이 그대로 대응해 오매칭 여지가 없다: 크림 488253-09 ↔ 공홈 488253-09-002-000.
 _SOURCE_SITES = ("SNKRDUNK", "ONITSUKA", "UNIQLO", "GU")
 _SOURCE_SITES_SQL = "('" + "','".join(_SOURCE_SITES) + "')"
+
+# ── 크림 계정 분리 [2026-08-26] ───────────────────────────────────────────
+# 일본 소싱(스니덩크·유니클로·GU)과 중국 소싱(식화)은 **크림 판매자 계정이 다르다**.
+# 계정을 안 가리면 한 사이클이 남의 계정 입찰까지 자기 것으로 보고 가격을 덮거나
+# 삭제한다(일본 입찰 27,654건이 그 대상이 될 뻔했다).
+# 그래서 소싱처를 계정 그룹에 묶고, 사이클은 **그룹 하나씩** 돈다.
+# 계정 선택 키는 samba_market_account.account_label 에 들어 있는 표식이다.
+# 배대지비는 여기 적지 않는다 — 정책관리(가디정책) KREAM 탭이 단일 출처다.
+#   일본 kreamForwardingFee / 중국 kreamForwardingFeeCn → _forwarding_fee() 가 고른다.
+_ACCOUNT_GROUPS: dict = {
+    "JP": {
+        "label_hint": "일본",
+        "sites": ("SNKRDUNK", "ONITSUKA", "UNIQLO", "GU"),
+    },
+    "CN": {
+        "label_hint": "중국",
+        "sites": ("SHIHUO",),
+    },
+}
+# 현재 사이클이 도는 그룹. 사이클 시작 시 지정한다.
+_active_group: str = "JP"
+
+
+def _group_sites_sql(group: str) -> str:
+    sites = _ACCOUNT_GROUPS.get(group, {}).get("sites") or ()
+    return "('" + "','".join(sites) + "')"
+
+
 # 공홈 API — 3,000엔 미만 주문은 배송비 500엔이 붙는다(사용자 확정 규칙).
 _HOME_API = {
     "UNIQLO": "https://www.uniqlo.com/jp/api/commerce/v5/ja",
@@ -5415,8 +5530,13 @@ async def _process_expired_asks(
     return c
 
 
-async def run_kream_unified_once() -> dict:
-    """[Step 3 섀도] 스니덩크 전수순회 통합 — 옵션별 갱신/리스톡/삭제 분류. 쓰기 없음(하드오프)."""
+async def run_kream_unified_once(group: str = "JP") -> dict:
+    """[Step 3 섀도] 소싱 전수순회 통합 — 옵션별 갱신/리스톡/삭제 분류.
+
+    group: 소싱 그룹('JP' 일본=스니덩크·유니클로·GU / 'CN' 중국=식화).
+    **크림 판매자 계정이 그룹마다 다르므로** 사이클은 그룹 하나씩 돈다.
+    계정을 안 가리면 남의 계정 입찰을 자기 것으로 보고 덮어쓴다.
+    """
     from collections import Counter as _Counter
 
     import time as _tstart  # noqa: F811
@@ -5438,10 +5558,14 @@ async def run_kream_unified_once() -> dict:
         await _flush_logs_to_db()
         return {"ok": True, "reason": "disabled"}
 
-    service, key, secret = await _load_kream_creds()
+    # 이번 사이클이 도는 소싱 그룹 고정 — 상품 조회·계정 선택이 모두 이 값을 따른다.
+    global _active_group
+    _active_group = group if group in _ACCOUNT_GROUPS else "JP"
+
+    service, key, secret = await _load_kream_creds(_active_group)
     if not (service and key and secret):
-        logger.warning("[크림통합] 인증정보 없음 — 스킵")
-        return {"ok": False, "reason": "no_creds"}
+        logger.warning("[크림통합][%s] 인증정보 없음 — 스킵", _active_group)
+        return {"ok": False, "reason": "no_creds", "group": _active_group}
     h = _headers(service, key, secret)
     try:
         asks = await _fetch_live_asks(h)
