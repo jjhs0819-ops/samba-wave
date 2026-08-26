@@ -3264,7 +3264,7 @@ _ANN_TOKEN_KEY = "kream_partner_token"
 # 사업자 연락처(고시 "A/S 책임자 또는 소비자상담 관련 전화번호", 법정 필수)는
 # 설정 > KREAM 의 'A/S 전화번호'(계정 additional_fields.asPhone)에서 읽는다.
 # 비어 있으면 등록하지 않는다 — 법정 필수항목이라 지어낼 수 없다.
-_ann_tel_cache: list = [0.0, ""]  # [조회시각, 번호]
+_ann_tel_cache: dict = {}  # 그룹 → [조회시각, 번호]
 # 해외 판매자는 원산지·HS코드 필수(누락 시 PUT 400). 원산지=일본(id 4) — 일본 소싱 발송분.
 _ANN_COUNTRY_JP = 4
 # [2026-08-04] 품목별 HS 정확화 [최우선·관세].
@@ -3363,18 +3363,31 @@ _ANN_SCHEMA_FALLBACK = {
     ],
 }
 _ann_schema_cache: dict = {}
-_ann_token_cache: list = [0.0, ""]  # [조회시각, 토큰]
+_ann_token_cache: dict = {}  # 그룹 → [조회시각, 토큰]
 _ann_done: set = set()  # 이 프로세스에서 등록 성공한 kid — 중복 PUT 회피
 _ann_stat: dict = {"try": 0, "ok": 0, "no_token": 0, "no_tel": 0, "fail": 0}
 
 
-async def _partner_token() -> str:
-    """파트너 세션 토큰(samba_settings). 5분 캐시 — 수명 8h 라 잦은 조회 불필요."""
+async def _partner_token(group: str | None = None) -> str:
+    """파트너 세션 토큰(samba_settings). 5분 캐시 — 수명 8h 라 잦은 조회 불필요.
+
+    [2026-08-26] **계정별로 다른 토큰이 필요하다.** 고시정보 등록은 공식 OpenAPI 가
+    아니라 비공식 API(partner-api.kream.co.kr) 라 판매자 로그인 세션을 쓴다.
+    일본/중국 계정은 서로 다른 로그인이므로 토큰도 따로다 — 한 토큰으로 다른 계정
+    상품에 고시를 박으면 엉뚱한 계정에 등록된다.
+
+    저장 키: 일본(기본) `kream_partner_token`, 그 외 `kream_partner_token:{그룹}`.
+    기본 키를 그대로 둔 건 기존 로컬 동기화 루프(_partner_token_sync.py)를 안 깨기
+    위해서다. 중국 계정 토큰은 `kream_partner_token:CN` 으로 따로 넣는다.
+    """
     import json as _json  # noqa: F811
     import time as _t  # noqa: F811
 
-    if _ann_token_cache[1] and _t.time() - float(_ann_token_cache[0]) < 300:
-        return str(_ann_token_cache[1])
+    g = group or _active_group
+    key = _ANN_TOKEN_KEY if g == "JP" else f"{_ANN_TOKEN_KEY}:{g}"
+    cached = _ann_token_cache.get(g)
+    if cached and cached[1] and _t.time() - float(cached[0]) < 300:
+        return str(cached[1])
     tok = ""
     try:
         from sqlalchemy import text as _sql_text  # noqa: F811
@@ -3386,7 +3399,7 @@ async def _partner_token() -> str:
                         "SELECT value, EXTRACT(EPOCH FROM (now() - updated_at))/3600 AS hrs "
                         "FROM samba_settings WHERE key = :k"
                     ),
-                    {"k": _ANN_TOKEN_KEY},
+                    {"k": key},
                 )
             ).first()
         val, _hrs = (row[0], float(row[1] or 0)) if row else (None, 0.0)
@@ -3400,13 +3413,21 @@ async def _partner_token() -> str:
         # 수명이 8h 라 2h 를 넘기면 루프가 멎었다고 보고 사이클 로그에 남긴다.
         if _hrs > 2:
             logger.warning(
-                "[크림통합] 파트너토큰이 %.1f시간째 갱신 안 됨 — "
+                "[크림통합][%s] 파트너토큰이 %.1f시간째 갱신 안 됨 — "
                 "_partner_token_sync.py 루프 확인 필요(고시등록 401 → 신규 입찰 전면 차단)",
+                g,
                 _hrs,
             )
+        if not tok and g != "JP":
+            logger.warning(
+                "[크림통합][%s] 계정 토큰 없음(설정키 %s) — 고시등록 불가. "
+                "해당 계정으로 파트너센터 로그인 후 토큰을 넣어야 한다.",
+                g,
+                key,
+            )
     except Exception as e:
-        logger.info("[크림통합] 파트너토큰 조회 실패: %s", str(e)[:80])
-    _ann_token_cache[0], _ann_token_cache[1] = _t.time(), tok
+        logger.info("[크림통합][%s] 파트너토큰 조회 실패: %s", g, str(e)[:80])
+    _ann_token_cache[g] = [_t.time(), tok]
     return tok
 
 
@@ -3416,27 +3437,37 @@ async def _ann_as_tel() -> str:
     10분 캐시 — 계정 설정은 자주 안 바뀐다."""
     import time as _t  # noqa: F811
 
-    if _ann_tel_cache[1] and _t.time() - float(_ann_tel_cache[0]) < 600:
-        return str(_ann_tel_cache[1])
+    # [2026-08-26] 연락처도 **계정별**이다. 고시는 계정(사업자) 명의로 등록되므로
+    # 다른 계정 번호를 적으면 법정 표기가 틀린다. 그룹 계정의 asPhone 을 쓴다.
+    g = _active_group
+    cached = _ann_tel_cache.get(g)
+    if cached and cached[1] and _t.time() - float(cached[0]) < 600:
+        return str(cached[1])
     tel = ""
+    hint = str(_ACCOUNT_GROUPS.get(g, {}).get("label_hint") or "")
     try:
         from sqlalchemy import text as _sql_text
 
+        sql = (
+            "SELECT additional_fields->>'asPhone' AS tel "
+            "FROM samba_market_account WHERE market_type='kream' "
+            "AND COALESCE(additional_fields->>'asPhone','')<>'' "
+        )
+        params: dict = {}
+        if hint:
+            sql += "AND account_label LIKE :hint "
+            params["hint"] = f"%{hint}%"
+        sql += "ORDER BY is_default DESC, is_active DESC LIMIT 1"
         async with get_read_session() as s:
-            r = (
-                await s.execute(
-                    _sql_text(
-                        "SELECT additional_fields->>'asPhone' AS tel "
-                        "FROM samba_market_account WHERE market_type='kream' "
-                        "AND COALESCE(additional_fields->>'asPhone','')<>'' "
-                        "ORDER BY is_default DESC, is_active DESC LIMIT 1"
-                    )
-                )
-            ).first()
+            r = (await s.execute(_sql_text(sql), params)).first()
         tel = str(r[0]).strip() if r and r[0] else ""
+        if not tel and hint:
+            logger.warning(
+                "[크림통합][%s] 계정 A/S 전화번호(asPhone) 없음 — 고시등록 건너뜀", g
+            )
     except Exception as e:
-        logger.info("[크림통합] 고시 연락처 조회 실패: %s", str(e)[:80])
-    _ann_tel_cache[0], _ann_tel_cache[1] = _t.time(), tel
+        logger.info("[크림통합][%s] 고시 연락처 조회 실패: %s", g, str(e)[:80])
+    _ann_tel_cache[g] = [_t.time(), tel]
     return tel
 
 
@@ -3551,7 +3582,12 @@ async def _ann_product_row(kid: str) -> dict:
 async def _register_announcement(kid: str) -> bool:
     """고시정보 등록 — 마스터 스키마(/announcement_info)의 카테고리별 필드키에
     품목별 실값을 채워 PUT. 사업자 연락처는 법정 필수항목이라 상수로 고정한다."""
-    if str(kid) in _ann_done:
+    # [2026-08-26] 중복 회피 키에 그룹을 붙인다. 고시는 **계정마다 따로** 등록해야
+    # 하는데, kid 만으로 캐시하면 일본에서 등록한 상품을 중국 사이클이 "이미 했다"고
+    # 건너뛴다 → 중국 계정엔 고시가 없어 신규 입찰이 통째로 거부된다
+    # (product_announcement_required).
+    _done_key = f"{_active_group}|{kid}"
+    if _done_key in _ann_done:
         return True
     _ann_stat["try"] += 1
     tok = await _partner_token()
@@ -3632,7 +3668,7 @@ async def _register_announcement(kid: str) -> bool:
                     f"{_ANN_BASE}/announcement_infos/{kid}", json=body, headers=hdrs
                 )
                 if p.status_code in (200, 201):
-                    _ann_done.add(str(kid))
+                    _ann_done.add(_done_key)
                     _ann_stat["ok"] += 1
                     return True
                 if p.status_code not in (500, 502, 503, 504):
