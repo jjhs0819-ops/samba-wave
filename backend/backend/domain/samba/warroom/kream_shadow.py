@@ -2090,6 +2090,11 @@ _HOME_API = {
 }
 _HOME_FREE_SHIP_MIN = 3000
 _HOME_SHIP_FEE = 500
+# 구매대행 수수료 [2026-08-26 지시] — 오니츠카·유니클로·GU 공홈은 한국 카드 결제가
+# 안 돼 대행을 거친다. 수수료는 **배송비까지 더한 총액 기준 4%**.
+#   예) 상품 2,000엔 + 배송 500엔 = 2,500엔 → 2,500 × 1.04 = 2,600엔이 실원가
+# 원가가 낮게 잡히면 마진을 잘못 계산해 손해로 직결되므로 판정 전에 미리 얹는다.
+_AGENCY_FEE_RATE = 1.04
 
 _SNKR_USED_URL = "https://snkrdunk.com/v1/apparels/{id}/used"
 _SNKR_HEADERS = {
@@ -4346,7 +4351,9 @@ async def _fetch_home_sizes(
             nm = disp
         if not nm:
             continue
+        # 배송비를 먼저 더하고, 그 총액에 대행 수수료를 얹는다(사용자 확정 규칙).
         landed = pr + (_HOME_SHIP_FEE if pr < _HOME_FREE_SHIP_MIN else 0)
+        landed = int(round(landed * _AGENCY_FEE_RATE))
         cur = out.get(nm)
         if cur is None or landed < cur["price"]:
             out[nm] = {"price": landed, "stock": qty}
@@ -5307,16 +5314,10 @@ async def _process_expired_asks(
                 c["nomap"] += 1
                 continue
             snkr_id, site = mapping
-            # 오니츠카 재입찰 영구 차단 [2026-07-20 지시] — 되살리면 안 됨.
-            if site == "ONITSUKA":
-                c["onitsuka"] += 1
-                continue
-            # 유니클로·GU 재입찰 영구 차단 [2026-08-19 지시] — 되살리면 안 됨.
-            # 한국 카드로 결제가 안 되는 소싱처라 팔려도 이행할 수 없다. 종전엔 기존
-            # 입찰 삭제만 얘기하고 **등록 경로를 막지 않아** 사이클마다 다시 등록됐다.
-            if site in ("UNIQLO", "GU"):
-                c["uniqlo_gu"] = c.get("uniqlo_gu", 0) + 1
-                continue
+            # [2026-08-26] 오니츠카·유니클로·GU 재입찰 차단 해제.
+            # 결제가 막혀 있던 게 차단 사유였는데(2026-07-20 / 08-19 지시) 구매대행이
+            # 열려 이행 가능해졌다. 대행 수수료 4%는 배송비까지 더한 총액에 얹어
+            # 원가에 미리 반영한다(_AGENCY_FEE_RATE).
             # 거래게이트(needs_trade)는 한글 팩/박스도 보므로 한글명 우선(영문만 쓰면
             # 'Premium Champion Pack' 이 게이트 통과해 팩/박스 재입찰되던 버그). [2026-07-25]
             pname = str(a.get("product_name_kr") or a.get("product_name") or "")
@@ -5891,12 +5892,8 @@ async def run_kream_unified_once() -> dict:
                 #   실측(2026-08-07, 30h): 반복 등록 143건, 최다 11회.
                 #   예) kid 22830 opt 295 — 실시간 255~285(295 없음) 인데 DB 재고1.
                 # 조회 실패는 DB 폴백 금지(통화사고 이력) — 이번 회차 건너뛰고 다음에 재시도.
-                # 유니클로·GU 신규 등록 영구 차단 [2026-08-19 지시] — 되살리면 안 됨.
-                # 한국 카드로 결제가 안 되는 소싱처라 팔려도 이행할 수 없다.
-                # 갱신 경로에만 차단을 넣고 이 등록 경로를 빼면 사이클마다 다시 등록된다.
-                if (prod.get("site") or "") in ("UNIQLO", "GU"):
-                    _drop("유니클로·GU 등록차단", kid, prod.get("name") or "")
-                    return r
+                # [2026-08-26] 유니클로·GU 신규 등록 차단 해제 — 구매대행으로 결제가
+                # 열렸다. 대행 수수료 4%는 배송비 포함 총액에 얹어 원가에 미리 반영한다.
                 try:
                     _live_sz = await _fetch_live_sizes_by_site(
                         scli, prod.get("site") or "SNKRDUNK", str(snkr_id)
