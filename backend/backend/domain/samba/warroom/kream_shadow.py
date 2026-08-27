@@ -3149,11 +3149,18 @@ async def _load_restock_guards() -> None:
                 if kid:
                     _g_noncard_kids.add(str(kid))
             # 이행대기 — 소싱주문번호 없는 미이행 주문(판매 후 소싱 전 재입찰 보류)
+            #
+            # [2026-08-27] 조건을 `order_number LIKE 'A-LI%'` 에서 **채널 = KREAM** 으로
+            # 바꾼다. 크림 주문번호는 A-LI 만이 아니라 **A-SN 도 있다**(실측
+            # A-SN217436081 등). 접두로 묶은 탓에 A-SN 주문은 소싱 전인데도 재입찰이
+            # 열려 있었다 — 같은 물건이 두 번 팔릴 수 있는 구멍이다.
+            # 접두 대신 channel_name 을 쓰면 크림 주문 전체가 빠짐없이 걸린다.
             for kid, opt in (
                 await s.execute(
                     _text(
                         "SELECT product_id AS kid, product_option AS opt FROM samba_order "
-                        "WHERE order_number LIKE 'A-LI%' AND COALESCE(sourcing_order_number,'')='' "
+                        "WHERE channel_name = 'KREAM' "
+                        "AND COALESCE(sourcing_order_number,'')='' "
                         "AND COALESCE(product_id,'')<>'' AND status NOT IN "
                         "('cancelled','cancel_requested','cancel_completed','cancel_release')"
                     )
