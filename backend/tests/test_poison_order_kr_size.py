@@ -78,19 +78,24 @@ def test_jp_fallback_is_cm_times_ten():
     assert kr_size_mm({"JP": "28.5", "EU": "44.5"}) == 285
 
 
-def test_us_fallback_men_and_women():
-    # 남성 mm = 180 + US×10, 여성 = 165 + US×10 (박스실측 기준, 5mm 그리드)
-    assert kr_size_mm({"US": "10", "UK": "9", "EU": "43"}) == 280
-    assert kr_size_mm({"US": "7", "UK": "4.5", "EU": "38"}) == 235
-    assert kr_size_mm({"US Men": "10", "UK": "9", "EU": "43"}) == 280
-    assert kr_size_mm({"US Women": "8", "EU": "39"}) == 245
+def test_us_only_is_not_converted():
+    """EU/UK/US 만 있는 SKU 는 표기를 비운다 — 환산식으로 지어내지 않는다.
+
+    실측(2026-08-24): MLB 아동화 7ASXLM06N-50WHS 는 포이즌이 EU/US/UK 만 주는데,
+    성인 남성 환산식(180+US×10)을 대면 EU 33.5·US 2 → 200mm 가 나온다.
+    실제 한국 사이즈는 210mm 로 10mm 짧다. 아동·유스 구간에서 그 식이 안 맞는다.
+    """
+    assert kr_size_mm({"EU": "33.5", "US": "2", "UK": "1.5"}) is None
+    assert kr_size_mm({"EU": "32", "US": "1", "UK": "13.5"}) is None
+    assert kr_size_mm({"EU": "43", "US": "10", "UK": "9"}) is None
+    assert kr_size_mm({"EU": "43", "US Men": "10", "UK": "9"}) is None
+    assert kr_size_mm({"EU": "39", "US Women": "8"}) is None
 
 
-def test_no_korean_size_returns_none():
-    # EU 만 주는 SPU — 임의 환산 금지, 표시 생략
-    assert kr_size_mm({"EU": "44.5"}) is None
-    assert kr_size_mm({}) is None
-    assert kr_size_mm(None) is None
+def test_chart_value_still_wins_when_us_present():
+    """US 가 같이 와도 표에 KR/JP 가 있으면 그걸 읽는다."""
+    assert kr_size_mm({"KR": "285", "US Men": "10.5", "EU": "44.5"}) == 285
+    assert kr_size_mm({"JP": "28.5", "US": "10.5", "EU": "44.5"}) == 285
 
 
 # ── 옵션 문자열에서 사이즈 토큰 추출 ──────────────────────────────────────

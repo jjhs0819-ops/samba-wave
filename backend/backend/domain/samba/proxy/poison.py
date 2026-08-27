@@ -75,19 +75,30 @@ def is_buyer_cancelable(order: dict[str, Any], window_min: int | None = None) ->
 
 
 def kr_size_mm(size_candidates: dict[str, Any] | None) -> int | None:
-    """POIZON 사이즈후보에서 한국 사이즈(mm)를 뽑는다 — KR 우선, 없으면 폴백.
+    """POIZON 사이즈 대조표에서 한국 사이즈(mm)를 읽는다 — 표에 없으면 None.
 
-    포이즌은 SKU 마다 사이즈 대조표(KR/EU/UK/JP/US Men/US Women 등)를 함께 준다.
-    소싱은 mm 표기로 하므로 주문에 들어온 EU 사이즈 옆에 이 값을 같이 보여준다.
+    포이즌은 SKU 마다 사이즈 대조표(KR/EU/UK/JP/US ...)를 함께 준다. 소싱은 mm
+    표기로 하므로 주문에 들어온 EU 사이즈 옆에 이 값을 같이 보여준다.
 
-    폴백 순서와 US 환산식은 포이즌 오토비더(`poison_dashboard.py::_kr_mm`)에서
-    검증된 로직을 그대로 옮긴 것이다. 무신사 등 소싱처 공용 사이즈표로 보정하지
-    않는다 — 신뢰서열이 박스실측 > 포이즌 > 소싱처라, 소싱처 표로 덮으면 오구매가 난다.
-    KR/CHN/JP/US 어느 것도 없으면 None(표시 생략)이며, 임의 환산표로 채우지 않는다.
+    **표에 적힌 값만 쓴다. 환산식으로 지어내지 않는다.**
+    - KR / CHN — 신발은 둘 다 mm 기준이라 그대로 읽는다.
+    - JP — cm 표기라 ×10 (단위 변환일 뿐, 추측이 아니다).
+    - 그 외(EU/UK/US 만 있는 SKU)는 None 을 돌려주고 표기를 비운다.
+
+    US 환산식(남성 mm=180+US×10)을 폴백으로 쓰다가 제거했다(2026-08-24).
+    그 식은 성인 남성 박스실측(US10=280mm) 기준이라 아동·유스 구간에서 10mm 씩
+    짧게 나온다. 실측 — MLB 아동화 7ASXLM06N-50WHS 는 포이즌이 EU/US/UK 만 주는데
+    (`sizeKey` 가 EU·UK·US 셋뿐, 응답에 KR 없음) EU 33.5·US 2 에 이 식을 대면
+    200mm 가 나오고 실제 한국 사이즈는 210mm 다. DB 도 같은 증상을 보인다 —
+    KR 을 받은 SKU 는 EU 35→220mm(371건)인데 US 폴백으로 채워진 SKU 는
+    EU 35→210mm(77건)로 갈렸다.
+
+    사이즈가 틀리면 그걸 보고 잘못 사게 되므로, 비워두는 편이 낫다.
+    소싱처(무신사 등) 공용 사이즈표로 채우는 것도 금지 — 신뢰서열이
+    박스실측 > 포이즌 > 소싱처라, 소싱처 표로 덮으면 오구매가 난다.
     """
     cand = size_candidates or {}
-    # KR 그대로. '280 (EU 44⅔)' 처럼 괄호 설명이 붙는 경우가 있어 앞 숫자만 취한다.
-    # CHN 은 중국 사이즈지만 신발은 mm 기준이라 KR 과 같은 값이 온다.
+    # KR/CHN 그대로. '280 (EU 44⅔)' 처럼 괄호 설명이 붙는 경우가 있어 앞 숫자만 취한다.
     m = re.match(r"\s*(\d{2,3})", str(cand.get("KR") or cand.get("CHN") or ""))
     if m:
         return int(m.group(1))
@@ -95,27 +106,6 @@ def kr_size_mm(size_candidates: dict[str, Any] | None) -> int | None:
     m = re.match(r"\s*(\d{2}(?:\.5)?)", str(cand.get("JP") or ""))
     if m:
         return int(float(m.group(1)) * 10)
-    # US 폴백 — cm 브랜드가 KR/JP 없이 EU/US/UK 만 주는 경우(데상트 등).
-    # 박스실측 기준 남성 US10=280mm(EU43) → 남성 mm=180+US×10, 여성 165+US×10.
-    # 성별 판정은 US-UK 차(남성 ≈1, 여성 ≈2.5). 5mm 그리드로 반올림.
-    # 키 이름은 엔드포인트마다 'US' 이기도 하고 'US Men'/'US Women' 이기도 하다.
-    us = cand.get("US") or cand.get("US Men") or cand.get("US Women")
-    if us:
-        try:
-            u = float(us)
-        except (TypeError, ValueError):
-            return None
-        # 여성 판정: 전용 키가 있으면 그것으로, 없으면 US-UK 차(남성 ≈1, 여성 ≈2.5).
-        is_women = not (cand.get("US") or cand.get("US Men")) and bool(
-            cand.get("US Women")
-        )
-        uk = cand.get("UK")
-        if not is_women and uk:
-            try:
-                is_women = (u - float(uk)) >= 1.8
-            except (TypeError, ValueError):
-                is_women = False
-        return int(round(((165 if is_women else 180) + u * 10) / 5) * 5)
     return None
 
 
