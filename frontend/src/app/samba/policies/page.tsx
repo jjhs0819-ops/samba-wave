@@ -146,8 +146,8 @@ interface MarketPolicyForm {
   kreamBoxPackMarginRate?: number     // 박스/카드팩(PSA제외 실링) 원가 추가마진율 (%)
   kreamNonCardMarginRate?: number     // 나머지(신발/의류 등) 원가 추가마진율 (%)
   kreamMaxCostJpy?: number            // 입찰 최고 원가 (엔) — 초과 상품은 갱신·리스톡 제외
-  kreamOverseasBaseFee?: number       // 해외판매 기본수수료 (원) — 정산 차감
-  kreamOverseasFeeRate?: number       // 해외판매 수수료율 (%) — 판매가 대비, 정산 차감
+  kreamOverseasBaseFee?: number       // 카드팩·박스 기본수수료 (원) — 정산 차감
+  kreamOverseasFeeRate?: number       // 카드팩·박스 수수료율 (%) — 판매가 대비, 정산 차감
   kreamItemFeeBase?: number           // 실물(신발/의류/시계) 기본수수료 (원) — 정산 차감
   kreamSellerLevel?: number           // 크림 판매등급 (1~5) — 등급수수료율 자동 도출(매달 변동)
   kreamItemFeeVat?: number            // 실물 수수료 VAT율 (%) — 별도 부과
@@ -1713,12 +1713,12 @@ export default function PoliciesPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>박스/카드팩 추가마진율</span>
                     <NumInput value={mp.kreamBoxPackMarginRate ?? 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamBoxPackMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>PSA 등급 제외한 박스·카드팩(실링) 상품 원가에 추가 가산(예: 5 → 원가×1.05)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크 한정 — PSA 등급 제외한 박스·카드팩(실링) 상품 원가에 추가 가산(예: 5 → 원가×1.05). 공홈 소싱(유니클로·GU·오니츠카)에는 적용 안 함</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>나머지 추가마진율</span>
                     <NumInput value={mp.kreamNonCardMarginRate ?? 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamNonCardMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드·박스·카드팩 외 나머지(신발·의류 등) 원가에 추가 가산(예: 5 → 원가×1.05)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크 한정 — 카드·박스·카드팩 외 나머지(신발·의류 등) 원가에 추가 가산(예: 5 → 원가×1.05). 공홈 소싱(유니클로·GU·오니츠카)에는 적용 안 함</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(카드)</span>
@@ -1727,27 +1727,27 @@ export default function PoliciesPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(박스)</span>
                     <NumInput value={mp.kreamShippingFeeBox ?? 900} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeBox: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="엔" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크→배대지 일본내 배송비(엔). 카드 300엔 / 박스·카드팩 900엔</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크→배대지 일본내 배송비(엔). 카드 300엔 / 박스·카드팩 900엔. 공홈 소싱(유니클로·GU·오니츠카)은 그 구간이 없어 미적용 — 공홈 원가에 각 사이트 국내배송비·결제수수료 4%가 이미 포함</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배대지비용</span>
                     <NumInput value={mp.kreamForwardingFee ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamForwardingFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>배대지→한국 배송비(원). 원가에 별도 가산. 원가=(snkr엔+배송엔)×환율+배대지</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>배대지→한국 배송비(원). 원가에 별도 가산. 원가=(snkr엔+배송엔)×환율+배대지. 공홈 소싱은 배송엔·추가마진 없이 (원가엔×환율)+배대지</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 기본수수료</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>카드팩·박스 기본수수료</span>
                     <NumInput value={mp.kreamOverseasBaseFee ?? 1370} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasBaseFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송(박스·카드팩) 주문 정산에서 차감하는 크림 기본수수료</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드팩·박스(해외배송) 주문 정산에서 차감하는 크림 기본수수료. PSA 낱장 카드는 수수료 무료</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 수수료율</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>카드팩·박스 수수료율</span>
                     <NumInput value={mp.kreamOverseasFeeRate ?? 3.3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송 주문 판매가 대비 수수료율. 정산=판매가−(기본수수료+판매가×이율)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드팩·박스 주문 판매가 대비 수수료율. 정산=판매가−(기본수수료+판매가×이율). PSA 낱장은 무료이고, 신발·의류는 아래 판매등급 수수료를 쓴다</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 기본수수료</span>
                     <NumInput value={mp.kreamItemFeeBase ?? 2500} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamItemFeeBase: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발/의류/시계 주문 정산 차감(PSA 낱장 무료·해외배송 제외). 크림 판매등급 기본수수료</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발·의류·시계 주문 정산 차감. **판매자 등급에 따라 요율이 달라진다**(아래 판매등급 참조). PSA 낱장 카드는 무료, 카드팩·박스는 위 항목을 쓴다</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>내 판매등급</span>

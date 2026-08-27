@@ -825,9 +825,11 @@ const ProductCard = React.memo(function ProductCard({
     const _homeDirect = ['UNIQLO', 'GU', 'ONITSUKA'].includes(String(p.source_site || '').toUpperCase())
     const kShip = _homeDirect ? 0 : (kIsCardShip ? kShipCard! : kShipBox!)
     // 추가마진 분류: PSA=0 / 박스·카드팩(비PSA·비신발)=박스팩율 / 신발·의류=나머지율
-    const kSurcharge = _kOpts.length > 0
-      ? (_hasPSA ? 0 : _isShoe ? kNonCard! : kBoxPack!)
-      : (_nameBox ? kBoxPack! : 0)
+    // [2026-08-27] 추가마진은 **스니덩크 한정**이다. 공홈 소싱은 가산하지 않는다.
+    const kSurcharge = _homeDirect ? 0
+      : _kOpts.length > 0
+        ? (_hasPSA ? 0 : _isShoe ? kNonCard! : kBoxPack!)
+        : (_nameBox ? kBoxPack! : 0)
     const kCostEff = Math.round(cost * (1 + kSurcharge / 100))
     const kBase = (kCostEff + kShip) * jpyRate + kFwd!
     const kMarginAmt = Math.max(kMinMargin!, kBase * kComp! / 100)

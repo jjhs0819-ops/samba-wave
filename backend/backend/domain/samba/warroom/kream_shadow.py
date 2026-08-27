@@ -1833,6 +1833,10 @@ def calc_base(
         ship_jpy = POLICY["shipping_fee_box"] if is_box else POLICY["shipping_fee_card"]
     if surcharge_rate is None:
         surcharge_rate = 0 if is_card else POLICY["box_pack_margin_rate"]
+    # [2026-08-27] 추가마진율(박스/카드팩·나머지)은 **스니덩크 한정**이다.
+    # 공홈 소싱은 원가가 곧 결제 총액이라 더 얹을 게 없다.
+    if home_direct:
+        surcharge_rate = 0
     eff_jpy = price_jpy * (1 + surcharge_rate / 100)
     return (eff_jpy + ship_jpy) * rate + _forwarding_fee()
 
