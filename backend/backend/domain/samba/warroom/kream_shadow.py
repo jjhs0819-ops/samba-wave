@@ -2197,6 +2197,23 @@ def _mounts():
     return {"all://snkrdunk.com": tr, "all://*.snkrdunk.com": tr}
 
 
+# 공홈(유니클로·GU) 요청 헤더 [2026-08-27].
+# **Accept-Language 가 없으면 403(Access Denied)** 이다. 실측 조합:
+#   UA 만 403 · UA+Accept 403 · UA+Accept+Accept-Language **200**
+# 프록시 유무와 무관하다 — IP 가 아니라 헤더 문제다.
+# 이게 빠져서 컨테이너의 공홈 조회가 100% 실패했고, 실시간 재고·원가를 못 봐
+# 유니클로·GU 가 재고 1,367건을 넣고도 등록 판정조차 안 됐다(입찰 5·24건에서 정체).
+# 호스트 수집기(_home_collect.py)는 이 헤더를 보내서 되고 있었다.
+_HOME_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Accept-Language": "ja-JP,ja;q=0.9",
+}
+
+
 # ── 소싱처 [2026-08-16] ────────────────────────────────────────────────────
 # 스니덩크 외에 유니클로/GU **일본 공홈**을 소싱처로 쓴다. 스니덩크는 이 두 브랜드
 # 물량이 얇고(UNIQLO 1,282 · GU 552) 공홈은 전 상품·전 사이즈 재고를 그대로 준다.
@@ -4472,7 +4489,10 @@ async def _fetch_home_sizes(
         return None
     try:
         r = await _rq(
-            "GET", f"{base}/products", params={"q": code, "limit": 1, "offset": 0}
+            "GET",
+            f"{base}/products",
+            params={"q": code, "limit": 1, "offset": 0},
+            headers=_HOME_HEADERS,
         )
         item = ((r.json().get("result") or {}).get("items") or [{}])[0]
         names = {
@@ -4486,6 +4506,7 @@ async def _fetch_home_sizes(
             "GET",
             f"{base}/products/E{code}-000/price-groups/00/l2s",
             params={"withPrices": "true", "withStocks": "true"},
+            headers=_HOME_HEADERS,
         )
         res = d.json().get("result") or {}
     except Exception:
@@ -4607,8 +4628,12 @@ async def _fetch_onitsuka_sizes(cli: httpx.AsyncClient, style_code: str) -> dict
         out: dict = {}
         for v in it.get("variants") or []:
             p = v.get("product") or {}
-            nm = str(p.get("sku") or "").split(".")[-1]
-            if not nm:
+            # 일본 스토어 sku 는 **밑줄** 구분이다 — '1183C102_001_250' 처럼
+            # {품번}_{색상}_{사이즈} 다. 점으로 자르면 통째로 남거나('..._OS')
+            # 엉뚱하게 잘려('5','0') 크림 옵션(250/255)과 한 개도 안 붙는다(실측).
+            _parts = re.split(r"[._]", str(p.get("sku") or ""))
+            nm = _parts[-1] if _parts else ""
+            if not nm or nm == str(p.get("sku") or ""):
                 continue
             out[nm] = {
                 "price": landed,
