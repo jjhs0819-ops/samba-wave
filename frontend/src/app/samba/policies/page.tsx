@@ -290,6 +290,8 @@ export default function PoliciesPage() {
   }, [])
   const [showForm, setShowForm] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
+  // '정책 미선택' 경고는 입력할 때마다 뜨면 방해된다 — 정책을 고를 때까지 1회만.
+  const unsavedWarnedRef = useRef(false)
   const [name, setName] = useState("새 정책")
   const [policyColor, setPolicyColor] = useState('#3B82F6')
   const [siteName, setSiteName] = useState("")
@@ -643,6 +645,7 @@ export default function PoliciesPage() {
   }, [selectedDetailTemplateId, detailTemplates])
 
   const openEdit = (p: SambaPolicy) => {
+    unsavedWarnedRef.current = false
     setEditingId(p.id)
     setName(p.name)
     setSiteName(p.site_name || "")
@@ -766,7 +769,16 @@ export default function PoliciesPage() {
   latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, market_detail_templates: marketDetailTemplates, color: policyColor }
 
   const triggerAutoSave = useCallback(() => {
-    if (!editingId) return
+    // 정책을 아직 고르지 않았으면 저장할 대상이 없다. 예전엔 여기서 조용히
+    // 리턴해서, 사용자는 입력이 반영된 줄 알고 새로고침 후 값이 사라졌다
+    // (바이마 정책 7개 항목이 2주간 저장되지 않음). 이제는 알린다.
+    if (!editingId) {
+      if (!unsavedWarnedRef.current) {
+        unsavedWarnedRef.current = true
+        showAlert('정책을 먼저 선택하거나 저장해야 마켓정책이 저장됩니다', 'error')
+      }
+      return
+    }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     autoSaveTimer.current = setTimeout(async () => {
       try {
@@ -786,7 +798,13 @@ export default function PoliciesPage() {
         // 리스트만 갱신 (현재 편집 폼은 유지)
         const list = await policyApi.list().catch(() => [])
         setPolicies(list)
-      } catch { /* 자동저장 실패 무시 */ }
+      } catch (e) {
+        // 삼키면 사용자는 저장된 줄 안다. 실패는 반드시 보여준다.
+        showAlert(
+          `자동저장 실패 — ${e instanceof Error ? e.message : '알 수 없는 오류'}`,
+          'error',
+        )
+      }
     }, 800)
   }, [editingId, name, siteName])
 
@@ -1290,6 +1308,13 @@ export default function PoliciesPage() {
               <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: c.text, textTransform: 'uppercase', letterSpacing: '0.05em' }}>마켓정책 설정</h4>
               <span style={{ fontSize: '0.75rem', color: c.textMuted }}>** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
             </div>
+            {/* 정책 미선택 상태에서는 자동저장이 돌지 않는다. 그대로 두면
+                입력이 반영된 것처럼 보이다가 새로고침에서 통째로 사라진다. */}
+            {!editingId && (
+              <div style={{ marginBottom: '1rem', padding: '0.625rem 0.875rem', borderRadius: '6px', background: '#5a1e1e', border: '1px solid #8b3a3a', color: '#ffd9d9', fontSize: '0.8125rem' }}>
+                정책이 선택되지 않아 <b>여기서 바꾼 값은 저장되지 않습니다</b>. 위에서 정책을 고르거나, 아래 저장 버튼으로 먼저 정책을 만들어 주세요.
+              </div>
+            )}
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center', marginBottom: '0.375rem' }}>
                 <span style={{ fontSize: '0.68rem', color: c.text, fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>국내</span>
