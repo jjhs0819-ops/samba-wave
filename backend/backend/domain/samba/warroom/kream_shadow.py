@@ -1819,7 +1819,14 @@ def calc_base(
       · surcharge_rate 명시: 호출부가 분류(PSA=0 / 박스·카드팩 / 신발·의류)해서 넘김
       · 미지정: PSA면 0, 비PSA는 박스/카드팩으로 간주(box_pack_margin_rate)"""
     require_policy()  # 정책 미로드 상태로 원가를 만들어내지 않는다 [2026-08-23]
-    ship_jpy = POLICY["shipping_fee_box"] if is_box else POLICY["shipping_fee_card"]
+    # [2026-08-26] shipping_fee_* 는 **엔** 기준(스니덩크→일본배대지 국내택배)이다.
+    # 중국 소싱(식화)은 그 구간이 없고, 위안 원가에 엔 배송비를 더한 뒤 위안 환율로
+    # 곱하면 원가가 통째로 부풀려진다 — 실측 사고: ¥550 짜리 가젤이 원가 309,161원으로
+    # 잡혀(정상 132,769원) 등록가가 238,000원까지 올라갔다. 통화가 다르면 더하지 않는다.
+    if _active_group == "CN":
+        ship_jpy = 0.0
+    else:
+        ship_jpy = POLICY["shipping_fee_box"] if is_box else POLICY["shipping_fee_card"]
     if surcharge_rate is None:
         surcharge_rate = 0 if is_card else POLICY["box_pack_margin_rate"]
     eff_jpy = price_jpy * (1 + surcharge_rate / 100)
@@ -4537,11 +4544,90 @@ async def _fetch_home_sizes(
     return out
 
 
+async def _fetch_onitsuka_sizes(cli: httpx.AsyncClient, style_code: str) -> dict | None:
+    """오니츠카 공홈 실시간 사이즈별 원가(엔)·재고 [2026-08-27].
+
+    종전엔 오니츠카가 이 진입점에 없어 `_fetch_snkr_live_sizes` 로 떨어졌다.
+    스니덩크에 `3183A970-001` 을 물으니 당연히 없고, 옵션이 전부 품절·원가 0 으로
+    읽혀 **등록된 입찰이 다음 사이클에 그대로 삭제**됐다(실측 130→117).
+
+    일본 스토어 GraphQL 이 엔화를 준다. 상품 지정은 필터가 아니라 **검색어**다 —
+    `filter:{sku:{eq}}` · `filter:{url_key:{eq}}` 는 total 0 으로 막혀 있다(실측).
+      크림 style_code '3183A970-001'  ↔  공홈 sku '3183A970.001'
+      variants[].product.sku 의 끝 토막이 사이즈(`.250` = 25.0cm)
+
+    전역 GraphQL(`/graphql`)은 global-e 가 접속 국가로 통화를 정해 한국 IP 면 KRW 다.
+    그건 해외직구가지 원가가 아니므로 **반드시 `/jp/ja-jp/graphql`** 을 쓴다.
+    조회 실패는 None(기존 DB값 유지) — 0 을 반환하면 정상 입찰이 무재고로 삭제된다.
+    """
+    sc = str(style_code or "").strip()
+    if not sc:
+        return None
+    sku = sc.replace("-", ".")
+    q = (
+        '{products(search:"%s",pageSize:5){items{sku '
+        "price_range{minimum_price{final_price{value currency}}} "
+        "__typename ... on ConfigurableProduct{variants{product{"
+        "sku stock_status}}}}}}" % sku
+    )
+
+    def _n(v: str) -> str:
+        return re.sub(r"[^A-Z0-9]", "", str(v or "").upper())
+
+    try:
+        r = await cli.get(
+            "https://www.onitsukatiger.com/jp/ja-jp/graphql",
+            params={"query": q},
+            headers={
+                "Store": "default",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+                ),
+            },
+        )
+        items = ((r.json().get("data") or {}).get("products") or {}).get("items") or []
+    except Exception:
+        return None
+    for it in items:
+        if _n(it.get("sku")) != _n(sku):
+            continue
+        fp = ((it.get("price_range") or {}).get("minimum_price") or {}).get(
+            "final_price"
+        ) or {}
+        # 통화가 JPY 가 아니면 global-e 가 끼어든 것 — 원가로 쓰면 안 된다.
+        if str(fp.get("currency") or "") != "JPY":
+            return None
+        pr = int(float(fp.get("value") or 0))
+        if pr <= 0:
+            return None
+        # 배송비를 먼저 더하고 그 총액에 대행 수수료를 얹는다(유니클로·GU 와 같은 규칙).
+        landed = pr + (_HOME_SHIP_FEE if pr < _HOME_FREE_SHIP_MIN else 0)
+        landed = int(round(landed * _AGENCY_FEE_RATE))
+        out: dict = {}
+        for v in it.get("variants") or []:
+            p = v.get("product") or {}
+            nm = str(p.get("sku") or "").split(".")[-1]
+            if not nm:
+                continue
+            out[nm] = {
+                "price": landed,
+                "stock": 1 if p.get("stock_status") == "IN_STOCK" else 0,
+            }
+        if not out:
+            out["ONE SIZE"] = {"price": landed, "stock": 1}
+        return out
+    return None
+
+
 async def _fetch_live_sizes_by_site(
     cli: httpx.AsyncClient, site: str, sid: str
 ) -> dict | None:
-    """소싱처별 실시간 사이즈 시세 진입점 — 스니덩크 / 공홈(유니클로·GU)."""
-    if str(site).upper() in _HOME_API:
+    """소싱처별 실시간 사이즈 시세 진입점 — 스니덩크 / 공홈(유니클로·GU·오니츠카)."""
+    _site = str(site).upper()
+    if _site == "ONITSUKA":
+        return await _fetch_onitsuka_sizes(cli, sid)
+    if _site in _HOME_API:
         return await _fetch_home_sizes(cli, site, sid)
     return await _fetch_snkr_live_sizes(cli, sid)
 
