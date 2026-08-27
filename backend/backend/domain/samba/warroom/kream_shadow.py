@@ -6008,8 +6008,27 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     # 순서를 '재고보유 + 소싱처 정보 오래된 순'으로 잡으면 순환은 저절로 된다 —
     # 판정한 상품은 실시간 원가/재고를 되쓰며 updated_at 이 NOW() 로 밀리므로
     # 자연히 뒤로 간다. 별도 상태를 들고 다닐 이유가 없다.
-    _scanned: set = set()
-    _fresh = list(rest_products)
+    # [2026-08-27] 스캔목록 **복원**. 2026-08-16 에 "재고보유+updated_at 정렬이 순환을
+    # 담당한다"며 지웠으나, 그 정렬은 재고 보유가 **1순위**라 재고 보유분이 매 사이클
+    # 다시 맨 앞에 선다. 슬라이스 1만은 그 그룹(28,991) 안에서만 돌고, 재고 0 그룹은
+    # 3 사이클마다 남는 1,009 자리만 받아 한 바퀴에 12일이 걸렸다.
+    #   실측(2026-08-27): DB재고 0 인 48,059건이 7일 넘게 판정을 못 받음.
+    #   크림662555(PSA 10 재고1·1등가능·1,631,000 등록가)는 이틀째 대기열 77,920번.
+    #   판정을 못 받으면 DB 재고도 못 갱신하므로 0 인 채 계속 뒤에 갇힌다(악순환).
+    # '이번 바퀴에 본 kid' 를 빼면 재고 우선 정렬은 **한 바퀴 안의 순서**로만 작동하고,
+    # 매칭 전량(약 10만)이 슬라이스 크기대로 10 사이클에 한 바퀴 돈다.
+    # 폐기 사유였던 '배포 때 리셋'은 DB 에 저장하므로 발생하지 않는다.
+    _scanned: set = {str(_k) for _k in (await _load_setting_map(_SET_SCANNED))}
+    _fresh = [p for p in rest_products if str(p["kid"]) not in _scanned]
+    # 남은 게 슬라이스보다 적으면 한 바퀴가 끝난 것 — 비우고 새 바퀴를 연다.
+    if len(_fresh) < _restock_scan:
+        logger.info(
+            "[크림통합] 리스톡 한 바퀴 완료(잔여 %d < 슬라이스 %d) — 스캔목록 리셋",
+            len(_fresh),
+            _restock_scan,
+        )
+        _scanned = set()
+        _fresh = list(rest_products)
 
     # [2026-08-15] **재고 있는 것부터 스캔한다.** 종전엔 스캔목록 순서 그대로 잘랐는데,
     # 슬라이스마다 재고 보유량이 극심하게 갈려 등록이 0 에 가까운 사이클이 반복됐다.
@@ -6026,7 +6045,10 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     # [2026-08-16] 재고 우선 + **소싱처 정보가 오래된 것부터**.
     # 스캔목록만으로 회전시키면 배포로 리셋될 때마다 같은 앞부분을 다시 훑는다.
     # updated_at 은 갱신·리스톡이 실시간 원가/재고를 되쓸 때 NOW() 로 찍히므로,
-    # 오래된 순이 곧 '아직 안 본 것' 이다 — 스캔목록이 없어도 자연히 순환한다.
+    # 오래된 순이 곧 '아직 안 본 것' 이다.
+    # [2026-08-27] 이 정렬은 **한 바퀴 안의 순서**만 정한다. 바퀴 자체의 순환은 위
+    # 스캔목록(_scanned)이 담당한다 — 정렬만으로는 재고 보유분이 매번 앞에 서서
+    # 뒤 그룹에 차례가 안 온다(그래서 2026-08-16 폐기를 되돌렸다).
     _fresh.sort(key=lambda p: (_has_stock(p), p.get("upd_ts") or 0))
     rest_slice = _fresh[:_restock_scan] if _restock_scan > 0 else _fresh
     # [2026-08-05] 스캔목록 저장을 **판정 뒤로** 옮긴다.
@@ -6034,7 +6056,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     # 보지 않아서, 조회 상한이나 스니덩크 실패로 한 번도 못 본 상품이 완료로 남고
     # 한 바퀴(5.6만) 내내 다시 안 뽑혔다. 실측 14334: 재고 1·크림 무경쟁인데 하루 넘게
     # 미등록 — 상한이 굶기고 스캔목록이 그걸 처리완료로 덮은 결과.
-    _scanned.update(p["kid"] for p in rest_slice)
+    _scanned.update(str(p["kid"]) for p in rest_slice)
     _unified_offset = len(_scanned)  # 바퀴 진행률(슬랙·로그 표기용)
     _g_unjudged.clear()
     _instock_n = sum(
@@ -6095,16 +6117,24 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
             return list(b)
         if not b:
             return list(a)
+        # [2026-08-27] 소수점 버림(int(step))을 **누적 목표치**로 바꾼다.
+        # 종전엔 step=1.21 이 int() 로 1 이 돼 1:1 로만 섞였다. 그러면 갱신(a)이 먼저
+        # 소진되고 리스톡(b) 나머지가 사이클 끝에 통째로 몰린다 — 사이클이 끊기면
+        # 그 구간은 등록에 못 간다(실측 a=12,116 · b=10,000 → 뒤쪽 2,116건이 몰림).
+        # b 를 ib 개 낸 시점에 a 가 몇 개 나갔어야 하는지로 맞추면 비율이 유지된다.
         out, ia, ib = [], 0, 0
-        step = len(a) / len(b)  # a 를 step 개 넣을 때마다 b 하나
+        step = len(a) / len(b)  # b 하나당 a 몇 개
         while ia < len(a) or ib < len(b):
-            for _ in range(max(1, int(step))):
-                if ia < len(a):
-                    out.append(a[ia])
-                    ia += 1
+            want = min(len(a), round(step * (ib + 1)))
+            while ia < want:
+                out.append(a[ia])
+                ia += 1
             if ib < len(b):
                 out.append(b[ib])
                 ib += 1
+            elif ia < len(a):  # b 가 먼저 끝나면 a 잔여를 그대로 붙인다
+                out.extend(a[ia:])
+                ia = len(a)
         return out
 
     products = _interleave(live_products, rest_slice)
@@ -6432,375 +6462,20 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                             _nm,
                         )
                         continue
-                    r["rows"].append(
-                        (
-                            "restock",
-                            "리스톡",
-                            kid,
-                            _nm,
-                            0,
-                            _tgt,
-                            True,
-                            prod["name"],
-                            False,
-                        )
-                    )
-                return r
-            live = await _fetch_snkr_used(scli, snkr_id) if snkr_id else None
-            if live is None:
-                r["snkr_fail"] = 1
-                _g_unjudged.add(kid)  # 스니덩크 조회 실패 — 판정 못 함
-                return r
-            r["snkr_ok"] = 1
-            r["card"] = 1
-            # 매수추천/원가오염 감시용 스냅샷 (PSA10 고점대비 급락 판정)
-            _p10 = live.get("PSA 10") or {}
-            _p9 = live.get("PSA 9") or {}
-            r["psa"] = (
-                kid,
-                snkr_id,
-                int(_p10.get("price") or 0),
-                int(_p10.get("stock") or 0),
-                int(_p9.get("price") or 0),
-                int(_p9.get("stock") or 0),
-            )
-            # 슬랙 '재고 N건(카드…)' 집계 — 매물 있는 카드 상품 수
-            if int(_p10.get("stock") or 0) > 0 or int(_p9.get("stock") or 0) > 0:
-                r["instock"] = 1
-            # ── DB write-back [원가/재고 갱신] — 카드는 마켓 미등록이라 메인 오토튠 범위 밖.
-            # 로컬 전수스캔이 하던 DB options 갱신이 끊겨 db_opts 가 낡았다(검수/리포트/즉시수익
-            # 부정확). kream_shadow 가 매 사이클 실시간 fetch 하므로 그 값을 DB 에 되쓴다.
-            # 비PSA(박스/신발) 옵션은 보존, PSA10/9 만 실시간값으로 갱신.
-            _base_opts = [
-                {
-                    "name": _n,
-                    "price": int(_d.get("price") or 0),
-                    "stock": int(_d.get("stock") or 0),
-                }
-                for _n, _d in (prod.get("db_opts") or {}).items()
-                if not str(_n).upper().startswith("PSA")
-            ]
-            _new_opts = _base_opts + [
-                {
-                    "name": "PSA 10",
-                    "price": int(_p10.get("price") or 0),
-                    "stock": int(_p10.get("stock") or 0),
-                },
-                {
-                    "name": "PSA 9",
-                    "price": int(_p9.get("price") or 0),
-                    "stock": int(_p9.get("stock") or 0),
-                },
-            ]
-            _new_cost = int(_p10.get("price") or 0) or int(_p9.get("price") or 0)
-            # fetch 성공(2311서 None 조기리턴)이므로 소싱품절(cost0)도 실측이다.
-            # 재고0·확인시각을 항상 되쓴다(소싱품절 카드 updated_at 이 07-22 동결되던 버그).
-            # cost 는 write-back 에서 0 이면 기존값 보존(마지막 원가 유실 방지).
-            r["db_update"] = (snkr_id, _new_opts, _new_cost)
-            # 크림 옵션(최저가) 조회 캐시 — 상품당 1회. 리스톡 신규등록에서 1등 판정에 쓴다.
-            _card_opts_cache: list | None = None
-            _kream_name_cache: str = ""  # 사이즈 국가 게이트용 크림 상품명
-            # PSA10/PSA9만 — 카드는 실시간 snkr(/used) 원가·재고 신뢰
-            for nm in ("PSA 10", "PSA 9"):
-                d = live.get(nm) or {}
-                price = _guard_jpy(kid, nm, int(d.get("price") or 0))
-                stock = int(d.get("stock") or 0)
-                ask = _get_live_ask(kid, nm)
-                has_ask = ask is not None
-                # 입찰 최고 원가 초과 — 신규 등록은 막고, **이미 걸린 입찰은 지운다**.
-                # [2026-08-13] 종전엔 has_ask 여부와 무관하게 overcost 로 빼기만 해서,
-                # 원가가 오른 뒤 상한을 넘긴 입찰이 영구 방치됐다. 체결되면 상한 초과
-                # 원가로 소싱해야 하므로 등록 차단과 삭제를 한 판정으로 묶는다.
-                if over_cost(price):
-                    r["rows"].append(
-                        (
-                            "delete" if has_ask else "overcost",
-                            "원가상한초과삭제" if has_ask else "원가상한초과",
-                            kid,
-                            nm,
-                            int(ask.get("price") or 0) if has_ask else 0,
-                            0,
-                            bool(has_ask),
-                            prod["name"],
-                            False,
-                        )
-                    )
-                    continue
-                if has_ask and stock > 0 and price > 0:
-                    cur = int(ask.get("price") or 0)
-                    low_over = int(ask.get("lowest_overseas_price") or 0)
-                    low_norm = int(ask.get("lowest_normal_price") or 0)
-                    low_keep = int(ask.get("lowest_100_price") or 0)
-                    # 입찰제한 쿨다운 — 크림이 계속 거절하는 건은 재시도 안 함
-                    if f"{kid}|{nm}" in _g_limit_cd:
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "입찰제한쿨다운",
-                                kid,
-                                nm,
-                                cur,
-                                cur,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
-                    _mp_now = calc_min_price(
-                        price, rate, False, nm.upper().startswith("PSA")
-                    )
-                    _floor_map[(kid, nm)] = _mp_now
-                    _floor_hint_put(kid, nm, _mp_now)
-                    act, target, adjusting, is_nc = _decide_price_action(
-                        cur,
-                        nm,
-                        price,
-                        low_over,
-                        low_norm,
-                        (kid, nm) in cooldown,
-                        prod["fixed"].get(nm, 0),
+                    # [2026-08-27] 리스톡도 **마진 하한을 남긴다.** 종전엔 갱신 경로만
+                    # _floor_map 에 넣어서, 등록 직전 재확인 게이트가 _floor_of() 로
+                    # 찾으면 0 이 나왔다. 거기 조건이 `if _fl and _cand >= _fl` 이라
+                    # 0(=하한 모름)이 '하한 초과'와 똑같이 취급돼 **무조건 보류**된다.
+                    # 목표가가 직전 최저보다 비싸지는 순간 그 건은 영영 등록이 안 된다.
+                    _floor_map[(kid, _nm)] = calc_min_price(
+                        _pr,
                         rate,
-                        tariff_threshold,
-                        live_rank=(await _rank_of(h, ask.get("id")) if ask else None),
-                        low_keep=low_keep,
+                        True,
+                        False,
+                        POLICY["non_card_margin_rate"],
+                        fee_kind="item",
                     )
-                    # 가격열위(국내 못이김/1등불가) 삭제, 아니면 갱신
-                    r["rows"].append(
-                        (
-                            "delete"
-                            if act in ("국내못이김삭제", "1등불가삭제")
-                            else "renew",
-                            act,
-                            kid,
-                            nm,
-                            cur,
-                            target,
-                            adjusting,
-                            prod["name"],
-                            is_nc,
-                        )
-                    )
-                elif has_ask and stock <= 0 and prod.get("ambiguous"):
-                    # 중복매핑(ambiguous) 가격불일치 — 어느 snkr 이 진짜 매칭인지 불확실.
-                    # 재고0 판단이 무효일 수 있어 삭제 보류(로컬 삭제보류 이식, 오삭제 방지).
-                    _cp = int(ask.get("price") or 0)
-                    r["rows"].append(
-                        (
-                            "skip",
-                            "삭제보류(중복매핑)",
-                            kid,
-                            nm,
-                            _cp,
-                            _cp,
-                            False,
-                            prod["name"],
-                            False,
-                        )
-                    )
-                elif has_ask and stock <= 0:
-                    # 재고0 HTML 이중검증 — used API 순간 0 에 정상입찰 오삭제 방지.
-                    _hl = await _html_haslisting(scli, snkr_id, nm)
-                    if _hl is not False:
-                        # True(HTML상 재고있음) 또는 None(확인불가) → 삭제 보류
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "삭제보류(HTML재고확인)",
-                                kid,
-                                nm,
-                                int(ask.get("price") or 0),
-                                int(ask.get("price") or 0),
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                    else:
-                        r["rows"].append(
-                            (
-                                "delete",
-                                "삭제(무재고·HTML확인)",
-                                kid,
-                                nm,
-                                int(ask.get("price") or 0),
-                                0,
-                                True,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                elif not has_ask and stock > 0 and price > 0:
-                    # [2026-08-05] 리스톡 등록도 **갱신과 같은 _decide_price_action** 을 탄다.
-                    # 종전엔 여기서만 자체 계산(calc_base/calc_min_price + 별도 _mkt 판정)을
-                    # 해서 등록 기준과 삭제 기준이 어긋났다 — 등록은 일반가만 보고 통과시키고,
-                    # 갱신은 일반·해외·보관100 을 다 봐서 1등불가로 지우는 왕복이 났다.
-                    # 카드/신발/박스 구분 없이 한 함수, 한 기준으로 판정한다.
-                    try:
-                        if _card_opts_cache is None:
-                            _cr = await _rq(
-                                "GET", f"{KREAM_OPENAPI_BASE}/products/{kid}", headers=h
-                            )
-                            _cr_j = _cr.json() or {}
-                            _card_opts_cache = _cr_j.get("options") or []
-                            _kream_name_cache = str(_cr_j.get("name") or "")
-                        _copt = _match_kream_option(nm, _card_opts_cache)
-                    except Exception:
-                        _copt = None
-                    # [2026-08-05] 옵션 매칭 실패 = "시세를 모름"이지 "경쟁자 없음"이 아니다.
-                    # 빈 dict 를 넘기면 시세가 전부 0 → market_low=0 → 무경쟁 판정 →
-                    # 시세를 무시하고 원가+마진으로 등록해버린다.
-                    # 실측 147059|250(7Y): 일반가 119,000 이 있는데 202,000 에 등록 →
-                    # 다음 사이클에 1등불가로 삭제되는 왕복. 매칭 실패면 등록을 건너뛴다.
-                    if _copt is None:
-                        _g_optmiss[f"{kid}|{nm}"] = ",".join(
-                            str(_o.get("name") or "") for _o in (_card_opts_cache or [])
-                        )[:200]
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "리스톡보류(옵션매칭실패)",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    # [2026-08-21] 크림이 같은 mm 를 두 옵션(`240(US 5.5)`·`240(US 6)`)
-                    # 으로 갈라 둔 자리면 등록하지 않는다 — 스니덩크는 `24cm` 하나뿐이라
-                    # 어느 쪽 물건인지 정할 수 없고, 팔리면 검수에서 반려된다.
-                    # 그 mm 가 하나뿐이면(`250(7Y)`) 1:1 이므로 정상 등록한다.
-                    # [2026-08-21] 크림이 `- KR Sizing`/`- US Sizing` 으로 국가를 못박은
-                    # 상품에 일본 표기(JP S/M/L) 물건을 넣으면 검수에서 불합격한다.
-                    # 실물 라벨에 KR 줄 자체가 없고, 같은 옷의 KR Sizing 아닌 크림 상품도
-                    # 없어 옮겨 담을 데가 없다. 확정 여부와 무관하게 등록을 막는다.
-                    # [2026-08-23] 크림 주니어·유아 옵션(`230(4Y)`·`150(7K)`)은
-                    # 스니덩크에 Y/K 구분이 없어 그 물건을 살 수 없다 — 검수 반려된다.
-                    # (실측: 대응 스니덩크 243건 전부 Y/K 표기 0건)
-                    # [2026-08-23] 매칭 블랙리스트(kream_snkr_rejected) —
-                    # 검수에서 걸러낸 조합은 매칭이 되살아나도 등록하지 않는다.
-                    if is_rejected_match(prod.get("snkr_id"), kid):
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "리스톡보류(매칭블랙리스트)",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    if junior_size_option(
-                        str(_copt.get("name") or nm),
-                        list((prod.get("db_opts") or {}).keys()),
-                    ):
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "리스톡보류(주니어사이즈)",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    if sizing_conflict_option(
-                        _kream_name_cache, nm, list((prod.get("db_opts") or {}).keys())
-                    ):
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "리스톡보류(사이즈국가불일치)",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    if ambiguous_size_option(
-                        str(_copt.get("name") or nm), _card_opts_cache
-                    ):
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "리스톡보류(사이즈중복)",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    _co = _copt
-                    # [2026-08-14] **등록할 바로 그 크림 옵션명으로 보유를 재확인**한다.
-                    # 위 has_ask 는 DB/스니덩크 옵션명 기준이라, 표기 규칙이 한 군데라도
-                    # 어긋나면 '입찰 없음'으로 새 나간다. 등록은 _copt["name"](크림 실제
-                    # 옵션명)으로 나가므로 그 이름으로 보면 규칙과 무관하게 절대 안 뚫린다.
-                    # 뚫렸을 때 나오는 결과가 '내 기존 입찰을 시장최저로 읽고 -1,000 해서
-                    # 그 위에 또 등록' 이다 — 실측 중복 359쌍이 전부 정확히 1,000원 차이.
-                    _kopt_nm = str(_copt.get("name") or "")
-                    if _kopt_nm and _get_live_ask(kid, _kopt_nm) is not None:
-                        r["rows"].append(
-                            (
-                                "skip",
-                                "리스톡보류(이미입찰중)",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
-                    _act, _tgt, _adj, _isnc = _decide_price_action(
-                        0,
-                        nm,
-                        price,
-                        int(_co.get("lowest_overseas_price") or 0),
-                        int(_co.get("lowest_normal_price") or 0),
-                        (kid, nm) in cooldown,
-                        prod["fixed"].get(nm, 0),
-                        rate,
-                        tariff_threshold,
-                        low_keep=int(_co.get("lowest_100_price") or 0),
-                    )
-                    if "삭제" in _act or _tgt <= 0:
-                        r["rows"].append(
-                            (
-                                "skip",
-                                f"리스톡보류({_act})",
-                                kid,
-                                nm,
-                                0,
-                                0,
-                                False,
-                                prod["name"],
-                                False,
-                            )
-                        )
-                        continue
+                    _floor_hint_put(kid, _nm, _floor_map[(kid, _nm)])
                     r["rows"].append(
                         (
                             "restock",
@@ -7168,6 +6843,11 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                             )
                         )
                         continue
+                    # [2026-08-27] 카드 리스톡도 **마진 하한을 남긴다** — 신발/의류와 같은
+                    # 이유다. 등록 직전 재확인 게이트가 _floor_of() 로 0 을 받으면
+                    # `if _fl and _cand >= _fl` 에서 '하한 초과'와 똑같이 취급돼 보류된다.
+                    _floor_map[(kid, nm)] = calc_min_price(price, rate, False, True)
+                    _floor_hint_put(kid, nm, _floor_map[(kid, nm)])
                     r["rows"].append(
                         (
                             "restock",
@@ -7804,10 +7484,12 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
         await _save_setting_map(_SET_RECENT, _g_recent_posts)
         _progress()  # 워치독 — 마무리 단계도 진행이다
         await _save_setting_map(_SET_FAILED, _g_failed_posts)
-    # [2026-08-16] 스캔목록 저장 폐기 — 순환은 '재고보유 + updated_at 오래된 순'
-    # 정렬이 담당한다. 판정한 상품은 실시간 원가/재고 되쓰기로 updated_at 이 밀려
-    # 자연히 뒤로 간다. 별도 상태를 저장할 이유가 없다.
-    # (남아 있던 값은 다음 로드에서 안 읽으므로 그대로 둬도 무해하다)
+    # [2026-08-27] 스캔목록 저장 **복원**(2026-08-16 폐기를 되돌림).
+    # 등록 실행까지 끝난 뒤 저장한다 — 판정만 하고 중간에 죽으면(배포·컨테이너 교체)
+    # 그 슬라이스가 '봤음'으로 남아 다음 바퀴까지 통째로 빠지기 때문이다.
+    # 미판정분(_g_unjudged)은 위에서 이미 빼뒀다.
+    _progress()  # 워치독 — 마무리 단계도 진행이다
+    await _save_setting_map(_SET_SCANNED, {_k: 1 for _k in _scanned})
     _progress()  # 워치독 — 마무리 단계도 진행이다
     await _save_setting_map(
         _SET_MISS, _g_miss_counts
