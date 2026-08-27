@@ -6020,15 +6020,6 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     # 폐기 사유였던 '배포 때 리셋'은 DB 에 저장하므로 발생하지 않는다.
     _scanned: set = {str(_k) for _k in (await _load_setting_map(_SET_SCANNED))}
     _fresh = [p for p in rest_products if str(p["kid"]) not in _scanned]
-    # 남은 게 슬라이스보다 적으면 한 바퀴가 끝난 것 — 비우고 새 바퀴를 연다.
-    if len(_fresh) < _restock_scan:
-        logger.info(
-            "[크림통합] 리스톡 한 바퀴 완료(잔여 %d < 슬라이스 %d) — 스캔목록 리셋",
-            len(_fresh),
-            _restock_scan,
-        )
-        _scanned = set()
-        _fresh = list(rest_products)
 
     # [2026-08-15] **재고 있는 것부터 스캔한다.** 종전엔 스캔목록 순서 그대로 잘랐는데,
     # 슬라이스마다 재고 보유량이 극심하게 갈려 등록이 0 에 가까운 사이클이 반복됐다.
@@ -6050,7 +6041,20 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     # 스캔목록(_scanned)이 담당한다 — 정렬만으로는 재고 보유분이 매번 앞에 서서
     # 뒤 그룹에 차례가 안 온다(그래서 2026-08-16 폐기를 되돌렸다).
     _fresh.sort(key=lambda p: (_has_stock(p), p.get("upd_ts") or 0))
-    rest_slice = _fresh[:_restock_scan] if _restock_scan > 0 else _fresh
+    # [2026-08-27] 바퀴 마지막 — 잔여를 **이번 사이클에 다 처리하고** 리셋한다.
+    # 잔여가 슬라이스보다 적으면 그 잔여만 돌린다(예: 99,000 중 마지막 9,000 → 9,000건).
+    # 리셋은 처리 뒤(아래 _scanned 갱신 직후)에 한다 — 먼저 비우고 전체로 갈아엎으면
+    # 그 잔여가 한 번도 판정 안 된 채 사라진다. 리셋 후 재정렬하면 재고 보유분이
+    # 1순위로 앞에 서므로 재고 0 인 잔여는 다음 바퀴에서도 뒤로 밀리고, 결국 매 바퀴
+    # 끝자락에 영영 안 보는 구간이 생긴다.
+    # (리셋 조건을 '잔여 0' 으로 두지 않는 이유는 2026-08-06 과 동일하다 — 신규 매칭이
+    #  매 사이클 1~45건씩 들어와 잔여가 0 이 되는 순간이 오지 않는다.)
+    _wrap = _restock_scan > 0 and len(_fresh) < _restock_scan
+    if _wrap:
+        logger.info(
+            "[크림통합] 리스톡 바퀴 마지막 — 잔여 %d건 처리하고 새 바퀴로", len(_fresh)
+        )
+    rest_slice = _fresh if _wrap or _restock_scan <= 0 else _fresh[:_restock_scan]
     # [2026-08-05] 스캔목록 저장을 **판정 뒤로** 옮긴다.
     # 종전엔 슬라이스에 뽑자마자 전량 '완료'로 찍고 저장했다. 판정까지 갔는지는
     # 보지 않아서, 조회 상한이나 스니덩크 실패로 한 번도 못 본 상품이 완료로 남고
@@ -6058,6 +6062,11 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     # 미등록 — 상한이 굶기고 스캔목록이 그걸 처리완료로 덮은 결과.
     _scanned.update(str(p["kid"]) for p in rest_slice)
     _unified_offset = len(_scanned)  # 바퀴 진행률(슬랙·로그 표기용)
+    if _wrap:
+        # 잔여를 이번 사이클에 다 처리했으니 여기서 목록을 비운다 — 다음 사이클이
+        # 새 바퀴 첫 슬라이스가 된다. 방금 본 잔여는 updated_at 이 최신이라
+        # 새 바퀴에서 자연히 뒤로 간다(같은 재고 그룹 안에서).
+        _scanned = set()
     _g_unjudged.clear()
     _instock_n = sum(
         1
