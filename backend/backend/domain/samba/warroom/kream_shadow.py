@@ -2818,7 +2818,70 @@ async def _load_matched_products() -> list[dict]:
                 "fixed": fixed,
             }
         )
-    return out
+    return _pick_cheapest_source(out)
+
+
+def _pick_cheapest_source(rows: list[dict]) -> list[dict]:
+    """같은 크림 상품이 여러 소싱처에 매칭돼 있으면 **가장 싼 곳만** 남긴다.
+
+    [2026-08-27] 종전엔 중복 제거가 없어 한 크림 상품(kid)에 두 행이 들어갔고,
+    판정도 두 번 돌았다. 두 소싱처 원가가 다르면 목표가가 둘 나오고 갱신이 서로
+    덮어써, 어느 쪽이 먼저 실행되느냐에 따라 가격이 흔들린다.
+      실측(2026-08-27): 스니덩크↔오니츠카 겹침 517개 상품 / 옵션 6,336개.
+      양쪽 다 원가가 있는 2,742 옵션은 **전부** 값이 달랐다.
+      재고 있는 것 기준 최저가는 오니츠카 1,909 · 스니덩크 21 — 공홈 정가와
+      리셀가의 차이라 사실상 일방적이다(평균 18,036엔·41.5% 저렴, 최대 89,314엔).
+    싼 쪽을 쓰면 원가가 내려가 1등 잡을 수 있는 옵션이 늘어난다.
+
+    선택 기준은 **재고 있는 옵션의 평균 원가**다. 재고 정보가 없으면 전체 평균으로
+    떨어진다(DB 값은 낡을 수 있지만 어느 소싱처가 싼지 고르는 데는 충분하고,
+    실제 원가·재고는 판정에서 실시간으로 다시 본다).
+    통화가 다른 행(스니덩크 글로벌 USD 등)은 숫자 비교가 성립하지 않으므로
+    뒤로 보낸다 — 엔화로 오인하면 9배 오입찰이 난다.
+    """
+    by_kid: dict = {}
+    for p in rows:
+        by_kid.setdefault(p["kid"], []).append(p)
+
+    def _avg_cost(p: dict) -> tuple:
+        vals = [
+            int(d.get("price") or 0)
+            for d in (p.get("db_opts") or {}).values()
+            if int(d.get("price") or 0) > 0 and int(d.get("stock") or 0) > 0
+        ]
+        if not vals:  # 재고 정보가 없으면 전체 옵션 평균으로
+            vals = [
+                int(d.get("price") or 0)
+                for d in (p.get("db_opts") or {}).values()
+                if int(d.get("price") or 0) > 0
+            ]
+        return (
+            0 if str(p.get("currency") or "JPY").upper() == "JPY" else 1,
+            0 if vals else 1,  # 원가를 아예 모르는 행은 맨 뒤
+            sum(vals) / len(vals) if vals else 0,
+        )
+
+    dropped: dict = {}
+    for _kid, ps in by_kid.items():
+        if len(ps) < 2:
+            continue
+        for _p in sorted(ps, key=_avg_cost)[1:]:
+            # [2026-08-27] **행을 버리지 않는다.** 빼버리면 그 소싱처의 원가·재고
+            # write-back(_db_update)이 끊겨 DB 값이 썩는다 — 나중에 싼 쪽이 품절돼
+            # 되돌아갈 때 판단 근거가 없어진다. 조회·판정은 그대로 돌리고,
+            # 등록·갱신·삭제 지시만 버린다(_process_logged 에서 rows 를 비운다).
+            _p["cost_loser"] = True
+            _s = str(_p.get("site") or "?")
+            dropped[_s] = dropped.get(_s, 0) + 1
+    if dropped:
+        logger.info(
+            "[크림통합] 소싱처 중복 %s — 원가 싼 쪽만 등록·갱신(수집 갱신은 전부 유지)",
+            ", ".join(
+                f"{k} {v:,}건 보류"
+                for k, v in sorted(dropped.items(), key=lambda x: -x[1])
+            ),
+        )
+    return rows
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -6892,7 +6955,14 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     async def _process_logged(_p, _cli):
         nonlocal _done_n
         try:
-            return await _process(_p, _cli)
+            _r = await _process(_p, _cli)
+            # [2026-08-27] 같은 크림 상품이 여러 소싱처에 매칭된 경우, 원가가 비싼 쪽은
+            # **등록·갱신·삭제 지시를 내지 않는다.** 두 행이 각자 목표가를 계산해
+            # 같은 입찰을 서로 덮어쓰면 실행 순서에 따라 가격이 흔들린다.
+            # 조회·판정은 그대로 돌렸으므로 db_update(원가·재고 수집 갱신)는 남긴다.
+            if _p.get("cost_loser") and isinstance(_r, dict):
+                _r["rows"] = []
+            return _r
         finally:
             _done_n += 1
             _progress()  # 워치독 — 상품 하나 끝날 때마다 살아있음 표시
