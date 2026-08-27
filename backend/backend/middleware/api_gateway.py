@@ -29,6 +29,10 @@ _EXEMPT_PATHS = {
     "/api/v1/samba/users/login",  # 로그인
     "/api/v1/samba/orders/ship-by-kakao",  # 카톡 송장 자동입력 — 라우트 자체 X-Kakao-Secret 검증
     "/api/v1/samba/orders/kakao-name-candidates",  # 카톡 OCR 이름 깨짐 대응 후보 조회 — 라우트 자체 X-Kakao-Secret 검증
+    # BUYMA PS-API webhook — BUYMA가 X-Api-Key 없이 호출.
+    # 라우트가 X-Buyma-Hmac-Sha256(HMAC-SHA256) 로 자체 검증하며, 서명이
+    # 맞지 않으면 401 이라 면제해도 아무나 쓸 수 있는 경로가 아니다.
+    "/api/v1/samba/buyma/webhook",
     "/api/v1/auth/email/sign-up",
     "/api/v1/auth/email/login",
     "/api/v1/auth/refresh",
