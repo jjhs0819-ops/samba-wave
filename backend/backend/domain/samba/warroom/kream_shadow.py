@@ -1813,6 +1813,7 @@ def calc_base(
     is_box: bool = False,
     is_card: bool = True,
     surcharge_rate: float | None = None,
+    home_direct: bool = False,
 ) -> float:
     """원가 base = (snkr엔 + 배송엔)×환율 + 배대지비(원).
     추가마진율(%)만큼 원가 가산 — 정책값 사용(하드코딩 금지).
@@ -1823,7 +1824,10 @@ def calc_base(
     # 중국 소싱(식화)은 그 구간이 없고, 위안 원가에 엔 배송비를 더한 뒤 위안 환율로
     # 곱하면 원가가 통째로 부풀려진다 — 실측 사고: ¥550 짜리 가젤이 원가 309,161원으로
     # 잡혀(정상 132,769원) 등록가가 238,000원까지 올라갔다. 통화가 다르면 더하지 않는다.
-    if _active_group == "CN":
+    # [2026-08-27] 공홈 소싱(유니클로·GU·오니츠카)도 이 구간이 없다. 원가에 이미
+    # 각 공홈의 국내 배송비가 들어 있어(_home_landed) 여기서 또 얹으면 이중 부과다.
+    #   실측: 유니클로 벨트 ¥3,490 에 스니덩크용 900엔이 붙어 원가가 7,828원 부풀었다.
+    if _active_group == "CN" or home_direct:
         ship_jpy = 0.0
     else:
         ship_jpy = POLICY["shipping_fee_box"] if is_box else POLICY["shipping_fee_card"]
@@ -1884,9 +1888,10 @@ def calc_min_price(
     is_card: bool = True,
     surcharge_rate: float | None = None,
     fee_kind: str | None = None,
+    home_direct: bool = False,
 ) -> int:
     require_policy()  # 정책 미로드 상태로 값을 만들어내지 않는다 [2026-08-23]
-    base = calc_base(price_jpy, rate, is_box, is_card, surcharge_rate)
+    base = calc_base(price_jpy, rate, is_box, is_card, surcharge_rate, home_direct)
     margin = max(
         float(POLICY["min_margin_amount"]),
         base * POLICY["competitive_margin_rate"] / 100,
@@ -2248,18 +2253,40 @@ def _group_sites_sql(group: str) -> str:
     return "('" + "','".join(sites) + "')"
 
 
-# 공홈 API — 3,000엔 미만 주문은 배송비 500엔이 붙는다(사용자 확정 규칙).
 _HOME_API = {
     "UNIQLO": "https://www.uniqlo.com/jp/api/commerce/v5/ja",
     "GU": "https://www.gu-global.com/jp/api/commerce/v5/ja",
 }
-_HOME_FREE_SHIP_MIN = 3000
-_HOME_SHIP_FEE = 500
-# 구매대행 수수료 [2026-08-26 지시] — 오니츠카·유니클로·GU 공홈은 한국 카드 결제가
-# 안 돼 대행을 거친다. 수수료는 **배송비까지 더한 총액 기준 4%**.
-#   예) 상품 2,000엔 + 배송 500엔 = 2,500엔 → 2,500 × 1.04 = 2,600엔이 실원가
-# 원가가 낮게 잡히면 마진을 잘못 계산해 손해로 직결되므로 판정 전에 미리 얹는다.
-_AGENCY_FEE_RATE = 1.04
+# 공홈 소싱처별 일본 국내 배송비·결제수수료 [2026-08-27 사용자 확정].
+#
+# 종전엔 상수 하나(_HOME_SHIP_FEE 500 / _HOME_FREE_SHIP_MIN 3000)를 셋이 공유했다.
+# 유니클로 기준을 오니츠카에 그대로 복사한 것이라 오니츠카 원가가 틀렸고,
+# 유니클로도 무료 기준이 3,000엔으로 잘못 잡혀 3,000~4,989엔 구간의 배송비 500엔이
+# 통째로 빠졌다 — 원가가 낮게 잡히면 그만큼 손해로 직결된다.
+#   실측: 크림864189 벨트 ¥3,490 → 배송비 0 으로 계산(정답은 +500엔).
+#
+#   · 유니클로·GU  전국 500엔, 4,990엔 이상 무료
+#   · 오니츠카      회원이라 **배송비 없음**(게스트만 11,000엔 미만 550엔)
+#   · 결제수수료 4%는 셋 공통 — 한국 카드가 안 먹혀 대행 결제를 거친다.
+#     배송비까지 더한 총액에 얹는다(2,000엔 + 500엔 = 2,500엔 → 2,600엔).
+_HOME_SHIP: dict[str, dict] = {
+    "UNIQLO": {"fee": 500, "free_min": 4990, "pay_rate": 1.04},
+    "GU": {"fee": 500, "free_min": 4990, "pay_rate": 1.04},
+    "ONITSUKA": {"fee": 0, "free_min": 0, "pay_rate": 1.04},
+}
+# 이 소싱처들은 원가에 **일본 국내 배송비가 이미 포함**돼 있다.
+# 스니덩크→배대지 구간 요금(shipping_fee_card/box)을 또 얹으면 이중 부과다.
+_HOME_DIRECT_SITES = frozenset(_HOME_SHIP)
+
+
+def _home_landed(site: str, price_jpy: int) -> int:
+    """공홈 실원가 = 상품가 + 국내배송비, 그 총액에 결제수수료를 얹은 값(엔)."""
+    r = _HOME_SHIP.get(str(site).upper())
+    if not r:
+        return int(price_jpy)
+    fee = int(r["fee"]) if int(r["fee"]) and price_jpy < int(r["free_min"]) else 0
+    return int(round((int(price_jpy) + fee) * float(r["pay_rate"])))
+
 
 _SNKR_USED_URL = "https://snkrdunk.com/v1/apparels/{id}/used"
 _SNKR_HEADERS = {
@@ -2535,17 +2562,25 @@ def _decide_price_action(
     live_rank: int | None = None,
     low_keep: int = 0,
     ask_count: int | None = None,
+    home_direct: bool = False,
 ) -> tuple[str, int, bool, bool]:
     """갱신 결정 — 반환 (act, target, adjusting, is_nocomp).
     로컬 _kream_ask_adjust rank1유도+5분기+rank2추종+안전장치 이식.
-    is_box=True(박스/카드팩/신발) → 배송비 900엔. surcharge_rate 로 추가마진 분류 지정."""
+    is_box=True(박스/카드팩/신발) → 배송비 900엔. surcharge_rate 로 추가마진 분류 지정.
+    home_direct=True(유니클로·GU·오니츠카) → 원가에 국내배송비가 이미 있어 900엔 미적용."""
     is_card = opt.upper().startswith("PSA")
     # 수수료 분류: PSA 낱장=무료 / 해외배송(박스·카드팩)=overseas / 신발·의류=item.
     # 호출부가 fee_kind 를 안 주면 미반영(기존 동작) — floor_map 과 어긋나지 않게 같은 값을 넘긴다.
     min_price = calc_min_price(
-        snkr_jpy, rate, is_box, is_card, surcharge_rate, fee_kind=fee_kind
+        snkr_jpy,
+        rate,
+        is_box,
+        is_card,
+        surcharge_rate,
+        fee_kind=fee_kind,
+        home_direct=home_direct,
     )
-    base = calc_base(snkr_jpy, rate, is_box, is_card, surcharge_rate)
+    base = calc_base(snkr_jpy, rate, is_box, is_card, surcharge_rate, home_direct)
     no_comp = (
         math.ceil(base * (1 + POLICY["no_competition_margin_rate"] / 100) / 1000) * 1000
     )
@@ -4626,9 +4661,8 @@ async def _fetch_home_sizes(
             nm = disp
         if not nm:
             continue
-        # 배송비를 먼저 더하고, 그 총액에 대행 수수료를 얹는다(사용자 확정 규칙).
-        landed = pr + (_HOME_SHIP_FEE if pr < _HOME_FREE_SHIP_MIN else 0)
-        landed = int(round(landed * _AGENCY_FEE_RATE))
+        # 배송비를 먼저 더하고, 그 총액에 결제수수료를 얹는다(_HOME_SHIP 참조).
+        landed = _home_landed(site, pr)
         cur = out.get(nm)
         if cur is None or landed < cur["price"]:
             out[nm] = {"price": landed, "stock": qty}
@@ -4692,9 +4726,9 @@ async def _fetch_onitsuka_sizes(cli: httpx.AsyncClient, style_code: str) -> dict
         pr = int(float(fp.get("value") or 0))
         if pr <= 0:
             return None
-        # 배송비를 먼저 더하고 그 총액에 대행 수수료를 얹는다(유니클로·GU 와 같은 규칙).
-        landed = pr + (_HOME_SHIP_FEE if pr < _HOME_FREE_SHIP_MIN else 0)
-        landed = int(round(landed * _AGENCY_FEE_RATE))
+        # [2026-08-27] 오니츠카는 **회원이라 배송비가 없다.** 종전엔 유니클로 상수를
+        # 그대로 써서(500엔·3,000엔 무료) 원가가 부풀려져 있었다.
+        landed = _home_landed("ONITSUKA", pr)
         out: dict = {}
         for v in it.get("variants") or []:
             p = v.get("product") or {}
@@ -6247,6 +6281,10 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
         async with sem:
             snkr_id = prod["snkr_id"]
             kid = prod["kid"]
+            # [2026-08-27] 공홈 소싱(유니클로·GU·오니츠카)은 원가에 그 공홈의 국내
+            # 배송비가 이미 들어 있다(_home_landed). 스니덩크→배대지 요금을 또 얹지
+            # 않도록 판정·하한 계산에 그대로 넘긴다.
+            _hd = str(prod.get("site") or "") in _HOME_DIRECT_SITES
             r = {"snkr_ok": 0, "snkr_fail": 0, "noncard": 0, "card": 0, "rows": []}
             # [Step 3 완성] 카드(PSA) 경로만 처리 — 신발(KREAM옵션 mm '270' ↔ DB 'cm')·
             # 박스(KREAM '해외배송' ↔ DB '1個')는 옵션명 매핑이 달라 오작동(false 리스톡) 위험 →
@@ -6381,6 +6419,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                             False,
                             POLICY["non_card_margin_rate"],
                             fee_kind="item",
+                            home_direct=_hd,
                         )
                         _floor_map[(kid, _nm)] = _fl_nc
                         _floor_hint_put(kid, _nm, _fl_nc)
@@ -6397,6 +6436,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                             is_box=True,
                             surcharge_rate=POLICY["non_card_margin_rate"],
                             fee_kind="item",
+                            home_direct=_hd,
                             live_rank=_g_live_rank.get(str(_ask_nc.get("id"))),
                             low_keep=int(_ask_nc.get("lowest_100_price") or 0),
                         )
@@ -6512,6 +6552,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                         is_box=True,
                         surcharge_rate=POLICY["non_card_margin_rate"],
                         fee_kind="item",
+                        home_direct=_hd,
                         low_keep=int(_popt.get("lowest_100_price") or 0),
                     )
                     if "삭제" in _act or _tgt <= 0:
@@ -6522,7 +6563,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                         #   margin = max(min_margin_amount, base × competitive_rate/100)
                         # 앞항이 이기면 **마진율을 아무리 낮춰도 최소가가 안 내려간다**.
                         _bs = calc_base(
-                            _pr, rate, True, False, POLICY["non_card_margin_rate"]
+                            _pr, rate, True, False, POLICY["non_card_margin_rate"], _hd
                         )
                         _by_floor = (
                             _bs * POLICY["competitive_margin_rate"] / 100
@@ -6546,6 +6587,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                         False,
                         POLICY["non_card_margin_rate"],
                         fee_kind="item",
+                        home_direct=_hd,
                     )
                     _floor_hint_put(kid, _nm, _floor_map[(kid, _nm)])
                     r["rows"].append(
@@ -6665,7 +6707,11 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                         continue
                     # 순위교정용 마진 하한 기록 (이 아래로는 안 내림)
                     _mp_now = calc_min_price(
-                        price, rate, False, nm.upper().startswith("PSA")
+                        price,
+                        rate,
+                        False,
+                        nm.upper().startswith("PSA"),
+                        home_direct=_hd,
                     )
                     _floor_map[(kid, nm)] = _mp_now
                     _floor_hint_put(kid, nm, _mp_now)
@@ -6679,6 +6725,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                         prod["fixed"].get(nm, 0),
                         rate,
                         tariff_threshold,
+                        home_direct=_hd,
                         live_rank=(await _rank_of(h, ask.get("id")) if ask else None),
                         low_keep=low_keep,
                     )
@@ -6898,6 +6945,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                         prod["fixed"].get(nm, 0),
                         rate,
                         tariff_threshold,
+                        home_direct=_hd,
                         low_keep=int(_co.get("lowest_100_price") or 0),
                     )
                     if "삭제" in _act or _tgt <= 0:
@@ -6918,7 +6966,9 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                     # [2026-08-27] 카드 리스톡도 **마진 하한을 남긴다** — 신발/의류와 같은
                     # 이유다. 등록 직전 재확인 게이트가 _floor_of() 로 0 을 받으면
                     # `if _fl and _cand >= _fl` 에서 '하한 초과'와 똑같이 취급돼 보류된다.
-                    _floor_map[(kid, nm)] = calc_min_price(price, rate, False, True)
+                    _floor_map[(kid, nm)] = calc_min_price(
+                        price, rate, False, True, home_direct=_hd
+                    )
                     _floor_hint_put(kid, nm, _floor_map[(kid, nm)])
                     r["rows"].append(
                         (

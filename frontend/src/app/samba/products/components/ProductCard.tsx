@@ -789,14 +789,24 @@ const ProductCard = React.memo(function ProductCard({
       kreamShippingFeeBox?: number; kreamForwardingFee?: number
       kreamBoxPackMarginRate?: number; kreamNonCardMarginRate?: number
     }
-    const kComp = Number(kp.kreamCompetitiveMarginRate ?? 13)
-    const kNoComp = Number(kp.kreamNoCompetitionMarginRate ?? 40)
-    const kMinMargin = Number(kp.kreamMinMarginAmount ?? 9000)
-    const kShipCard = Number(kp.kreamShippingFeeCard ?? 300)
-    const kShipBox = Number(kp.kreamShippingFeeBox ?? 900)
-    const kFwd = Number(kp.kreamForwardingFee ?? 8000)
-    const kBoxPack = Number(kp.kreamBoxPackMarginRate ?? 0) // 박스/카드팩 추가마진율(%)
-    const kNonCard = Number(kp.kreamNonCardMarginRate ?? 5) // 나머지(신발/의류) 추가마진율(%)
+    // [2026-08-27] 하드코딩 폴백 제거. 백엔드는 2026-08-23 에 정책 하드코딩을 전부
+    // 걷어내고 못 읽으면 계산을 중단하게 바꿨는데(require_policy) 여기만 남아 있었다.
+    // 그래서 가디정책 최소마진 8,000원 대신 폴백 9,000원으로 계산해 화면 금액이
+    // 백엔드와 어긋났다. 정책을 못 읽으면 계산하지 않는다(아래 kPolicyOk).
+    const _kNum = (v: unknown): number | null =>
+      v === null || v === undefined || v === '' || !Number.isFinite(Number(v))
+        ? null
+        : Number(v)
+    const kComp = _kNum(kp.kreamCompetitiveMarginRate)
+    const kNoComp = _kNum(kp.kreamNoCompetitionMarginRate)
+    const kMinMargin = _kNum(kp.kreamMinMarginAmount)
+    const kShipCard = _kNum(kp.kreamShippingFeeCard)
+    const kShipBox = _kNum(kp.kreamShippingFeeBox)
+    const kFwd = _kNum(kp.kreamForwardingFee)
+    const kBoxPack = _kNum(kp.kreamBoxPackMarginRate) // 박스/카드팩 추가마진율(%)
+    const kNonCard = _kNum(kp.kreamNonCardMarginRate) // 나머지(신발/의류) 추가마진율(%)
+    const kPolicyOk = [kComp, kNoComp, kMinMargin, kShipCard, kShipBox, kFwd,
+      kBoxPack, kNonCard].every(v => v !== null)
     // 로컬 봇과 동일 — 배송비(is_box)와 5%가산(is_card)은 별개 축:
     //  · 배송비: PSA 단품 카드 = 300엔, 그외(박스/카드팩/신발) = 900엔 (옵션 유형)
     //  · 5% 가산: 비(非)트레이딩카드=신발/의류만. 카드·카드박스는 미적용 (snkr_type 축)
@@ -807,20 +817,28 @@ const ProductCard = React.memo(function ProductCard({
     const _isShoe = _kOpts.some(o => /^\d+(?:\.\d+)?\s*cm$|^\d{3}$/i.test(String(o?.name || '').trim()))
     // PSA 단품이 하나라도 있으면 카드 배송(300), 아니면 박스 배송(900). 옵션 없으면 상품명 추정.
     const kIsCardShip = _kOpts.length > 0 ? _hasPSA : !_nameBox
-    const kShip = kIsCardShip ? kShipCard : kShipBox
+    // [2026-08-27] 공홈 소싱(유니클로·GU·오니츠카)은 이 배송비를 붙이지 않는다.
+    // 정책 화면 설명대로 이 값은 **스니덩크→배대지** 일본내 구간 요금이고, 공홈은
+    // 그 구간이 없다. 공홈 원가에는 각 사이트의 국내 배송비가 이미 포함돼 있어
+    // (유니클로·GU 4,990엔 미만 500엔 / 오니츠카 회원 무료, 총액의 4% 결제수수료)
+    // 여기서 또 얹으면 이중 부과다 — 백엔드 calc_base 의 home_direct 와 같은 규칙.
+    const _homeDirect = ['UNIQLO', 'GU', 'ONITSUKA'].includes(String(p.source_site || '').toUpperCase())
+    const kShip = _homeDirect ? 0 : (kIsCardShip ? kShipCard! : kShipBox!)
     // 추가마진 분류: PSA=0 / 박스·카드팩(비PSA·비신발)=박스팩율 / 신발·의류=나머지율
     const kSurcharge = _kOpts.length > 0
-      ? (_hasPSA ? 0 : _isShoe ? kNonCard : kBoxPack)
-      : (_nameBox ? kBoxPack : 0)
+      ? (_hasPSA ? 0 : _isShoe ? kNonCard! : kBoxPack!)
+      : (_nameBox ? kBoxPack! : 0)
     const kCostEff = Math.round(cost * (1 + kSurcharge / 100))
-    const kBase = (kCostEff + kShip) * jpyRate + kFwd
-    const kMarginAmt = Math.max(kMinMargin, kBase * kComp / 100)
+    const kBase = (kCostEff + kShip) * jpyRate + kFwd!
+    const kMarginAmt = Math.max(kMinMargin!, kBase * kComp! / 100)
     const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
-    const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp / 100) / 1000) * 1000
-    const kKindLabel = _isShoe ? '신발' : kIsCardShip ? '카드' : '박스'
-    const kCalcStr = cost > 0
-      ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}+${kKindLabel}배송 ¥${fmt(kShip)})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
-      : '원가 없음'
+    const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp! / 100) / 1000) * 1000
+    const kKindLabel = _homeDirect ? '공홈' : _isShoe ? '신발' : kIsCardShip ? '카드' : '박스'
+    const kCalcStr = !kPolicyOk
+      ? '정책 미로드 (정책관리 KREAM 탭 확인)'
+      : cost > 0
+        ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}${_homeDirect ? ' · 공홈배송·결제수수료 포함' : `+${kKindLabel}배송 ¥${fmt(kShip)}`})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd!)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin!)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
+        : '원가 없음'
     return PLAT.map(pl => {
       const m = rm[pl.key]
       const id = m?.product_id ? String(m.product_id) : ''
