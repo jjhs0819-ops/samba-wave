@@ -4628,13 +4628,20 @@ async def _fetch_onitsuka_sizes(cli: httpx.AsyncClient, style_code: str) -> dict
         out: dict = {}
         for v in it.get("variants") or []:
             p = v.get("product") or {}
-            # 일본 스토어 sku 는 **밑줄** 구분이다 — '1183C102_001_250' 처럼
-            # {품번}_{색상}_{사이즈} 다. 점으로 자르면 통째로 남거나('..._OS')
-            # 엉뚱하게 잘려('5','0') 크림 옵션(250/255)과 한 개도 안 붙는다(실측).
-            _parts = re.split(r"[._]", str(p.get("sku") or ""))
-            nm = _parts[-1] if _parts else ""
-            if not nm or nm == str(p.get("sku") or ""):
+            # 일본 스토어 variant sku 는 '1183C102_001_22.5' 꼴이다 —
+            # {품번}_{색상}_{사이즈} 이고 **점은 사이즈의 소수점**이다.
+            # 점으로도 쪼개면 '5'/'0' 이 되고, 점으로만 쪼개면 '..._OS' 가 통째로
+            # 남는다(실측 둘 다 겪음). 밑줄로만 자르고 마지막 토막을 쓴다.
+            _sku = str(p.get("sku") or "")
+            nm = _sku.rsplit("_", 1)[-1] if "_" in _sku else ""
+            if not nm:
                 continue
+            # 크림 신발 옵션은 mm 정수('225','230')다. '22.5' 를 맞춰 준다.
+            try:
+                if "." in nm:
+                    nm = str(int(round(float(nm) * 10)))
+            except ValueError:
+                pass
             out[nm] = {
                 "price": landed,
                 "stock": 1 if p.get("stock_status") == "IN_STOCK" else 0,
