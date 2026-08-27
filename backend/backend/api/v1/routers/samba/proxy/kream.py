@@ -1053,16 +1053,25 @@ async def snkrdunk_compare_all_public(
             -- 브랜드(상품수집처럼 동적 브랜드 드롭다운용) — DB brand 컬럼
             COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand,
             (COALESCE(extra_data->>'supply_gap', '') = 'true') AS supply_gap,
-            -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
-            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN options ELSE NULL END AS size_options,
+            -- 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL).
+            -- [2026-08-27] 조건에 **공홈 소싱처**를 더한다. snkr_type 은 스니덩크가 주는
+            -- 값이라 유니클로·GU·오니츠카는 전부 비어 있고, 그 탓에 size_options 가
+            -- 통째로 NULL 이 돼 검수화면이 '무재고'로 표시했다
+            --   실측: 유니클로 4,951건 중 4,946건이 무재고 처리(실제로는 재고 11).
+            -- 스니덩크는 카드가 섞여 있어 화이트리스트를 유지하고(성능), 공홈은
+            -- 사이즈 상품뿐이므로 소싱처로 가른다 — 새 공홈이 붙어도 자동 적용된다.
+            CASE WHEN (extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch')
+                  OR source_site <> 'SNKRDUNK') THEN options ELSE NULL END AS size_options,
             COALESCE(extra_data->>'currency', '') AS currency,
             -- SUM/MIN 서브쿼리는 신발(스니커즈)만 계산 — 카드 2.5만행 전체에 돌리면
             -- /all 이 29초로 느려져 페이지 로드마다 DB 부하(2026-07-09 성능 회귀 수정).
-            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
+            CASE WHEN (extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch')
+                  OR source_site <> 'SNKRDUNK') THEN COALESCE((
                 SELECT SUM(NULLIF(o->>'stock', '')::int)
                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
             ), 0) ELSE 0 END AS total_stock,
-            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
+            CASE WHEN (extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch')
+                  OR source_site <> 'SNKRDUNK') THEN COALESCE((
                 SELECT MIN(NULLIF(o->>'price', '')::numeric)::int
                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE NULLIF(o->>'price', '')::numeric > 0
@@ -1103,7 +1112,11 @@ async def snkrdunk_compare_all_public(
         is_sneaker = d.get("snkr_type") == "sneaker"
         d["is_sneaker"] = is_sneaker
         # 신발/의류/시계 = 사이즈(또는 ONE SIZE)옵션 기반 재고·가격. PSA칸 없음.
-        is_sized = d.get("snkr_type") in ("sneaker", "apparel", "watch")
+        # [2026-08-27] 위 SQL 과 같은 규칙 — 공홈 소싱처는 snkr_type 이 비어 있으므로
+        # 소싱처로 가른다. 여기만 옛 조건이면 size_options 를 받아놓고도 버린다.
+        is_sized = d.get("snkr_type") in ("sneaker", "apparel", "watch") or str(
+            d.get("source_site") or ""
+        ) not in ("", "SNKRDUNK")
         # 사이즈옵션 파싱(재고>0만, 사이즈 오름차순) — 프론트 사이즈별 표시용
         if is_sized and d.get("size_options"):
 
