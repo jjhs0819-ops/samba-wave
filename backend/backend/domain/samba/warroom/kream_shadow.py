@@ -613,13 +613,21 @@ async def _brand_reg_rates(
                         # 옵션마다 하나씩 걸리므로 상품으로 세면 규모가 절반 이하로
                         # 축소돼 보인다.
                         "WITH m AS ("
-                        "  SELECT TRIM(cp.brand) br,"
+                        # [2026-08-28] 크림 브랜드를 우선한다. 소싱처 브랜드로
+                        # 세면 크림 화면과 기준이 달라 값이 어긋나고, 같은
+                        # 브랜드가 표기만 달라 갈라진다(Onitsuka Tiger / onitsukatiger).
+                        "  SELECT TRIM(COALESCE(NULLIF(cp.resell_matches->'kream'->>'brand',''),"
+                        "              cp.brand)) br,"
                         "         cp.resell_matches->'kream'->>'product_id' kid,"
                         "         COALESCE((x->>'stock')::int,0) stk,"
                         "         COALESCE((x->>'price')::int,0) pr"
                         "  FROM samba_collected_product cp"
                         "  CROSS JOIN LATERAL jsonb_array_elements(cp.options::jsonb) x"
-                        "  WHERE cp.source_site IN ('SNKRDUNK','ONITSUKA')"
+                        # [2026-08-28] 공홈 소싱(유니클로·GU·오니츠카)도 센다.
+                        # 스니덩크·오니츠카만 보던 탓에 공홈 매칭분이 통째로
+                        # 빠져 브랜드별 현황이 실제와 크게 어긋났다
+                        #   실측: 크림 파트너 화면 GU 입찰 1,117건 vs 집계 27건.
+                        "  WHERE cp.source_site IN " + _SOURCE_SITES_SQL + "  "
                         "    AND COALESCE(cp.resell_matches->'kream'->>'product_id','')<>''"
                         "    AND (cp.resell_matches->'kream'->>'verified')='true'"
                         "    AND jsonb_typeof(cp.options::jsonb)='array'),"
@@ -669,9 +677,10 @@ async def _brand_reg_rates(
                     await s2.execute(
                         _text(
                             "SELECT resell_matches->'kream'->>'product_id',"
-                            " COALESCE(NULLIF(TRIM(brand),''),'(브랜드없음)')"
+                            " COALESCE(NULLIF(TRIM(resell_matches->'kream'->>'brand'),''),"
+                            "          NULLIF(TRIM(brand),''),'(브랜드없음)')"
                             " FROM samba_collected_product"
-                            " WHERE source_site IN ('SNKRDUNK','ONITSUKA')"
+                            " WHERE source_site IN " + _SOURCE_SITES_SQL + " "
                             "   AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                         )
                     )
@@ -753,7 +762,7 @@ async def _count_cat1_verified_unreg() -> int:
     sql = _text(
         """
         SELECT COUNT(*) FROM samba_collected_product p
-        WHERE p.source_site IN ('SNKRDUNK','ONITSUKA')
+        WHERE p.source_site IN __SITES__
           AND COALESCE(p.resell_matches->'kream'->>'verified','') = 'true'
           AND (
             COALESCE(p.resell_matches->'kream'->>'product_id','') <> ''
@@ -767,7 +776,10 @@ async def _count_cat1_verified_unreg() -> int:
             OR COALESCE((SELECT NULLIF(o->>'stock','')::int
                       FROM jsonb_array_elements(p.options::jsonb) o
                       WHERE REPLACE(o->>'name',' ','')='PSA9' LIMIT 1),0) > 0
-            OR (p.extra_data->>'snkr_type' IN ('sneaker','apparel','watch')
+            OR ((p.extra_data->>'snkr_type' IN ('sneaker','apparel','watch')
+                 -- [2026-08-28] 공홈 소싱은 snkr_type 이 비어 있다(스니덩크가 주는 값).
+                 -- 소싱처로도 인정하지 않으면 재고 판정에서 통째로 빠진다.
+                 OR p.source_site <> 'SNKRDUNK')
                 AND COALESCE((SELECT SUM(NULLIF(o->>'stock','')::int)
                       FROM jsonb_array_elements(p.options::jsonb) o),0) > 0)
           )
@@ -779,7 +791,7 @@ async def _count_cat1_verified_unreg() -> int:
                 IN (SELECT product_id FROM kream_live_asks
                     WHERE account_group = :grp)
           )
-        """
+        """.replace("__SITES__", _SOURCE_SITES_SQL)
     )
     try:
         async with get_read_session() as s:
@@ -1346,6 +1358,70 @@ async def _write_live_asks_snapshot(asks: list) -> None:
             await s.commit()
     except Exception as exc:
         logger.warning("[크림통합] kream_live_asks 스냅샷 실패(무시): %s", exc)
+
+
+async def _snap_apply(added: list | None = None, removed: list | None = None) -> None:
+    """스냅샷을 **증분으로** 맞춘다 — 등록/삭제 직후 호출 [2026-08-28].
+
+    _write_live_asks_snapshot 은 사이클 **시작 시점**에 한 번만 찍는다. 그래서 그
+    사이클이 등록한 건은 다음 사이클이 시작해야 반영되고, 슬랙·검수화면·상품관리가
+    한 사이클(약 1시간) 뒤처진 숫자를 보여줬다.
+      실측(2026-08-28 07:49): 크림 실제 28,952 / DB 스냅샷 27,236 — 차이 1,716 은
+      그 사이클의 조기등록 누적 1,722 와 사실상 같은 값이다.
+    등록·삭제가 성공한 자리에서 그 행만 넣고 빼면 화면이 실시간으로 따라온다.
+    사이클 시작 때 어차피 크림 API 전량으로 덮어쓰므로, 어긋나도 한 사이클 안에 교정된다.
+
+    added:   [(kid, opt, price), ...]   removed: [(kid, opt), ...]
+    """
+    if not added and not removed:
+        return
+    try:
+        from backend.db.orm import get_write_session
+
+        async with get_write_session() as s:
+            if removed:
+                await s.execute(
+                    _text(
+                        "DELETE FROM kream_live_asks WHERE account_group = :g "
+                        'AND product_id = :k AND "option" = :o'
+                    ),
+                    [
+                        {"g": _active_group, "k": str(k), "o": str(o)}
+                        for k, o in removed
+                    ],
+                )
+            if added:
+                # 같은 (상품,옵션)이 남아 있으면 지우고 넣는다 — 유니크 제약이 없어
+                # 그냥 INSERT 하면 중복 행이 쌓이고 집계가 부풀려진다.
+                await s.execute(
+                    _text(
+                        "DELETE FROM kream_live_asks WHERE account_group = :g "
+                        'AND product_id = :k AND "option" = :o'
+                    ),
+                    [
+                        {"g": _active_group, "k": str(k), "o": str(o)}
+                        for k, o, _p in added
+                    ],
+                )
+                await s.execute(
+                    _text(
+                        "INSERT INTO kream_live_asks "
+                        '(product_id, "option", price, account_group, updated_at) '
+                        "VALUES (:k, :o, :p, :g, NOW())"
+                    ),
+                    [
+                        {
+                            "k": str(k),
+                            "o": str(o),
+                            "p": int(p or 0),
+                            "g": _active_group,
+                        }
+                        for k, o, p in added
+                    ],
+                )
+            await s.commit()
+    except Exception as exc:
+        logger.warning("[크림통합] 스냅샷 증분 반영 실패(무시): %s", exc)
 
 
 async def _write_back_db_options(updates: list) -> None:
@@ -4108,7 +4184,10 @@ _g_prod_cache: dict[str, tuple[float, list]] = {}
 #   실측 주문 걸린 456종 중 251종이 크림 현재 이름·사진과 달랐다(색상까지 다른 것 20종)
 # 사이클이 어차피 GET /products/{id} 를 부르므로, 그 응답의 이름·사진을 같이 거둬
 # 사이클 말미에 한 번 반영한다 — 추가 호출 0.
-_g_prod_meta: dict[str, tuple[str, str, str]] = {}  # pid -> (name_ko, name_en, image)
+# pid -> (name_ko, name_en, image, brand)
+# [2026-08-28] 크림 브랜드(brand_name)를 같이 모은다. 종전엔 소싱처 브랜드만
+# 들고 있어 브랜드별 집계가 크림 화면과 어긋났다 — 실측 GU 우리 57 vs 크림 1,117.
+_g_prod_meta: dict[str, tuple[str, str, str, str]] = {}
 
 
 def _pick_main_image(d: dict) -> str:
@@ -4136,8 +4215,14 @@ async def _fetch_prod_options(h: dict, pid, fresh: bool = False) -> list:
     d = r.json() or {}
     opts = d.get("options") or []
     _ko = str(d.get("translated_name") or "").strip()
-    if _ko:
-        _g_prod_meta[key] = (_ko, str(d.get("name") or "").strip(), _pick_main_image(d))
+    _br = str(d.get("brand_name") or "").strip()
+    if _ko or _br:
+        _g_prod_meta[key] = (
+            _ko,
+            str(d.get("name") or "").strip(),
+            _pick_main_image(d),
+            _br,
+        )
     # 빈 응답은 캐시하지 않는다 — 일시 실패를 TTL 동안 굳히면 무경쟁 오판으로 이어진다
     if opts:
         _g_prod_cache[key] = (_now_ts(), opts)
@@ -4145,7 +4230,14 @@ async def _fetch_prod_options(h: dict, pid, fresh: bool = False) -> list:
 
 
 async def _sync_kream_meta() -> None:
-    """사이클 중 받아둔 크림 이름·사진을 DB 에 반영한다 — 다른 값일 때만 UPDATE."""
+    """사이클 중 받아둔 크림 이름·사진·브랜드를 DB 에 반영한다 — 다른 값일 때만 UPDATE.
+
+    [2026-08-28] brand 를 같이 넣는다. 종전엔 크림 브랜드를 아예 저장하지 않아
+    브랜드별 집계가 **소싱처 브랜드**로 나갔고 크림 화면과 어긋났다.
+      실측: 크림 파트너 화면 GU 입찰 1,117건 / 우리 집계 57건.
+      같은 브랜드가 표기만 달라 갈라지기도 했다(Onitsuka Tiger 1,718 · onitsukatiger 1,346).
+    사이클이 상품을 판정할 때마다 채워지므로 별도 백필 없이 한 바퀴면 전량 채워진다.
+    """
     if not _g_prod_meta:
         return
     from backend.db.orm import get_write_session  # noqa: F811
@@ -4153,22 +4245,28 @@ async def _sync_kream_meta() -> None:
     upd = 0
     try:
         async with get_write_session() as s:
-            for pid, (ko, en, img) in list(_g_prod_meta.items()):
+            for pid, _m in list(_g_prod_meta.items()):
+                ko, en, img = _m[0], _m[1], _m[2]
+                br = _m[3] if len(_m) > 3 else ""
                 r = await s.execute(
                     _text(
                         "UPDATE samba_collected_product SET resell_matches = "
-                        "  jsonb_set(jsonb_set(jsonb_set(resell_matches::jsonb, "
+                        "  jsonb_set(jsonb_set(jsonb_set(jsonb_set("
+                        "    resell_matches::jsonb, "
                         "    '{kream,name_ko}', to_jsonb(CAST(:ko AS text))), "
                         "    '{kream,name_en}', to_jsonb(CAST(:en AS text))), "
-                        "    '{kream,image}', to_jsonb(CAST(:img AS text)))::json, "
+                        "    '{kream,image}', to_jsonb(CAST(:img AS text))), "
+                        "    '{kream,brand}', to_jsonb(CAST(:br AS text)))::json, "
                         # 갱신시각은 건드리지 않는다 — 리스톡 정렬(오래된 순) 기준이다
                         "  updated_at = updated_at "
                         "WHERE resell_matches->'kream'->>'product_id' = :k "
                         "  AND (COALESCE(resell_matches->'kream'->>'name_ko','') <> :ko "
                         "       OR (:img <> '' AND "
-                        "           COALESCE(resell_matches->'kream'->>'image','') <> :img))"
+                        "           COALESCE(resell_matches->'kream'->>'image','') <> :img) "
+                        "       OR (:br <> '' AND "
+                        "           COALESCE(resell_matches->'kream'->>'brand','') <> :br))"
                     ),
-                    {"ko": ko, "en": en, "img": img, "k": str(pid)},
+                    {"ko": ko, "en": en, "img": img, "br": br, "k": str(pid)},
                 )
                 upd += r.rowcount or 0
             await s.commit()
@@ -4176,7 +4274,7 @@ async def _sync_kream_meta() -> None:
         logger.warning("[크림통합] 크림 메타 동기화 실패(무시): %s", exc)
         return
     if upd:
-        logger.info("[크림통합] 크림 이름·사진 갱신 %d건", upd)
+        logger.info("[크림통합] 크림 이름·사진·브랜드 갱신 %d건", upd)
 
 
 @_timed("크림상품_rival")
@@ -4440,6 +4538,8 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
             _progress()  # 워치독 — 실행도 '진행'이다
             if await _exec_delete_ask(cli, h, _aid, _kid, _opt):
                 c["del"] = c.get("del", 0) + 1
+                if _kid and _opt:  # 화면 즉시 반영 [2026-08-28]
+                    await _snap_apply(removed=[(_kid, _opt)])
             else:
                 c["fail"] = c.get("fail", 0) + 1
 
@@ -4449,6 +4549,9 @@ async def _exec_pending(cli, h, dels: list, upds: list, c: dict) -> None:
             _res, _r = await _execute_update(cli, h, _aid, _tg, _cur, _nc, _kid, _opt)
             if _res == "ok":
                 c["patch"] = c.get("patch", 0) + 1
+                # [2026-08-28] 가격 조정은 스냅샷에 반영하지 않는다 — 입찰 **개수**가
+                # 바뀌지 않아 화면 집계에 영향이 없는데, 사이클당 수천 번 돌아 DB
+                # 왕복만 늘린다. price 는 다음 사이클 전량 갱신 때 맞춰진다.
                 _audit_patch(_kid, _opt, _tg, _cur, _r)
             elif _res == "reverted":
                 c["revert"] = c.get("revert", 0) + 1
@@ -7226,6 +7329,8 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                                             if _ok:
                                                 _early_post += 1
                                                 _g_early_posted.add(f"{_k}|{_n}")
+                                                # 화면이 한 사이클 뒤처지지 않게 즉시 반영
+                                                await _snap_apply(added=[(_k, _n, _t)])
                                                 await _audit_post(
                                                     _ecli, h, _k, _n, _t, _pre
                                                 )
@@ -7588,6 +7693,7 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                     if _ok:
                         exec_post += 1
                         _progress()  # 워치독 — 마무리 단계도 진행이다
+                        await _snap_apply(added=[(_kid, _nm, _tg)])  # 화면 즉시 반영
                         await _audit_post(ecli, h, _kid, _nm, _tg, _pre)
                         # 슬랙 리스톡 섹션 등록줄 (로컬 포맷: "{상품명20} {옵션} {가격}원")
                         registered_lines.append(f"{str(_pn)[:20]} {_nm} {_tg:,}원")
