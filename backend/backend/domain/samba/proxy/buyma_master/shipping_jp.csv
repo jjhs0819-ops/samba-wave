@@ -1,0 +1,24 @@
+kind,key,value,note
+kpacket,100,4550,
+kpacket,200,5730,
+kpacket,300,6930,
+kpacket,400,8120,
+kpacket,500,9340,
+kpacket,600,10290,
+kpacket,700,11240,
+kpacket,800,12190,
+kpacket,900,13130,
+kpacket,1000,14090,
+kpacket,1100,14930,
+kpacket,1200,15770,
+kpacket,1300,16610,
+kpacket,1400,17450,
+kpacket,1500,18330,
+kpacket,1600,18840,
+kpacket,1700,19340,
+kpacket,1800,19840,
+kpacket,1900,20350,
+kpacket,2000,20880,
+kpacket_max_g,-,2000,K패킷 상한(g). 초과분은 EMS
+ems_base_2kg,-,35500,일본행 EMS 2kg (2026.7.1 시행)
+ems_per_kg,-,2500,2kg 초과 1kg 당 증가분(2~5kg 구간 실측)

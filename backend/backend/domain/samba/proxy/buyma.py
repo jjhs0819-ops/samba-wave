@@ -290,6 +290,15 @@ class BuymaApiClient:
             if u
         ]
 
+        # 상품 단위 품절 — 무신사 goodsSaleType=STAND_BY_SALE 등은 상품 전체가
+        # 구매 불가인데도 개별 옵션의 isSoldOut 은 False 로 내려온다. 옵션만 보면
+        # 품절 상품이 "판매 가능"으로 등록되므로 상품 단위 상태를 함께 본다.
+        product_sold_out = bool(
+            product.get("isOutOfStock")
+            or product.get("is_out_of_stock")
+            or (product.get("sale_status") or product.get("saleStatus")) == "sold_out"
+        )
+
         # options → 사이즈 추출 + 재고
         options = [
             {"type": "color", "master_id": color_id, "position": 1, "value": color_val}
@@ -310,10 +319,21 @@ class BuymaApiClient:
                         {"type": "color", "value": color_val},
                         {"type": "size", "value": size_label},
                     ],
-                    "stock_type": "out_of_stock" if sold_out else "purchase_for_order",
+                    "stock_type": (
+                        "out_of_stock"
+                        if (sold_out or product_sold_out)
+                        else "purchase_for_order"
+                    ),
                     "order_quantity": 1,
                 }
             )
+
+        # 품번(ブランド品番) — 바이마 구매자는 품번으로 검색하므로 누락되면
+        # /r/{품번} 검색 결과에 아예 노출되지 않는다. CSV(buyma_bulk)·직접등록
+        # (buyma_direct)과 동일하게 소싱 품번을 넣는다.
+        style = bm.clean_style_no(
+            product.get("style_code") or product.get("model_no") or ""
+        )
 
         until = (date.today() + timedelta(days=60)).strftime("%Y/%m/%d")
         return {
@@ -336,6 +356,7 @@ class BuymaApiClient:
                 "duty": "included",  # 관세부담없음
                 "images": images,
                 "shipping_methods": [{"shipping_method_id": ship_id}],
+                "style_numbers": [{"number": style}] if style else [],
                 "options": options,
                 "variants": variants,
             }
@@ -360,6 +381,23 @@ class BuymaApiClient:
                 "success": False,
                 "error_type": "no_variants",
                 "message": "매핑된 사이즈 없음",
+            }
+        # 전 사이즈 품절인데 등록하면 구매 불가 상품이 노출된다. 주문이 들어오면
+        # 매입 자체가 불가능해 강제취소(매입성공률 하락)로 직결되므로 차단한다.
+        if not any(
+            v.get("stock_type") == "purchase_for_order" for v in prod["variants"]
+        ):
+            return {
+                "success": False,
+                "error_type": "all_sold_out",
+                "message": "판매 가능한 사이즈 없음(전 사이즈 품절)",
+            }
+        # 이미지가 한 장도 없으면 상품 페이지가 성립하지 않는다.
+        if not prod["images"]:
+            return {
+                "success": False,
+                "error_type": "no_images",
+                "message": "등록 가능한 이미지 없음",
             }
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(

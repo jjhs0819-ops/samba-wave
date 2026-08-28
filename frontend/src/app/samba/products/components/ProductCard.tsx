@@ -135,6 +135,10 @@ function buildMarketProductUrl(
       return `https://kream.co.kr/products/${productNo}`
     case 'ebay':
       return `https://www.ebay.com/itm/${productNo}`
+    case 'buyma':
+      // 바이마 상품ID는 등록 응답이 아니라 webhook(product/create)으로 들어온다.
+      // 백필로 market_product_nos 에 채워지면 여기서 상품 페이지로 바로 간다.
+      return `https://www.buyma.com/item/${productNo}/`
     case 'cafe24':
       return `https://${sellerId}.cafe24.com/product/detail.html?product_no=${productNo}`
     default:
