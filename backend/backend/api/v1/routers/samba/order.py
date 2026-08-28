@@ -10204,6 +10204,14 @@ async def sync_orders_from_markets(
             # 소싱계정 캐시 — (tenant_id, site_name) → sourcing_account_id (#299)
             # 주문 동기화 시 sourcing_account_id 누락/"etc" 잔존 방지용
             # is_login_default=True 우선, 없으면 단일 계정만, 여러 개면 None(모호)
+            # ★site_name 표기는 정규화해서 키를 잡는다 — 계정은 "TheHyundai",
+            #   주문 source_site 는 "THEHYUNDAI" 로 대소문자가 어긋나 있어 raw
+            #   문자열끼리 비교하면 매칭에 실패한다(더현대 실측, 자동배정 누락).
+            #   import 는 try 밖에 둬야 캐시 빌드가 실패해도 아래 조회에서 NameError 가 안 난다.
+            from backend.api.v1.routers.samba.sourcing_account import (
+                _normalize_sourcing_site_name as _norm_site,
+            )
+
             _sa_map: dict[tuple[str, str], str | None] = {}
             try:
                 async with get_read_session() as _sa_sess:
@@ -10217,7 +10225,7 @@ async def sync_orders_from_markets(
                     ).fetchall()
                 _sa_by_key: dict[tuple[str, str], dict] = {}
                 for _sa_id, _sa_tid, _sa_site, _sa_default in _sa_rows:
-                    _k = (str(_sa_tid or ""), str(_sa_site or ""))
+                    _k = (str(_sa_tid or ""), _norm_site(str(_sa_site or "")))
                     if _k not in _sa_by_key:
                         _sa_by_key[_k] = {"default": None, "count": 0, "first": None}
                     info = _sa_by_key[_k]
@@ -10611,7 +10619,8 @@ async def sync_orders_from_markets(
                 _cur_said = order_data.get("sourcing_account_id") or ""
                 if not _cur_said or _cur_said == "etc":
                     _ss = order_data.get("source_site") or ""
-                    _sa_key = (_tid or "", _ss)
+                    # 계정 캐시와 동일한 정규화를 적용해야 표기 차이로 인한 미배정을 막는다
+                    _sa_key = (_tid or "", _norm_site(_ss))
                     if _ss and _sa_key in _sa_map and _sa_map[_sa_key]:
                         order_data["sourcing_account_id"] = _sa_map[_sa_key]
                 # 매칭 검증용 임시 키 제거 (DB 저장 직전, 모델에 없는 필드)
