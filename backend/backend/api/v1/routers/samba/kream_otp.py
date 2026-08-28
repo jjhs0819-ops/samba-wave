@@ -89,7 +89,14 @@ async def receive_otp(
             "ON CONFLICT (key) DO UPDATE "
             "SET value = EXCLUDED.value, updated_at = NOW()"
         ),
-        {"k": f"{_KEY}:{grp}", "v": payload},
+        [
+            {"k": f"{_KEY}:{grp}", "v": payload},
+            # [2026-08-28] 그룹 공용 자리에도 같이 넣는다. 폰 규칙에 group 을 잘못
+            # 박아도(중국 폰에 JP 등) 로그인이 막히지 않게 하려는 것이다.
+            # 두 계정이 동시에 로그인하는 일은 없고, 조회는 '로그인 요청 이후
+            # 도착분'만 인정하므로 남의 코드를 집어 쓸 위험도 없다.
+            {"k": f"{_KEY}:ANY", "v": payload},
+        ],
     )
     await session.commit()
     logger.info("[크림OTP][%s] 코드 수신", grp)
@@ -102,21 +109,45 @@ async def read_otp(
     max_age: int = _TTL_SEC,
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict:
-    """최근 코드 조회. max_age 초를 넘긴 코드는 없는 것으로 본다."""
+    """최근 코드 조회. max_age 초를 넘긴 코드는 없는 것으로 본다.
+
+    [2026-08-28] 그룹 자리에 쓸 만한 코드가 없으면 **공용 자리(ANY)** 를 본다.
+    폰 규칙에 group 을 잘못 박아도 로그인이 막히지 않게 하려는 것이다.
+    """
     grp = (group or "JP").upper()
-    row = (
-        await session.execute(
-            sa_text("SELECT value::text FROM samba_settings WHERE key = :k"),
-            {"k": f"{_KEY}:{grp}"},
-        )
-    ).first()
-    if not row or not row[0]:
-        return {"ok": False, "reason": "코드 없음"}
-    try:
-        d = json.loads(row[0])
-    except Exception:
-        return {"ok": False, "reason": "형식 오류"}
-    age = time.time() - float(d.get("ts") or 0)
-    if age > max(1, int(max_age)):
-        return {"ok": False, "reason": "만료", "age_sec": int(age)}
-    return {"ok": True, "code": str(d.get("code") or ""), "age_sec": int(age)}
+
+    def _pick(raw: str | None) -> tuple[str, int] | None:
+        """(코드, 나이) — 없거나 만료면 None."""
+        if not raw:
+            return None
+        try:
+            d = json.loads(raw)
+        except Exception:
+            return None
+        code = str(d.get("code") or "")
+        if not code:
+            return None
+        age = int(time.time() - float(d.get("ts") or 0))
+        return (code, age) if age <= max(1, int(max_age)) else None
+
+    rows = {
+        str(k): v
+        for k, v in (
+            await session.execute(
+                sa_text(
+                    "SELECT key, value::text FROM samba_settings WHERE key = ANY(:ks)"
+                ),
+                {"ks": [f"{_KEY}:{grp}", f"{_KEY}:ANY"]},
+            )
+        ).all()
+    }
+    for key in (f"{_KEY}:{grp}", f"{_KEY}:ANY"):
+        got = _pick(rows.get(key))
+        if got:
+            return {
+                "ok": True,
+                "code": got[0],
+                "age_sec": got[1],
+                "via": "그룹" if key.endswith(grp) else "공용",
+            }
+    return {"ok": False, "reason": "쓸 수 있는 코드 없음"}
