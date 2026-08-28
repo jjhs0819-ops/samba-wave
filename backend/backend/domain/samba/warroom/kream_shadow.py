@@ -4920,15 +4920,21 @@ async def _fetch_abcmart_sizes(
         return None
     landed = _home_landed(site, price)
     out: dict = {}
-    for b in re.findall(r"<dl[^>]*>.*?</dl>", h, re.S):
-        mcm = re.search(r"(\d{2}(?:\.\d)?)\s*cm", b)
-        if not mcm:
+    # 마크업 구조 무관 파싱 — ABC마트(<dt>cm</dt><dd>카트</dd>)와
+    # 그랜드(<li><strong>cm</strong>카트</li>) 구조가 달라 <dl> 기준이면 그랜드는
+    # 전부 놓친다. 각 cm 부터 다음 cm 까지 구간에서 카트(재고)/재入荷·restock(품절) 판정.
+    ms = list(re.finditer(r"(\d{2}(?:\.\d)?)\s*cm", h))
+    seen: set = set()
+    for i, m in enumerate(ms):
+        cm = m.group(1)
+        end = ms[i + 1].start() if i + 1 < len(ms) else m.end() + 400
+        seg = h[m.start() : end]
+        cart = ("cart.aspx?goods=" in seg) or ("js-add-cart" in seg)
+        sold = ("restock" in seg.lower()) or ("再入荷" in seg) or ("品切" in seg)
+        if (not cart and not sold) or cm in seen:
             continue
-        instock = ("cart.aspx?goods=" in b) or ("js-add-cart" in b)
-        # 사이즈표 안내행 제외 — 카트링크도 품절버튼도 없으면 옵션이 아니다
-        if not instock and "soldout" not in b.lower():
-            continue
-        out[f"{mcm.group(1)}cm"] = {"price": landed, "stock": 1 if instock else 0}
+        seen.add(cm)
+        out[f"{cm}cm"] = {"price": landed, "stock": 1 if cart else 0}
     return out or None
 
 
