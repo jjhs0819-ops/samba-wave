@@ -392,6 +392,11 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiService', label: 'API Service', type: 'text', placeholder: '예: direct (직연동) / hubnet (허브넷)' },
     { name: 'apiKey', label: 'API Key', type: 'text', placeholder: '크림 발급 API 키' },
     { name: 'apiSecret', label: 'API Secret', type: 'password', placeholder: '크림 발급 시크릿' },
+    // [2026-08-28] 판매자센터 로그인 비밀번호. 크림은 refresh 토큰을 회전해주지 않아
+    // (수명 24h) 하루 한 번 재로그인이 강제된다. 이 값이 있어야 자동 로그인이 돌고,
+    // 없으면 고시등록이 401 로 막혀 신규 입찰이 통째로 거부된다.
+    // 아이디는 위 '스토어 ID'(로그인 이메일)를 그대로 쓴다.
+    { name: 'password', label: '판매자센터 비밀번호', type: 'password', placeholder: 'partner.kream.co.kr 로그인 비밀번호 — 자동 로그인용' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '사업자 연락처 — 상품 고시정보 필수' },
   ]},
   { key: 'poison', label: '포이즌', authField: 'apiKey', guideUrl: 'https://open.poizon.com', fields: [
