@@ -4914,8 +4914,17 @@ async def _fetch_abcmart_sizes(
         h = r.content.decode("shift_jis", "replace")
     except Exception:
         return None
-    mp = re.search(r'class="price"[^0-9￥]*￥?([0-9,]+)', h)
-    price = int(mp.group(1).replace(",", "")) if mp else 0
+    # 가격 마크업 2종: 단순 class="price" / 할인상품 price_sale(할인가)·price_default(정가).
+    price = 0
+    for _pat in (
+        r'price_sale"[^0-9￥]*￥?([0-9,]+)',
+        r'price_default"[^0-9￥]*￥?([0-9,]+)',
+        r'class="price"[^0-9￥]*￥?([0-9,]+)',
+    ):
+        _mp = re.search(_pat, h)
+        if _mp:
+            price = int(_mp.group(1).replace(",", ""))
+            break
     if price <= 0:
         return None
     landed = _home_landed(site, price)
