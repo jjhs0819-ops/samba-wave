@@ -434,6 +434,8 @@ export default function OrderInfoCell(props: Props) {
             SSG: `https://pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo=${encodeURIComponent(srcNo)}&viewType=Ssg`,
             LOTTEON: `https://www.lotteon.com/p/order/claim/giftBoxDetail?odNo=${srcNo}&type=snd`,
             GSShop: `https://www.gsshop.com/ord/dlvcursta/popup/ordDtl.gs?ordNo=${encodeURIComponent(srcNo)}&ecOrdTypCd=S`,
+            // 더현대(현대Hi) — 송장조회와 동일 URL (tracking_sync/service.py 의 build_tracking_url 참조)
+            THEHYUNDAI: `https://hi.thehyundai.com/mypage/order/detail?ordNo=${encodeURIComponent(srcNo)}`,
           }
           const url = orderUrlMap[sourceSiteCode]
           if (!url) { showAlert(`${o.source_site || '알수없는'} 소싱처는 원주문링크를 지원하지 않습니다`, 'info'); return }

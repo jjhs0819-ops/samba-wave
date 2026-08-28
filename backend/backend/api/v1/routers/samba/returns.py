@@ -358,6 +358,11 @@ async def list_returns(
             "ABCmart": "https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo={}",
             "GrandStage": "https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo={}",
             "Nike": "https://www.nike.com/kr/orders/{}",
+            "SSG": "https://pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo={}&viewType=Ssg",
+            "LOTTEON": "https://www.lotteon.com/p/order/claim/giftBoxDetail?odNo={}&type=snd",
+            "GSShop": "https://www.gsshop.com/ord/dlvcursta/popup/ordDtl.gs?ordNo={}&ecOrdTypCd=S",
+            # 더현대(현대Hi) — 송장조회와 동일 URL (tracking_sync/service.py 의 build_tracking_url 참조)
+            "THEHYUNDAI": "https://hi.thehyundai.com/mypage/order/detail?ordNo={}",
         }
         for row in rows:
             # 1순위: 타마켓주문링크 (URL 형태만 — 순수 주문번호는 제외)

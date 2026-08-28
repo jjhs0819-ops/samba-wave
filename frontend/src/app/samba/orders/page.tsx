@@ -1231,6 +1231,8 @@ export default function OrdersPage() {
                     '나이키': 'NIKE',
                     '패션플러스': 'FASHIONPLUS',
                     '올리브영': 'OLIVEYOUNG',
+                    '더현대': 'THEHYUNDAI',
+                    '현대Hi': 'THEHYUNDAI',
                   }
                   const code = aliasMap[raw] || raw
                   void actionTag
@@ -1245,6 +1247,8 @@ export default function OrdersPage() {
                     LOTTEON: `https://www.lotteon.com/p/order/claim/giftBoxDetail?odNo=${srcNo}&type=snd`,
                     GSSHOP: `https://www.gsshop.com/ord/dlvcursta/popup/ordDtl.gs?orderNo=${srcNo}`,
                     OLIVEYOUNG: `https://www.oliveyoung.co.kr/store/mypage/getOrderDetail.do?dlvNo=${srcNo}`,
+                    // 더현대(현대Hi) — 송장조회와 동일 URL (tracking_sync/service.py 의 build_tracking_url 참조)
+                    THEHYUNDAI: `https://hi.thehyundai.com/mypage/order/detail?ordNo=${encodeURIComponent(srcNo)}`,
                   }
                   return map[code] || null
                 }
