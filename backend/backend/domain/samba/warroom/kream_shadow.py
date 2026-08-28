@@ -2303,7 +2303,15 @@ _HOME_HEADERS = {
 # 스니덩크 외에 유니클로/GU **일본 공홈**을 소싱처로 쓴다. 스니덩크는 이 두 브랜드
 # 물량이 얇고(UNIQLO 1,282 · GU 552) 공홈은 전 상품·전 사이즈 재고를 그대로 준다.
 # 품번이 그대로 대응해 오매칭 여지가 없다: 크림 488253-09 ↔ 공홈 488253-09-002-000.
-_SOURCE_SITES = ("SNKRDUNK", "ONITSUKA", "UNIQLO", "GU")
+_SOURCE_SITES = (
+    "SNKRDUNK",
+    "ONITSUKA",
+    "UNIQLO",
+    "GU",
+    "ABCMART_JP",
+    "GRANDSTAGE_JP",
+    "ATMOS",
+)
 _SOURCE_SITES_SQL = "('" + "','".join(_SOURCE_SITES) + "')"
 
 # ── 크림 계정 분리 [2026-08-26] ───────────────────────────────────────────
@@ -2317,7 +2325,15 @@ _SOURCE_SITES_SQL = "('" + "','".join(_SOURCE_SITES) + "')"
 _ACCOUNT_GROUPS: dict = {
     "JP": {
         "label_hint": "일본",
-        "sites": ("SNKRDUNK", "ONITSUKA", "UNIQLO", "GU"),
+        "sites": (
+            "SNKRDUNK",
+            "ONITSUKA",
+            "UNIQLO",
+            "GU",
+            "ABCMART_JP",
+            "GRANDSTAGE_JP",
+            "ATMOS",
+        ),
     },
     "CN": {
         "label_hint": "중국",
@@ -2353,6 +2369,10 @@ _HOME_SHIP: dict[str, dict] = {
     "UNIQLO": {"fee": 500, "free_min": 4990, "pay_rate": 1.04},
     "GU": {"fee": 500, "free_min": 4990, "pay_rate": 1.04},
     "ONITSUKA": {"fee": 0, "free_min": 0, "pay_rate": 1.04},
+    # [2026-08-28] 일본 신규 3사 — 전부 무료배송, 결제수수료 4%(오니츠카와 동일)
+    "ABCMART_JP": {"fee": 0, "free_min": 0, "pay_rate": 1.04},
+    "GRANDSTAGE_JP": {"fee": 0, "free_min": 0, "pay_rate": 1.04},
+    "ATMOS": {"fee": 0, "free_min": 0, "pay_rate": 1.04},
 }
 # 이 소싱처들은 원가에 **일본 국내 배송비가 이미 포함**돼 있다.
 # 스니덩크→배대지 구간 요금(shipping_fee_card/box)을 또 얹으면 이중 부과다.
@@ -4863,15 +4883,79 @@ async def _fetch_onitsuka_sizes(cli: httpx.AsyncClient, style_code: str) -> dict
     return None
 
 
-async def _fetch_live_sizes_by_site(
+async def _fetch_abcmart_sizes(
     cli: httpx.AsyncClient, site: str, sid: str
 ) -> dict | None:
-    """소싱처별 실시간 사이즈 시세 진입점 — 스니덩크 / 공홈(유니클로·GU·오니츠카)."""
+    """일본 ABC-MART / 그랜드스테이지 상세에서 사이즈별 실원가·재고 — {cm: {price, stock}}.
+
+    [2026-08-28] 봇차단이 없어 컨테이너에서 직접 curl 가능. 수집기(_home_collect.py
+    _run_abcmart)와 같은 파싱: /shop/g/g{code}/ 상세의 ￥가격 + 사이즈 <dl>(재고 있는
+    사이즈만 cart.aspx 링크). 무료배송이라 _home_landed 는 결제수수료 4%만 얹는다.
+    조회 실패는 None(기존 DB값 유지) — 0 반환 시 정상 입찰이 무재고로 삭제된다.
+    """
+    host = (
+        "gs.abc-mart.net"
+        if str(site).upper() == "GRANDSTAGE_JP"
+        else "www.abc-mart.net"
+    )
+    try:
+        r = await cli.get(
+            f"https://{host}/shop/g/g{sid}/",
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                )
+            },
+            follow_redirects=True,
+        )
+        if r.status_code != 200:
+            return None
+        h = r.content.decode("shift_jis", "replace")
+    except Exception:
+        return None
+    mp = re.search(r'class="price"[^0-9￥]*￥?([0-9,]+)', h)
+    price = int(mp.group(1).replace(",", "")) if mp else 0
+    if price <= 0:
+        return None
+    landed = _home_landed(site, price)
+    out: dict = {}
+    for b in re.findall(r"<dl[^>]*>.*?</dl>", h, re.S):
+        mcm = re.search(r"(\d{2}(?:\.\d)?)\s*cm", b)
+        if not mcm:
+            continue
+        instock = ("cart.aspx?goods=" in b) or ("js-add-cart" in b)
+        # 사이즈표 안내행 제외 — 카트링크도 품절버튼도 없으면 옵션이 아니다
+        if not instock and "soldout" not in b.lower():
+            continue
+        out[f"{mcm.group(1)}cm"] = {"price": landed, "stock": 1 if instock else 0}
+    return out or None
+
+
+async def _fetch_live_sizes_by_site(
+    cli: httpx.AsyncClient, site: str, sid: str, db_opts: dict | None = None
+) -> dict | None:
+    """소싱처별 실시간 사이즈 시세 진입점.
+    스니덩크 / 공홈(유니클로·GU·오니츠카) / ABC마트·그랜드(curl) / atmos(DB신뢰)."""
     _site = str(site).upper()
     if _site == "ONITSUKA":
         return await _fetch_onitsuka_sizes(cli, sid)
     if _site in _HOME_API:
         return await _fetch_home_sizes(cli, site, sid)
+    if _site in ("ABCMART_JP", "GRANDSTAGE_JP"):
+        return await _fetch_abcmart_sizes(cli, _site, sid)
+    if _site == "ATMOS":
+        # atmos 는 Akamai 봇차단이라 백엔드에서 재조회 불가. 수집기(웨일 CDP)가 DB에
+        # 자주 갱신하므로 그 값을 신뢰한다 — 수집이 곧 재조회다. 무료배송 4% 반영.
+        out: dict = {}
+        for nm, d in (db_opts or {}).items():
+            pr = int(d.get("price") or 0)
+            if pr > 0:
+                out[nm] = {
+                    "price": _home_landed("ATMOS", pr),
+                    "stock": int(d.get("stock") or 0),
+                }
+        return out or None
     return await _fetch_snkr_live_sizes(cli, sid)
 
 
@@ -6454,7 +6538,10 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                 # 열렸다. 대행 수수료 4%는 배송비 포함 총액에 얹어 원가에 미리 반영한다.
                 try:
                     _live_sz = await _fetch_live_sizes_by_site(
-                        scli, prod.get("site") or "SNKRDUNK", str(snkr_id)
+                        scli,
+                        prod.get("site") or "SNKRDUNK",
+                        str(snkr_id),
+                        prod.get("db_opts"),
                     )
                 except Exception as _e:
                     _live_sz = None
