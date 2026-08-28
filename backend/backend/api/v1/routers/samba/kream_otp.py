@@ -25,8 +25,7 @@ import re
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import text as sa_text
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -55,28 +54,47 @@ async def _require_internal_token(
         raise HTTPException(status_code=401, detail="유효하지 않은 내부 토큰")
 
 
-class OtpIn(BaseModel):
-    group: str = "JP"  # 계정 그룹 — 폰마다 고정해서 보낸다
-    text: str = ""  # 문자 원문(권장). 서버가 6자리를 뽑는다
-    code: str = ""  # 이미 6자리만 뽑아 보낼 때
+_GROUP_RE = re.compile(r'"?group"?\s*[:=]\s*"?([A-Za-z]{2,6})"?')
 
 
-def _pick_code(body: OtpIn) -> str:
-    """6자리 코드 추출 — code 가 있으면 그대로, 없으면 문자 원문에서 찾는다."""
-    if body.code.strip().isdigit() and len(body.code.strip()) == 6:
-        return body.code.strip()
-    m = _CODE_RE.search(body.text or "")
-    return m.group(1) if m else ""
+def _parse_raw(raw: str) -> tuple[str, str]:
+    """본문에서 (그룹, 코드)를 뽑는다 — **JSON 이 깨져 있어도** 동작한다.
+
+    [2026-08-28] 폰(MacroDroid)이 보내는 본문은
+      {"group":"CN","text":"{sms_message}"}
+    인데, 실제 문자에는 줄바꿈과 따옴표가 들어 있어 그대로 박히면 JSON 문법이
+    깨진다. 그래서 FastAPI 모델 검증이 422 로 떨어졌다(실측: 문자 수신 3건 전부
+    422, 변수가 빈 테스트만 200). 폰 규칙을 고치게 하는 대신 서버가 흡수한다.
+    정상 JSON 이면 그대로 읽고, 아니면 원문 전체에서 정규식으로 찾는다.
+    """
+    grp, txt = "", raw
+    try:
+        d = json.loads(raw)
+        if isinstance(d, dict):
+            grp = str(d.get("group") or "")
+            txt = str(d.get("text") or d.get("code") or "")
+            if str(d.get("code") or "").strip().isdigit():
+                return grp, str(d["code"]).strip()
+    except Exception:
+        m = _GROUP_RE.search(raw)
+        grp = m.group(1) if m else ""
+    m2 = _CODE_RE.search(txt)
+    return grp, (m2.group(1) if m2 else "")
 
 
 @router.post("/otp", dependencies=[Depends(_require_internal_token)])
 async def receive_otp(
-    body: OtpIn,
+    request: Request,
     session: AsyncSession = Depends(get_write_session_dependency),
 ) -> dict:
-    """폰이 받은 크림 로그인 문자를 적재한다. 원문을 그대로 보내도 된다."""
-    grp = (body.group or "JP").upper()
-    code = _pick_code(body)
+    """폰이 받은 크림 로그인 문자를 적재한다. 원문을 그대로 보내도 된다.
+
+    본문은 모델로 검증하지 않고 **원문 그대로** 읽는다 — 문자에 줄바꿈·따옴표가
+    있어도 422 로 떨어지지 않게 하기 위해서다(_parse_raw 참조).
+    """
+    raw = (await request.body()).decode("utf-8", "replace")
+    grp, code = _parse_raw(raw)
+    grp = (grp or "JP").upper()
     if not code:
         # 크림 문자가 아니거나 형식이 다르면 조용히 무시한다 — 폰 규칙이 넓게
         # 걸려 있어도 서버가 걸러주는 편이 안전하다.
