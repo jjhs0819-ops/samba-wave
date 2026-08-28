@@ -15,6 +15,7 @@
   7. buyma 아닌 계정 거부
   8. list 형태로 저장된 레코드(운영에 105건 존재) 복구
   9. 일문 상품명(name_ja) 채움 / --skip-name-ja
+ 10. --exclude 로 지정한 상품은 연결하지 않는다
 
 usage:
   docker compose up -d test-db && python -m alembic upgrade head
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -225,11 +227,31 @@ async def main() -> int:
     check(await snapshot() == after, "재실행해도 DB 가 그대로다")
     check("이미 연결됨" in out and "5" in line, "5건 전부 이미 연결됨으로 집계")
 
-    print("\n[4] --skip-name-ja")
+    print("\n[4] --exclude")
+    ex = CSV.parent / "_backfill_verify_exclude.json"
+    ex.write_text(json.dumps(["7000001"]), encoding="utf-8")
+    # 이미 연결된 상태라 값은 어차피 그대로다. 확인할 것은 제외 건수를
+    # 보고하는지, 그리고 제외한 상품을 건드리지 않는지다.
+    out = run("--account", ACC_BUYMA, "--apply", "--exclude", str(ex))
+    check("1건 제외" in out, "--exclude 가 제외 건수를 보고한다")
+    check(await snapshot() == after, "제외한 상품은 손대지 않는다")
+    ex.unlink(missing_ok=True)
+
+    # 옵션을 안 붙여도 기본 목록(scripts/data/buyma_excluded_nos.json)이 걸려야
+    # 한다. 사람이 잊는 쪽에 걸면 내렸던 상품이 되살아난다.
+    from scripts.buyma_backfill import DEFAULT_EXCLUDE
+
+    out = run("--account", ACC_BUYMA, "--dry-run")
+    check(
+        DEFAULT_EXCLUDE.exists() and DEFAULT_EXCLUDE.name in out,
+        "옵션 없이도 기본 제외목록을 읽는다",
+    )
+
+    print("\n[5] --skip-name-ja")
     run("--account", ACC_BUYMA, "--apply", "--skip-name-ja")
     check(await snapshot() == after, "--skip-name-ja 는 일문명을 건드리지 않는다")
 
-    print("\n[5] 잘못된 계정")
+    print("\n[6] 잘못된 계정")
     out = run("--account", ACC_OTHER, "--dry-run")
     check("market_type 가 buyma 가 아님" in out, "buyma 아닌 계정 거부")
     out = run("--account", "ma_없는계정", "--dry-run")

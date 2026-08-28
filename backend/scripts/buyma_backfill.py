@@ -20,6 +20,11 @@ name_ja 를 같이 넣는 이유는, 무신사에서 수집한 name 은 한국�
 usage:
   python -m scripts.buyma_backfill --csv backfill_mapping.csv --account ma_xxx --dry-run
   python -m scripts.buyma_backfill --csv backfill_mapping.csv --account ma_xxx --apply
+
+권리침해 등으로 바이마에서 내린 상품은 scripts/data/buyma_excluded_nos.json 에
+넣어두면 옵션 없이도 자동으로 빠진다. 옵션을 잊으면 조용히 연결되고, 그게
+오토튠을 타면 내렸던 상품이 되살아나므로 기본값으로 둔다.
+다른 목록을 쓰려면 --exclude 로 지정한다.
 """
 
 from __future__ import annotations
@@ -27,15 +32,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 import sys
 from collections import Counter
 from pathlib import Path
 
 from sqlalchemy import select
 
+# 바이마에서 내려 다시 올리면 안 되는 무신사 goods_no 목록.
+# --exclude 로 덮어쓸 수 있지만, 지정이 없으면 이 파일을 쓴다.
+DEFAULT_EXCLUDE = Path(__file__).parent / "data" / "buyma_excluded_nos.json"
+
 
 async def _run(
-    csv_path: Path, account_id: str, apply: bool, limit: int, name_ja: bool
+    csv_path: Path,
+    account_id: str,
+    apply: bool,
+    limit: int,
+    name_ja: bool,
+    exclude: Path | None,
 ) -> int:
     from backend.db.orm import get_write_sessionmaker
     from backend.domain.samba.account.model import SambaMarketAccount
@@ -46,6 +61,26 @@ async def _run(
 
     csv.field_size_limit(10**7)
     rows = list(csv.DictReader(csv_path.open(encoding="utf-8-sig")))
+
+    # 권리침해 지적 등으로 바이마에서 내린 상품은 연결하면 안 된다. 연결하면
+    # registered_accounts 에 buyma 가 붙어 오토튠 감시대상이 되고, 다음 재전송
+    # 때 삭제한 상품이 되살아난다.
+    # 2026-08-28 SCULPTOR 206건 — BUYMA 통지ID:14891, 권리자 Roots Corporation.
+    # 옵션을 안 붙이면 조용히 연결돼 버리므로, 지정이 없으면 리포에 있는
+    # 기본 목록을 쓴다. 잊는 쪽에 걸지 않는다.
+    src = exclude or DEFAULT_EXCLUDE
+    if src.exists():
+        skip = {str(x).strip() for x in json.loads(src.read_text(encoding="utf-8"))}
+        before = len(rows)
+        rows = [r for r in rows if r["musinsa_goods_no"].strip() not in skip]
+        print(
+            f"[제외] {src.name} — 목록 {len(skip):,}건 중 {before - len(rows):,}건 제외",
+            flush=True,
+        )
+    elif exclude:
+        print(f"제외목록 없음: {exclude}")
+        return 2
+
     if limit:
         rows = rows[:limit]
     print(
@@ -167,6 +202,12 @@ def main() -> int:
         action="store_true",
         help="일문 상품명(name_ja) 은 건드리지 않는다",
     )
+    ap.add_argument(
+        "--exclude",
+        type=Path,
+        help=f"연결에서 제외할 무신사 goods_no 목록(JSON 배열). "
+        f"미지정이면 {DEFAULT_EXCLUDE.name} 을 쓴다",
+    )
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--dry-run", action="store_true")
     g.add_argument("--apply", action="store_true")
@@ -174,7 +215,9 @@ def main() -> int:
     if not a.csv.exists():
         print(f"CSV 없음: {a.csv}")
         return 2
-    return asyncio.run(_run(a.csv, a.account, a.apply, a.limit, not a.skip_name_ja))
+    return asyncio.run(
+        _run(a.csv, a.account, a.apply, a.limit, not a.skip_name_ja, a.exclude)
+    )
 
 
 if __name__ == "__main__":
