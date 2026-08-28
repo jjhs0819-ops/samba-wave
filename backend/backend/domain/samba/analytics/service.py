@@ -11,6 +11,31 @@ from backend.domain.samba.order.repository import SambaOrderRepository
 from backend.domain.samba.product.repository import SambaProductRepository
 
 
+# [2026-08-28] 매출 집계 규칙 — 두 가지를 바로잡는다.
+# 1) sale_price / cost 는 이미 "주문 총액"이다. 주문 목록 API 도 sum(sale_price) 로
+#    집계한다(order.py:952 등). 여기서 quantity 를 다시 곱하면 수량이 여러 개인
+#    주문이 배수로 부풀려진다. (실측: qty=3 주문 sale_price=772,748 = 3장 합계)
+# 2) 취소·환불 주문은 매출이 아니다. 상태 필터가 없으면 이미 환불된 금액이
+#    매출에 그대로 남는다. (실측 2026-08-28: 전액환불된 주문 1건이 15,205,666원으로 집계)
+#    단, profit 은 0 으로 만들지 않는다 — 환불해도 마켓 수수료 차액 손실이 실제로 남는다.
+_VOID_STATUSES = {"cancelled", "cancel_requested", "returned", "refunded"}
+
+
+def _is_void(order) -> bool:
+    """취소·반품 주문 — 매출/원가 집계에서 제외."""
+    return (order.status or "") in _VOID_STATUSES
+
+
+def _sales_of(order) -> float:
+    """주문 매출액. sale_price 가 이미 총액이라 quantity 를 곱하지 않는다."""
+    return 0.0 if _is_void(order) else float(order.sale_price or 0)
+
+
+def _cost_of(order) -> float:
+    """주문 원가. cost 도 총액이라 quantity 를 곱하지 않는다."""
+    return 0.0 if _is_void(order) else float(order.cost or 0)
+
+
 class SambaAnalyticsService:
     def __init__(
         self,
@@ -63,7 +88,7 @@ class SambaAnalyticsService:
             key = ch_id
 
             agg[key]["channel_name"] = ch_name
-            agg[key]["sales"] += order.sale_price * order.quantity
+            agg[key]["sales"] += _sales_of(order)
             agg[key]["orders"] += 1
             agg[key]["profit"] += order.profit
 
@@ -88,7 +113,7 @@ class SambaAnalyticsService:
             p_name = order.product_name or "기타"
 
             agg[p_id]["product_name"] = p_name
-            agg[p_id]["sales"] += order.sale_price * order.quantity
+            agg[p_id]["sales"] += _sales_of(order)
             agg[p_id]["orders"] += 1
             agg[p_id]["profit"] += order.profit
             agg[p_id]["units"] += order.quantity
@@ -130,7 +155,7 @@ class SambaAnalyticsService:
             if date_str not in daily:
                 continue
 
-            daily[date_str]["sales"] += order.sale_price * order.quantity
+            daily[date_str]["sales"] += _sales_of(order)
             daily[date_str]["orders"] += 1
             daily[date_str]["profit"] += order.profit
 
@@ -158,7 +183,7 @@ class SambaAnalyticsService:
                     "profit": 0.0,
                 }
 
-            monthly[month_str]["sales"] += order.sale_price * order.quantity
+            monthly[month_str]["sales"] += _sales_of(order)
             monthly[month_str]["orders"] += 1
             monthly[month_str]["profit"] += order.profit
 
@@ -178,7 +203,7 @@ class SambaAnalyticsService:
         all_products = await self.product_repo.list_async()
         all_channels = await self.channel_repo.list_async()
 
-        total_sales = sum(o.sale_price * o.quantity for o in all_orders)
+        total_sales = sum(_sales_of(o) for o in all_orders)
         total_profit = sum(o.profit for o in all_orders)
 
         return {
@@ -248,8 +273,8 @@ class SambaAnalyticsService:
         for order in all_orders:
             site = order.source_site or "미분류"
             agg[site]["source_site"] = site
-            agg[site]["total_cost"] += order.cost * order.quantity
-            agg[site]["total_revenue"] += order.sale_price * order.quantity
+            agg[site]["total_cost"] += _cost_of(order)
+            agg[site]["total_revenue"] += _sales_of(order)
             agg[site]["total_profit"] += order.profit
             agg[site]["order_count"] += 1
 
@@ -313,7 +338,7 @@ class SambaAnalyticsService:
             )
             agg[pid]["product_name"] = order.product_name or "기타"
             agg[pid]["source_site"] = order.source_site or ""
-            agg[pid]["sales"] += order.sale_price * order.quantity
+            agg[pid]["sales"] += _sales_of(order)
             agg[pid]["profit"] += order.profit
             agg[pid]["orders"] += 1
             agg[pid]["units"] += order.quantity
@@ -344,7 +369,7 @@ class SambaAnalyticsService:
             )
             agg[pid]["product_name"] = order.product_name or "기타"
             agg[pid]["source_site"] = order.source_site or ""
-            agg[pid]["sales"] += order.sale_price * order.quantity
+            agg[pid]["sales"] += _sales_of(order)
             agg[pid]["profit"] += order.profit
             agg[pid]["orders"] += 1
             agg[pid]["units"] += order.quantity
@@ -405,7 +430,7 @@ class SambaAnalyticsService:
         for order in all_orders:
             brand = brand_map.get(order.collected_product_id or "", "") or "미분류"
             agg[brand]["brand"] = brand
-            agg[brand]["sales"] += order.sale_price * order.quantity
+            agg[brand]["sales"] += _sales_of(order)
             agg[brand]["profit"] += order.profit
             agg[brand]["orders"] += 1
 
@@ -433,7 +458,7 @@ class SambaAnalyticsService:
             tenant_id=tenant_id, created_from=start, created_to=end
         )
 
-        total_sales = sum(o.sale_price * o.quantity for o in filtered)
+        total_sales = sum(_sales_of(o) for o in filtered)
         total_profit = sum(o.profit for o in filtered)
         total_orders = len(filtered)
 

@@ -1919,9 +1919,9 @@ async def analytics_aggregate(
             sa_func.coalesce(sa_func.sum(SambaOrder.sale_price), 0).label("sales"),
             sa_func.count().label("orders"),
             sa_func.coalesce(sa_func.sum(SambaOrder.profit), 0).label("profit"),
-            sa_func.coalesce(
-                sa_func.sum(SambaOrder.cost * SambaOrder.quantity), 0
-            ).label("cost"),
+            # [2026-08-28] cost 는 이미 주문 총액이라 quantity 를 곱하면 안 된다.
+            # (실측: qty=3 주문 cost=568,523 = 3장 합계) sale_price 와 같은 규칙.
+            sa_func.coalesce(sa_func.sum(SambaOrder.cost), 0).label("cost"),
         )
         .select_from(SambaOrder)
         .outerjoin(SambaMarketAccount, SambaMarketAccount.id == SambaOrder.channel_id)
