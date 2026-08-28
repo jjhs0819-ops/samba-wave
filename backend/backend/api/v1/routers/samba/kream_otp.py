@@ -125,17 +125,24 @@ async def receive_otp(
 async def read_otp(
     group: str,
     max_age: int = _TTL_SEC,
+    after: float = 0.0,
     session: AsyncSession = Depends(get_read_session_dependency),
 ) -> dict:
     """최근 코드 조회. max_age 초를 넘긴 코드는 없는 것으로 본다.
 
     [2026-08-28] 그룹 자리에 쓸 만한 코드가 없으면 **공용 자리(ANY)** 를 본다.
     폰 규칙에 group 을 잘못 박아도 로그인이 막히지 않게 하려는 것이다.
+
+    [2026-08-28] `after`(epoch) 는 **그 시각 이후 도착한 코드만** 인정한다.
+    max_age 만으로는 경계가 흐려 직전 로그인의 옛 코드를 집어간다 — 실측:
+    로그인 요청 4분 전에 저장된 093241 을 그대로 써 크림이 400
+    ("인증번호를 확인해주세요")을 돌려줬다. 호출부는 로그인 요청 직전의
+    시각을 after 로 넘겨야 한다.
     """
     grp = (group or "JP").upper()
 
     def _pick(raw: str | None) -> tuple[str, int] | None:
-        """(코드, 나이) — 없거나 만료면 None."""
+        """(코드, 나이) — 없거나 만료거나 after 이전이면 None."""
         if not raw:
             return None
         try:
@@ -145,7 +152,10 @@ async def read_otp(
         code = str(d.get("code") or "")
         if not code:
             return None
-        age = int(time.time() - float(d.get("ts") or 0))
+        ts = float(d.get("ts") or 0)
+        if after and ts < float(after):
+            return None
+        age = int(time.time() - ts)
         return (code, age) if age <= max(1, int(max_age)) else None
 
     rows = {
