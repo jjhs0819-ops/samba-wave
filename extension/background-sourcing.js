@@ -3405,12 +3405,24 @@ async function _ssgFetchDetail(productId) {
       try {
         const url = `/item/itemView.ssg?itemId=${prdId}&siteNo=6009`
         const r = await fetch(url, { credentials: 'include' })
-        if (!r.ok) return { success: false, message: `SSG fetch HTTP ${r.status}` }
+        // [2026-08-26 중요] 본문을 먼저 읽고 차단부터 판정한다.
+        //
+        // 예전엔 !r.ok 에서 곧바로 빠져나가 아래 차단 문구 검사를 아예 못 했다.
+        // SSG 봇차단은 403 + 차단 문구로 오는데(실측: status 403, 본문 2,588자,
+        // '비정상적인 접근' 포함), 그 경우가 전부 blocked 가 아닌 일반 실패로
+        // 회신됐다. 그래서 백엔드 집계에서 "값 미확보"로 잡혀 차단 카운터가 거의
+        // 오르지 않았고(30분간 차단 4건 / 미확보 275건), 백오프가 걸리지 않아
+        // 차단 상태에서 계속 두드렸다 — 차단이 안 풀린 진짜 이유.
         const h = await r.text()
         if (h.includes('비정상적인 접근') || h.includes('자동화된 환경') ||
             h.includes('연속적인 접근') || h.includes('로봇이 아닙니다')) {
           return { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
         }
+        // 문구가 없어도 403/429 는 차단으로 본다(문구가 바뀌어도 놓치지 않게).
+        if (r.status === 403 || r.status === 429) {
+          return { success: false, blocked: true, message: `SSG 차단 의심 HTTP ${r.status}` }
+        }
+        if (!r.ok) return { success: false, message: `SSG fetch HTTP ${r.status}` }
         if (h.indexOf('임직원 및 사업자 회원') !== -1 || h.indexOf('임직원만 구매') !== -1) {
           return { success: false, staffOnly: true, message: 'SSG 임직원/사업자 회원 전용 상품' }
         }
