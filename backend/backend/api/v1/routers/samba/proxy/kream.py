@@ -1195,7 +1195,7 @@ class SnkrdunkAnomalyOkPatchRequest(BaseModel):
     anomaly_ok: bool
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/verify")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/verify")
 async def snkrdunk_update_verify_public(
     snkr_id: str,
     body: SnkrdunkVerifyPatchRequest,
@@ -1225,7 +1225,7 @@ async def snkrdunk_update_verify_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/anomaly-ok")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/anomaly-ok")
 async def snkrdunk_update_anomaly_ok_public(
     snkr_id: str,
     body: SnkrdunkAnomalyOkPatchRequest,
@@ -1270,7 +1270,7 @@ async def snkrdunk_update_anomaly_ok_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.get("/kream/snkrdunk-compare/{snkr_id}/kream-image")
+@snkrdunk_public_router.get("/kream/snkrdunk-compare/{snkr_id:path}/kream-image")
 async def snkrdunk_kream_image_public(
     snkr_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -1322,7 +1322,7 @@ async def snkrdunk_kream_image_public(
     return {"image": img}
 
 
-@snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
+@snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id:path}/match")
 async def snkrdunk_remove_match_public(
     snkr_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -1331,7 +1331,7 @@ async def snkrdunk_remove_match_public(
     return await _snkrdunk_remove_match_impl(snkr_id, session)
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/match")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/match")
 async def snkrdunk_update_match_public(
     snkr_id: str,
     body: SnkrdunkMatchPatchRequest,
@@ -1343,7 +1343,7 @@ async def snkrdunk_update_match_public(
     )
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/style-code")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/style-code")
 async def snkrdunk_update_style_code_public(
     snkr_id: str,
     body: SnkrdunkStyleCodePatchRequest,
@@ -1367,7 +1367,7 @@ async def snkrdunk_update_style_code_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/fixed-price")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/fixed-price")
 async def snkrdunk_update_fixed_price_public(
     snkr_id: str,
     body: SnkrdunkFixedPricePatchRequest,
@@ -1402,7 +1402,7 @@ async def snkrdunk_update_fixed_price_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/kream-name")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/kream-name")
 async def snkrdunk_update_kream_name_public(
     snkr_id: str,
     body: SnkrdunkKreamNamePatchRequest,
@@ -1421,7 +1421,7 @@ async def snkrdunk_update_kream_name_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/kream-name-en")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/kream-name-en")
 async def snkrdunk_update_kream_name_en_public(
     snkr_id: str,
     body: SnkrdunkKreamNameEnPatchRequest,
