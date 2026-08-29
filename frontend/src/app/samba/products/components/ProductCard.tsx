@@ -586,7 +586,20 @@ const ProductCard = React.memo(function ProductCard({
   const _excludeHeldPoint = Boolean(_ssmAll?.[p.source_site]?.excludeHeldPoint)
   const _costExclHeldPoint = (p as unknown as { cost_excl_held_point?: number }).cost_excl_held_point
   const _useExcl = _excludeHeldPoint && (_costExclHeldPoint ?? 0) > 0
-  const cost = (_useExcl ? _costExclHeldPoint : p.cost) || p.sale_price || p.original_price || 0
+  // [2026-08-29] 원가 폴백 — 공홈 소싱(오니츠카·ABC·그랜드·아트모스·유니클로·GU)은
+  // 수집기가 original_price/sale_price 를 0 으로 두고 **실가격은 옵션에** 담는다.
+  // sale_price 만 보면 원가 ¥0 로 뜨므로, 값이 없으면 옵션 최저가(재고 있는 것 우선)로
+  // 폴백한다. 소싱처 무관 공통 처리 — 새 소싱처 추가 시 재세팅 불필요.
+  const _optCost = (() => {
+    const _os = Array.isArray(p.options)
+      ? (p.options as Array<{ price?: number; stock?: number }>)
+      : []
+    const _inStock = _os.filter(o => Number(o?.price) > 0 && Number(o?.stock) > 0).map(o => Number(o.price))
+    if (_inStock.length) return Math.min(..._inStock)
+    const _any = _os.filter(o => Number(o?.price) > 0).map(o => Number(o.price))
+    return _any.length ? Math.min(..._any) : 0
+  })()
+  const cost = (_useExcl ? _costExclHeldPoint : p.cost) || p.sale_price || p.original_price || _optCost || 0
   const baseMarginRate = (pricing.marginRate as number) || 15
   // 가격범위별 마진 매칭 (백엔드 _calculate_range_margin과 동일: cost >= min && cost < max)
   const useRangeMargin = Boolean(pricing.useRangeMargin)
