@@ -3021,6 +3021,62 @@ def _pick_cheapest_source(rows: list[dict]) -> list[dict]:
     return rows
 
 
+def _merge_kid_opts(products: list[dict]) -> dict:
+    """kid(크림 상품)별로 여러 소싱처 옵션을 **옵션(사이즈) 단위 최저가**로 병합한다.
+
+    [2026-08-29 사용자 지시] 종전 kid_to_opts 는 kid당 한 소싱처 db_opts 만 남겨
+    (dict 컴프리헨션에서 마지막 행이 이김), 최저가 소싱처에 없는 사이즈는 통째로
+    버려졌다. 예: 살로몬 807822 는 SNKR(225/235/240)만 입찰되고 ABC 전용 230/245/250
+    이 빠졌다. 사이즈마다 그 사이즈를 가진 소싱처 중 최저가를 고른다.
+
+    반환값 각 옵션에 출처(src=소싱처, sid=소싱상품id)를 붙인다 — 실시간 재조회를
+    옵션별 소싱처로 하고(_one_style), 원가계산도 옵션별 home_direct 로 가르기 위함.
+    통화가 다른 행(스니덩크 글로벌 USD)은 숫자 비교가 안 되므로 병합에서 제외한다.
+    """
+    by_kid: dict = {}
+    for p in products:
+        if p.get("kid"):
+            by_kid.setdefault(p["kid"], []).append(p)
+
+    def _canon(nm: str) -> str:
+        mm = _cm_to_mm(nm)  # '22.5cm' → '225'
+        return mm if mm else str(nm).upper().strip()
+
+    out: dict = {}
+    for kid, ps in by_kid.items():
+        best: dict = {}  # canon → (price, stock, name, src, sid)
+        for p in ps:
+            if str(p.get("currency") or "JPY").upper() != "JPY":
+                continue  # 통화 다르면 병합 제외(엔화 오인 9배 오입찰 방지)
+            site = str(p.get("site") or "SNKRDUNK").upper()
+            sid = str(p.get("snkr_id") or "")
+            for nm, d in (p.get("db_opts") or {}).items():
+                price = int((d or {}).get("price") or 0)
+                stock = int((d or {}).get("stock") or 0)
+                c = _canon(nm)
+                cur = best.get(c)
+                # 가격>0 이 가격0 을 이긴다. 둘 다 >0 이면 싼 쪽. 동가면 재고 있는 쪽.
+                if cur is None:
+                    best[c] = (price, stock, nm, site, sid)
+                else:
+                    win = (price > 0 and (cur[0] <= 0 or price < cur[0])) or (
+                        price == cur[0] and stock > cur[1]
+                    )
+                    if win:
+                        best[c] = (price, stock, nm, site, sid)
+        merged: dict = {
+            nm: {"price": pr, "stock": st, "src": sc, "sid": si}
+            for (pr, st, nm, sc, si) in best.values()
+        }
+        if not merged:  # 전부 통화 다름 등 — 대표행 db_opts 로 폴백
+            for p in ps:
+                if p.get("db_opts"):
+                    merged = {k: dict(v) for k, v in p["db_opts"].items()}
+                    break
+        out[kid] = merged
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # [Step 5] 리스톡/삭제 실행 + 로컬 봇 가드 이식 — 실제 POST/DELETE 안전 가드.
 # 로컬 파일기반 상태(miss_counts/recent_posts/failed_posts)는 백엔드서 못 쓰므로 samba_settings
@@ -5078,17 +5134,45 @@ async def _process_shoe_asks(
         )
 
         async def _one_style(kid: str):
-            style = kid_to_snkr.get(kid)
-            if not style:
+            # [2026-08-29] 옵션(사이즈)별 소싱처가 다를 수 있다(최저가 병합). 각 소싱처를
+            # 따로 조회해, 그 소싱처가 담당하는 옵션만 실시간값으로 채운다. 각 옵션값에
+            # src 를 붙여 결정 루프가 옵션별 home_direct(공홈 여부)로 원가를 가른다.
+            opts = kid_to_opts.get(kid) or {}
+            srcs: dict = {}
+            for _d in opts.values():
+                _i = str((_d or {}).get("sid") or "")
+                if _i:
+                    srcs[(str((_d or {}).get("src") or "SNKRDUNK").upper(), _i)] = True
+            if not srcs:
+                _st = kid_to_snkr.get(kid)
+                if _st:
+                    srcs[("SNKRDUNK", str(_st))] = True
+            if not srcs:
                 return
             async with _sem:
                 _progress()  # 워치독
-                # [2026-08-04] 카테고리 무관 처리 — 스니덩크 id 가 숫자면 의류·잡화라
-                # /v1/apparels/{id}/sizes, 스타일코드면 상품 HTML 을 쓴다.
-                # [2026-08-07] 분기를 _fetch_snkr_live_sizes 로 빼 리스톡과 공유한다.
-                live = await _fetch_snkr_live_sizes(cli, str(style))
-            if live is not None:
-                live_map[kid] = live
+                combined: dict = {}
+                for _site, _sid in srcs:
+                    # 스니덩크 id 숫자=의류/잡화, 스타일코드=mm 품목 / 공홈·ABC·atmos 는
+                    # _fetch_live_sizes_by_site 가 소싱처별로 분기(리스톡과 공유).
+                    lv = await _fetch_live_sizes_by_site(cli, _site, _sid, opts)
+                    if not lv:
+                        continue
+                    for _nm, _d in opts.items():
+                        if (
+                            str((_d or {}).get("src") or "").upper() != _site
+                            or str((_d or {}).get("sid") or "") != _sid
+                        ):
+                            continue
+                        _hit = _live_opt(lv, _nm)
+                        if _hit is not None:
+                            combined[_nm] = {
+                                "price": int((_hit or {}).get("price") or 0),
+                                "stock": int((_hit or {}).get("stock") or 0),
+                                "src": _site,
+                            }
+            if combined:
+                live_map[kid] = combined
 
         # [2026-08-04] 브랜드·카테고리 가리지 않고 전량 대상. 종전엔 mm 옵션(230·275)만
         # 뽑아 의류(S/M/L)가 통째로 빠졌고, 시세를 못 받은 상품은 갱신 스킵이라
@@ -5108,15 +5192,24 @@ async def _process_shoe_asks(
         # [2026-08-07] 갱신·삭제가 본 실시간값을 DB 에도 되쓴다(종전 write-back 은 카드 전용).
         # 입찰 보유 상품은 리스톡 루프를 안 타므로 여기서 챙기지 않으면 계속 낡는다.
         # cost 는 0 = 기존 보존(비카드 DB 원가 원화 오염 이력).
-        c["db_updates"] = [
-            (
-                str(kid_to_snkr[kid]),
-                _merge_live_into_db_opts(kid_to_opts.get(kid) or {}, _sz),
-                0,
-            )
-            for kid, _sz in live_map.items()
-            if kid_to_snkr.get(kid)
-        ]
+        # [2026-08-29] 옵션이 여러 소싱처에서 병합됐으므로, 되쓰기도 **소싱상품(sid)별로
+        # 갈라** 각자 행에만 쓴다. 안 그러면 병합된 ABC 옵션이 SNKR 행에 섞여 들어가
+        # 소싱 데이터가 오염된다.
+        _dbu: list = []
+        for kid, _sz in live_map.items():
+            _opts = kid_to_opts.get(kid) or {}
+            _by_sid: dict = {}
+            for _nm, _d in _opts.items():
+                _sid = str((_d or {}).get("sid") or "") or str(
+                    kid_to_snkr.get(kid) or ""
+                )
+                if _sid:
+                    _by_sid.setdefault(_sid, {})[_nm] = _d
+            for _sid, _sub in _by_sid.items():
+                _lst = _merge_live_into_db_opts(_sub, _sz)
+                if _lst:
+                    _dbu.append((_sid, _lst, 0))
+        c["db_updates"] = _dbu
 
         # [2026-08-13] 진행 로그 — 이 루프는 2만 건대인데 시작/끝만 찍어서, 안에서
         # 느려지거나 멈춰도 밖에서 구분할 방법이 없었다(실측: 3시간 무진행을
@@ -5185,7 +5278,14 @@ async def _process_shoe_asks(
                 continue
             c["stock"] += 1
             cur = int(a.get("price") or 0)
-            _min_p = calc_min_price(price, rate, True, False, _sur, fee_kind="item")
+            # [2026-08-29] 옵션(사이즈)마다 소싱처가 다를 수 있다(최저가 병합). 공홈
+            # 소싱(ABC·그랜드·atmos·유니클로·GU·오니츠카)은 원가에 국내배송·결제수수료가
+            # 이미 있어(landed) home_direct 로 계산해야 한다 — 안 그러면 스니덩크용 배송
+            # 900엔을 헛되이 더해 원가가 부풀고 하한이 높아진다.
+            _hd = str((od or {}).get("src") or "").upper() in _HOME_DIRECT_SITES
+            _min_p = calc_min_price(
+                price, rate, True, False, _sur, fee_kind="item", home_direct=_hd
+            )
             _floor_map[(kid, opt)] = _min_p
             _lo = int(a.get("lowest_overseas_price") or 0)
             _ln = int(a.get("lowest_normal_price") or 0)
@@ -5203,6 +5303,7 @@ async def _process_shoe_asks(
                 is_box=True,
                 surcharge_rate=_sur,
                 fee_kind="item",  # 신발·의류·시계 = 2,750 + 6.16%
+                home_direct=_hd,
                 # [2026-08-13] 여기서 _rank_of 를 await 하면 안 된다 — 이 루프는
                 # gather 가 아니라 **순차**라, 입찰 21,000건에 API 왕복이 직렬로 붙어
                 # 신발갱신이 3시간 넘게 진행 로그 한 줄 없이 멈춘 것처럼 보였다.
@@ -6229,8 +6330,10 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     kid_to_snkr = {
         p["kid"]: p["snkr_id"] for p in products if p["kid"] and p["snkr_id"]
     }
-    # 신발 pass용 kid→옵션맵 (사이즈별 price/stock). 배치 슬라이스 전 전체 — 신발 ask도 전역.
-    kid_to_opts = {p["kid"]: p["db_opts"] for p in products if p["kid"]}
+    # 신발 pass용 kid→옵션맵 (사이즈별 price/stock/src/sid). 배치 슬라이스 전 전체.
+    # [2026-08-29] **옵션(사이즈)별 최저가 소싱처**로 병합 — 종전엔 kid당 한 소싱처만
+    # 남아 최저가 소싱처에 없는 사이즈가 통째로 빠졌다(살로몬 807822 ABC 230/245/250).
+    kid_to_opts = _merge_kid_opts(products)
     # 의류/시계(apparel/watch) kid — 신발 pass 가 옵션포맷(S/M/L) 무관 갱신/삭제하도록 전달.
     async with get_read_session() as _ss:
         _skr = (
