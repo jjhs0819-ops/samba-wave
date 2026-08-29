@@ -3044,30 +3044,41 @@ def _merge_kid_opts(products: list[dict]) -> dict:
 
     out: dict = {}
     for kid, ps in by_kid.items():
-        best: dict = {}  # canon → (price, stock, name, src, sid)
+        cand_map: dict = {}  # canon → [{src,sid,name,price,stock}, ...] (전 소싱처 후보)
         for p in ps:
             if str(p.get("currency") or "JPY").upper() != "JPY":
                 continue  # 통화 다르면 병합 제외(엔화 오인 9배 오입찰 방지)
             site = str(p.get("site") or "SNKRDUNK").upper()
             sid = str(p.get("snkr_id") or "")
             for nm, d in (p.get("db_opts") or {}).items():
-                price = int((d or {}).get("price") or 0)
-                stock = int((d or {}).get("stock") or 0)
-                c = _canon(nm)
-                cur = best.get(c)
-                # 가격>0 이 가격0 을 이긴다. 둘 다 >0 이면 싼 쪽. 동가면 재고 있는 쪽.
-                if cur is None:
-                    best[c] = (price, stock, nm, site, sid)
-                else:
-                    win = (price > 0 and (cur[0] <= 0 or price < cur[0])) or (
-                        price == cur[0] and stock > cur[1]
-                    )
-                    if win:
-                        best[c] = (price, stock, nm, site, sid)
-        merged: dict = {
-            nm: {"price": pr, "stock": st, "src": sc, "sid": si}
-            for (pr, st, nm, sc, si) in best.values()
-        }
+                cand_map.setdefault(_canon(nm), []).append(
+                    {
+                        "src": site,
+                        "sid": sid,
+                        "name": nm,
+                        "price": int((d or {}).get("price") or 0),
+                        "stock": int((d or {}).get("stock") or 0),
+                    }
+                )
+        merged: dict = {}
+        for _c, cands in cand_map.items():
+            # 대표(단일)값 — 재고보유 정렬·폴백·write-back 용. **진짜 최저 소싱처는
+            # 실시간값으로 경쟁하한을 계산해 결정 루프에서 고른다**(cands 전체 보존).
+            # 대표는 재고 있는 것 우선, 그다음 DB 엔화 최저.
+            rep = min(
+                cands,
+                key=lambda x: (
+                    0 if x["stock"] > 0 else 1,
+                    x["price"] if x["price"] > 0 else 10**9,
+                ),
+            )
+            merged[rep["name"]] = {
+                "price": rep["price"],
+                "stock": rep["stock"],
+                "src": rep["src"],
+                "sid": rep["sid"],
+                "cands": cands,
+            }
         if not merged:  # 전부 통화 다름 등 — 대표행 db_opts 로 폴백
             for p in ps:
                 if p.get("db_opts"):
@@ -5134,15 +5145,19 @@ async def _process_shoe_asks(
         )
 
         async def _one_style(kid: str):
-            # [2026-08-29] 옵션(사이즈)별 소싱처가 다를 수 있다(최저가 병합). 각 소싱처를
-            # 따로 조회해, 그 소싱처가 담당하는 옵션만 실시간값으로 채운다. 각 옵션값에
-            # src 를 붙여 결정 루프가 옵션별 home_direct(공홈 여부)로 원가를 가른다.
+            # [2026-08-29] 전 소싱처 통합 — 한 옵션(사이즈)을 여러 소싱처가 가질 수 있다.
+            # 그 옵션에 얽힌 **모든 소싱처**(cands)를 각각 실시간 조회해 소싱처별로 담아
+            # 둔다. 결정 루프가 각 소싱처의 실시간 원가로 경쟁하한을 계산해 **최저 하한
+            # 소싱처**를 고른다(예전엔 DB 엔화 최저를 미리 못박아 다른 소싱처를 못 봤다).
             opts = kid_to_opts.get(kid) or {}
             srcs: dict = {}
             for _d in opts.values():
-                _i = str((_d or {}).get("sid") or "")
-                if _i:
-                    srcs[(str((_d or {}).get("src") or "SNKRDUNK").upper(), _i)] = True
+                for _cd in (_d or {}).get("cands") or [_d]:
+                    _i = str((_cd or {}).get("sid") or "")
+                    if _i:
+                        srcs[
+                            (str((_cd or {}).get("src") or "SNKRDUNK").upper(), _i)
+                        ] = True
             if not srcs:
                 _st = kid_to_snkr.get(kid)
                 if _st:
@@ -5151,28 +5166,15 @@ async def _process_shoe_asks(
                 return
             async with _sem:
                 _progress()  # 워치독
-                combined: dict = {}
+                live_by_src: dict = {}
                 for _site, _sid in srcs:
                     # 스니덩크 id 숫자=의류/잡화, 스타일코드=mm 품목 / 공홈·ABC·atmos 는
                     # _fetch_live_sizes_by_site 가 소싱처별로 분기(리스톡과 공유).
                     lv = await _fetch_live_sizes_by_site(cli, _site, _sid, opts)
-                    if not lv:
-                        continue
-                    for _nm, _d in opts.items():
-                        if (
-                            str((_d or {}).get("src") or "").upper() != _site
-                            or str((_d or {}).get("sid") or "") != _sid
-                        ):
-                            continue
-                        _hit = _live_opt(lv, _nm)
-                        if _hit is not None:
-                            combined[_nm] = {
-                                "price": int((_hit or {}).get("price") or 0),
-                                "stock": int((_hit or {}).get("stock") or 0),
-                                "src": _site,
-                            }
-            if combined:
-                live_map[kid] = combined
+                    if lv:
+                        live_by_src[(_site, _sid)] = lv
+            if live_by_src:
+                live_map[kid] = live_by_src
 
         # [2026-08-04] 브랜드·카테고리 가리지 않고 전량 대상. 종전엔 mm 옵션(230·275)만
         # 뽑아 의류(S/M/L)가 통째로 빠졌고, 시세를 못 받은 상품은 갱신 스킵이라
@@ -5195,18 +5197,25 @@ async def _process_shoe_asks(
         # [2026-08-29] 옵션이 여러 소싱처에서 병합됐으므로, 되쓰기도 **소싱상품(sid)별로
         # 갈라** 각자 행에만 쓴다. 안 그러면 병합된 ABC 옵션이 SNKR 행에 섞여 들어가
         # 소싱 데이터가 오염된다.
+        # live_map[kid] = {(src,sid): 실시간사이즈맵}. 소싱처(sid)별로 그 소싱처 옵션만
+        # 그 소싱처 실시간값으로 되쓴다 — cands 에서 소싱처별 db_opts 를 복원한다.
         _dbu: list = []
-        for kid, _sz in live_map.items():
-            _opts = kid_to_opts.get(kid) or {}
-            _by_sid: dict = {}
-            for _nm, _d in _opts.items():
-                _sid = str((_d or {}).get("sid") or "") or str(
-                    kid_to_snkr.get(kid) or ""
-                )
-                if _sid:
-                    _by_sid.setdefault(_sid, {})[_nm] = _d
-            for _sid, _sub in _by_sid.items():
-                _lst = _merge_live_into_db_opts(_sub, _sz)
+        for kid, _lbs in live_map.items():
+            _per_src: dict = {}  # (src,sid) → {name: {price,stock}}
+            for _mo in (kid_to_opts.get(kid) or {}).values():
+                for _cd in _mo.get("cands") or [_mo]:
+                    _k = (
+                        str((_cd or {}).get("src") or "SNKRDUNK").upper(),
+                        str((_cd or {}).get("sid") or ""),
+                    )
+                    _nm = str((_cd or {}).get("name") or "")
+                    if _k[1] and _nm:
+                        _per_src.setdefault(_k, {})[_nm] = {
+                            "price": int((_cd or {}).get("price") or 0),
+                            "stock": int((_cd or {}).get("stock") or 0),
+                        }
+            for (_site, _sid), _lv in _lbs.items():
+                _lst = _merge_live_into_db_opts(_per_src.get((_site, _sid)) or {}, _lv)
                 if _lst:
                     _dbu.append((_sid, _lst, 0))
         c["db_updates"] = _dbu
@@ -5230,11 +5239,53 @@ async def _process_shoe_asks(
             opt = str(a.get("option") or "").strip()
             # 실시간 우선: 조회 성공한 상품은 그 값이 진실(매물 없으면 재고0=삭제 후보)
             if kid in live_map:
-                # [2026-08-04] 크림 키즈·여성 사이즈는 '240(US 5.5)'·'230(4Y)' 처럼 접미가
-                # 붙는다. 스니덩크 시세는 '240' 키라 그대로 조회하면 전부 빗나가
-                # 재고·원가를 0 으로 보고 갱신이 통째로 스킵됐다(2,153건 방치).
-                # [2026-08-07] 접미 흡수 규칙을 _live_opt 로 빼 리스톡과 공유한다.
-                od = _live_opt(live_map[kid], opt) or {"price": 0, "stock": 0}
+                # [2026-08-29 전 소싱처 통합] live_map[kid] = {(src,sid): 실시간사이즈맵}.
+                # 이 옵션(사이즈)을 가진 **모든 소싱처 후보**의 실시간 원가로 경쟁하한을
+                # 각각 계산해 **최저 하한 소싱처**를 고른다(DB 엔화 최저가 아니라 실시간
+                # 경쟁하한 기준). 접미 흡수(_live_opt)로 '240(US 5.5)' 같은 크림 접미도 매칭.
+                _lbs = live_map[kid]
+                _mo = _live_opt(kid_to_opts.get(kid) or {}, opt) or {}
+                _cands = _mo.get("cands") or ([_mo] if _mo else [])
+                _best = None  # (floor, price, stock, src)
+                for _cd in _cands:
+                    _lv = _lbs.get(
+                        (
+                            str((_cd or {}).get("src") or "SNKRDUNK").upper(),
+                            str((_cd or {}).get("sid") or ""),
+                        )
+                    )
+                    _hit = _live_opt(_lv, opt) if _lv else None
+                    if not _hit:
+                        continue
+                    _pp = int((_hit or {}).get("price") or 0)
+                    _ss = int((_hit or {}).get("stock") or 0)
+                    if _pp <= 0 or _ss <= 0:
+                        continue
+                    if not (5000 <= _pp <= max(300000, POLICY["max_cost_jpy"])):
+                        continue  # 오염 원가 후보 제외
+                    _cd_hd = (
+                        str((_cd or {}).get("src") or "").upper() in _HOME_DIRECT_SITES
+                    )
+                    _fl = calc_min_price(
+                        _pp,
+                        rate,
+                        True,
+                        False,
+                        _sur,
+                        fee_kind="item",
+                        home_direct=_cd_hd,
+                    )
+                    if _best is None or _fl < _best[0]:
+                        _best = (
+                            _fl,
+                            _pp,
+                            _ss,
+                            str((_cd or {}).get("src") or "").upper(),
+                        )
+                if _best is None:
+                    od = {"price": 0, "stock": 0}  # 재고 있는 후보 없음 → 삭제 경로
+                else:
+                    od = {"price": _best[1], "stock": _best[2], "src": _best[3]}
             else:
                 # [2026-08-01 통화사고] DB 폴백 금지 — 신발 DB 원가에 원화(KRW)로 저장된 오염분이
                 # 2만개 있어 엔화로 오인하면 9배 부풀린 조정이 나간다. 실시간(JP native, 엔화)
