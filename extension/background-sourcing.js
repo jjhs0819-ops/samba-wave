@@ -5411,7 +5411,8 @@ async function extractDetailData(tabId, site, productId) {
 // (롯데ON 데몬의 self-update 와 동일 패턴 — sourcing.py)
 // ============================================================
 const _SELF_UPDATE_ALARM = 'sambaSelfUpdate'
-const _SELF_UPDATE_INTERVAL_MIN = 360 // 6시간
+// 6시간은 너무 느렸다 — 급한 수정이 반나절씩 안 퍼졌다. 30분으로 단축.
+const _SELF_UPDATE_INTERVAL_MIN = 30
 
 function _cmpSemver(a, b) {
   const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0)
@@ -5426,8 +5427,15 @@ function _cmpSemver(a, b) {
 
 async function _checkSelfUpdate() {
   try {
-    // 오토튠/잡 실행 중인 PC는 reload 보류 — 작업 끊김 방지. 다음 주기에 재시도.
-    if (_localAutotuneJoined) return
+    // [2026-08-26] 예전엔 `if (_localAutotuneJoined) return` 이라 오토튠에 참여
+    // 중인 PC는 자가 업데이트를 통째로 건너뛰었다. 그런데 오토튠 참여는 상시
+    // 상태라, 정작 일하는 PC들이 영영 옛 버전에 머물렀다(실측 2026-08-26:
+    // 27cc2c53=2.14.76, 76290318=2.14.77 — 최신은 2.14.84).
+    // 그 결과 차단 오분류 같은 중요한 수정이 현장에 반영되지 않았다.
+    //
+    // 이제는 "잡을 실제로 처리하는 중"일 때만 미룬다. 잡 사이 유휴 구간에
+    // reload 하므로 작업이 끊기지 않는다.
+    if (globalThis._pollSourcingInflight) return
 
     const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
     if (!proxyUrl) return
