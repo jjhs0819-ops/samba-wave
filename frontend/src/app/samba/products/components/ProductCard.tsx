@@ -573,7 +573,7 @@ const ProductCard = React.memo(function ProductCard({
   const _site = (p.source_site || '').toUpperCase()
   const _cur = (p.extra_data as Record<string, unknown> | undefined)?.currency
   // UNIQLO/GU 는 일본 공홈(jp/api) 수집이라 엔화. 원가에 3,000엔 미만 배송비 500엔 포함.
-  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA', 'UNIQLO', 'GU']
+  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS']
   const USD_SOURCE_SITES = ['AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
   const curSym = (JPY_SOURCE_SITES.includes(_site) || _cur === 'JPY') ? '¥'
     : (USD_SOURCE_SITES.includes(_site) || _cur === 'USD') ? '$'
@@ -792,6 +792,8 @@ const ProductCard = React.memo(function ProductCard({
       kreamMinMarginAmount?: number; kreamShippingFeeCard?: number
       kreamShippingFeeBox?: number; kreamForwardingFee?: number
       kreamBoxPackMarginRate?: number; kreamNonCardMarginRate?: number
+      kreamOverseasBaseFee?: number; kreamOverseasFeeRate?: number
+      kreamItemFeeBase?: number; kreamItemFeeVat?: number; kreamSellerLevel?: number
     }
     // [2026-08-27] 하드코딩 폴백 제거. 백엔드는 2026-08-23 에 정책 하드코딩을 전부
     // 걷어내고 못 읽으면 계산을 중단하게 바꿨는데(require_policy) 여기만 남아 있었다.
@@ -809,8 +811,16 @@ const ProductCard = React.memo(function ProductCard({
     const kFwd = _kNum(kp.kreamForwardingFee)
     const kBoxPack = _kNum(kp.kreamBoxPackMarginRate) // 박스/카드팩 추가마진율(%)
     const kNonCard = _kNum(kp.kreamNonCardMarginRate) // 나머지(신발/의류) 추가마진율(%)
+    // 크림 판매수수료 — 정산에서 차감되므로 등록가에 역산해서 얹는다(백엔드 gross_up_kream_fee 동일).
+    const kOvBase = _kNum(kp.kreamOverseasBaseFee) // 박스·카드팩: 기본수수료(원)
+    const kOvRate = _kNum(kp.kreamOverseasFeeRate) // 박스·카드팩: 판매가 대비 %(3%+VAT 반영)
+    const kItemBase = _kNum(kp.kreamItemFeeBase) // 신발·의류·시계: 기본수수료(원)
+    const kItemVat = _kNum(kp.kreamItemFeeVat) // 실물 수수료 VAT율(%)
+    // 실물 등급요율(%)은 저장값이 아니라 판매등급(kreamSellerLevel 1~5)에서 도출 — 백엔드 동일 표.
+    const _ITEM_RATE_BY_LEVEL: Record<number, number> = { 5: 5.50, 4: 5.60, 3: 5.70, 2: 5.85, 1: 6.00 }
+    const kItemRate = _ITEM_RATE_BY_LEVEL[Number(_kNum(kp.kreamSellerLevel) ?? 4)] ?? 5.60
     const kPolicyOk = [kComp, kNoComp, kMinMargin, kShipCard, kShipBox, kFwd,
-      kBoxPack, kNonCard].every(v => v !== null)
+      kBoxPack, kNonCard, kOvBase, kOvRate, kItemBase, kItemVat].every(v => v !== null)
     // 로컬 봇과 동일 — 배송비(is_box)와 5%가산(is_card)은 별개 축:
     //  · 배송비: PSA 단품 카드 = 300엔, 그외(박스/카드팩/신발) = 900엔 (옵션 유형)
     //  · 5% 가산: 비(非)트레이딩카드=신발/의류만. 카드·카드박스는 미적용 (snkr_type 축)
@@ -826,7 +836,8 @@ const ProductCard = React.memo(function ProductCard({
     // 그 구간이 없다. 공홈 원가에는 각 사이트의 국내 배송비가 이미 포함돼 있어
     // (유니클로·GU 4,990엔 미만 500엔 / 오니츠카 회원 무료, 총액의 4% 결제수수료)
     // 여기서 또 얹으면 이중 부과다 — 백엔드 calc_base 의 home_direct 와 같은 규칙.
-    const _homeDirect = ['UNIQLO', 'GU', 'ONITSUKA'].includes(String(p.source_site || '').toUpperCase())
+    const _srcUp = String(p.source_site || '').toUpperCase()
+    const _homeDirect = ['UNIQLO', 'GU', 'ONITSUKA', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS'].includes(_srcUp)
     const kShip = _homeDirect ? 0 : (kIsCardShip ? kShipCard! : kShipBox!)
     // 추가마진 분류: PSA=0 / 박스·카드팩(비PSA·비신발)=박스팩율 / 신발·의류=나머지율
     // [2026-08-27] 추가마진은 **스니덩크 한정**이다. 공홈 소싱은 가산하지 않는다.
@@ -834,16 +845,42 @@ const ProductCard = React.memo(function ProductCard({
       : _kOpts.length > 0
         ? (_hasPSA ? 0 : _isShoe ? kNonCard! : kBoxPack!)
         : (_nameBox ? kBoxPack! : 0)
-    const kCostEff = Math.round(cost * (1 + kSurcharge / 100))
+    // 공홈 원가(landed) = (상품가 + 국내배송비) × 결제수수료. 백엔드 _home_landed 동일 규칙.
+    //  · 유니클로·GU 4,990엔 미만 배송비 500엔 / 오니츠카·ABC·그랜드·아트모스 무료
+    //  · 결제수수료 4% — 한국카드 불가로 대행결제(pay_rate 1.04). 셋(넷) 공통.
+    const _homeFee = (_srcUp === 'UNIQLO' || _srcUp === 'GU') && cost < 4990 ? 500 : 0
+    const kCostEff = _homeDirect
+      ? Math.round((cost + _homeFee) * 1.04)
+      : Math.round(cost * (1 + kSurcharge / 100))
     const kBase = (kCostEff + kShip) * jpyRate + kFwd!
+    // 크림 수수료 분류: PSA 낱장=무료 / 박스·카드팩=overseas / 신발·의류(공홈 포함)=item
+    const kFeeKind: 'none' | 'overseas' | 'item' = _homeDirect ? 'item'
+      : _kOpts.length > 0
+        ? (_hasPSA ? 'none' : _isShoe ? 'item' : 'overseas')
+        : (_nameBox ? 'overseas' : 'none')
+    const _grossUp = (net: number): number => {
+      if (kFeeKind === 'overseas') {
+        if (kOvRate! >= 100) return net
+        return (net + kOvBase!) / (1 - kOvRate! / 100)
+      }
+      if (kFeeKind === 'item') {
+        const vat = 1 + kItemVat! / 100
+        const fixed = kItemBase! * vat
+        const rate = kItemRate * vat
+        if (rate >= 100) return net
+        return (net + fixed) / (1 - rate / 100)
+      }
+      return net
+    }
     const kMarginAmt = Math.max(kMinMargin!, kBase * kComp! / 100)
-    const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
-    const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp! / 100) / 1000) * 1000
+    const kMinPrice = Math.ceil(_grossUp(kBase + kMarginAmt) / 1000) * 1000
+    const kNoCompPrice = Math.ceil(_grossUp(kBase * (1 + kNoComp! / 100)) / 1000) * 1000
     const kKindLabel = _homeDirect ? '공홈' : _isShoe ? '신발' : kIsCardShip ? '카드' : '박스'
+    const _feeLabel = kFeeKind === 'none' ? '' : ' + 크림수수료'
     const kCalcStr = !kPolicyOk
       ? '정책 미로드 (정책관리 KREAM 탭 확인)'
       : cost > 0
-        ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}${_homeDirect ? ' · 공홈배송·결제수수료 포함' : `+${kKindLabel}배송 ¥${fmt(kShip)}`})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd!)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin!)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
+        ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}${_homeDirect ? ' · 공홈배송·결제수수료 포함' : `+${kKindLabel}배송 ¥${fmt(kShip)}`})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd!)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin!)})${_feeLabel} · 무경쟁 ₩${fmt(kNoCompPrice)}`
         : '원가 없음'
     return PLAT.map(pl => {
       const m = rm[pl.key]

@@ -2681,9 +2681,11 @@ def _decide_price_action(
         home_direct=home_direct,
     )
     base = calc_base(snkr_jpy, rate, is_box, is_card, surcharge_rate, home_direct)
-    no_comp = (
-        math.ceil(base * (1 + POLICY["no_competition_margin_rate"] / 100) / 1000) * 1000
-    )
+    # 무경쟁 상한도 팔리면 크림 판매수수료를 뗀다 — 하한(calc_min_price)처럼 역산해서
+    # 얹어야 목표마진(24%)이 실제로 남는다. [2026-08-29] 종전엔 상한에만 빠져 있어
+    # 무경쟁 등록가가 수수료만큼 낮게 나갔다(유니클로 벨트 55,000 → 정답 61,000).
+    no_comp_net = base * (1 + POLICY["no_competition_margin_rate"] / 100)
+    no_comp = math.ceil(gross_up_kream_fee(no_comp_net, fee_kind) / 1000) * 1000
     is_ov = bool(low_over)
     # [2026-08-02] 시장최저 = 해외/일반/보관 전 판매유형 중 최저. 보관판매(lowest_100/95)를
     # 빼고 계산해 "1등인 줄 알고" 넣은 입찰이 즉시 2등이 되던 것 수정.
