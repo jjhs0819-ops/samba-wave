@@ -2998,23 +2998,59 @@ def _pick_cheapest_source(rows: list[dict]) -> list[dict]:
             sum(vals) / len(vals) if vals else 0,
         )
 
+    # [2026-08-29 사용자 지시] 리스톡도 **옵션(사이즈) 단위 최저 소싱처**로.
+    # 종전엔 상품 평균원가가 비싼 소싱처 행을 통째로 억제(cost_loser)해, 그 소싱처에만
+    # 있는 사이즈가 신규 등록에서 통째로 빠졌다. 옵션마다 유효원가(엔) 최저 소싱처를
+    # 찾아, 그 옵션이 자기 것이 아닌 행에만 등록·갱신·삭제를 억제한다(loser_opts).
+    # 유효원가 = 소싱처 원가모델 반영(공홈 landed / 스니덩크 배송·추가마진) — 최종
+    # 경쟁하한 순서와 일치. 환율·배대지(공통)는 순서에 영향 없어 생략.
+    def _canon_o(nm: str) -> str:
+        mm = _cm_to_mm(str(nm))
+        return mm if mm else str(nm).upper().strip()
+
+    def _eff_yen(site: str, price: int) -> float:
+        if price <= 0:
+            return 1e12
+        if str(site).upper() in _HOME_DIRECT_SITES:
+            return float(_home_landed(site, price))  # 공홈: 국내배송·수수료 반영
+        return (
+            price * (1 + POLICY["non_card_margin_rate"] / 100)
+            + POLICY["shipping_fee_box"]
+        )
+
     dropped: dict = {}
     for _kid, ps in by_kid.items():
         if len(ps) < 2:
             continue
-        for _p in sorted(ps, key=_avg_cost)[1:]:
-            # [2026-08-27] **행을 버리지 않는다.** 빼버리면 그 소싱처의 원가·재고
-            # write-back(_db_update)이 끊겨 DB 값이 썩는다 — 나중에 싼 쪽이 품절돼
-            # 되돌아갈 때 판단 근거가 없어진다. 조회·판정은 그대로 돌리고,
-            # 등록·갱신·삭제 지시만 버린다(_process_logged 에서 rows 를 비운다).
-            _p["cost_loser"] = True
-            _s = str(_p.get("site") or "?")
-            dropped[_s] = dropped.get(_s, 0) + 1
+        best_opt: dict = {}  # canon → (eff_yen, id(행))
+        for _p in ps:
+            if str(_p.get("currency") or "JPY").upper() != "JPY":
+                continue  # 통화 다른 행은 옵션 비교에서 제외(엔화 오인 방지)
+            for nm, d in (_p.get("db_opts") or {}).items():
+                if int((d or {}).get("stock") or 0) <= 0:
+                    continue  # 재고 없는 옵션은 후보 아님
+                eff = _eff_yen(_p.get("site"), int((d or {}).get("price") or 0))
+                c = _canon_o(nm)
+                cur = best_opt.get(c)
+                if cur is None or eff < cur[0]:
+                    best_opt[c] = (eff, id(_p))
+        for _p in ps:
+            losers = {
+                _canon_o(nm)
+                for nm in (_p.get("db_opts") or {})
+                if best_opt.get(_canon_o(nm)) and best_opt[_canon_o(nm)][1] != id(_p)
+            }
+            _p["loser_opts"] = losers
+            _allc = {_canon_o(nm) for nm in (_p.get("db_opts") or {})}
+            if _allc and _allc <= losers:  # 모든 옵션이 loser → 통째 억제(로그용)
+                _p["cost_loser"] = True
+                _s = str(_p.get("site") or "?")
+                dropped[_s] = dropped.get(_s, 0) + 1
     if dropped:
         logger.info(
-            "[크림통합] 소싱처 중복 %s — 원가 싼 쪽만 등록·갱신(수집 갱신은 전부 유지)",
+            "[크림통합] 소싱처 중복 %s — 옵션별 최저 소싱처만 등록·갱신(수집 갱신은 전부 유지)",
             ", ".join(
-                f"{k} {v:,}건 보류"
+                f"{k} {v:,}건 통째보류"
                 for k, v in sorted(dropped.items(), key=lambda x: -x[1])
             ),
         )
@@ -7375,8 +7411,28 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
             # **등록·갱신·삭제 지시를 내지 않는다.** 두 행이 각자 목표가를 계산해
             # 같은 입찰을 서로 덮어쓰면 실행 순서에 따라 가격이 흔들린다.
             # 조회·판정은 그대로 돌렸으므로 db_update(원가·재고 수집 갱신)는 남긴다.
-            if _p.get("cost_loser") and isinstance(_r, dict):
-                _r["rows"] = []
+            if isinstance(_r, dict):
+                if _p.get("cost_loser"):
+                    _r["rows"] = []  # 모든 옵션이 loser → 통째 억제
+                elif _p.get("loser_opts"):
+                    # [2026-08-29] 옵션(사이즈)별 최저 소싱처만 지시를 낸다. 이 행이
+                    # 최저가 아닌 옵션(loser_opts)의 등록·갱신·삭제만 버린다 — 그 옵션은
+                    # 다른(최저) 소싱처가 관리한다. 행 튜플 index 3 = 옵션명.
+                    _ls = _p["loser_opts"]
+
+                    def _co(_nm: str) -> str:
+                        _mm = _cm_to_mm(str(_nm))
+                        return _mm if _mm else str(_nm).upper().strip()
+
+                    _r["rows"] = [
+                        _rw
+                        for _rw in (_r.get("rows") or [])
+                        if not (
+                            isinstance(_rw, (list, tuple))
+                            and len(_rw) > 3
+                            and _co(_rw[3]) in _ls
+                        )
+                    ]
             return _r
         finally:
             _done_n += 1
