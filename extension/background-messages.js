@@ -54,7 +54,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
         const base = proxyUrl || SambaBackgroundCore.DEFAULT_PROXY_URL
         const res = await SambaBackgroundCore.apiFetch(
-          `${base}${SambaBackgroundCore.API_PREFIX}/collector/jp-browser-ingest`,
+          `${base}${SambaBackgroundCore.API_PREFIX}/kream/jp-browser-ingest`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

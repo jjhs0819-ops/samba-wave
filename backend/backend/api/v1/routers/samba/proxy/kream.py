@@ -1483,7 +1483,7 @@ class JpBrowserProduct(BaseModel):
     sourceUrl: str = ""
 
 
-@router.post("/collector/jp-browser-ingest")
+@snkrdunk_public_router.post("/kream/jp-browser-ingest")
 async def jp_browser_ingest(
     body: JpBrowserProduct,
     session: AsyncSession = Depends(get_write_session_dependency),
