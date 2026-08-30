@@ -42,6 +42,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true
   }
 
+  // [2026-08-30] 일본 소싱(ABC·그랜드·atmos) 실브라우저 수집분을 백엔드로 릴레이.
+  // content-collect-abcmart/atmos 가 페이지에서 읽어 보낸 상품 데이터를 적재 엔드포인트로.
+  if (msg.type === 'JP_INGEST') {
+    ;(async () => {
+      try {
+        if (!msg.data || !msg.data.code) {
+          sendResponse({ ok: false, reason: 'no-code' })
+          return
+        }
+        const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
+        const base = proxyUrl || SambaBackgroundCore.DEFAULT_PROXY_URL
+        const res = await SambaBackgroundCore.apiFetch(
+          `${base}${SambaBackgroundCore.API_PREFIX}/collector/jp-browser-ingest`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(msg.data),
+          }
+        )
+        sendResponse({ ok: res.ok })
+      } catch (e) {
+        sendResponse({ ok: false, reason: String(e) })
+      }
+    })()
+    return true
+  }
+
   if (msg.type === 'TWENTYNINECM_SYNC_COOKIE') {
     // 29CM 로그인 쿠키 → 백엔드. 계정별 쿠폰 자격이 달라 계정 기준 수집이 필요하다.
     ;(async () => {

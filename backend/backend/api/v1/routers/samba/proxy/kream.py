@@ -1466,3 +1466,109 @@ async def kream_image_proxy(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+class JpBrowserProduct(BaseModel):
+    """확장앱(실브라우저)이 읽은 일본 소싱 상품 — ABC/그랜드/atmos."""
+
+    site: str
+    siteProductId: str
+    code: str = ""
+    color: str = ""
+    brand: str = ""
+    name: str = ""
+    price: int = 0
+    sizes: list[dict[str, Any]] = []
+    image: list[str] = []
+    sourceUrl: str = ""
+
+
+@router.post("/collector/jp-browser-ingest")
+async def jp_browser_ingest(
+    body: JpBrowserProduct,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """[2026-08-30] 일본 소싱(ABC마트·그랜드스테이지·atmos)은 봇차단으로 서버수집 불가.
+    확장앱이 실브라우저에서 읽은 DOM 을 여기로 보내 적재한다. 크림 매칭은 로컬 매처가
+    별도로(카탈로그 보유) code 로 붙인다 — 여기선 pending 마커만 남긴다."""
+    import json as _json
+
+    from sqlalchemy import text as _t
+
+    site = (body.site or "").upper()
+    if site not in ("ABCMART_JP", "GRANDSTAGE_JP", "ATMOS"):
+        raise HTTPException(status_code=400, detail="지원 안 하는 소싱처")
+    sid = str(body.siteProductId or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="siteProductId 필요")
+    price = int(body.price or 0)
+    opts = [
+        {
+            "name": str(s.get("name") or ""),
+            "price": price,
+            "stock": int(s.get("stock") or 0),
+        }
+        for s in (body.sizes or [])
+        if s.get("name")
+    ]
+    has = any(o["stock"] > 0 for o in opts)
+    imgs = [i for i in (body.image or []) if i]
+    tid = (
+        await session.execute(
+            _t(
+                "SELECT tenant_id FROM samba_collected_product "
+                "WHERE source_site='ONITSUKA' AND tenant_id IS NOT NULL LIMIT 1"
+            )
+        )
+    ).scalar()
+    pol = (
+        await session.execute(
+            _t("SELECT id FROM samba_policy WHERE name LIKE '%가디%' LIMIT 1")
+        )
+    ).scalar()
+    ed = {
+        "snkr_type": "sneaker",
+        "source": site.lower(),
+        "currency": "JPY",
+        "name_ja": body.name or "",
+        "browser_collected": True,
+    }
+    _pfx = {"ABCMART_JP": "ab", "GRANDSTAGE_JP": "gs", "ATMOS": "at"}.get(site, "xx")
+    _id = "cph_" + _pfx + "_" + sid[:22]
+    # 로컬 매처가 code 로 크림 붙일 때까지 pending. 이미 매칭된 행은 아래 UPDATE 가 안 건드림.
+    resell = {"pending": {"code": body.code or "", "color": body.color or ""}}
+    await session.execute(
+        _t(
+            "INSERT INTO samba_collected_product "
+            "(id, source_site, site_product_id, name, brand, style_code, "
+            " original_price, sale_price, status, lock_delete, sale_status, "
+            " monitor_priority, source_url, options, images, extra_data, "
+            " resell_matches, tenant_id, applied_policy_id, created_at, updated_at) "
+            "VALUES (:id,:site,:sid,:name,:brand,:code, 0,:price,'active',false,:ss, "
+            " 'cold',:url, CAST(:opts AS json), CAST(:imgs AS json), CAST(:ed AS json), "
+            " CAST(:rm AS jsonb), :tid, :pol, NOW(), NOW()) "
+            "ON CONFLICT (id) DO UPDATE SET "
+            " options=EXCLUDED.options, images=EXCLUDED.images, sale_price=EXCLUDED.sale_price, "
+            " sale_status=EXCLUDED.sale_status, extra_data=EXCLUDED.extra_data, "
+            " brand=EXCLUDED.brand, name=EXCLUDED.name, updated_at=NOW()"
+        ),
+        {
+            "id": _id,
+            "site": site,
+            "sid": sid,
+            "name": body.name or "",
+            "brand": body.brand or "",
+            "code": body.code or "",
+            "price": price,
+            "ss": "in_stock" if has else "soldout",
+            "url": body.sourceUrl or "",
+            "opts": _json.dumps(opts, ensure_ascii=False),
+            "imgs": _json.dumps(imgs, ensure_ascii=False),
+            "ed": _json.dumps(ed, ensure_ascii=False),
+            "rm": _json.dumps(resell, ensure_ascii=False),
+            "tid": tid,
+            "pol": pol,
+        },
+    )
+    await session.commit()
+    return {"ok": True, "id": _id, "options": len(opts)}
