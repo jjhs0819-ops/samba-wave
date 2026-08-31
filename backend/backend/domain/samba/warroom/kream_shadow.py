@@ -627,7 +627,7 @@ async def _brand_reg_rates(
                         # 스니덩크·오니츠카만 보던 탓에 공홈 매칭분이 통째로
                         # 빠져 브랜드별 현황이 실제와 크게 어긋났다
                         #   실측: 크림 파트너 화면 GU 입찰 1,117건 vs 집계 27건.
-                        "  WHERE cp.source_site IN " + _SOURCE_SITES_SQL + "  "
+                        "  WHERE cp.source_site IN " + _active_sites_sql() + "  "
                         "    AND COALESCE(cp.resell_matches->'kream'->>'product_id','')<>''"
                         "    AND (cp.resell_matches->'kream'->>'verified')='true'"
                         "    AND jsonb_typeof(cp.options::jsonb)='array'),"
@@ -680,7 +680,7 @@ async def _brand_reg_rates(
                             " COALESCE(NULLIF(TRIM(resell_matches->'kream'->>'brand'),''),"
                             "          NULLIF(TRIM(brand),''),'(브랜드없음)')"
                             " FROM samba_collected_product"
-                            " WHERE source_site IN " + _SOURCE_SITES_SQL + " "
+                            " WHERE source_site IN " + _active_sites_sql() + " "
                             "   AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                         )
                     )
@@ -791,7 +791,7 @@ async def _count_cat1_verified_unreg() -> int:
                 IN (SELECT product_id FROM kream_live_asks
                     WHERE account_group = :grp)
           )
-        """.replace("__SITES__", _SOURCE_SITES_SQL)
+        """.replace("__SITES__", _active_sites_sql())
     )
     try:
         async with get_read_session() as s:
@@ -2335,7 +2335,26 @@ _SOURCE_SITES = (
     "GRANDSTAGE_JP",
     "ATMOS",
 )
-_SOURCE_SITES_SQL = "('" + "','".join(_SOURCE_SITES) + "')"
+_SOURCE_SITES_SQL = (
+    "('" + "','".join(_SOURCE_SITES) + "')"
+)  # JP 고정값 — 폴백용으로만 남긴다
+# CN(중국) 소싱처. JP 목록과 겹치지 않는다.
+_SOURCE_SITES_CN = ("SHIHUO",)
+_SOURCE_SITES_CN_SQL = "('" + "','".join(_SOURCE_SITES_CN) + "')"
+
+
+def _active_sites_sql() -> str:
+    """[2026-08-31] 사이클이 도는 그룹(_active_group)에 맞는 소싱처 SQL IN 절.
+
+    종전엔 _SOURCE_SITES_SQL(JP 고정)을 CN 사이클에서도 그대로 썼다 — CN 계정으로
+    로그인해서 JP 소싱처(스니덩크 등) 88,000+건을 통째로 다시 스캔하고 있었다.
+    SHIHUO(CN 전용)는 그 목록에 없어 CN은 정작 자기 소싱처를 단 한 건도 못 봤다.
+    실측: CN 사이클 90분+ 소요, kream_live_asks 에 CN 계정으로 JP 상품ID가 잘못
+    들어가는 것까지 확인됨(계정 혼선 위험). 그룹별로 정확히 갈라야 한다."""
+    if _active_group == "CN":
+        return _SOURCE_SITES_CN_SQL
+    return _SOURCE_SITES_SQL
+
 
 # ── 크림 계정 분리 [2026-08-26] ───────────────────────────────────────────
 # 일본 소싱(스니덩크·유니클로·GU)과 중국 소싱(식화)은 **크림 판매자 계정이 다르다**.
@@ -2926,7 +2945,7 @@ async def _load_matched_products() -> list[dict]:
                     # 물량이 얇다(UNIQLO 1,282 · GU 552)는 게 공홈을 쓰는 이유고,
                     # 품번이 그대로 대응해(488253-09 ↔ 488253-09-002-000) 오매칭이 없다.
                     "FROM samba_collected_product "
-                    f"WHERE source_site IN {_SOURCE_SITES_SQL} "
+                    f"WHERE source_site IN {_active_sites_sql()} "
                     "AND COALESCE(resell_matches->'kream'->>'product_id','')<>''"
                 )
             )
@@ -6062,7 +6081,7 @@ async def _lookup_snkr_mapping(kid: str) -> tuple[str, str] | None:
                     "SELECT site_product_id, source_site "
                     "FROM samba_collected_product "
                     "WHERE resell_matches->'kream'->>'product_id' = :k "
-                    f"AND source_site IN {_SOURCE_SITES_SQL} LIMIT 1"
+                    f"AND source_site IN {_active_sites_sql()} LIMIT 1"
                 ),
                 {"k": kid},
             )
