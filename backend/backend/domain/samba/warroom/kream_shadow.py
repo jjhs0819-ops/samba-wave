@@ -4210,6 +4210,36 @@ async def _rival_rank_after(cli, h, kid: str, opt: str, price: int):
     return 1 if price <= _low else 2
 
 
+_kid_group_cache: dict = {}  # kid -> 'JP'/'CN'/None (소싱처 그룹, 사이클 캐시)
+
+
+async def _kid_source_group(kid: str) -> str | None:
+    """kream product_id 의 소싱처가 어느 그룹(JP/CN)인지. 실패 None. 캐시.
+    [2026-09-01 긴급] JP 소싱(스니덩크 등)이 CN 계정에 등록돼 중국 배대지로
+    발송불가 → 대량 손해. 등록 직전 소싱처↔계정그룹 일치 강제 차단용."""
+    k = str(kid)
+    if k in _kid_group_cache:
+        return _kid_group_cache[k]
+    g = None
+    try:
+        async with get_read_session() as s:
+            row = (
+                await s.execute(
+                    _text(
+                        "SELECT source_site FROM samba_collected_product "
+                        "WHERE resell_matches->'kream'->>'product_id' = :k LIMIT 1"
+                    ),
+                    {"k": k},
+                )
+            ).scalar()
+        if row:
+            g = "CN" if str(row) in _SOURCE_SITES_CN else "JP"
+    except Exception:
+        g = None
+    _kid_group_cache[k] = g
+    return g
+
+
 @_timed("등록POST")
 async def _exec_create_ask(
     cli: httpx.AsyncClient, h: dict, kid: str, price: int, opt: str
@@ -4217,6 +4247,11 @@ async def _exec_create_ask(
     """POST /asks 신규 입찰. 보관 전환 신청(is_keep_on_deferred) 명시 — 신규는 미입력 시
     보관 안 됨(2026-07-19). 보관불가 상품(400 '보관 신청이 불가능')은 keep 빼고 재등록.
     반환 (성공, 사유)."""
+    # [2026-09-01 긴급·최우선] 소싱처 그룹 ≠ 현재 계정 그룹이면 입찰 절대 금지.
+    # JP 소싱 상품이 CN 계정(중국 배대지)에 걸려 발송불가 대량손해 재발 방지.
+    _sg = await _kid_source_group(kid)
+    if _sg is not None and _sg != _active_group:
+        return False, f"group_mismatch(src={_sg},acct={_active_group})"
     _key = f"{kid}|{opt}"
     body = {"product_id": int(kid), "price": int(price), "option": opt}
     if _key not in _keep_impossible:
