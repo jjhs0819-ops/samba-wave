@@ -98,8 +98,11 @@ async def sync_kream_orders_from_api(
         )
         if tenant_id is not None:
             acc_stmt = acc_stmt.where(SambaMarketAccount.tenant_id == tenant_id)
-        kream_acc = (await session.execute(acc_stmt)).scalars().first()
-        if not kream_acc:
+        # [2026-09-01 사고수정] 크림 계정 **전부** 순회.
+        # 종전 first() 는 첫 계정(JP=스니덩크)만 동기화해, CN(식화) 계정 주문이
+        # 삼바 주문페이지에 통째로 안 들어왔다(일본상품 CN오등록 사고 주문 포함).
+        kream_accs = (await session.execute(acc_stmt)).scalars().all()
+        if not kream_accs:
             summary["errors"].append("KREAM 계정 없음 — 설정>스토어연결에서 등록 필요")
             return summary
 
@@ -107,23 +110,9 @@ async def sync_kream_orders_from_api(
         # tenant 로 채운다. 안 하면 생성 주문 tenant_id=None → 테넌트 필터 주문페이지에 안 보임
         # [2026-07-21 사고: 자동수집분 6건 tenant None 으로 숨겨짐].
         if tenant_id is None:
-            tenant_id = kream_acc.tenant_id
+            tenant_id = kream_accs[0].tenant_id
 
-        ext = (
-            kream_acc.additional_fields
-            if isinstance(kream_acc.additional_fields, dict)
-            else {}
-        )
-        api_service = str(ext.get("apiService") or "")
-        api_key = str(ext.get("apiKey") or kream_acc.api_key or "")
-        api_secret = str(ext.get("apiSecret") or kream_acc.api_secret or "")
-        if not (api_service and api_key and api_secret):
-            summary["errors"].append(
-                "KREAM API 인증정보 없음 — 설정>스토어연결에서 Service/Key/Secret 입력 필요"
-            )
-            return summary
-
-        # 2) 소싱계정(SNKRDUNK) — 엑셀 경로와 동일 규칙
+        # 2) 소싱계정(SNKRDUNK) — 원가 역조회용(계정 무관, 1회만)
         snkr_stmt = (
             select(SambaSourcingAccount.id)
             .where(
@@ -150,27 +139,44 @@ async def sync_kream_orders_from_api(
         if not snkr_id:
             snkr_id = (await session.execute(snkr_stmt)).scalars().first()
 
-        client = KreamPartnerClient(api_service, api_key, api_secret)
-
-        # 3) 상태별 페이지네이션 수집
+        # 3) 계정별 상태별 페이지네이션 수집 (모든 크림 계정)
         raw: list[tuple[dict, dict]] = []  # (order, order_product)
-        for status in _SYNC_STATUSES:
-            page = 1
-            while page <= _MAX_PAGES:
-                code, body = await client.list_orders(status, page=page, per_page=50)
-                if code != 200 or not isinstance(body, dict):
-                    if page == 1:
-                        summary["errors"].append(f"{status}: HTTP {code}")
-                    break
-                items = body.get("items") or []
-                if not items:
-                    break
-                for od in items:
-                    for op in od.get("order_products") or []:
-                        raw.append((od, op))
-                if len(items) < 50:
-                    break
-                page += 1
+        for kream_acc in kream_accs:
+            ext = (
+                kream_acc.additional_fields
+                if isinstance(kream_acc.additional_fields, dict)
+                else {}
+            )
+            api_service = str(ext.get("apiService") or "")
+            api_key = str(ext.get("apiKey") or kream_acc.api_key or "")
+            api_secret = str(ext.get("apiSecret") or kream_acc.api_secret or "")
+            if not (api_service and api_key and api_secret):
+                summary["errors"].append(
+                    f"{kream_acc.account_label or kream_acc.id}: API 인증정보 없음 — 건너뜀"
+                )
+                continue
+            client = KreamPartnerClient(api_service, api_key, api_secret)
+            for status in _SYNC_STATUSES:
+                page = 1
+                while page <= _MAX_PAGES:
+                    code, body = await client.list_orders(
+                        status, page=page, per_page=50
+                    )
+                    if code != 200 or not isinstance(body, dict):
+                        if page == 1:
+                            summary["errors"].append(
+                                f"{kream_acc.account_label or kream_acc.id}/{status}: HTTP {code}"
+                            )
+                        break
+                    items = body.get("items") or []
+                    if not items:
+                        break
+                    for od in items:
+                        for op in od.get("order_products") or []:
+                            raw.append((od, op))
+                    if len(items) < 50:
+                        break
+                    page += 1
         summary["fetched"] = len(raw)
         if not raw:
             return summary
@@ -190,7 +196,7 @@ async def sync_kream_orders_from_api(
                     f"""
                     SELECT id, resell_matches->'kream'->>'product_id' AS kream_pid
                     FROM samba_collected_product
-                    WHERE source_site = 'SNKRDUNK'
+                    WHERE source_site IN ('SNKRDUNK', 'SHIHUO')
                       AND resell_matches->'kream'->>'product_id' = ANY(:pids)
                       {tid_cond}
                     """
