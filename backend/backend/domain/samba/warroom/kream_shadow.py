@@ -801,22 +801,19 @@ async def _count_cat1_verified_unreg() -> int:
         return -1
 
 
-async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
+async def _orphan_report(asks: list, matched_kids: set, h: dict) -> str:
     """방치입찰(매칭 없는 live ask) — 갱신이 가격조정을 못 해 체결 시 손실위험.
-    로컬 봇과 동일: 30건 이하면 자동삭제, 초과면 오탐 우려로 알림만(수동 확인)."""
 
-    # 관리 대상(PSA 카드 / 해외배송 박스)만 판정 — 신발(mm 사이즈)은 오니츠카라
-    # 스니덩크 매칭맵에 없는 게 정상. 이를 방치로 오판하면 정상 입찰이 삭제된다.
-    def _managed(opt: str) -> bool:
-        o = str(opt or "").upper()
-        return o.startswith("PSA") or "해외배송" in str(opt or "")
-
-    orphans = [
-        a
-        for a in asks
-        if _managed(a.get("option"))
-        and str(a.get("product_id") or "") not in kid_to_snkr
-    ]
+    [2026-08-31] 종전엔 kid_to_snkr(스니덩크 매핑만)로 판정 + 카드/박스만 감시했다.
+    그래서 오니츠카·유니클로 등 다른 소싱처로 매칭된 신발/의류를 오탐 취급할까봐
+    아예 감시 대상에서 뺐는데, 그 바람에 **진짜 매칭이 끊긴 신발/의류 방치입찰**도
+    같이 안 걸러졌다(실측: 스투시 조끼 등 532건 방치 → 체결돼 20만원 손해).
+    matched_kids 는 _load_matched_products() 가 만드는 **전 소싱처 통합** 매칭 kid
+    집합이라 오니츠카/유니클로 매칭도 다 포함한다 — 이걸 기준으로 하면 소싱처
+    무관하게 정확히 "진짜 매칭 없음"만 잡혀 오탐 걱정 없이 전 옵션을 감시할 수 있다.
+    자동삭제 상한도 30건→1,000건으로 올린다(그 이하는 로컬 봇 시절 규모 기준일 뿐,
+    쌓이면 영원히 수동 확인 대기로 방치되던 문제였다)."""
+    orphans = [a for a in asks if str(a.get("product_id") or "") not in matched_kids]
     if not orphans:
         return ""
     kids = {str(a.get("product_id")) for a in orphans}
@@ -833,8 +830,8 @@ async def _orphan_report(asks: list, kid_to_snkr: dict, h: dict) -> str:
         )
     if len(orphans) > 10:
         msg += f"외 {len(orphans) - 10:,}건\n"
-    if len(orphans) > 30:
-        msg += "※ 30건 초과 — 오탐 가능성으로 자동삭제 보류(수동 확인 필요)\n"
+    if len(orphans) > 1000:
+        msg += "※ 1,000건 초과 — 오탐 가능성으로 자동삭제 보류(수동 확인 필요)\n"
     elif _EXECUTE:
         ok = fail = 0
         async with httpx.AsyncClient(mounts=_mounts(), timeout=25) as cli:
@@ -1341,6 +1338,32 @@ async def _write_live_asks_snapshot(asks: list) -> None:
                     "ADD COLUMN IF NOT EXISTS account_group text NOT NULL DEFAULT 'JP'"
                 )
             )
+            # [2026-08-31] PK가 (product_id, option)뿐이라 JP/CN이 같은 상품을 같이
+            # 가지면 저장이 충돌했다(실측: CN 그룹 편입 직후 09:12~09:15 사이 187회
+            # UniqueViolationError). account_group을 PK에 포함시켜야 그룹별로 공존
+            # 가능하다. idempotent — 이미 맞는 PK면 건너뛴다.
+            _pk_ok = await s.execute(
+                _text(
+                    "SELECT 1 FROM pg_constraint "
+                    "WHERE conrelid = 'kream_live_asks'::regclass "
+                    "AND conname = 'kream_live_asks_pkey' "
+                    "AND pg_get_constraintdef(oid) = "
+                    "'PRIMARY KEY (product_id, option, account_group)'"
+                )
+            )
+            if _pk_ok.first() is None:
+                await s.execute(
+                    _text(
+                        "ALTER TABLE kream_live_asks "
+                        "DROP CONSTRAINT IF EXISTS kream_live_asks_pkey"
+                    )
+                )
+                await s.execute(
+                    _text(
+                        "ALTER TABLE kream_live_asks "
+                        "ADD PRIMARY KEY (product_id, option, account_group)"
+                    )
+                )
             await s.execute(
                 _text("DELETE FROM kream_live_asks WHERE account_group = :g"),
                 {"g": _active_group},
@@ -8367,7 +8390,9 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
     _unf = await _unfulfilled_count()
     _pre = f"⚠️ 미이행 크림주문 {_unf:,}건 (소싱 필요)\n" if _unf > 0 else ""
     try:
-        _pre += await _orphan_report(asks, kid_to_snkr, h)
+        # 전 소싱처(카드/박스/신발/의류 무관) 통합 매칭 kid 집합 — _orphan_report 참조.
+        _matched_kids = {str(p["kid"]) for p in products if p.get("kid")}
+        _pre += await _orphan_report(asks, _matched_kids, h)
     except Exception as _oe:
         logger.warning("[크림통합] 방치입찰 알림 실패(무시): %s", _oe)
     try:
