@@ -1070,11 +1070,12 @@ async def _kream_shadow_loop() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
-    # [2026-08-31] CN(중국) 그룹이 인자 없이 항상 JP 기본값만 돌아 백엔드 자동
-    # 사이클에 아예 연결이 안 돼 있었다 — kream_live_asks에 CN 행이 0건이던 원인.
-    # JP/CN 번갈아 돈다. CN 계정 인증정보(토큰) 없으면 run_kream_unified_once 가
-    # 자체적으로 "no_creds"로 스킵하니 안전.
-    _groups = ("JP", "CN")
+    # [2026-09-01 사고수정] CN(중국/식화) 그룹은 자동 입찰 금지 — JP 만 돈다.
+    # 2026-08-31 에 CN 을 자동사이클에 넣었다가, JP 소싱상품이 CN 계정에 오등록돼
+    # 중국 배대지로 발송불가 → 대량 손해가 났다. 식화 소싱 파이프라인이 준비될
+    # 때까지 CN 은 자동 입찰하지 않는다. (재개 시 ("JP","CN") 로 되돌리되
+    # kream_shadow._exec_create_ask 소싱처↔그룹 가드가 함께 살아 있어야 함.)
+    _groups = ("JP",)
     _gi = 0
     while True:
         _group = _groups[_gi % len(_groups)]
