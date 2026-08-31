@@ -1300,14 +1300,10 @@ class EbayClient:
             except Exception:
                 _live_offer = None
         if _live_offer is not None:
-            offer_data["availableQuantity"] = int(
-                _live_offer.get("availableQuantity", 0) or 0
-            )
-            logger.info(
-                "[eBay] 기존 리스팅 재고 유지: sku=%s qty=%s",
-                sku,
-                offer_data["availableQuantity"],
-            )
+            # 기존 리스팅 업데이트 시 수량은 건드리지 않는다.
+            # 셀러센터에서 직접 관리하므로 Samba가 덮어쓰면 안 됨.
+            offer_data.pop("availableQuantity", None)
+            logger.info("[eBay] 기존 리스팅 재고 유지(건드리지 않음): sku=%s", sku)
 
         # (신규 등록 경로) 재고수량이 1보다 크게 설정된 상품은 이미 팔린 수량을
         # 반영해야 함 — 그대로 밀어넣으면 매 동기화마다 판매분이 복구되는 오버셀 재발.
