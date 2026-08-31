@@ -7835,8 +7835,11 @@ async def run_kream_unified_once(group: str = "JP") -> dict:
                             "KREAM", kid, f"{_pn} ({nm}): 리스톡 신규입찰 {target:,}"
                         )
                     elif kind == "delete":
+                        # [2026-08-31] 사유 불문 전부 "무재고 삭제"로 찍혀 실제 삭제사유
+                        # (1등불가삭제/국내못이김삭제/원가상한초과 등)가 안 보였다 —
+                        # 실제로는 오판이 아니라 로그 표시가 부정확했던 것. act 그대로 표시.
                         _emit_autotune_log(
-                            "KREAM", kid, f"{_pn} ({nm}): 무재고 삭제 (현재 {cur:,})"
+                            "KREAM", kid, f"{_pn} ({nm}): {act} (현재 {cur:,})"
                         )
                     elif target != cur:
                         _emit_autotune_log(

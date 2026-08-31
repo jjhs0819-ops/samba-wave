@@ -1070,7 +1070,15 @@ async def _kream_shadow_loop() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
+    # [2026-08-31] CN(중국) 그룹이 인자 없이 항상 JP 기본값만 돌아 백엔드 자동
+    # 사이클에 아예 연결이 안 돼 있었다 — kream_live_asks에 CN 행이 0건이던 원인.
+    # JP/CN 번갈아 돈다. CN 계정 인증정보(토큰) 없으면 run_kream_unified_once 가
+    # 자체적으로 "no_creds"로 스킵하니 안전.
+    _groups = ("JP", "CN")
+    _gi = 0
     while True:
+        _group = _groups[_gi % len(_groups)]
+        _gi += 1
         try:
             # [2026-08-04] 구 ask 단위 섀도(run_kream_shadow_once)는 제거했다.
             # KREAM_UNIFIED=1 로 1년 가까이 통합 경로만 돌았는데도 같은 판단 로직이
@@ -1079,11 +1087,11 @@ async def _kream_shadow_loop() -> None:
                 run_kream_unified_once,
             )
 
-            await run_kream_unified_once()
+            await run_kream_unified_once(_group)
         except _asyncio.CancelledError:
             return
         except Exception as exc:
-            _log.warning("[크림섀도] 루프 오류(무시): %s", exc)
+            _log.warning("[크림섀도][%s] 루프 오류(무시): %s", _group, exc)
         # 배치 로테이션 주기 — 사이클 자체는 수십초라 대기가 길면 전 카탈로그 1회전이 수십시간.
         # 90초 + 배치 1,500 → 약 40분/1회전 (로컬 봇 수준의 시세 추종).
         await _asyncio.sleep(int(os.environ.get("KREAM_LOOP_SLEEP") or 90))

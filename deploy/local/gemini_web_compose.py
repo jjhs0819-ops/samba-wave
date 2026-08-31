@@ -115,6 +115,30 @@ def count_imgs(c):
     return js(c, f"{BIG_IMG_JS}.length") or 0
 
 
+# [2026-08-29] 첨부 비우기는 시작뿐 아니라 **모든 종료 경로**에서 해야 한다.
+# 실패로 빠져나갈 때 안 비우면 첨부가 그대로 남아 다음 건에 이월된다.
+# 실측: 실패 16건이 누적돼 입력창에 사진 10장이 쌓여 있었다(2026-08-29).
+def clear_attachments(c, rounds=40):
+    """입력창의 첨부를 전부 제거. 남은 개수를 돌려준다."""
+    for _ in range(rounds):
+        n = js(
+            c,
+            "(function(){var b=[...document.querySelectorAll('button')]"
+            ".filter(x=>/첨부파일 닫기|첨부 닫기/i.test(x.getAttribute('aria-label')||'')"
+            "&&x.getBoundingClientRect().width>0);"
+            "if(!b.length)return 0;b[0].click();return 1;})()",
+        )
+        if not n:
+            break
+        time.sleep(0.6)
+    return js(
+        c,
+        "[...document.querySelectorAll('button')].filter(x=>"
+        "/첨부파일 닫기|첨부 닫기/i.test(x.getAttribute('aria-label')||'')"
+        "&&x.getBoundingClientRect().width>0).length",
+    )
+
+
 def main():
     card_path, out_path = sys.argv[1], sys.argv[2]
     tab_id = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_TAB
@@ -139,17 +163,7 @@ def main():
     # [최우선] 새 채팅으로 전환해도 입력창의 첨부는 그대로 유지된다(실측 2026-08-20).
     # 시작 시 반드시 첨부·텍스트를 전부 비운다. 안 비우면 이전 건의 첨부가 이월·누적돼
     # 여러 카드가 한 요청에 섞이고, 첨부 개수 검증도 잔여물 때문에 헛통과한다.
-    for _ in range(12):
-        n = js(
-            c,
-            "(function(){var b=[...document.querySelectorAll('button')]"
-            ".filter(x=>/첨부파일 닫기|첨부 닫기/i.test(x.getAttribute('aria-label')||'')"
-            "&&x.getBoundingClientRect().width>0);"
-            "if(!b.length)return 0;b[0].click();return 1;})()",
-        )
-        if not n:
-            break
-        time.sleep(0.7)
+    clear_attachments(c)
     js(
         c,
         "(function(){var e=document.querySelector('[contenteditable=\"true\"]');"
@@ -187,6 +201,7 @@ def main():
             print(f"  ..붙여넣기 재시도 {idx}번째 사진 (시도 {attempt + 1})", flush=True)
         if not attached:
             print(f"FAIL PASTE {idx}번째 사진 첨부 실패 — 전송 중단")
+            clear_attachments(c)
             c.close()
             sys.exit(3)
 
@@ -235,11 +250,13 @@ def main():
         tail = js(c, "document.body.innerText.slice(-400)") or ""
         if "이미지를 생성할 수 없" in tail:
             print("FAIL LIMIT 일일 이미지 한도 소진")
+            clear_attachments(c)
             c.close()
             sys.exit(2)
         time.sleep(2)
     else:
         print("FAIL 생성 타임아웃")
+        clear_attachments(c)
         c.close()
         sys.exit(1)
 
@@ -268,6 +285,7 @@ def main():
 
     if not data_url or not data_url.startswith("data:image"):
         print(f"FAIL 결과 이미지 회수 실패 ({str(data_url)[:60]})")
+        clear_attachments(c)
         c.close()
         sys.exit(1)
 
