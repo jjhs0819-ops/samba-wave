@@ -1070,12 +1070,11 @@ async def _kream_shadow_loop() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
-    # [2026-09-01 사고수정] CN(중국/식화) 그룹은 자동 입찰 금지 — JP 만 돈다.
-    # 2026-08-31 에 CN 을 자동사이클에 넣었다가, JP 소싱상품이 CN 계정에 오등록돼
-    # 중국 배대지로 발송불가 → 대량 손해가 났다. 식화 소싱 파이프라인이 준비될
-    # 때까지 CN 은 자동 입찰하지 않는다. (재개 시 ("JP","CN") 로 되돌리되
-    # kream_shadow._exec_create_ask 소싱처↔그룹 가드가 함께 살아 있어야 함.)
-    _groups = ("JP",)
+    # JP/CN 번갈아 돈다. CN 은 식화(SHIHUO) 매칭이 verified 될 때 등록해야 하므로
+    # 사이클은 계속 돈다(식화 미확인이면 후보 0 이라 입찰 없음).
+    # [2026-09-01] JP 소싱상품이 CN 계정에 오등록되는 사고는 CN 을 끄는 게 아니라
+    # kream_shadow._exec_create_ask 의 소싱처↔그룹 가드로 막는다(그게 진짜 방어).
+    _groups = ("JP", "CN")
     _gi = 0
     while True:
         _group = _groups[_gi % len(_groups)]
