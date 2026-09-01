@@ -116,7 +116,16 @@ export default function DrilldownGroupTable(props: DrilldownGroupTableProps) {
             >
               상품수집
             </button>
-            <button onClick={handleBrandRefresh} style={{ display: 'none' }}>추가수집</button>
+            <button
+              onClick={handleBrandRefresh}
+              title="선택된(없으면 전체) 브랜드의 카테고리를 재스캔해 신상품만큼 요청수를 올리고 이어서 수집합니다"
+              style={{
+                background: 'rgba(81,207,102,0.1)', border: '1px solid rgba(81,207,102,0.35)',
+                color: '#51CF66', padding: '0.3rem 0.75rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer',
+              }}
+            >
+              추가수집
+            </button>
             <button
               onClick={handleSyncRequestedCounts}
               title="선택된(없으면 전체) 그룹의 요청수를 현재 수집수로 일괄 맞춥니다"

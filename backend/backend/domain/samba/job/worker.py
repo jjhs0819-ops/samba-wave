@@ -612,7 +612,7 @@ class JobWorker:
             from backend.core.config import settings as _cfg
 
             logger.info(f"[잡워커] rebalance start poll={self._poll_count}")
-            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "300"))
+            _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "36"))
             _min_pct = 0.15
 
             _conn = await _asyncpg.connect(
@@ -882,7 +882,7 @@ class JobWorker:
         max_picks = transmit_slots + 2
         picked = 0
         # bg 세마포어 초기값 — over-claim 게이트용 (#459)
-        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "300"))
+        _bg_max = int(os.environ.get("JOB_BG_TRANSMIT_MAX_CONCURRENCY", "36"))
         # F1(#462): 일반 claim 래치 — 집중 pending 부하에서 autotune-first 가 매 iteration
         # 느린 일반 claim 으로 폴백하며 autotune 슬롯을 못 채우던 회귀(동시성 10→5) 차단.
         # 일반 claim 이 한 번 None 이면 이후 iteration 은 빠른 autotune claim 만 → poll 당 1회로 제한.
@@ -1300,24 +1300,53 @@ class JobWorker:
                             logger.error(f"[잡워커] 배포 중단 pending 복구 실패: {se}")
                     else:
                         # 진행 없음 타임아웃 → pending 복구 (재시작 시 이어서 수집)
+                        # 단, 같은 원인으로 반복 stuck 나면(#706) 무한 재시도 대신 failed 처리
+                        _MAX_NO_PROGRESS_RETRY = 5
                         logger.warning(
                             f"[잡워커] 수집 진행 없음 {_NO_PROGRESS_SEC}초 → pending 복구: {_job_id}"
-                        )
-                        _add_job_log(
-                            _job_id,
-                            f"수집 진행 없음 ({_NO_PROGRESS_SEC // 60}분) — 자동 재시도 예정",
-                            job_type="collect",
                         )
                         try:
                             async with get_write_session() as timeout_session:
                                 from sqlalchemy import text as _text2
 
-                                await timeout_session.execute(
+                                _attempt_result = await timeout_session.execute(
                                     _text2(
-                                        "UPDATE samba_jobs SET status='pending', started_at=NULL WHERE id=:jid AND status='running'"
+                                        "UPDATE samba_jobs SET attempt = COALESCE(attempt, 0) + 1 "
+                                        "WHERE id=:jid AND status='running' RETURNING attempt"
                                     ),
                                     {"jid": _job_id},
                                 )
+                                _new_attempt = _attempt_result.scalar()
+                                if (
+                                    _new_attempt is not None
+                                    and _new_attempt >= _MAX_NO_PROGRESS_RETRY
+                                ):
+                                    await timeout_session.execute(
+                                        _text2(
+                                            "UPDATE samba_jobs SET status='failed', error=:err WHERE id=:jid"
+                                        ),
+                                        {
+                                            "jid": _job_id,
+                                            "err": f"진행없음 타임아웃 {_new_attempt}회 반복 — 자동 실패 처리",
+                                        },
+                                    )
+                                    _add_job_log(
+                                        _job_id,
+                                        f"수집 진행 없음 {_new_attempt}회 반복 — 자동 실패 처리",
+                                        job_type="collect",
+                                    )
+                                else:
+                                    await timeout_session.execute(
+                                        _text2(
+                                            "UPDATE samba_jobs SET status='pending', started_at=NULL WHERE id=:jid AND status='running'"
+                                        ),
+                                        {"jid": _job_id},
+                                    )
+                                    _add_job_log(
+                                        _job_id,
+                                        f"수집 진행 없음 ({_NO_PROGRESS_SEC // 60}분, {_new_attempt or '?'}회째) — 자동 재시도 예정",
+                                        job_type="collect",
+                                    )
                                 await timeout_session.commit()
                         except Exception as te:
                             logger.error(f"[잡워커] 진행없음 pending 복구 실패: {te}")
@@ -1384,6 +1413,10 @@ class JobWorker:
                 if not fresh_job:
                     logger.error(f"[잡워커] 잡 재조회 실패: {_job_id}")
                     return
+                # 이 SELECT로 연 트랜잭션을 즉시 닫음 — 안 닫으면 뒤이은 전송/삭제
+                # 처리(최대 300초+) 내내 idle in transaction으로 커넥션 점유됨(#705).
+                # expire_on_commit=False(db/orm.py) 라 커밋 후에도 fresh_job 속성 접근 안전.
+                await session.commit()
                 logger.info(f"[잡워커] 실행: {_job_id} ({_job_type})")
 
                 try:
@@ -1420,6 +1453,12 @@ class JobWorker:
                         )
 
                         await run_cs_sync(fresh_job, repo, session, self)
+                    elif _job_type == "returns_sync":
+                        from backend.domain.samba.job.handlers.returns_sync import (
+                            run as run_returns_sync,
+                        )
+
+                        await run_returns_sync(fresh_job, repo, session, self)
                     else:
                         await repo.fail_job(_job_id, f"알 수 없는 잡 타입: {_job_type}")
 
@@ -1668,7 +1707,7 @@ class JobWorker:
             _rows = (
                 await _ps.execute(
                     _text(
-                        "SELECT id, sale_price, options, market_product_nos, last_sent_data"
+                        "SELECT id, sale_price, options, market_product_nos, last_sent_data, source_site"
                         " FROM samba_collected_product"
                         " WHERE id = ANY(CAST(:pids AS text[]))"
                     ),
@@ -1735,7 +1774,9 @@ class JobWorker:
                 "Count": str(stock_qty),
             }
             if options and isinstance(options, list):
-                emp_opts = _build_options(options, stock_qty)
+                emp_opts = _build_options(
+                    options, stock_qty, source_site=str(prod.source_site or "")
+                )
                 if emp_opts:
                     minimal["Opts"] = emp_opts
                     has_two_axes = any(o.get("title2") for o in emp_opts)
@@ -2422,6 +2463,9 @@ class JobWorker:
 
         BATCH_SIZE = 1
         all_indices = list(range(start_from, total))
+        # [펜싱] 클레임 시점 스냅샷 — 배치마다 DB의 (status, started_at)와 대조해
+        # 리퍼 재큐잉→타 인스턴스 재클레임된 낡은 실행을 감지한다.
+        _claim_started_at = getattr(job, "started_at", None)
         for batch_start in range(0, len(all_indices), BATCH_SIZE):
             batch = all_indices[batch_start : batch_start + BATCH_SIZE]
             i_first = batch[0]
@@ -2435,6 +2479,31 @@ class JobWorker:
             except Exception as exc:
                 logger.warning(f"[잡워커] 취소 체크 중 DB 에러: {job.id} — {exc}")
                 _is_cancelled = False
+
+            # [펜싱] 이중 실행 차단 (2026-08-07 플토 데상트 EMP 중복 120건 사고) —
+            # 다른 인스턴스의 리퍼가 이 잡을 '죽었다' 오판해 pending 재큐잉하고
+            # 새 워커가 재클레임하면 status/started_at 이 바뀐다. 낡은 실행은
+            # 여기서 조용히 종료한다(진행 마킹·완료 처리 없이 — 새 실행이 이어감).
+            # 마켓 등록은 비멱등이라, 이 감지가 없으면 겹친 구간이 전부 이중 등록된다.
+            _fence = await repo.get_job_claim(job.id)
+            if _fence is not None:
+                _f_status, _f_started = _fence
+                # 취소(cancelled)는 아래 기존 분기가 로그·플래그 정리와 함께 처리
+                # 하므로 펜싱에서 건드리지 않는다. 펜싱은 '리퍼 재큐잉(pending)'과
+                # '타 워커 재클레임(started_at 변경)'만 잡는다.
+                _requeued = str(_f_status) == "pending"
+                _reclaimed = (
+                    _claim_started_at is not None
+                    and _f_started is not None
+                    and _f_started != _claim_started_at
+                )
+                if _requeued or _reclaimed:
+                    logger.warning(
+                        f"[잡워커] 펜싱 — 잡 소유권 상실 감지, 낡은 실행 중단: "
+                        f"{job.id} ({i_first}/{total} 지점, status={_f_status}, "
+                        f"reclaimed={_reclaimed})"
+                    )
+                    return
 
             # 배포 종료 감지 — progress 저장 + 즉시 pending 전환 후 탈출
             if self._shutting_down:
@@ -2651,6 +2720,7 @@ class JobWorker:
             "NAVERSTORE",
             "SNKRDUNK",
             "THEHYUNDAI",
+            "29CM",
         }
         # 확장앱 기반 소싱처 (소싱큐)
         EXTENSION_SITES = {
@@ -3021,7 +3091,9 @@ class JobWorker:
                         if _site_consecutive_errors[_ik] >= 5:
                             _rate_limited = True
                         if rle.retry_after > 0:
-                            if await _cancellable_sleep(rle.retry_after):
+                            # 소싱처가 비정상적으로 큰 Retry-After를 보내도
+                            # 워커 슬롯을 무기한 점유하지 못하게 상한 적용 (#706)
+                            if await _cancellable_sleep(min(rle.retry_after, 60)):
                                 return None
                         return None
                     except Exception as e:
@@ -3343,7 +3415,9 @@ class JobWorker:
                     if _site_consecutive_errors[_ik] >= 5:
                         _rate_limited = True
                     if rle.retry_after > 0:
-                        if await _cancellable_sleep(rle.retry_after):
+                        # 소싱처가 비정상적으로 큰 Retry-After를 보내도
+                        # 워커 슬롯을 무기한 점유하지 못하게 상한 적용 (#706)
+                        if await _cancellable_sleep(min(rle.retry_after, 60)):
                             return None
                     return None
                 except Exception as e:
@@ -5579,6 +5653,15 @@ class JobWorker:
             )
 
             client = TheHyundaiSourcingClient()
+        elif site == "29CM":
+            # 29CM — curl_cffi 직접 호출. httpx 는 Cloudflare TLS 지문 차단으로 전부 403.
+            # 로그인 쿠키가 있으면 실어 보낸다(계정 기준 수집).
+            from backend.domain.samba.plugins.sourcing.twentyninecm import (
+                get_29cm_cookie,
+            )
+            from backend.domain.samba.proxy.twentyninecm import TwentyNineCMClient
+
+            client = TwentyNineCMClient(await get_29cm_cookie())
 
         # 확장앱 소싱큐 기반 사이트 — 소싱큐로 검색 요청
         if not client:
@@ -6338,6 +6421,60 @@ class JobWorker:
                     f"{len(_thehyundai_details)}/{len(new_items)}건 성공"
                 )
 
+        # 29CM: 저장 전 4건 병렬로 상세 선취합 (THEHYUNDAI 패턴).
+        # 병렬을 더 올리면 Cloudflare 가 403 을 낸다(실측) — 4 + 0.3s 간격 유지.
+        _29cm_details: dict[str, dict[str, Any]] = {}
+        if site == "29CM" and client:
+            new_items = [
+                it
+                for it in items_list
+                if str(it.get("site_product_id", "")) not in existing_ids
+            ][:remaining]
+            if new_items:
+                logger.info(
+                    f"[잡워커] 29CM 상세 선취합 시작: {len(new_items)}건 (4건 병렬)"
+                )
+                _29_BATCH = 4
+                for batch_start in range(0, len(new_items), _29_BATCH):
+                    from backend.domain.samba.emergency import (
+                        is_collect_cancel_requested as _icc_29,
+                        is_emergency_stopped as _ies_29,
+                    )
+
+                    if _icc_29() or _ies_29() or await repo.is_cancelled(job.id):
+                        await repo.cancel_job(job.id)
+                        await session.commit()
+                        return
+                    batch = new_items[batch_start : batch_start + _29_BATCH]
+                    details = await asyncio.gather(
+                        *(
+                            client.get_detail(str(it.get("site_product_id", "")))
+                            for it in batch
+                        ),
+                        return_exceptions=True,
+                    )
+                    for it, det in zip(batch, details):
+                        pid = str(it.get("site_product_id", ""))
+                        if isinstance(det, Exception):
+                            logger.warning(
+                                f"[잡워커] 29CM 상세 선취합 실패 {pid}: {det}"
+                            )
+                            continue
+                        if det:
+                            _29cm_details[pid] = det
+                    done = min(batch_start + _29_BATCH, len(new_items))
+                    await repo.update_progress(job.id, done, len(new_items))
+                    _add_job_log(
+                        job.id,
+                        f"[{site}] [{sf.name}] 상세 조회 [{done:,}/{len(new_items):,}]",
+                        job_type="collect",
+                    )
+                    await asyncio.sleep(0.3)
+                logger.info(
+                    f"[잡워커] 29CM 상세 선취합 완료: "
+                    f"{len(_29cm_details)}/{len(new_items)}건 성공"
+                )
+
         # GSShop: 선취합 + 카테고리 필터 (검색 결과에 이름/카테고리 없으므로 상세 조회 필수)
         _gsshop_details: dict[str, dict[str, Any]] = {}
         if site == "GSShop" and client:
@@ -6809,6 +6946,9 @@ class JobWorker:
             # THEHYUNDAI: 선취합된 상세 데이터 사용
             if site == "THEHYUNDAI" and p_id in _thehyundai_details:
                 detail = _thehyundai_details[p_id]
+            # 29CM: 선취합된 상세 데이터 사용
+            if site == "29CM" and p_id in _29cm_details:
+                detail = _29cm_details[p_id]
             _skip_detail = _search_kwargs.get("_skip_detail", False)
             # ABCmart 최대혜택가: 선취합 미스 시 폴백 조회
             if (
@@ -6907,7 +7047,16 @@ class JobWorker:
             # SSG 카드혜택가는 결제금액 7만원 이상에서만 적용 — 7만원 미만 단품은 카드할인을
             # 못 받으므로 판매가(카드할인 전 표시가)를 원가로 한다(#430).
             _ssg_list_price = int(detail.get("salePrice", 0) or 0) or sale_price
-            if site == "THEHYUNDAI":
+            if site == "29CM":
+                # 29CM 원가 = 상세의 노출가(internalDisplayPrice, 쿠폰 반영 최종가) 정본.
+                # 쿠폰 목록으로 직접 계산하면 안 된다 — canDownload 가 사용 자격을
+                # 보장하지 않아 원가를 낮게 잡는다(twentyninecm.py 주석 참조).
+                cost = (
+                    int(detail.get("cost", 0) or 0)
+                    or int(item.get("cost", 0) or 0)
+                    or sale_price
+                )
+            elif site == "THEHYUNDAI":
                 # 더현대 원가 = 상세 new_cost(카드즉시할인 반영 최저가) 정본.
                 # 상세 누락 시 검색 표시가(cost=salePrice) → sale_price 폴백.
                 cost = (
@@ -7004,11 +7153,18 @@ class JobWorker:
                     or _lotteon_cat4
                     or item.get("category4", "")
                 )
+            # item/detail의 extra_data 병합 — 공유 헬퍼(_build_product_data)는 보존하는데
+            # 이 인라인 저장 경로만 누락돼 SNKRDUNK snkr_type 등이 조용히 유실되던 버그 (#701)
+            _extra_data = {
+                **(item.get("extra_data") or {}),
+                **(detail.get("extra_data") or {}),
+            }
             product_data = {
                 # 셀러샵 수집분은 board(테트리스) 분리를 위해
                 # source_site 를 LOTTEON_SELLERSHOP 로 저장한다. site(=LOTTEON)는 수집/필터
                 # 로직 전부에서 그대로 쓰이고 저장 시점에만 분기(refresh 는 base-site 정규화).
                 "source_site": ("LOTTEON_SELLERSHOP" if _is_seller_shop else site),
+                "extra_data": (_extra_data or None),
                 "search_filter_id": filter_id,
                 "site_product_id": p_id,
                 "source_url": item.get("source_url", "")

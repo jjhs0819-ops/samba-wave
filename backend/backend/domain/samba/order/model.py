@@ -439,11 +439,25 @@ def _register_auto_cancel_trigger() -> None:
     _TRIGGER_STATUSES = {"cancel_requested", "cancelling"}
 
     # 한글 shipping_status → 내부 status enum 매핑.
-    # status='pending'(주문접수) 인데 마켓 shipping_status 가 취소단계로 넘어온 경우
-    # status 도 자동 동기화. (전송로직/대시보드/오토튠이 status 기준으로 동작하므로 필수)
+    # status='pending'(주문접수) 로 남아있는데 마켓 shipping_status 는 이미 다음 단계로
+    # 넘어온 경우 status 도 자동 동기화. (전송로직/대시보드/오토튠/미발송 필터가 status
+    # 기준으로 동작하므로 필수. 특히 배송완료/구매확정이 pending 으로 잔존하면 미처리로
+    # 오분류되어 재발주 위험 + 미발송 카운트 뻥튀기 — issue: 샵마인 대조 불일치.)
+    #
+    # pending 만 대상이므로 "status 는 사용자가 관리" 원칙과 충돌 없음
+    # (사용자가 만진 wait_ship/직배/까대기 등 비-pending 상태는 절대 건드리지 않음).
+    # 전진 전용 매핑이라 회귀 없음. cancel 계열만 after_flush 자동취소 트리거 대상.
     _PENDING_AUTO_FIX_MAP = {
         "취소완료": "cancelled",
         "취소요청": "cancel_requested",
+        "국내배송중": "shipping",
+        "출고완료": "shipping",
+        "발송완료": "shipping",
+        "배송완료": "delivered",
+        "구매확정": "delivered",
+        "반품요청": "return_requested",
+        "회수확정": "return_completed",
+        "반품완료": "returned",
     }
 
     @event.listens_for(Session, "before_flush")

@@ -104,6 +104,28 @@ class BackendSettings(BaseSettings):
     비어있으면 미박음 → 데몬 기본값(https://api.samba-wave.co.kr) 사용. 메인 운영은 비워둬도 동일.
     예) "https://api.myfork.com" """
 
+    lotteon_image_proxy_base: str = "https://api.samba-wave.co.kr/api/v1/samba/img"
+    """롯데ON 전송 시 R2 이미지 URL 을 갈아끼울 자체 도메인 프록시 베이스.
+
+    롯데ON 은 R2 공개 도메인(img.sambawave-cdn.shop)을 상품등록 API 의
+    origFileNm 검증에서 9999 "URL 형식이 올바르지 않습니다" 로 거부한다.
+    2026-08-14 실측(동일 상품·동일 이미지, 신규등록 경로):
+      img.sambawave-cdn.shop/mirror/<key>            → 9999 실패
+      img.sambawave-cdn.shop/art/product/.../<key>   → 9999 실패 (경로 모방도 무효)
+      api.samba-wave.co.kr/images/mirror/<key>       → 등록 성공
+    즉 경로/파일명이 아니라 호스트가 거부 사유다.
+
+    기본값이 VM Caddy 의 /images/* 가 아니라 백엔드 자체 경로(image_proxy.py)인
+    이유: Caddy 프록시의 origin(R2_PUBLIC_HOST)이 현재 테넌트 버킷이 아닌 옛
+    버킷을 가리키고 있어 새로 만든 이미지(AI 변환분 등)가 404 다. 실측 —
+    운영에서 변환된 transformed/ai_4b5f7fa9_a4f1e7.jpg 가 테넌트 버킷에는 있는데
+    Caddy /images/ 경유로는 404. 백엔드 경로는 테넌트 R2 설정을 그대로 쓰므로
+    VM 환경변수 수정 없이도 항상 같은 버킷을 본다.
+
+    비우면 재작성을 하지 않는다(기존 동작 유지 — 즉시 롤백 가능). 단 그 경우
+    AI 변환 이미지(R2 저장)는 롯데ON 등록이 거부된다.
+    예) "https://api.myfork.com/api/v1/samba/img" """
+
     # ===========================================
     # AI / Anthropic Configuration
     # ===========================================

@@ -211,6 +211,25 @@ def _build_search_tags(product: dict[str, Any]) -> list[str]:
     return tags[:20]
 
 
+def _variation_fill_value(type_name: str, size_val: str, color_val: str) -> str:
+    """카테고리 필수 구매옵션 이름이 사이즈/색상 계열이면 아이템 실제값을 반환.
+
+    쿠팡은 아이템 간 '인정된 속성 조합'이 같으면 중복으로 보고 상품 전체를 거절한다.
+    사이즈 속성명은 카테고리마다 다른데("사이즈", "의류 사이즈", "패션의류/잡화 사이즈"…)
+    우리가 보내는 이름이 그 카테고리에 없으면 무시되고, 보충 로직이 넣는 상수값만
+    남아 전 아이템이 동일해진다 (2026-08-14 에잇세컨즈 S/M/L 3종 전건 거절).
+    해당 없으면 빈 문자열 — 호출부가 기존 상수 보충으로 폴백한다.
+    """
+    name = str(type_name or "").strip().lower()
+    if not name:
+        return ""
+    if "사이즈" in name or "size" in name:
+        return str(size_val or "").strip()
+    if "색상" in name or "컬러" in name or "color" in name:
+        return str(color_val or "").strip()
+    return ""
+
+
 def _parse_option_color_size(opt_name: str, default_color: str) -> tuple[str, str]:
     """옵션명에서 색상/사이즈 분리."""
     opt_name = opt_name.strip()
@@ -269,6 +288,40 @@ def _build_content_details(detail_html: str) -> list[dict[str, Any]]:
                 url = "https:" + url
             details.append({"content": url, "detailType": "IMAGE"})
     return details if details else [{"content": detail_html, "detailType": "TEXT"}]
+
+
+def _build_contents_blocks(
+    content_details: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """detailType 연속 구간별로 contentsType 이 일치하는 contents 블록 생성.
+
+    (2026-08-07) 쿠팡이 contentsType↔detailType 짝 검증을 강제하기 시작 —
+    기존처럼 HTML 블록 하나에 TEXT/IMAGE 조각을 섞어 보내면
+    "상세컨텐츠의 세부타입 설정이 잘 못 되었습니다. 컨텐츠타입에 맞는
+    세부타입을 입력해 주세요." 반려(에잇세컨즈 재전송 전량 실사고, 종전
+    등록분은 통과했던 규칙이라 쿠팡 측 검증 강화로 판단).
+
+    TEXT 구간 → contentsType TEXT, IMAGE 구간 → IMAGE_NO_SPACE(상세 이미지를
+    공백 없이 이어붙이는 표준 타입).
+    """
+    blocks: list[dict[str, Any]] = []
+    cur_type: str | None = None
+    cur: list[dict[str, Any]] = []
+    for d in content_details or []:
+        t = "IMAGE_NO_SPACE" if d.get("detailType") == "IMAGE" else "TEXT"
+        if t != cur_type and cur:
+            blocks.append({"contentsType": cur_type, "contentDetails": cur})
+            cur = []
+        cur_type = t
+        cur.append(d)
+    if cur:
+        blocks.append({"contentsType": cur_type, "contentDetails": cur})
+    return blocks or [
+        {
+            "contentsType": "TEXT",
+            "contentDetails": [{"content": "", "detailType": "TEXT"}],
+        }
+    ]
 
 
 _TAG_RE = re.compile(r"<[^>]+>")
@@ -993,7 +1046,8 @@ class CoupangClient:
             CoupangClient.search_brand_id() 결과를 호출자가 전달. 비어있으면 brand 문자열만 사용.
 
         required_attribute_types: 카테고리별 필수 구매옵션 attributeTypeName 목록.
-            2026-08-01 필수 구매옵션 의무화 대응. 누락된 type만 "상세페이지 참조"로 자동 보충.
+            2026-08-01 필수 구매옵션 의무화 대응. 누락된 type만 required_attribute_fill_value()로
+            자료형에 맞게(NUMBER는 단위 부착 등) 자동 보충.
         """
         from datetime import datetime as dt, timezone as tz
 
@@ -1019,6 +1073,8 @@ class CoupangClient:
             else ([_main_raw] if _main_raw else [])
         )
         coupang_main = _main_filtered[0] if _main_filtered else ""
+        # 정책 토글: 추가이미지(DETAIL) 미등록 — 대표(REPRESENTATION)만 전송
+        _no_additional_images = bool(product.get("_coupang_no_additional_images"))
         default_color = product.get("color", "") or "상세 이미지 참조"
         detail_html = (
             product.get("detail_html", "") or f"<p>{product.get('name', '')}</p>"
@@ -1053,7 +1109,7 @@ class CoupangClient:
             _filter_html_external_images(detail_html) if _is_gsshop else detail_html
         )
 
-        # 상세 컨텐츠 (IMAGE/TEXT 혼합)
+        # 상세 컨텐츠 (IMAGE/TEXT 혼합) — 블록 구성은 _build_contents_blocks가 처리
         content_details = _build_content_details(detail_html)
 
         # 품번(MPN, modelNo) — 2026-08-01 의무화: 바코드(GTIN) 또는 품번 둘 중 하나 필수
@@ -1082,14 +1138,15 @@ class CoupangClient:
                         "vendorPath": rep_image,
                     }
                 )
-                for idx, url in enumerate(images_raw[1:10], start=1):
-                    item_images.append(
-                        {
-                            "imageOrder": idx,
-                            "imageType": "DETAIL",
-                            "vendorPath": url,
-                        }
-                    )
+                if not _no_additional_images:
+                    for idx, url in enumerate(images_raw[1:10], start=1):
+                        item_images.append(
+                            {
+                                "imageOrder": idx,
+                                "imageType": "DETAIL",
+                                "vendorPath": url,
+                            }
+                        )
 
             # 아이템별 색상 (옵션에서 파싱된 개별 색상 우선)
             resolved_color = item_color or default_color
@@ -1132,15 +1189,28 @@ class CoupangClient:
                     }
                 )
 
-            # 카테고리별 필수 구매옵션 누락분 자동 보충 ("상세페이지 참조")
+            # 카테고리별 필수 구매옵션 누락분 자동 보충 — 자료형별 값(NUMBER는 단위 부착 등)
             if _required_attr_types:
+                from backend.domain.samba.proxy.notice_utils import (  # noqa: F811
+                    required_attribute_fill_value,
+                )
+
                 _present = {a["attributeTypeName"] for a in _attrs}
                 for _req in _required_attr_types:
                     if _req and _req not in _present:
+                        # [중복옵션 방지] 카테고리가 요구하는 이름이 '사이즈/색상' 계열이면
+                        # 상수 보충값이 아니라 이 아이템의 실제 사이즈·색상을 채운다.
+                        # (2026-08-14 에잇세컨즈 실패 4건) 우리는 "패션의류/잡화 사이즈"로
+                        # 보내는데 카테고리 실제 속성명이 "사이즈"면 쿠팡이 우리 속성은
+                        # 무시하고, 보충된 "사이즈"에는 전 아이템 동일한 상수가 들어가
+                        # S/M/L 3개가 같은 옵션으로 판정 → "중복된 옵션값" 전건 거절.
+                        _v = _variation_fill_value(_req, size_val, resolved_color)
+                        if not _v:
+                            _v = required_attribute_fill_value(notice_meta, _req)
                         _attrs.append(
                             {
                                 "attributeTypeName": _req[:25],
-                                "attributeValueName": "상세페이지 참조",
+                                "attributeValueName": str(_v)[:30],
                             }
                         )
 
@@ -1160,12 +1230,9 @@ class CoupangClient:
                 "pccNeeded": False,
                 "offerCondition": "NEW",
                 "attributes": _attrs,
-                "contents": [
-                    {
-                        "contentsType": "HTML",
-                        "contentDetails": content_details,
-                    }
-                ],
+                # contentsType↔detailType 짝 강제(2026-08-07 쿠팡 검증 강화) —
+                # HTML 단일 블록에 TEXT/IMAGE 혼합 금지, 타입별 블록 분리
+                "contents": _build_contents_blocks(content_details),
                 "notices": notices,
                 "images": item_images,
                 "certifications": [
@@ -1262,6 +1329,30 @@ class CoupangClient:
                 )
             )
 
+        # [진단] 아이템 간 속성 조합이 겹치면 쿠팡이 "중복된 옵션값"으로 상품 전체를
+        # 거절한다. API 에러만 보면 어느 속성이 겹쳤는지 알 수 없어 원인 추적에
+        # 이틀이 걸렸다(2026-08-14) — 전송 전에 조합을 찍어 로그에 남긴다.
+        if len(items) > 1:
+            _sigs = [
+                tuple(
+                    sorted(
+                        (
+                            a.get("attributeTypeName", ""),
+                            a.get("attributeValueName", ""),
+                        )
+                        for a in (it.get("attributes") or [])
+                    )
+                )
+                for it in items
+            ]
+            if len(set(_sigs)) < len(_sigs):
+                logger.warning(
+                    "[쿠팡] 옵션 속성 조합 중복 감지 — 등록 거절 위험: "
+                    f"{str(product.get('name', ''))[:40]} "
+                    f"items={len(items)} 고유조합={len(set(_sigs))} "
+                    f"예시={_sigs[0]}"
+                )
+
         # SEO 최적화: 노출상품명 + 검색태그
         display_name = _build_display_product_name(product)
         search_tags = _build_search_tags(product)
@@ -1344,56 +1435,68 @@ class CoupangClient:
         targets = [status] if status else STATUSES
 
         now = datetime.now(timezone.utc)
-        since = now - timedelta(days=days)
         # createdAtTo는 exclusive로 처리되므로 +1일 추가 (당일 주문 누락 방지)
-        until = now + timedelta(days=1)
-        created_at_from = since.strftime("%Y-%m-%d")
-        created_at_to = until.strftime("%Y-%m-%d")
+        overall_since = now - timedelta(days=days)
+        overall_until = now + timedelta(days=1)
+
+        # 쿠팡 API 제약: createdAtTo - createdAtFrom < 32일. days가 크면(예: 32일
+        # 조회 요청) 통째로 보내면 HTTP 400으로 전체 실패하므로 31일 단위로 분할 조회.
+        MAX_SPAN_DAYS = 31
+        windows: list[tuple[datetime, datetime]] = []
+        win_start = overall_since
+        while win_start < overall_until:
+            win_end = min(win_start + timedelta(days=MAX_SPAN_DAYS), overall_until)
+            windows.append((win_start, win_end))
+            win_start = win_end
 
         path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/ordersheets"
         seen_ids: set[int] = set()
         all_orders: list[dict[str, Any]] = []
 
-        for idx, target_status in enumerate(targets):
-            if idx > 0:
-                await asyncio.sleep(1.5)  # 쿠팡 API rate limit 회피 (HTTP 429)
-            next_token = ""
-            for _ in range(100):  # 무한루프 방지
-                params: dict[str, str] = {
-                    "createdAtFrom": created_at_from,
-                    "createdAtTo": created_at_to,
-                    "status": target_status,
-                    "maxPerPage": str(max_per_page),
-                }
-                if next_token:
-                    params["nextToken"] = next_token
+        for win_idx, (since, until) in enumerate(windows):
+            created_at_from = since.strftime("%Y-%m-%d")
+            created_at_to = until.strftime("%Y-%m-%d")
 
-                result = await self._call_api("GET", path, params=params)
+            for idx, target_status in enumerate(targets):
+                if idx > 0 or win_idx > 0:
+                    await asyncio.sleep(1.5)  # 쿠팡 API rate limit 회피 (HTTP 429)
+                next_token = ""
+                for _ in range(100):  # 무한루프 방지
+                    params: dict[str, str] = {
+                        "createdAtFrom": created_at_from,
+                        "createdAtTo": created_at_to,
+                        "status": target_status,
+                        "maxPerPage": str(max_per_page),
+                    }
+                    if next_token:
+                        params["nextToken"] = next_token
 
-                data = result.get("data", []) if isinstance(result, dict) else []
-                extracted: list[dict[str, Any]] = []
-                if isinstance(data, list):
-                    extracted = data
-                elif isinstance(data, dict):
-                    sheets = data.get("orderSheets", data.get("content", []))
-                    if isinstance(sheets, list):
-                        extracted = sheets
+                    result = await self._call_api("GET", path, params=params)
 
-                for order in extracted:
-                    box_id = order.get("shipmentBoxId")
-                    if box_id and box_id not in seen_ids:
-                        seen_ids.add(box_id)
-                        all_orders.append(order)
+                    data = result.get("data", []) if isinstance(result, dict) else []
+                    extracted: list[dict[str, Any]] = []
+                    if isinstance(data, list):
+                        extracted = data
+                    elif isinstance(data, dict):
+                        sheets = data.get("orderSheets", data.get("content", []))
+                        if isinstance(sheets, list):
+                            extracted = sheets
 
-                next_token = (
-                    result.get("nextToken", "") if isinstance(result, dict) else ""
-                )
-                if not next_token:
-                    break
+                    for order in extracted:
+                        box_id = order.get("shipmentBoxId")
+                        if box_id and box_id not in seen_ids:
+                            seen_ids.add(box_id)
+                            all_orders.append(order)
+
+                    next_token = (
+                        result.get("nextToken", "") if isinstance(result, dict) else ""
+                    )
+                    if not next_token:
+                        break
 
         logger.info(
             f"[쿠팡] 주문 조회 완료: {len(all_orders)}건 "
-            f"(최근 {days}일, status={status or 'ALL'})"
+            f"(최근 {days}일, status={status or 'ALL'}, {len(windows)}개 구간 분할)"
         )
         return all_orders
 

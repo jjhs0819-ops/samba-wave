@@ -32,6 +32,7 @@ from backend.api.v1.routers.samba.balju_internal import (
     router as samba_balju_internal_router,
 )
 from backend.api.v1.routers.samba.cs_internal import router as samba_cs_internal_router
+from backend.api.v1.routers.samba.kream_otp import router as samba_kream_otp_router
 from backend.api.v1.routers.samba.ebay_mapping import (
     router as samba_ebay_mapping_router,
 )
@@ -49,8 +50,11 @@ from backend.api.v1.routers.samba.product import router as samba_product_router
 from backend.api.v1.routers.samba.proxy import (
     bg_worker_router as samba_bg_worker_router,
     bunjang_queue_router as samba_bunjang_queue_router,
+    buyma_oauth_router as samba_buyma_oauth_router,
+    buyma_webhook_router as samba_buyma_webhook_router,
     cafe24_oauth_router as samba_cafe24_oauth_router,
     musinsa_extension_router as samba_musinsa_extension_router,
+    twentyninecm_extension_router as samba_29cm_extension_router,
     router as samba_proxy_router,
     snkrdunk_public_router as samba_snkrdunk_public_router,
     sourcing_queue_router as samba_sourcing_queue_router,
@@ -173,6 +177,11 @@ def create_application() -> FastAPI:
         samba_order_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     app.include_router(samba_order_public_router, prefix="/api/v1/samba")
+    # R2 이미지 공개 프록시 — 마켓 서버가 우리 도메인으로 이미지를 받아가는 경로.
+    # 인증 의존성 없음(마켓이 헤더 없이 fetch) + ApiGatewayMiddleware 면제 등록됨.
+    from backend.api.v1.routers.samba.image_proxy import router as samba_img_router
+
+    app.include_router(samba_img_router, prefix="/api/v1/samba")
     app.include_router(
         samba_channel_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
@@ -224,12 +233,16 @@ def create_application() -> FastAPI:
     # main proxy router의 라우터 레벨 JWT가 확장앱 set-cookie 호출을 401로 막아
     # 2026-04-09부터 settings.musinsa_cookie 갱신 정지가 발생한 사고의 fix.
     app.include_router(samba_musinsa_extension_router, prefix="/api/v1/samba/proxy")
+    app.include_router(samba_29cm_extension_router, prefix="/api/v1/samba/proxy")
     # snkrdunk 매칭 수정 (인증 불필요 — 로컬 검수 도구 전용)
     app.include_router(samba_snkrdunk_public_router, prefix="/api/v1/samba/proxy")
     app.include_router(samba_sourcing_queue_router, prefix="/api/v1/samba")
     app.include_router(samba_bunjang_queue_router, prefix="/api/v1/samba")
     # 카페24 OAuth 콜백은 외부 서버 리다이렉트라 JWT 헤더 불가 → 별도 라우터로 JWT 예외
     app.include_router(samba_cafe24_oauth_router, prefix="/api/v1/samba")
+    app.include_router(samba_buyma_oauth_router, prefix="/api/v1/samba")
+    # BUYMA webhook 은 BUYMA 서버가 API키·JWT 없이 호출 → 라우트가 HMAC 서명 검증
+    app.include_router(samba_buyma_webhook_router, prefix="/api/v1/samba")
     app.include_router(samba_bg_worker_router, prefix="/api/v1/samba")
     app.include_router(
         samba_warroom_router, prefix="/api/v1/samba", dependencies=samba_auth
@@ -257,6 +270,9 @@ def create_application() -> FastAPI:
     # 발주전자료 내부 API — samba_auth 우회, X-Internal-Token 자체 검증
     # (Claude 클라우드 스케줄잡 전용)
     app.include_router(samba_balju_internal_router, prefix="/api/v1")
+    # 크림 로그인 OTP 수신 — samba_auth 우회, X-Internal-Token 자체 검증
+    # 폰(MacroDroid/Tasker)이 크림 문자의 6자리만 넘긴다. 자격증명은 폰에 없다.
+    app.include_router(samba_kream_otp_router, prefix="/api/v1")
     app.include_router(
         samba_store_care_router, prefix="/api/v1/samba", dependencies=samba_auth
     )

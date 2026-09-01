@@ -14,7 +14,8 @@
     LO: '롯데택배', LT: '롯데택배', EP: '우체국택배', POST: '우체국택배',
     RZ: '로젠택배', DS: '대신택배', IL: '일양로지스', KD: '경동택배',
     CH: '천일택배', HD: '롯데택배', SL: 'SLX택배',
-    CR: 'CVSnet편의점택배', DH: 'DHL', GS: 'GSMNtoN',
+    // DH=대한통운 (GS샵 실측 2026-08-11 — DHL로 오매핑되어 쿠팡 INVALID_INVOICE_NUMBER 거부 4건)
+    CR: 'CVSnet편의점택배', DH: 'CJ대한통운', GS: 'GSMNtoN',
   }
 
   function isOrderCancelled() {

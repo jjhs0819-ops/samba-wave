@@ -22,6 +22,7 @@ SUPPORTED_SOURCING_SITES = [
     {"id": "KREAM", "name": "크림", "group": "리셀"},
     {"id": "SNKRDUNK", "name": "스니덩크", "group": "리셀"},
     {"id": "BUNJANG", "name": "번개장터", "group": "리셀"},
+    {"id": "DAANGN", "name": "당근마켓", "group": "리셀"},
     {"id": "Nike", "name": "나이키", "group": "스포츠"},
     {"id": "Adidas", "name": "아디다스", "group": "스포츠"},
     {"id": "ABCmart", "name": "ABC마트", "group": "신발"},
@@ -36,6 +37,7 @@ SUPPORTED_SOURCING_SITES = [
     {"id": "NAVERSTORE", "name": "네이버스토어", "group": "오픈마켓"},
     {"id": "TheHyundai", "name": "더현대", "group": "백화점"},
     {"id": "REXMONDE", "name": "렉스몬드", "group": "패션"},
+    {"id": "29CM", "name": "29CM", "group": "패션"},
     # 배대지(해외배송 대행) — 크림 해외판매 시 스니덩크 해외송장을 허브넷 행에 기입해야
     # 국내 재발송됨. 소싱처는 아니지만 id/pw 로그인 방식이 동일해 같은 계정관리 UI 재사용.
     {"id": "HUBNET", "name": "허브넷", "group": "배대지"},

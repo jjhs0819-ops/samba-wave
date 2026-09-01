@@ -74,11 +74,11 @@ export function useProxySettings(): ProxySettingsState & ProxySettingsActions {
   const testProxy = async (idx: number) => {
     const p = proxies[idx]
     if (!p.url) {
-      // 메인 IP는 httpbin으로 직접 테스트
+      // 메인 IP는 ipify로 직접 테스트 (httpbin은 자체 가용성이 불안정해 제외)
       setProxyTesting(idx)
       try {
-        const res = await fetch('https://httpbin.org/ip').then(r => r.json())
-        showAlert(`메인 IP 확인: ${res.origin}`, 'success')
+        const res = await fetch('https://api.ipify.org?format=json').then(r => r.json())
+        showAlert(`메인 IP 확인: ${res.ip}`, 'success')
       } catch { showAlert('메인 IP 테스트 실패', 'error') }
       setProxyTesting(null)
       return

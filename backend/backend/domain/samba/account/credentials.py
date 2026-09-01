@@ -224,6 +224,27 @@ def toss_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
     }
 
 
+def buyma_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
+    """BUYMA PS-API — client_id/secret(컬럼) + OAuth 토큰(oauth 컬럼) + storeId/sandbox.
+
+    apiKey 칸 = client_id, apiSecret 칸 = client_secret (설정폼 매핑).
+    액세스/리프레시 토큰은 OAuth 콜백이 oauth_access_token/oauth_refresh_token 컬럼에 저장.
+    """
+    if account is None:
+        return {}
+    ext = _extras(account)
+    return {
+        "clientId": account.api_key or "",
+        "clientSecret": account.api_secret or "",
+        "accessToken": account.oauth_access_token or "",
+        "refreshToken": account.oauth_refresh_token or "",
+        "storeId": account.seller_id or ext.get("storeId", ""),
+        "sandbox": bool(ext.get("sandbox", False)),
+        "buyingCountry": ext.get("buyingCountry", "韓国"),
+        "shippingCountry": ext.get("shippingCountry", "韓国"),
+    }
+
+
 # 마켓 → 빌더 매핑 — 동적 디스패치용
 CRED_BUILDERS = {
     "lotteon": lotteon_creds,
@@ -244,6 +265,7 @@ CRED_BUILDERS = {
     "kream": kream_creds,
     "musinsa": musinsa_creds,
     "toss": toss_creds,
+    "buyma": buyma_creds,
 }
 
 
@@ -281,7 +303,19 @@ _FORM_TO_COLUMNS: dict[str, tuple[Optional[str], Optional[str], Optional[str]]] 
     "kream": ("apiKey", "apiSecret", None),
     "musinsa": (None, None, None),
     "toss": ("apiKey", "apiSecret", None),
+    # BUYMA PS-API: apiKey칸=client_id, apiSecret칸=client_secret, storeId=셀러ID
+    "buyma": ("apiKey", "apiSecret", "storeId"),
 }
+
+
+def _clean(value: Any) -> str:
+    """폼 입력값 → 앞뒤 공백 제거한 문자열.
+
+    판매자ID/API키에 붙은 공백은 화면에서 보이지 않는데, 헤더로 나가는 순간
+    httpx 가 "Illegal header value" 로 요청을 거부한다(ESM X-ESM-Seller-Id 등).
+    실제로 지마켓 계정 'woo8482 ' 가 이 경로로 유입돼 조회 전건 실패했다.
+    """
+    return str(value or "").strip()
 
 
 def form_to_account_payload(
@@ -304,22 +338,26 @@ def form_to_account_payload(
         "is_active": True,
     }
     if api_key_field:
-        payload["api_key"] = form_data.get(api_key_field, "") or ""
+        payload["api_key"] = _clean(form_data.get(api_key_field, ""))
     if api_secret_field:
-        payload["api_secret"] = form_data.get(api_secret_field, "") or ""
+        payload["api_secret"] = _clean(form_data.get(api_secret_field, ""))
     if seller_id_field:
-        payload["seller_id"] = form_data.get(seller_id_field, "") or ""
+        payload["seller_id"] = _clean(form_data.get(seller_id_field, ""))
 
     # business_name 폼 키 보존
     if "businessName" in form_data:
-        payload["business_name"] = form_data.get("businessName", "") or ""
+        payload["business_name"] = _clean(form_data.get("businessName", ""))
 
     # additional_fields = form 전체 (컬럼 추출분도 남겨둠 — 기존 코드 호환).
-    # 빈 값은 제거해 noise 감소.
-    extras = {
-        k: v
-        for k, v in form_data.items()
-        if v not in (None, "", []) and k != "businessName"
-    }
+    # 빈 값은 제거해 noise 감소. 문자열은 앞뒤 공백 제거 후 판정 —
+    # " " 만 든 값이 빈 값으로 걸러지고, 공백 낀 ID/키가 그대로 남지 않는다.
+    extras: dict[str, Any] = {}
+    for k, v in form_data.items():
+        if k == "businessName":
+            continue
+        cleaned = _clean(v) if isinstance(v, str) else v
+        if cleaned in (None, "", []):
+            continue
+        extras[k] = cleaned
     payload["additional_fields"] = extras
     return payload

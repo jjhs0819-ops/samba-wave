@@ -236,8 +236,14 @@ export function StoreSettingsPanel(props: Props) {
                           if (!data.apiKey) { showAlert('API Key를 먼저 입력하세요.', 'error'); return }
                           await forbiddenApi.saveSetting('store_lotteon', data)
                           const [polRes, whRes] = await Promise.all([
-                            proxyApi.lotteonDeliveryPolicies(editingAccountId || undefined),
-                            proxyApi.lotteonWarehouses(editingAccountId || undefined),
+                            proxyApi.lotteonDeliveryPolicies(
+                              editingAccountId || undefined,
+                              editingAccountId ? undefined : String(data.apiKey || ''),
+                            ),
+                            proxyApi.lotteonWarehouses(
+                              editingAccountId || undefined,
+                              editingAccountId ? undefined : String(data.apiKey || ''),
+                            ),
                           ])
                           if (polRes.success) setLotteonDeliveryPolicyOptions(polRes.policies)
                           if (whRes.success) setLotteonWarehouseOptions({ departure: whRes.departure, return_: whRes.return_ })

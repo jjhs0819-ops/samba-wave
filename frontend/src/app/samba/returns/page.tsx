@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { accountApi, orderApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
+import { jobApi } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { makeCard, makeInputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
 import { PERIOD_BUTTONS } from '@/lib/samba/constants'
@@ -62,6 +63,7 @@ export default function ReturnsPage() {
   })
   const [period, setPeriod] = useState('2month')
   const [syncAccountId, setSyncAccountId] = useState('')
+  const [syncBusy, setSyncBusy] = useState(false)
   const [customStart, setCustomStart] = useState((getPeriodStart('2month') ?? new Date()).toLocaleDateString('sv-SE'))
   const [customEnd, setCustomEnd] = useState(getPeriodEnd('2month').toLocaleDateString('sv-SE'))
   const [startLocked, setStartLocked] = useState(false)
@@ -201,55 +203,73 @@ export default function ReturnsPage() {
 
   useEffect(() => { load() }, [load])
 
-  // 가져오기 버튼 — 마켓 동기화 후 DB 데이터 로드
+  // 가져오기 버튼 — 백그라운드 returns_sync 잡 생성 + 진행률 폴링 후 DB 로드.
+  // (구: 단일 HTTP 로 31개 계정을 동기 순회 → Caddy 120초 컷 → 재클릭 sweep 중첩
+  //  + write 트랜잭션 장기 점유로 풀 고갈. order_sync 와 동일하게 잡으로 분리)
   const loadReturns = async () => {
+    if (syncBusy) return  // 연타 방지 — 중복 잡은 백엔드 create_job 가드도 차단
+    setSyncBusy(true)
     const ts = fmtTime
 
-    // 마켓타입 선택 시 해당 마켓 계정들만 순회 동기화
+    // 대상 계정 해석 (type: 그룹 / 특정 계정 / 전체)
+    let accountIds: string[] | undefined
+    let label: string
     if (syncAccountId.startsWith('type:')) {
       const marketType = syncAccountId.replace('type:', '')
       const marketAccs = accounts.filter(a => a.market_type === marketType)
-      const marketName = marketAccs[0]?.market_name || marketType
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 수집 시작 (${fmtNum(marketAccs.length)}개 계정)...`])
-      let totalSynced = 0
-      for (const acc of marketAccs) {
-        try {
-          const syncResult = await returnApi.syncFromMarkets(30, acc.id)
-          for (const r of syncResult.results) {
-            if (r.status === 'success') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched ?? 0)}건 조회, ${fmtNum(r.synced ?? 0)}건 신규`])
-            } else if (r.status === 'error') {
-              setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
-            }
-          }
-          totalSynced += syncResult.total_synced
-        } catch (e) {
-          setLogMessages(prev => [...prev, `[${ts()}] ${acc.market_name}(${acc.seller_id || '-'}) 오류: ${e}`])
-        }
-      }
-      setLogMessages(prev => [...prev, `[${ts()}] ${marketName} 반품교환 수집 완료 (신규 ${fmtNum(totalSynced)}건)`])
-      await load()
-      return
+      accountIds = marketAccs.map(a => a.id)
+      label = `${marketAccs[0]?.market_name || marketType} (${fmtNum(marketAccs.length)}개 계정)`
+    } else if (syncAccountId) {
+      accountIds = [syncAccountId]
+      label = accounts.find(a => a.id === syncAccountId)?.market_name || syncAccountId
+    } else {
+      accountIds = undefined  // 전체 활성 계정
+      label = `전체마켓 (${fmtNum(accounts.length)}개 계정)`
     }
 
-    // 전체마켓 또는 개별 계정 동기화
-    const isAll = !syncAccountId
-    const label = isAll ? '전체마켓' : (accounts.find(a => a.id === syncAccountId)?.market_name || syncAccountId)
-    setLogMessages(prev => [...prev, `[${ts()}] ${label} 반품교환 수집 중...`])
+    setLogMessages(prev => [...prev, `[${ts()}] ${label} 반품교환 수집 시작...`])
+
     try {
-      const syncResult = await returnApi.syncFromMarkets(30, isAll ? undefined : syncAccountId)
-      for (const r of syncResult.results) {
-        if (r.status === 'success') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: ${fmtNum(r.fetched ?? 0)}건 조회, ${fmtNum(r.synced ?? 0)}건 신규`])
-        } else if (r.status === 'error') {
-          setLogMessages(prev => [...prev, `[${ts()}] ${r.account}: 오류 — ${r.message}`])
+      const payload: Record<string, unknown> = { days: 30 }
+      if (accountIds && accountIds.length > 0) payload.account_ids = accountIds
+      const created = await jobApi.create({ job_type: 'returns_sync', payload })
+      const jobId = created.id
+      setLogMessages(prev => [...prev, `[${ts()}] 백그라운드 반품수집 ${created.duplicate ? '재연결' : '시작'} (${jobId.slice(0, 12)}...)`])
+
+      let logSince = 0
+      let done = false
+      while (!done) {
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        try {
+          const logsRes = await jobApi.jobLogs(jobId, logSince)
+          if (logsRes.logs.length > 0) {
+            setLogMessages(prev => [...prev, ...logsRes.logs])
+            logSince += logsRes.logs.length
+          }
+          const job = await jobApi.get(jobId)
+          const status = job.status
+          if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+            // 잡 종료 직전 백엔드가 추가한 결과 로그 누락 방지
+            try {
+              const finalLogs = await jobApi.jobLogs(jobId, logSince)
+              if (finalLogs.logs.length > 0) {
+                setLogMessages(prev => [...prev, ...finalLogs.logs])
+                logSince += finalLogs.logs.length
+              }
+            } catch { /* 최종 로그 폴링 실패 무시 */ }
+            setLogMessages(prev => [...prev, `[${ts()}] ${status === 'completed' ? '반품교환 수집 완료' : status === 'failed' ? '반품교환 수집 실패' : '반품교환 수집 취소'}`])
+            done = true
+          }
+        } catch {
+          // 폴링 실패는 일시적 네트워크/DB 풀 압박 — 다음 사이클 자동 재시도
         }
       }
-      setLogMessages(prev => [...prev, `[${ts()}] 반품교환 수집 완료 (신규 ${fmtNum(syncResult.total_synced)}건)`])
     } catch (e) {
-      setLogMessages(prev => [...prev, `[오류] 반품교환 수집 실패: ${e}`])
+      setLogMessages(prev => [...prev, `[오류] 반품교환 수집 실패: ${e instanceof Error ? e.message : String(e)}`])
+    } finally {
+      await load()
+      setSyncBusy(false)
     }
-    await load()
   }
 
   const handleSubmit = async () => {
@@ -547,7 +567,7 @@ export default function ReturnsPage() {
               ])
             })()}
           </select>
-          <button onClick={loadReturns} style={{ ...btn('primary', c), padding: '0.22rem 0.65rem', fontSize: '0.75rem' }}>가져오기</button>
+          <button onClick={loadReturns} disabled={syncBusy} style={{ ...btn('primary', c), padding: '0.22rem 0.65rem', fontSize: '0.75rem', ...(syncBusy ? { opacity: 0.6, cursor: 'not-allowed' } : null) }}>{syncBusy ? '수집 중...' : '가져오기'}</button>
         </div>
       </div>
 
@@ -942,7 +962,7 @@ export default function ReturnsPage() {
                         <select value={r.return_source || '원주문'} onChange={async (e) => {
                           try {
                             await returnApi.patch(r.id, { return_source: e.target.value })
-                            loadReturns()
+                            load()  // 목록만 재로드 — 구코드는 loadReturns()로 전체 마켓 sweep을 유발했음
                           } catch {}
                         }} style={{ fontSize: '0.72rem', padding: '2px 4px', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, cursor: 'pointer' }}>
                           <option value="원주문">원주문</option>

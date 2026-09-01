@@ -82,8 +82,15 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 })
 
-// 무신사 잔액 체크 — 버튼 요청 시에만 실행
+// 무신사 잔액 체크 — 서버 요청(버튼 클릭) 감지 시 실행
+// 동시 실행 가드: 폴링 주기 < 탭 오픈+대기 시간이어도 마이페이지 탭이 중복 열리지 않게.
+let _balanceCheckInProgress = false
 async function checkMusinsaBalance() {
+  if (_balanceCheckInProgress) {
+    console.log('[잔액] 이미 체크 진행 중 → 스킵')
+    return
+  }
+  _balanceCheckInProgress = true
   console.log('[잔액] 잔액 체크 시작')
   let tab = null
   try {
@@ -93,8 +100,12 @@ async function checkMusinsaBalance() {
     console.log(`[잔액] 체크 실패: ${e.message}`)
   } finally {
     if (tab?.id) try { await chrome.tabs.remove(tab.id) } catch {}
-    chrome.alarms.clear('balanceCheckPoll')
-    console.log('[잔액] 체크 완료 → 폴링 중지')
+    _balanceCheckInProgress = false
+    // NOTE: balanceCheckPoll 알람은 여기서 절대 clear 하지 않는다.
+    // 이 폴링은 '버튼 클릭 요청'을 감지하는 유일한 통로라 항상 살아있어야 한다.
+    // (과거엔 clear 해서 최초 1회 체크 후 폴링이 영구 정지 → 잔액 새로고침이
+    //  다시는 안 먹던 버그. chromeProfileSyncPoll 과 동일하게 상시 폴링 유지.)
+    console.log('[잔액] 체크 완료')
   }
 }
 
@@ -139,7 +150,8 @@ async function pollChromeProfileSyncRequest() {
   }
 }
 
-// 잔액 폴링 (5분 주기, 서버에 요청 없으면 아무 동작 안 함)
+// 잔액 폴링 (상시, 5분 주기) — 서버에 요청(버튼 클릭) 없으면 GET 한 번 후 아무 동작 안 함.
+// 요청이 감지될 때만 checkMusinsaBalance()가 마이페이지 탭을 연다.
 chrome.alarms.get('balanceCheckPoll', (alarm) => {
   if (!alarm) {
     chrome.alarms.create('balanceCheckPoll', { periodInMinutes: 5 })

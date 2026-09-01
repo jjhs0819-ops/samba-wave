@@ -48,7 +48,9 @@ class AdidasClient:
     SEARCH_API = "https://www.adidas.co.kr/api/search/taxonomy"
     DETAIL_URL = "https://www.adidas.co.kr/api/products"
 
-    async def search(self, keyword: str, page: int = 1) -> dict[str, Any]:
+    async def search(
+        self, keyword: str, page: int = 1, max_count: int = 500, **kwargs: Any
+    ) -> dict[str, Any]:
         """상품 검색 — /api/search/taxonomy JSON API."""
         params = {"query": keyword}
         async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
@@ -70,7 +72,7 @@ class AdidasClient:
             items = item_list.get("items", [])
             total = item_list.get("count", len(items))
 
-            products = [self._map_item(item) for item in items]
+            products = [self._map_item(item) for item in items][:max_count]
             logger.info(f"[Adidas] 검색 '{keyword}' → {len(products)}건 (전체 {total})")
             return {"products": products, "total": total}
 

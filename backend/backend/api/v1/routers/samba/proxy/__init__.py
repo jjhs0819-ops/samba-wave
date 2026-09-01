@@ -8,6 +8,8 @@ from . import (
     ai_tags,
     ai_tools,
     bunjang,
+    buyma_oauth,
+    buyma_webhook,
     cafe24_oauth,
     config,
     esmplus,
@@ -23,6 +25,7 @@ from . import (
     preset_images,
     smartstore,
     sourcing,
+    twentyninecm,
 )
 from ._helpers import _get_setting, _set_setting
 
@@ -45,6 +48,7 @@ router.include_router(kream.router)
 router.include_router(lottehome.router)
 router.include_router(gsshop.router)
 router.include_router(poison.router)
+router.include_router(twentyninecm.router)
 
 # 확장앱 소싱큐 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
 sourcing_queue_router = sourcing.sourcing_queue_router
@@ -52,11 +56,19 @@ sourcing_queue_router = sourcing.sourcing_queue_router
 # 카페24 OAuth 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
 cafe24_oauth_router = cafe24_oauth.cafe24_oauth_router
 
+# BUYMA PS-API OAuth 전용 라우터 (인증 불필요) — app_factory.py에서 별도 등록
+buyma_oauth_router = buyma_oauth.buyma_oauth_router
+
+# BUYMA PS-API webhook 전용 라우터 (인증 불필요, HMAC 서명으로 자체 검증)
+# — app_factory.py에서 별도 등록
+buyma_webhook_router = buyma_webhook.buyma_webhook_router
+
 # bg-worker 전용 라우터 (인증 불필요, 워커 토큰으로 자체 검증) — app_factory.py에서 별도 등록
 bg_worker_router = ai_tools.bg_worker_router
 
 # 무신사 확장앱 전용 라우터 (JWT 면제, X-Api-Key만) — app_factory.py에서 별도 등록
 musinsa_extension_router = musinsa.extension_router
+twentyninecm_extension_router = twentyninecm.extension_router
 
 # snkrdunk 매칭 수정 전용 라우터 (인증 불필요, 로컬 검수 도구용) — app_factory.py에서 별도 등록
 snkrdunk_public_router = kream.snkrdunk_public_router
@@ -68,8 +80,11 @@ __all__ = [
     "router",
     "sourcing_queue_router",
     "cafe24_oauth_router",
+    "buyma_oauth_router",
+    "buyma_webhook_router",
     "bg_worker_router",
     "musinsa_extension_router",
+    "twentyninecm_extension_router",
     "snkrdunk_public_router",
     "bunjang_queue_router",
     "_get_setting",

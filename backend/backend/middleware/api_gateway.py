@@ -29,6 +29,10 @@ _EXEMPT_PATHS = {
     "/api/v1/samba/users/login",  # 로그인
     "/api/v1/samba/orders/ship-by-kakao",  # 카톡 송장 자동입력 — 라우트 자체 X-Kakao-Secret 검증
     "/api/v1/samba/orders/kakao-name-candidates",  # 카톡 OCR 이름 깨짐 대응 후보 조회 — 라우트 자체 X-Kakao-Secret 검증
+    # BUYMA PS-API webhook — BUYMA가 X-Api-Key 없이 호출.
+    # 라우트가 X-Buyma-Hmac-Sha256(HMAC-SHA256) 로 자체 검증하며, 서명이
+    # 맞지 않으면 401 이라 면제해도 아무나 쓸 수 있는 경로가 아니다.
+    "/api/v1/samba/buyma/webhook",
     "/api/v1/auth/email/sign-up",
     "/api/v1/auth/email/login",
     "/api/v1/auth/refresh",
@@ -38,6 +42,9 @@ _EXEMPT_PATHS = {
 # 화이트리스트 누락 시 프론트가 무한 재요청하며 워커 event loop 소모 → health timeout 유발
 _EXEMPT_PREFIXES = (
     "/static/",
+    # R2 이미지 공개 프록시 — 마켓 서버(롯데ON 등)가 상품등록 검수 중 헤더 없이
+    # 이미지를 받아간다. 키 형태 검증으로 이미지 오브젝트만 노출(image_proxy.py).
+    "/api/v1/samba/img/",
     "/docs",
     "/redoc",
     "/openapi.json",
@@ -45,6 +52,9 @@ _EXEMPT_PREFIXES = (
     "/api/v1/samba/proxy/autotune-daemon/",  # 데몬 health/version — 인증無 (오토튠 페이지 + 데몬 부트스트랩)
     "/api/v1/internal/cs/",  # CS 자동화 내부 API — 자체 X-Internal-Token 검증 (Claude 스케줄잡)
     "/api/v1/internal/balju/",  # 발주전자료 내부 API — 자체 X-Internal-Token 검증 (Claude 스케줄잡)
+    # 크림 로그인 OTP 수신 — 폰(MacroDroid)이 API 키 없이 문자 6자리만 넘긴다.
+    # 자체 X-Internal-Token 검증이 유일 방어선이다(kream_otp.py). [2026-08-28]
+    "/api/v1/internal/kream/",
     "/api/v1/ebay/deletion-notification",  # eBay 마켓플레이스 계정삭제 webhook — eBay가 API키 없이 호출(challenge/POST), SHA-256 검증으로 자체 인증
     "/api/v1/ebay/oauth-accepted",  # eBay OAuth 동의 콜백 — eBay가 브라우저 redirect(API키 없음), code로 자체 검증
     "/api/v1/ebay/oauth-declined",  # eBay OAuth 거부 콜백

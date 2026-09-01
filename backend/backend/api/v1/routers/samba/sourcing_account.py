@@ -66,6 +66,11 @@ def _normalize_sourcing_site_name(site_name: str | None) -> str:
         "더현대닷컴": "THEHYUNDAI",
         "현대백화점": "THEHYUNDAI",
         "HITHEHYUNDAI": "THEHYUNDAI",
+        # 29CM — 표기 흔들림 흡수(숫자/영문 혼용 사이트명)
+        "29CM": "29CM",
+        "29센티미터": "29CM",
+        "이십구센티": "29CM",
+        "29": "29CM",
     }
     return alias_map.get(compact, raw)
 
@@ -535,8 +540,41 @@ async def sync_membership_from_extension(
         extra["membership_grade"] = body.membership_grade
 
         if body.expired:
-            extra["cookie_expired"] = True
-            extra["cookie_expired_at"] = datetime.now(timezone.utc).isoformat()
+            # [2026-08-05 근본fix] 최근에 검증된 쿠키는 만료 처리하지 않는다.
+            #
+            # 이 엔드포인트의 expired=True 는 확장앱 content script 가 a-rt.com 페이지에서
+            # "비로그인"을 감지하면 보내는데, 계정 구분 없이 **그 사이트 전 계정**을 만료로
+            # 찍는다. 그래서 누군가(사람이든 자동화든) 로그인 안 된 브라우저로 a-rt.com 을
+            # 한 번만 열어도 4개 계정 쿠키가 통째로 날아가고, 백엔드는 익명 가격(정가)으로
+            # 원가를 수집한다. 실측 2026-08-05: 점검 도구가 ABC 상품페이지를 연 직후
+            # 4계정 전부 cookie_expired=true, abcmart_cookies=[] 로 초기화됨.
+            #
+            # 데몬은 30분마다 로그인 세션을 검증해 쿠키를 sync 하므로, 그보다 최근에
+            # 갱신된 쿠키는 "살아있음이 확인된 값"이다. 브라우저 탭 하나의 비로그인
+            # 관찰로 그 값을 덮지 않는다. 진짜로 죽은 쿠키는 갱신이 멈추므로
+            # 30분이 지나면 정상적으로 만료 처리된다.
+            _upd = extra.get("cookie_updated_at") or ""
+            _fresh = False
+            try:
+                if _upd:
+                    _dt = datetime.fromisoformat(_upd)
+                    if _dt.tzinfo is None:
+                        _dt = _dt.replace(tzinfo=timezone.utc)
+                    _fresh = (
+                        datetime.now(timezone.utc) - _dt
+                    ).total_seconds() < 30 * 60
+            except Exception:
+                _fresh = False
+            if _fresh:
+                logger.info(
+                    "[멤버십동기화] %s %s — 최근 검증된 쿠키라 만료 처리 스킵 (updated=%s)",
+                    body.site_name,
+                    account.account_label,
+                    _upd[:19],
+                )
+            else:
+                extra["cookie_expired"] = True
+                extra["cookie_expired_at"] = datetime.now(timezone.utc).isoformat()
         elif body.cookie:
             extra["abcmart_cookie"] = body.cookie
             extra["cookie_expired"] = False

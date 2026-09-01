@@ -2678,6 +2678,7 @@ def _build_elevenst_option_xml(
     - 그 외엔 1D 싱글옵션
     - 1차 그룹명 폴백: "선택", 2차 폴백: "옵션"
     - colOptPrice = max(opt.price - 활성옵션최저가, 0) — 옵션별 추가요금 반영
+      활성 옵션이 없으면 전체 옵션 최저가로 폴백 (base 0원 옵션 확보)
     - 11번가 정책: 옵션가 0원 옵션 최소 1개 필수 (base 옵션이 자동 0원)
     """
     if not options:
@@ -2705,7 +2706,20 @@ def _build_elevenst_option_xml(
         and not o.get("isSoldOut", False)
         and (o.get("stock") or 0) > 0
     ]
-    diff_base = min(_active_prices) if _active_prices else 0
+    # 활성 옵션이 하나도 없으면(전 사이즈 품절 / 저재고 캡으로 전량 0 처리) 전체
+    # 옵션 최저가로 폴백한다. 여기서 0 으로 떨어지면 diff = 옵션가 전액이 되어
+    # 모든 옵션에 상품가만큼 추가금이 붙고, 11번가가 "옵션가격이 0원인 옵션이
+    # 하나 이상이 있어야 합니다"(500) 로 등록을 거부한다.
+    # (실측: 하바이아나스 5건 — 재고 1~2 뿐이라 캡에 전부 걸려 전송 실패)
+    _all_prices = [
+        int(o.get("price") or 0) for o in options if int(o.get("price") or 0) > 0
+    ]
+    if _active_prices:
+        diff_base = min(_active_prices)
+    elif _all_prices:
+        diff_base = min(_all_prices)
+    else:
+        diff_base = 0
 
     def _stock_of(opt: dict) -> tuple[int, str]:
         raw = opt.get("stock")

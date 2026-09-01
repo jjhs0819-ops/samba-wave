@@ -1572,42 +1572,48 @@ class SmartStoreClient:
         """
         from datetime import datetime, timedelta, timezone
 
-        # KST 기준으로 시작 시간 계산 (스마트스토어 API 최대 90일 제한)
+        # KST 기준 (스마트스토어 API 최대 90일 제한)
         kst = timezone(timedelta(hours=9))
+        _FMT = "%Y-%m-%dT%H:%M:%S.000+09:00"
         effective_days = min(days, 89)
-        since = datetime.now(kst) - timedelta(days=effective_days)
-        since_str = since.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
-
-        params: dict[str, Any] = {
-            "lastChangedFrom": since_str,
-        }
-        if order_status:
-            params["lastChangedType"] = order_status
+        now = datetime.now(kst)
 
         # 1단계: 변경된 주문 ID 목록 조회
         # 과거: lastChangedType 13개 루프 호출 — 11개 타입이 400 에러("정확한 타입 아님")로 죽고
         #       살아있는 PAYED·PURCHASE_DECIDED 2개만 동작. 배송지변경(DELIVERY_ADDRESS_CHANGED)된
         #       신규주문은 마지막 이벤트가 비-PAYED라 영영 누락되는 사고가 있었다(2026-05-12 이종영 주문).
-        # 현재: lastChangedType 파라미터 생략 — 모든 변경 유형을 한 호출로 받는다.
-        #       네이버 공식 답변(commerce-api Discussion #1646)도 type 생략을 권고.
-        # 요청 기간 + 최근 1일 두 시점 호출은 그대로 유지 — 응답 누락 방지 안전장치.
-        logger.info(f"[스마트스토어] 주문 조회 시작 lastChangedFrom={since_str}")
+        # → lastChangedType 파라미터 생략(모든 변경 유형 한 호출). 네이버 Discussion #1646 권고.
+        #
+        # ★ 24시간 청크 순회 (2026-07-27 수정)
+        #   네이버 last-changed-statuses 는 [lastChangedFrom, lastChangedTo] 범위가 최대 24시간.
+        #   lastChangedTo 생략 시 사실상 to = from+24h 로 고정된다(25h 이상 명시하면 HTTP 400
+        #   "조회 날짜가 유효하지 않습니다"). 기존 코드는 from=now-N일 한 번만 호출해 실제로는
+        #   "N일 전~(N-1)일 전 24시간"만 조회 → 그 창이 비면 페이지네이션도 진전 못해 대부분 빈
+        #   응답. 최근 1일 보강 호출만 살아있어 "변경이 최근 24시간 이내"인 주문만 수집되고,
+        #   1~14일 전 변경 주문은 통째로 누락됐다(계정당 수 건씩 주문 유실). → 요청 기간을
+        #   24시간 창으로 쪼개 [now-N일, now] 전 구간을 순회한다.
+        logger.info(
+            f"[스마트스토어] 주문 조회 시작 — 최근 {effective_days}일 24시간 청크 순회"
+        )
 
         all_statuses: list[dict[str, Any]] = []
         seen_po_ids: set[str] = set()
 
-        # 페이지네이션: 네이버 last-changed-statuses는 응답이 lastChangedDate 오름차순으로
-        # 정렬되며 응답 limit이 있어 since가 멀수록 잘림(2026-05-12 검증: since=5/7 → 1건만,
-        # since=5/10 → 9건). 응답이 잘리면 마지막 lastChangedDate를 새 cursor로 써서
-        # 더 이상 새 productOrderId가 안 나올 때까지 반복 호출.
-        async def _fetch_with_pagination(
-            initial_from: str, forced_type: str | None = None
+        async def _fetch_window(
+            win_from: datetime, win_to: datetime, forced_type: str | None = None
         ) -> None:
-            cursor = initial_from
+            """[win_from, win_to] (≤24h) 창을 페이지네이션하며 조회.
+
+            네이버 응답은 lastChangedDate 오름차순 + limit 절단이 있어, 잘리면 마지막
+            lastChangedDate 를 새 커서로 [cursor, win_to] 재조회한다(범위는 항상 ≤24h 유지).
+            """
+            to_str = win_to.strftime(_FMT)
+            cursor = win_from.strftime(_FMT)
             for _page in range(20):  # 안전 상한: 20페이지
-                qparams = dict(params)
-                qparams["lastChangedFrom"] = cursor
-                qparams.pop("lastChangedType", None)
+                qparams: dict[str, Any] = {
+                    "lastChangedFrom": cursor,
+                    "lastChangedTo": to_str,
+                }
                 if forced_type:
                     qparams["lastChangedType"] = forced_type
                 result = None
@@ -1628,7 +1634,8 @@ class SmartStoreClient:
                             await asyncio.sleep(wait)
                             continue
                         logger.warning(
-                            f"[스마트스토어] last-changed-statuses 호출 실패 (from={cursor}): {_api_err}"
+                            f"[스마트스토어] last-changed-statuses 호출 실패 "
+                            f"(from={cursor} to={to_str}): {_api_err}"
                         )
                         break
                 if result is None:
@@ -1661,20 +1668,22 @@ class SmartStoreClient:
                     return
                 cursor = last_changed_date
 
-        # since_str 시작 + 최근 1일 보강 호출 (이미 잡힌 건은 dedup으로 skip)
-        await _fetch_with_pagination(since_str)
-        recent = datetime.now(kst) - timedelta(days=1)
-        recent_str = recent.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
-        if recent_str > since_str:
-            await _fetch_with_pagination(recent_str)
+        # ── 요청 기간 24시간 청크 순회 (type 미지정 — 모든 변경 유형) ──
+        _win_start = now - timedelta(days=effective_days)
+        while _win_start < now:
+            _win_end = min(_win_start + timedelta(hours=24), now)
+            await _fetch_window(_win_start, _win_end)
+            _win_start = _win_end
 
-        # PAYED 전용 14일 보강 호출 — last-changed-statuses는 이벤트 기반이라
-        # 결제 후 발주확인 없이 방치된 주문(PAYED 상태 유지, 이후 변경 없음)이
-        # 일반 호출에서 누락될 수 있음. PAYED 타입 지정 + 14일 윈도우로 보완.
-        _payed_since = datetime.now(kst) - timedelta(days=14)
-        _payed_since_str = _payed_since.strftime("%Y-%m-%dT%H:%M:%S.000+09:00")
+        # ── PAYED 전용 14일 보강 (24시간 청크) ──
+        # 결제 후 발주확인 없이 방치돼 이후 변경이 없는 주문은, 요청 기간이 14일보다 짧으면
+        # 일반 순회에서 빠질 수 있어 PAYED 타입으로 14일을 별도 순회한다(이미 잡힌 건은 dedup).
         _before_count = len(seen_po_ids)
-        await _fetch_with_pagination(_payed_since_str, forced_type="PAYED")
+        _payed_start = now - timedelta(days=14)
+        while _payed_start < now:
+            _payed_end = min(_payed_start + timedelta(hours=24), now)
+            await _fetch_window(_payed_start, _payed_end, forced_type="PAYED")
+            _payed_start = _payed_end
         _payed_new = len(seen_po_ids) - _before_count
         if _payed_new:
             logger.info(f"[스마트스토어] PAYED 보강 조회로 {_payed_new}건 추가 발견")

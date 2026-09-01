@@ -41,10 +41,14 @@ async def _get_esm_client(
             ).bindparams(aid=account_id, mtype=market)
         )
     else:
+        # 계정 미지정 폴백 — ORDER BY 없는 LIMIT 1 은 어느 계정이 걸릴지 보장이 없어,
+        # 다계정 운영에서 엉뚱한 사업자의 출고지·발송정책을 보여줄 수 있다.
+        # 기본 계정(is_default) 우선, 그다음 가장 먼저 등록된 계정으로 고정한다.
         result = await session.exec(
             text(
                 "SELECT seller_id, additional_fields FROM samba_market_account "
-                "WHERE market_type = :mtype AND is_active = true LIMIT 1"
+                "WHERE market_type = :mtype AND is_active = true "
+                "ORDER BY is_default DESC, created_at ASC LIMIT 1"
             ).bindparams(mtype=market)
         )
 
@@ -100,14 +104,28 @@ async def esm_delivery_info(
             return_exceptions=True,
         )
 
+        # 실패를 빈 리스트로 뭉개고 success=True 를 돌려주면 화면에 초록색
+        # "0개를 불러왔습니다" 가 떠서 401(셀링툴 미인증)·판매자ID 오타를 구분할 수
+        # 없다. 하나라도 실패하면 사유를 그대로 올린다.
+        errors: list[str] = []
         if isinstance(places, Exception):
             logger.warning(f"[ESMPlus/{market}] 출고지 조회 실패: {places}")
+            errors.append(f"출고지: {places}")
             places = []
         if isinstance(dispatch_policies, Exception):
             logger.warning(
                 f"[ESMPlus/{market}] 발송정책 조회 실패: {dispatch_policies}"
             )
+            errors.append(f"발송정책: {dispatch_policies}")
             dispatch_policies = []
+
+        if errors:
+            return {
+                "success": False,
+                "places": places,
+                "dispatchPolicies": dispatch_policies,
+                "message": f"[{client.seller_id}] 조회 실패 — " + " / ".join(errors),
+            }
 
         return {
             "success": True,

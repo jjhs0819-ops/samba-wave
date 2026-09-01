@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# PC별 SSG 연속 차단 횟수 — 라우팅 제외 시간을 지수적으로 늘리는 데 쓴다.
+# 한 건이라도 정상 수집되면 그 PC 키를 지워 즉시 기본값(5분)으로 복귀한다.
+_SSG_BLOCK_STREAK: dict[str, int] = {}
+
 
 class SSGPlugin(SourcingPlugin):
     """SSG 소싱처 플러그인.
@@ -283,7 +287,26 @@ class SSGPlugin(SourcingPlugin):
                         # HTML 파싱이 정상가로 fallback됐거나 미설정이면 확장앱 실시간값 우선
                         detail["bestBenefitPrice"] = _ext_benefit
                     elif not _cur_benefit:
-                        detail["bestBenefitPrice"] = _rob_sell
+                        # [2026-08-06 fix] 마지막 폴백을 정가(_rob_sell=sellprc)에서
+                        # 판매가로 바꾼다.
+                        #
+                        # _rob_sell 은 주석대로 "정상가(originalPrice 용도만)" 인데
+                        # 원가 폴백에 쓰여, 카드혜택가·bestAmt 를 못 가져온 상품의
+                        # 원가가 할인 전 정가로 박혔다. 실측(2026-08-06): SSG 등록상품
+                        # 20,210건 중 4,325건이 cost > sale_price 였고, 표본에서
+                        # cost 가 original_price 와 정확히 일치했다
+                        # (예: 원가 45,000 = 정가 45,000, 판매가 38,250).
+                        # 역마진은 아니지만 매입가를 과대계상해 판매가 경쟁력을 깎는다.
+                        #
+                        # CLAUDE.md SSG 원가 규칙도 domCardPrice → bestAmt → salePrice
+                        # 순이라 정가는 애초에 후보가 아니다. 판매가 후보가 전부 없을
+                        # 때만 정가로 내려간다(0 저장 방지).
+                        _fallback_sale = (
+                            _dom_sale
+                            or _rob_best
+                            or int(detail.get("salePrice", 0) or 0)
+                        )
+                        detail["bestBenefitPrice"] = _fallback_sale or _rob_sell
 
                 # _parse_result_item_obj 실패 시 (dept.ssg.com AJAX 로드): resultItemObj 폴백
                 if not detail:
@@ -436,6 +459,11 @@ class SSGPlugin(SourcingPlugin):
                         detail["isOutOfStock"] = True
                         detail["isSoldOut"] = True
 
+            # 정상 수집됨 — 그 PC 의 연속 차단 기록을 지워 다음 차단 시 5분부터
+            # 다시 세게 한다(차단이 풀렸는데 긴 휴식이 남아 있으면 손해).
+            if detail and _proc_dev:
+                _SSG_BLOCK_STREAK.pop(_proc_dev, None)
+
             if not detail:
                 _ext_msg = ""
                 if isinstance(_ext_result, dict) and not _ext_result.get("success"):
@@ -446,6 +474,47 @@ class SSGPlugin(SourcingPlugin):
                         _ext_msg = (_ext_result.get("error") or "").strip()
                     if _ext_result.get("blocked"):
                         _ext_msg = "SSG 차단됨 (reCAPTCHA) — 잠시 후 재시도 해주세요"
+                        # [2026-08-18] 차단 회신 즉시 그 PC 를 SSG 라우팅에서 뺀다.
+                        #
+                        # 확장앱은 차단을 감지하면 그 PC 의 SSG 폴링을 300초 멈춘다
+                        # (pauseSiteCollect). 그런데 백엔드는 그 사실을
+                        # _pc_site_poll_seen TTL(180초)이 지나야 "폴링 안 온다"고
+                        # 추론해서, 정지 300초 중 앞 180초 동안 그 PC 로 잡을 계속
+                        # 발행했다. 아무도 안 가져가니 전부 150초 타임아웃만 태운다
+                        # (실측 2026-08-18: 정지 중인 PC 로 6분간 SSG 잡 4건 발행).
+                        #
+                        # 사이트 전체 백오프(임계 30건)와는 별개다. 여기서 막는 건
+                        # "쉬는 PC 한 대"뿐이고, 나머지 PC 는 그대로 SSG 를 돈다.
+                        if _proc_dev:
+                            try:
+                                import time as _t
+
+                                from backend.api.v1.routers.samba.collector_autotune import (  # noqa: F811
+                                    _site_block_backoff_until as _sbbu,
+                                )
+
+                                # 연속 차단마다 제외 시간을 2배로(5→10→20→40→60분
+                                # 상한). 고정 5분이면 차단이 안 풀린 상태에서 5분마다
+                                # 영원히 노크한다 — 실측(2026-08-18) 25분간 한 PC 가
+                                # 6회 두드렸고 차단이 계속 유지됐다. 확장앱
+                                # (background-sourcing.js) 휴식 규칙과 동일하게 맞춘다.
+                                _k = f"SSG|{_proc_dev}"
+                                _n = _SSG_BLOCK_STREAK.get(_proc_dev, 0) + 1
+                                _SSG_BLOCK_STREAK[_proc_dev] = _n
+                                _sec = min(300.0 * (2 ** (_n - 1)), 3600.0)
+                                _until = _t.time() + _sec
+                                if _sbbu.get(_k, 0.0) < _until:
+                                    _sbbu[_k] = _until
+                                    logger.info(
+                                        "[SSG] 차단 회신 — %s 라우팅 %s초 제외(연속 %s회)",
+                                        str(_proc_dev)[:20],
+                                        f"{int(_sec):,}",
+                                        f"{_n:,}",
+                                    )
+                            except Exception as _e:
+                                logger.warning(
+                                    "[SSG] PC 라우팅 제외 실패(무시): %s", _e
+                                )
                     logger.warning(
                         f"[SSG] 갱신 실패 진단: {site_product_id} — "
                         f"{_ext_msg or '(사유 없음)'}"
@@ -523,6 +592,42 @@ class SSGPlugin(SourcingPlugin):
                 )
                 if _max_price > 0:
                     best_benefit_price = round(_max_price * _card_ratio)
+
+            # [2026-08-07] 원가 상한 — 원가는 판매가를 넘을 수 없다.
+            #
+            # 옵션 가격을 bestAmt 우선으로 바꿨는데도(ssg_sourcing.py) bestAmt 가 비어
+            # 있는 옵션은 sellprc(정가)로 폴백해 같은 증상이 남았다(실측 2026-08-07:
+            # 배포 후 갱신분에서 cost 49,000 = original 49,000 / sale 41,650).
+            # 값 출처가 어디든 "매입가가 판매가보다 비싸다"는 성립할 수 없으므로
+            # 마지막에 한 번 잘라낸다. 이러면 파싱 경로가 늘어나도 재발하지 않는다.
+            if new_sale_price and best_benefit_price > int(new_sale_price):
+                logger.info(
+                    "[SSG] 원가 상한 적용: %s원 → 판매가 %s원 (%s)",
+                    f"{int(best_benefit_price):,}",
+                    f"{int(new_sale_price):,}",
+                    site_product_id,
+                )
+                best_benefit_price = int(new_sale_price)
+
+            # [2026-08-08] 혜택가를 못 구한 경우(=0/None)도 상한 대상이다.
+            #
+            # new_cost 는 best_benefit_price 가 falsy 면 None 이 되고, 그러면 DB 의
+            # 기존 cost 가 그대로 남는다. 그 사이 판매가만 내려가면 "옛 원가 >
+            # 새 판매가" 가 된다 — 상한 코드는 best_benefit_price 만 봐서 이 경우를
+            # 못 잡았다(실측 2026-08-08: 상한 배포 후에도 128건 중 28건 발생,
+            # 상한 적용 로그는 0건).
+            # 기존 원가가 새 판매가보다 비싸면 판매가로 낮춰 쓴다. 낮추는 방향이라
+            # 역마진 위험은 없다.
+            if not best_benefit_price and new_sale_price:
+                _old_cost = int(getattr(product, "cost", 0) or 0)
+                if _old_cost > int(new_sale_price):
+                    logger.info(
+                        "[SSG] 기존 원가 상한 적용: %s원 → 판매가 %s원 (%s, 혜택가 미수집)",
+                        f"{_old_cost:,}",
+                        f"{int(new_sale_price):,}",
+                        site_product_id,
+                    )
+                    best_benefit_price = int(new_sale_price)
 
             # 변동/재고변동 정확 판정 — 옵션별 0 경계 전환을 stock_changed로 인정
             from backend.domain.samba.collector.refresher import (

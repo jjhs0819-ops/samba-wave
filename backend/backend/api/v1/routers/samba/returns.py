@@ -53,20 +53,21 @@ def _claim_kind_from_order(
 ) -> str | None:
     status_text = (status or "").lower()
     ship_text = shipping_status or ""
-    if (
-        status_text in {"cancel_requested", "cancelling", "cancelled"}
-        or "\ucde8\uc18c" in ship_text
-    ):
+    # shipping_status(\ub9c8\ucf13 \uc2e4\uc81c \ud074\ub808\uc784 \uc0c1\ud0dc)\ub97c status(\ub0b4\ubd80 \ud544\ub4dc, stale \uac00\ub2a5)\ubcf4\ub2e4 \uc6b0\uc120\ud55c\ub2e4.
+    # status=cancelled \ub85c \uad73\uc740 SSG \ubc18\ud488(\ubc18\ud488\uc778\ub370 cnclQty>0 \u2192 \ucde8\uc18c \uc624\ubd84\ub958 + \uc0c1\ud0dc\uc804\ud658 \uac00\ub4dc\uac00
+    # cancelled \ub97c \ubc18\ud488\uc694\uccad\uc73c\ub85c \ub418\ub3cc\ub9ac\uc9c0 \ubabb\ud568)\uc774 shipping=\ubc18\ud488\uc694\uccad\uc774\uba74 return \uc73c\ub85c \uc7a1\ud788\ub3c4\ub85d.
+    # \uacfc\uac70\uc5d4 cancel \uc744 \uba3c\uc800 \uac80\uc0ac\ud574 \ubc18\ud488/\uad50\ud658\uc774 \ucde8\uc18c\ub85c \ubd84\ub958\ub418\ub358 \ubc84\uadf8.
+    if "\ucde8\uc18c" in ship_text:  # \ucde8\uc18c
         return "cancel"
-    if (
-        status_text in {"exchange_requested", "exchanging", "exchanged"}
-        or "\uad50\ud658" in ship_text
-    ):
+    if "\uad50\ud658" in ship_text:  # \uad50\ud658
         return "exchange"
-    if (
-        status_text in {"return_requested", "returning", "returned"}
-        or "\ubc18\ud488" in ship_text
-    ):
+    if "\ubc18\ud488" in ship_text:  # \ubc18\ud488
+        return "return"
+    if status_text in {"cancel_requested", "cancelling", "cancelled"}:
+        return "cancel"
+    if status_text in {"exchange_requested", "exchanging", "exchanged"}:
+        return "exchange"
+    if status_text in {"return_requested", "returning", "returned"}:
         return "return"
     return None
 
@@ -74,13 +75,19 @@ def _claim_kind_from_order(
 def _claim_status_from_order(status: str | None, shipping_status: str | None) -> str:
     status_text = (status or "").lower()
     ship_text = shipping_status or ""
-    if "\uac70\ubd80" in ship_text:
+    # shipping_status(\ub9c8\ucf13 \uc2e4\uc81c \uc0c1\ud0dc) \uc6b0\uc120 \u2014 status(\ub0b4\ubd80 \ud544\ub4dc) \uac00 stale(cancelled)\uc5ec\ub3c4
+    # shipping \uc774 '\ubc18\ud488\uc694\uccad/\uad50\ud658\uc694\uccad/\ucde8\uc18c\uc694\uccad'(\uc9c4\ud589\uc911)\uc774\uba74 completed \ub85c \uc624\ud310\ud558\uc9c0 \uc54a\ub294\ub2e4.
+    if "\uac70\ubd80" in ship_text:  # \uac70\ubd80
         return "rejected"
     if (
-        status_text in {"cancelled", "returned", "exchanged"}
-        or "\uc644\ub8cc" in ship_text
-        or "\ub9c8\uac10" in ship_text
-    ):
+        "\uc644\ub8cc" in ship_text or "\ub9c8\uac10" in ship_text
+    ):  # \ubc18\ud488\uc644\ub8cc/\ucde8\uc18c\uc644\ub8cc/\uad6c\ub9e4\ud655\uc815 \ub4f1
+        return "completed"
+    if (
+        "\uc694\uccad" in ship_text
+    ):  # \ubc18\ud488\uc694\uccad/\uad50\ud658\uc694\uccad/\ucde8\uc18c\uc694\uccad \u2192 \uc9c4\ud589\uc911
+        return "requested"
+    if status_text in {"cancelled", "returned", "exchanged"}:
         return "completed"
     if status_text in {"cancelling", "returning", "exchanging"}:
         return "approved"
@@ -732,14 +739,18 @@ def _parse_lotteon_return(
     # return_type은 호출 API(get_returns=return, get_exchanges=exchange)에서 결정
     # step_cd로 재분류하지 않음 — clmTpCd=RETN이면 반품, 교환 API면 교환
 
-    if step_cd == "21":
+    # 종결 판정: 취소 21=취소완료 / 반품 27=반품완료. 완료일(clmCmptDttm)이 있으면
+    # 종결로 본다(실측 2026-07-29: step27 반품은 항상 clmCmptDttm 존재, step23 진행중은
+    # 없음). 22=거부. 그 외(반품 23 등)는 진행중.
+    if step_cd in ("21", "27") or item.get("clmCmptDttm"):
         status = "completed"
     elif step_cd == "22":
         status = "rejected"
     else:
         status = "requested"
 
-    qty_raw = item.get("cnclQty") or item.get("odQty") or 1
+    # 반품 수량: 취소는 cnclQty, 반품은 rtngQty, 없으면 odQty
+    qty_raw = item.get("cnclQty") or item.get("rtngQty") or item.get("odQty") or 1
     try:
         qty = int(qty_raw)
     except (ValueError, TypeError):
@@ -765,6 +776,34 @@ def _parse_lotteon_return(
         "product_id": item.get("spdNo", "") or item.get("sitmNo", ""),
         "status": status,
     }
+
+
+async def _lotteon_find_order_strict(
+    order_repo: Any, od_no: str, od_seq: str | None
+) -> Any:
+    """롯데ON 클레임 매칭 — od_no(+od_seq)로만 조회 (#707).
+
+    shipment_id(=clmNo/배송번호)는 고유하지 않아 한 배송번호를 여러 주문이 공유함
+    (find_by_async가 그중 아무 행이나 반환 → 정상 주문에 취소완료가 잘못 붙는 사고).
+    order.py의 기존 (od_no, od_seq) 전용 매칭(2026-05-19 사례)과 동일 원칙 적용.
+    후보가 여러 개면 잘못 붙이는 것보다 매칭하지 않는 편이 안전하므로 스킵.
+    """
+    if not od_no:
+        return None
+    candidates = await order_repo.filter_by_async(
+        source="lotteon", od_no=od_no, limit=10
+    )
+    if od_seq:
+        _seq_matched = [c for c in candidates if (c.od_seq or "") == od_seq]
+        if _seq_matched:
+            candidates = _seq_matched
+    if len(candidates) > 1:
+        logger.warning(
+            f"[롯데ON] 클레임 매칭 후보 {len(candidates)}건(오매칭 위험) — 스킵: "
+            f"od_no={od_no} od_seq={od_seq}"
+        )
+        return None
+    return candidates[0] if candidates else None
 
 
 # 배송 진행 단계 보호 — 주문동기화(order.py `_lo_shipped_guard`)와 동일 집합.
@@ -833,8 +872,19 @@ async def sync_returns_from_markets(
     body: SyncReturnsRequest,
     session: AsyncSession = Depends(get_write_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+    run_finalize: bool = True,
 ):
-    """활성 마켓 계정에서 반품/교환/취소 데이터를 가져와 DB에 저장."""
+    """활성 마켓 계정에서 반품/교환/취소 데이터를 가져와 DB에 저장.
+
+    run_finalize:
+        True(기본) — 계정 순회 후 전역 후처리(stale auto-close / shipping_status
+        일괄 동기화 / 롯데ON 재분류 / claim 백필)까지 실행. 단일 HTTP 호출·단일
+        계정 호출은 이 경로.
+        False — returns_sync 백그라운드 잡이 계정별로 병렬 호출할 때 사용. 전역
+        후처리는 계정 수만큼 반복하면 안 되므로(31× 벌크 UPDATE·5000행 백필 →
+        락 경합/데드락) 스킵하고, 잡 핸들러가 모든 계정 완료 후 account_id 미매칭
+        sentinel 로 이 함수를 1회 더 호출해 finalize 만 수행한다.
+    """
     from backend.domain.samba.account.repository import SambaMarketAccountRepository
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
     from backend.domain.samba.order.repository import SambaOrderRepository
@@ -1212,16 +1262,13 @@ async def sync_returns_from_markets(
                     order_number = claim["order_number"]
                     if not order_number:
                         continue
-                    existing_order = await order_repo.find_by_async(
-                        order_number=order_number
+                    # od_no(+od_seq) 전용 매칭 (#707) — shipment_id(clmNo)는 고유하지
+                    # 않아 다른 주문에 잘못 붙는 사고 원인이었음. order_number 필드에는
+                    # 클레임 API의 odNo(주문번호)가 그대로 들어있어 DB의 order_number
+                    # 컬럼(상품주문번호=odNo_odSeq)과는 형식이 달라 직접 비교하지 않음.
+                    existing_order = await _lotteon_find_order_strict(
+                        order_repo, order_number, claim.get("ord_dtl_sn") or None
                     )
-                    if not existing_order:
-                        # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
-                        sitmNo = claim.get("sitmNo", "")
-                        if sitmNo:
-                            existing_order = await order_repo.find_by_async(
-                                shipment_id=sitmNo
-                            )
                     if not existing_order:
                         logger.warning(
                             f"[롯데ON] 반품 주문 미매칭: {order_number} sitmNo={claim.get('sitmNo', '')}"
@@ -1388,16 +1435,14 @@ async def sync_returns_from_markets(
                         ex_order_number = item.get("odNo", "")
                         if not ex_order_number:
                             continue
-                        existing_order = await order_repo.find_by_async(
-                            order_number=ex_order_number
+                        # od_no(+od_seq) 전용 매칭 (#707) — 반품/취소 경로와 동일 이유로
+                        # shipment_id(sitmNo) fallback 제거.
+                        existing_order = await _lotteon_find_order_strict(
+                            order_repo,
+                            ex_order_number,
+                            str(item.get("odSeq", "") or item.get("procSeq", ""))
+                            or None,
                         )
-                        if not existing_order:
-                            # sitmNo(상품주문번호)는 DB의 shipment_id 필드에 저장됨
-                            ex_sitmNo = item.get("sitmNo", "")
-                            if ex_sitmNo:
-                                existing_order = await order_repo.find_by_async(
-                                    shipment_id=ex_sitmNo
-                                )
                         if not existing_order:
                             logger.warning(
                                 f"[롯데ON] 교환 주문 미매칭: {ex_order_number} sitmNo={item.get('sitmNo', '')}"
@@ -1682,6 +1727,14 @@ async def sync_returns_from_markets(
                             existing_order = await order_repo.find_by_async(
                                 order_number=candidate
                             )
+                            # 쿠팡 반품 orderId(=배송번호)는 삼바 order_number(상품주문번호)와
+                            # 다르고 shipment_id 에 저장된다. order_number 매칭 실패 시
+                            # shipment_id 로 재시도 — 안 하면 RETURNS_COMPLETED 갱신이
+                            # 스킵돼 반품완료 주문이 진행중으로 고착(덕수궁 관측).
+                            if not existing_order:
+                                existing_order = await order_repo.find_by_async(
+                                    shipment_id=candidate
+                                )
                             if existing_order:
                                 break
                         if not existing_order:
@@ -1694,24 +1747,78 @@ async def sync_returns_from_markets(
                             or item.get("exchangeStatus")
                         )
                         status = _coupang_status(status_raw)
+                        # 쿠팡 returnRequests 엔드포인트는 출고중지요청(상품준비중 단계 취소)을
+                        # 실제 반품과 같은 응답에 담아 내려준다. 이 건은 receiptType 이
+                        # 'RETURN' 이지만 receiptStatus 가 RELEASE_STOP_*(출고중지요청,
+                        # 예: RELEASE_STOP_UNCHECKED) 이다 — 실측 확인(손성아/조미혜 2026-07,
+                        # cancelReasonCategory1='고객변심'). receiptStatus 를 무시하고 전부
+                        # 'return' 으로 저장하면 출고전 취소가 반품으로 둔갑 → 주문상태가
+                        # 반품요청으로 덮여 취소가 반품에 갇힌다. 출고중지요청은 취소로 분류.
+                        # (결제완료 단계 취소 CANCEL 카테고리의 receiptType='CANCEL' 도 포함.)
+                        receipt_type = (item.get("receiptType") or "").upper()
+                        receipt_status = (item.get("receiptStatus") or "").upper()
+                        is_cancel_claim = (
+                            receipt_type == "CANCEL"
+                            or receipt_status.startswith("RELEASE_STOP")
+                            or receipt_status == "RU"
+                        )
+                        # 완료단계 모호성 보정: 취소승인(출고중지완료) 후 쿠팡은 그 건을
+                        # 반품완료와 동일한 RETURNS_COMPLETED 로 내려줘 receiptStatus 로는
+                        # 취소완료/반품완료 구분 불가(실측 손성아/조미혜 2026-07). 이 주문에
+                        # 살아있는(거부 아님) 취소 클레임이 이미 있으면 이 완료건을 그 취소의
+                        # 완료로 귀속시켜 반품행 재생성을 막는다. 취소 클레임은 RELEASE_STOP
+                        # 단계에서 이미 취소행으로 기록되므로(위 분기) 완료건은 그 뒤에 온다.
+                        if return_type == "return" and not is_cancel_claim:
+                            _prior_cancels = await svc.repo.filter_by_async(
+                                order_id=existing_order.id, type="cancel"
+                            )
+                            if any(
+                                (p.status or "").lower() != "rejected"
+                                for p in _prior_cancels
+                            ):
+                                is_cancel_claim = True
+                        effective_type = (
+                            "cancel"
+                            if return_type == "return" and is_cancel_claim
+                            else return_type
+                        )
+                        _done_label = {
+                            "exchange": "교환",
+                            "cancel": "취소",
+                        }.get(effective_type, "반품")
+                        # 주문상태 갱신용 '요청' 라벨(신규 진입 시점).
+                        _req_label = {
+                            "return": "반품요청",
+                            "exchange": "교환요청",
+                            "cancel": "취소요청",
+                        }.get(effective_type, "반품요청")
+                        # 반품행 market_order_status — 요청/완료/거부 상태 반영.
+                        # 완료건을 요청으로 되돌려 찍지 않는다(취소완료→취소요청 하향 방지).
+                        if status == "completed":
+                            _status_label = {
+                                "exchange": "교환완료",
+                                "cancel": "취소완료",
+                            }.get(effective_type, "반품완료")
+                        elif status == "rejected":
+                            _status_label = {
+                                "exchange": "교환거부",
+                                "cancel": "취소거부",
+                            }.get(effective_type, "반품거부")
+                        else:
+                            _status_label = _req_label
                         existing_returns = await svc.repo.filter_by_async(
-                            order_id=existing_order.id, type=return_type
+                            order_id=existing_order.id, type=effective_type
                         )
                         if existing_returns:
                             patch: dict[str, Any] = {
                                 "order_date": existing_order.paid_at
                                 or existing_order.created_at,
-                                "market_order_status": {
-                                    "return": "반품요청",
-                                    "exchange": "교환요청",
-                                }.get(return_type, "반품요청"),
+                                "market_order_status": _status_label,
                             }
                             if status in ("approved", "completed", "rejected"):
                                 patch["status"] = status
                             if status == "completed":
-                                patch["completion_detail"] = (
-                                    "교환" if return_type == "exchange" else "반품"
-                                )
+                                patch["completion_detail"] = _done_label
                                 patch["completion_date"] = datetime.now(UTC)
                             elif status == "rejected":
                                 patch["completion_detail"] = "거부"
@@ -1736,7 +1843,7 @@ async def sync_returns_from_markets(
                         return_data = {
                             "order_id": existing_order.id,
                             "order_number": order_number,
-                            "type": return_type,
+                            "type": effective_type,
                             "reason": item.get("returnReason")
                             or item.get("reason")
                             or item.get("reasonCode")
@@ -1770,10 +1877,7 @@ async def sync_returns_from_markets(
                             or account.market_name
                             or label,
                             "market": "쿠팡",
-                            "market_order_status": {
-                                "return": "반품요청",
-                                "exchange": "교환요청",
-                            }.get(return_type, "반품요청"),
+                            "market_order_status": _status_label,
                             "return_link": existing_order.source_url or "",
                             "return_source": existing_order.source_site or "",
                             "region": _extract_city_district(
@@ -1784,9 +1888,7 @@ async def sync_returns_from_markets(
                             or existing_order.created_at,
                             "status": status,
                             "completion_detail": (
-                                "교환"
-                                if status == "completed" and return_type == "exchange"
-                                else "반품"
+                                _done_label
                                 if status == "completed"
                                 else "거부"
                                 if status == "rejected"
@@ -1796,7 +1898,7 @@ async def sync_returns_from_markets(
                                 {
                                     "date": datetime.now(UTC).isoformat(),
                                     "status": status,
-                                    "message": f"쿠팡 {return_type} 클레임 동기화",
+                                    "message": f"쿠팡 {effective_type} 클레임 동기화",
                                 }
                             ],
                             "notes": [],
@@ -1806,17 +1908,21 @@ async def sync_returns_from_markets(
                         if status in ("completed", "rejected"):
                             return_data["completion_date"] = datetime.now(UTC)
                         await svc.repo.create_async(**return_data)
-                        await order_repo.update_async(
-                            existing_order.id,
-                            status=(
-                                "exchange_requested"
-                                if return_type == "exchange"
-                                else "return_requested"
-                            ),
-                            shipping_status=(
-                                "교환요청" if return_type == "exchange" else "반품요청"
-                            ),
-                        )
+                        # 종결(취소완료/반품완료/교환완료) 주문을 새 '요청' 상태로 하향
+                        # 덮어쓰지 않는다 — 롯데ON 경로와 동일 원칙. 특히 이미 취소완료된
+                        # 주문이 뒤늦은 출고중지요청 sync 로 취소요청/반품요청으로 되돌아가
+                        # 미종결처럼 보이던 문제(손성아) 차단.
+                        _cur = (existing_order.status or "").strip().lower()
+                        if _cur not in ("cancelled", "returned", "exchanged"):
+                            _new_status = {
+                                "exchange": "exchange_requested",
+                                "cancel": "cancel_requested",
+                            }.get(effective_type, "return_requested")
+                            await order_repo.update_async(
+                                existing_order.id,
+                                status=_new_status,
+                                shipping_status=_req_label,
+                            )
                         synced_count += 1
                     return synced_count
 
@@ -2645,35 +2751,20 @@ async def sync_returns_from_markets(
             logger.error(f"[반품동기화] {label} 실패: {e}")
             results.append({"account": label, "status": "error", "message": str(e)})
 
-    # 취소완료 주문의 stale 활성 samba_return auto-close (issue #335 Part B)
-    # 주문이 마켓에서 취소(status='cancelled')되면 그 주문에 매달린 활성 반품/교환
-    # 레코드는 더 이상 유효하지 않다. 닫지 않으면 아래 일괄 SQL의 seed 로 남아
-    # 매 cycle 취소완료 주문 shipping_status 를 반품요청/교환요청으로 덮어쓴다.
-    # completion_detail='취소' 도 함께 박아 프론트 표시(취소완료)와 정합 유지.
-    # 멱등 벌크 UPDATE — placeholder/cast 없음(silent fail 방지).
-    try:
-        from sqlalchemy import text as _sa_text
+    # returns_sync 잡의 계정별 병렬 호출은 전역 후처리를 스킵한다(계정 수만큼
+    # 반복 실행 = 락 경합/데드락 유발). 잡 핸들러가 모든 계정 완료 후 finalize 만
+    # 1회 호출한다. run_finalize=True(기본)인 단일/전체 HTTP 호출은 아래로 진행.
+    if not run_finalize:
+        return {"total_synced": total_synced, "results": results}
 
-        _ac = await session.execute(
-            _sa_text("""
-            UPDATE samba_return r
-            SET status = 'cancelled',
-                completion_detail = '취소'
-            FROM samba_order o
-            WHERE r.order_id = o.id
-              AND o.status = 'cancelled'
-              AND r.status NOT IN ('completed', 'cancelled', 'rejected')
-        """)
-        )
-        await session.commit()
-        if _ac.rowcount:
-            logger.info(
-                f"[반품동기화] 취소완료 주문 stale samba_return {_ac.rowcount}건 auto-close"
-            )
-    except Exception as _ac_err:
-        logger.warning(
-            f"[반품동기화] 취소완료 stale return auto-close 실패(무시): {_ac_err}"
-        )
+    # 반품 레코드 정합 유지보수 — stale 종결(취소/반품/교환완료) + 중복 정리.
+    # order_sync 잡 핸들러도 완료 후 동일 함수를 호출해 3시간 주기 중복 재생성을
+    # 흡수한다(단일 소스 = returns/maintenance.py).
+    from backend.domain.samba.returns.maintenance import (
+        finalize_returns_consistency,
+    )
+
+    await finalize_returns_consistency(session)
 
     # DB 기반 원주문 shipping_status 일괄 동기화
     # samba_return 레코드가 있고 아직 진행 중인 주문의 shipping_status를 강제 업데이트

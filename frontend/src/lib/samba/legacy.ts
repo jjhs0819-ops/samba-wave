@@ -295,7 +295,13 @@ export const orderApi = {
       search_category: params.search_category ?? 'customer',
       sort_by: params.sort_by ?? 'date_desc',
     })
-    return request<PaginatedOrderList>(`${SAMBA_PREFIX}/orders/by-date-range-paged?${q}`)
+    return request<PaginatedOrderList>(
+      `${SAMBA_PREFIX}/orders/by-date-range-paged?${q}`,
+      undefined,
+      // 타임아웃 20초 + 2회 재시도 — 배포/일시 끊김에 "Failed to fetch"로 바로
+      // 실패 처리하지 않고 자동 복구 (2026-08-14 주문 페이지 반복 실패 보고)
+      { timeoutMs: 20000, retries: 2 },
+    )
   },
   listByCollectedProduct: (collectedProductId: string) =>
     request<SambaOrder[]>(`${SAMBA_PREFIX}/orders/by-collected-product?collected_product_id=${encodeURIComponent(collectedProductId)}`),
@@ -331,7 +337,11 @@ export const orderApi = {
       search_category: params.search_category ?? 'customer',
       sort_by: params.sort_by ?? 'date_desc',
     })
-    return request<PaginatedOrderList>(`${SAMBA_PREFIX}/orders/by-collected-product-paged?${q}`)
+    return request<PaginatedOrderList>(
+      `${SAMBA_PREFIX}/orders/by-collected-product-paged?${q}`,
+      undefined,
+      { timeoutMs: 20000, retries: 2 },
+    )
   },
   downloadExcel: async (params: {
     order_ids?: string[]
@@ -348,8 +358,8 @@ export const orderApi = {
     search_text?: string
     search_category?: string
     sort_by?: string
-    // 'ub1' (default, 소싱처 발주) | 'lotte' (롯데택배 송장 양식)
-    format?: 'ub1' | 'lotte'
+    // 'ub1' (default, 소싱처 발주) | 'lotte' (롯데택배 송장 양식) | 'cj' (CJ대한통운 송장 양식)
+    format?: 'ub1' | 'lotte' | 'cj'
   }) => {
     const res = await fetchWithAuth(`${SAMBA_PREFIX}/orders/excel-export`, {
       method: 'POST',
@@ -735,6 +745,8 @@ export interface SambaSearchFilter {
   parent_id?: string | null;
   is_folder?: boolean;
   collected_count?: number;
+  trashed_count?: number;
+  revenue_sum?: number;
   children?: SambaSearchFilter[];
 }
 
@@ -1055,10 +1067,54 @@ export const collectorApi = {
     request<{ created: number }>(`${SAMBA_PREFIX}/collector/products/bulk`, { method: "POST", body: JSON.stringify({ items }) }),
   updateProduct: (id: string, data: Partial<SambaCollectedProduct>) =>
     request<SambaCollectedProduct>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  uploadImage: async (file: File): Promise<string> => {
+    // FormData 업로드 — Content-Type은 브라우저가 boundary 포함해 자동 설정해야 하므로
+    // request() 공용 헬퍼(JSON 강제)를 안 쓰고 직접 fetch 한다.
+    const fd = new FormData()
+    fd.append('file', file)
+    const headers: Record<string, string> = {}
+    if (API_GATEWAY_KEY) headers['X-Api-Key'] = API_GATEWAY_KEY
+    const token = getAccessToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    const res = await fetch(`${SAMBA_PREFIX}/collector/products/images/upload`, {
+      method: 'POST', headers, body: fd,
+    })
+    if (!res.ok) throw new Error(`이미지 업로드 실패 (${res.status})`)
+    const data = await res.json()
+    return data.url as string
+  },
   deleteProduct: (id: string) =>
     request<{ ok: boolean }>(`${SAMBA_PREFIX}/collector/products/${id}`, { method: "DELETE" }),
   bulkDeleteProducts: (ids: string[]) =>
-    request<{ deleted: number }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
+    request<{ deleted: number; market_delete_failed?: string[] }>(`${SAMBA_PREFIX}/collector/products/bulk-delete`, { method: "POST", body: JSON.stringify({ ids }) }),
+  bulkTrashProducts: (ids: string[]) =>
+    request<{ trashed: number; market_delete_failed?: string[] }>(`${SAMBA_PREFIX}/collector/products/bulk-trash`, { method: "POST", body: JSON.stringify({ ids }) }),
+  bulkRestoreProducts: (ids: string[]) =>
+    request<{ restored: number }>(`${SAMBA_PREFIX}/collector/products/bulk-restore`, { method: "POST", body: JSON.stringify({ ids }) }),
+  listTrashedProducts: (searchFilterId?: string, limit?: number, skip?: number) => {
+    const params = new URLSearchParams()
+    if (searchFilterId) params.set('search_filter_id', searchFilterId)
+    if (limit !== undefined) params.set('limit', String(limit))
+    if (skip !== undefined) params.set('skip', String(skip))
+    const qs = params.toString()
+    return request<SambaCollectedProduct[]>(`${SAMBA_PREFIX}/collector/products/trash${qs ? `?${qs}` : ''}`)
+  },
+  duplicateFilter: (filter: SambaSearchFilter) =>
+    request<SambaSearchFilter>(`${SAMBA_PREFIX}/collector/filters`, {
+      method: "POST",
+      body: JSON.stringify({
+        source_site: filter.source_site,
+        name: `${filter.name} (복사)`,
+        keyword: filter.keyword,
+        category_filter: filter.category_filter,
+        min_price: filter.min_price,
+        max_price: filter.max_price,
+        exclude_sold_out: filter.exclude_sold_out,
+        requested_count: filter.requested_count,
+        parent_id: filter.parent_id,
+        is_folder: false,
+      }),
+    }),
   blockAndDelete: (productIds: string[]) =>
     request<{ ok: boolean; blocked: number; deleted: number }>(
       `${SAMBA_PREFIX}/collector/products/block-and-delete`, { method: "POST", body: JSON.stringify({ product_ids: productIds }) }),
@@ -1827,11 +1883,11 @@ export const proxyApi = {
     const res = await fetchWithAuth(`${SAMBA_PREFIX}/proxy/preset-images/upload`, { method: 'POST', body: formData })
     return res.json() as Promise<{ success: boolean; message: string; image?: string }>
   },
-  transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
+  transformImages: (productIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string, provider?: string) =>
     request<{ success: boolean; status?: string; job_id?: string; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
-        body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset }),
+        body: JSON.stringify({ product_ids: productIds, scope, mode, model_preset: modelPreset, provider }),
       }),
   bgJobStatus: (jobId: string) =>
     request<{ status: string; total: number; current: number; total_transformed: number; total_failed: number; image_current?: number; image_total?: number; current_product_id?: string }>(
@@ -1842,11 +1898,11 @@ export const proxyApi = {
   bgJobCancel: (jobId: string) =>
     request<{ success: boolean; job_id?: string; status?: string; message?: string }>(
       `${SAMBA_PREFIX}/proxy/bg-jobs/${jobId}/cancel`, { method: 'POST', body: JSON.stringify({}) }),
-  transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string) =>
+  transformByGroups: (groupIds: string[], scope: { thumbnail: boolean; additional: boolean; detail: boolean }, mode: string, modelPreset?: string, provider?: string) =>
     request<{ success: boolean; message: string; total_transformed: number; total_failed: number }>(
       `${SAMBA_PREFIX}/proxy/images/transform`, {
         method: 'POST',
-        body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset }),
+        body: JSON.stringify({ group_ids: groupIds, scope, mode, model_preset: modelPreset, provider }),
       }),
   generateAiTagsByGroups: (groupIds: string[]) =>
     request<{ success: boolean; message: string; total_tagged: number; api_calls: number; input_tokens: number; output_tokens: number; cost_krw: number }>(

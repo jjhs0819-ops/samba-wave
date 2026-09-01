@@ -22,15 +22,53 @@ API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 
 async def _get_gemma_api_key(session: Any) -> str:
-    """DB samba_settings에서 Gemini API 키 조회 (Gemma도 동일 키 사용)."""
+    """DB samba_settings에서 Gemini API 키 조회 (Gemma도 동일 키 사용).
+
+    멀티테넌트 격리(2026-05-18) 이후 설정은 '{tenant_id}:gemini' 로 저장되므로
+    bare 'gemini' 조회만 하면 못 찾는다(회귀). 조회 순서:
+      1) 현재 요청의 테넌트 컨텍스트 → '{tid}:gemini'
+      2) bare 'gemini' (구 데이터 폴백)
+      3) HTTP 컨텍스트 없이 호출된 경우(워커/디스패처) '%:gemini' 단일 매칭 폴백
+    """
     from backend.domain.samba.forbidden.repository import SambaSettingsRepository
 
     repo = SambaSettingsRepository(session)
-    row = await repo.find_by_async(key="gemini")
-    if row and isinstance(row.value, dict):
-        key = str(row.value.get("apiKey", "")).strip()
+
+    tid = None
+    try:
+        from backend.core.tenant_context import current_tenant_id
+
+        tid = current_tenant_id.get()
+    except Exception:
+        tid = None
+
+    candidates = [f"{tid}:gemini", "gemini"] if tid else ["gemini"]
+
+    async def _extract(row: Any) -> str:
+        if row and isinstance(row.value, dict):
+            return str(row.value.get("apiKey", "")).strip()
+        return ""
+
+    for cand in candidates:
+        key = await _extract(await repo.find_by_async(key=cand))
         if key:
             return key
+
+    # 테넌트 컨텍스트 없이 호출(워커 등) → prefixed 단일 매칭 폴백
+    if not tid:
+        from sqlalchemy import select
+
+        from backend.domain.samba.forbidden.model import SambaSettings
+
+        result = await session.execute(
+            select(SambaSettings).where(SambaSettings.key.like("%:gemini")).limit(2)
+        )
+        rows = result.scalars().all()
+        if len(rows) == 1:
+            key = await _extract(rows[0])
+            if key:
+                return key
+
     raise ValueError("Gemini/Gemma API Key가 설정되지 않았습니다.")
 
 

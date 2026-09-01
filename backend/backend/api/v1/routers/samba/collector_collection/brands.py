@@ -127,6 +127,7 @@ async def brand_refresh(
             "GSShop",
             "KREAM",
             "THEHYUNDAI",
+            "29CM",
         }
         if site not in _SCAN_SUPPORTED:
             raise HTTPException(
@@ -174,6 +175,14 @@ async def brand_refresh(
             scan_result = await TheHyundaiPlugin().scan_categories(
                 keyword, selected_brands=[keyword] if keyword else None
             )
+            categories = scan_result.get("categories", [])
+        elif site == "29CM":
+            from backend.domain.samba.plugins.sourcing.twentyninecm import (
+                TwentyNineCMPlugin,
+            )
+
+            # 29CM 카테고리 트리는 키워드와 무관하게 전체를 1회 호출로 받는다
+            scan_result = await TwentyNineCMPlugin().scan_categories(keyword)
             categories = scan_result.get("categories", [])
         else:
             # MUSINSA — brand-scan과 동일한 필터 API 재귀 탐색 방식 사용 (전체 카테고리)
@@ -461,6 +470,25 @@ async def brand_discover(body: BrandDiscoverRequest):
             "total": res.get("total", 0),
         }
 
+    if body.source_site == "29CM":
+        from backend.domain.samba.plugins.sourcing.twentyninecm import (
+            TwentyNineCMPlugin,
+        )
+
+        res = await TwentyNineCMPlugin().discover_brands(body.keyword)
+        # 프론트 브랜드 모달은 id 를 brand_ids 로 넘긴다 → frontBrandNo 를 id 로 준다
+        return {
+            "brands": [
+                {
+                    "name": b.get("name", ""),
+                    "count": int(b.get("count") or 0),
+                    "id": b.get("value") or "",
+                }
+                for b in res.get("brands", [])
+            ],
+            "total": res.get("total", 0),
+        }
+
     raise HTTPException(400, f"브랜드 탐색 미지원 소싱처: {body.source_site}")
 
 
@@ -675,6 +703,14 @@ async def brand_scan(
             brand_ids=body.brand_ids or None,
             brand_total=body.brand_total or 0,
         )
+
+    if body.source_site == "29CM":
+        from backend.domain.samba.plugins.sourcing.twentyninecm import (
+            TwentyNineCMPlugin,
+        )
+
+        # 카테고리 트리는 전체 1회 호출 — 브랜드 선택과 무관하다
+        return await TwentyNineCMPlugin().scan_categories(keyword)
 
     raise HTTPException(400, f"카테고리 스캔 미지원 소싱처: {body.source_site}")
 

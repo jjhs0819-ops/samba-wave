@@ -69,7 +69,7 @@ chrome.storage.onChanged.addListener((changes) => {
 })
 
 // Service Worker 시작 시 저장된 쿠키 + 설정 복원
-chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteonCookie', 'proxyUrl', '_lastAutoLoginSuccessAt']).then(async data => {
+chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteonCookie', 'proxyUrl', '_lastAutoLoginSuccessAt', '_lastJarLoginAccount']).then(async data => {
   if (data.proxyUrl) {
     PROXY_URL = data.proxyUrl
     console.log(`[복원] 백엔드 URL: ${PROXY_URL}`)
@@ -104,6 +104,14 @@ chrome.storage.local.get(['capturedCookie', 'capturedAt', 'kreamCookie', 'lotteo
       globalThis._lastAutoLoginSuccessAt = data._lastAutoLoginSuccessAt
       const entries = Object.entries(data._lastAutoLoginSuccessAt).map(([k, v]) => `${k}:${Math.round((Date.now()-v)/60000)}분전`).join(', ')
       console.log(`[복원] 자동로그인 성공시각 복원: ${entries}`)
+    } catch {}
+  }
+  // 쿠키 자별 마지막 로그인 계정 복원 — a-rt.com(ABC마트/ABC캠프)처럼 세션을 공유하는
+  // 사이트에서 '지금 세션 주인이 누구인지' 판단 근거. 없으면 캐시를 못 믿고 재로그인한다.
+  if (data._lastJarLoginAccount && typeof data._lastJarLoginAccount === 'object') {
+    try {
+      globalThis._lastJarLoginAccount = data._lastJarLoginAccount
+      console.log(`[복원] 쿠키자 로그인계정 복원: ${JSON.stringify(data._lastJarLoginAccount)}`)
     } catch {}
   }
 })

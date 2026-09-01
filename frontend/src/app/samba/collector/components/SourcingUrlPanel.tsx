@@ -234,6 +234,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               selectedSite === 'GSShop' ? '키워드 또는 URL (예: 내셔널지오그래픽, https://www.gsshop.com/search?tq=내셔널지오그래픽)' :
               selectedSite === 'ElandMall' ? '키워드 또는 URL (예: 나이키, https://www.elandmall.com/search?kwd=나이키)' :
               selectedSite === 'SSF' ? '키워드 또는 URL (예: 나이키, https://www.ssfshop.com/search?keyword=나이키)' :
+              selectedSite === '29CM' ? '키워드 또는 URL (예: 나이키, https://www.29cm.co.kr/search?keyword=나이키, https://www.29cm.co.kr/store/brand/95369)' :
               selectedSite === 'BUNJANG' ? '번개장터 검색 URL (예: https://m.bunjang.co.kr/keywords/포켓몬카드?brandId=["139"])' :
               '키워드 또는 URL을 입력하세요'
             }
@@ -243,7 +244,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               color: c.text, outline: 'none',
             }}
           />
-          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'LOTTEON_SELLERSHOP' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM' || selectedSite === 'THEHYUNDAI') && (
+          {(selectedSite === 'MUSINSA' || selectedSite === 'LOTTEON' || selectedSite === 'LOTTEON_SELLERSHOP' || selectedSite === 'GSShop' || selectedSite === 'ABCmart' || selectedSite === 'Nike' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'KREAM' || selectedSite === 'THEHYUNDAI' || selectedSite === '29CM') && (
             <button onClick={async () => {
               if (!collectUrl.trim()) { showAlert('URL 또는 키워드를 입력하세요'); return }
               setBrandScanning(true)
@@ -284,7 +285,7 @@ export default function SourcingUrlPanel(props: SourcingUrlPanelProps) {
               }
 
               // 롯데ON / SSG / 패션플러스 / 더현대: 브랜드 탐색 후 선택 모달 표시
-              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'THEHYUNDAI') {
+              if (selectedSite === 'LOTTEON' || selectedSite === 'SSG' || selectedSite === 'FashionPlus' || selectedSite === 'THEHYUNDAI' || selectedSite === '29CM') {
                 try {
                   const discoverKeyword = keyword || brand
                   const res = await collectorApi.brandDiscover(discoverKeyword, selectedSite)

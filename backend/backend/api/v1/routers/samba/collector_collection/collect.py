@@ -442,6 +442,7 @@ async def collect_by_url(
             existing_stmt = select(CPModel).where(
                 CPModel.source_site == "MUSINSA",
                 CPModel.site_product_id == goods_no,
+                CPModel.deleted_at.is_(None),
             )
             existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 
@@ -657,6 +658,7 @@ async def collect_by_url(
             existing_stmt = select(CPModel).where(
                 CPModel.source_site == "KREAM",
                 CPModel.site_product_id == product_id,
+                CPModel.deleted_at.is_(None),
             )
             existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 
@@ -944,6 +946,7 @@ async def collect_by_url(
             existing_stmt = select(CPModel).where(
                 CPModel.source_site == "SSG",
                 CPModel.site_product_id == item_id,
+                CPModel.deleted_at.is_(None),
             )
             existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 
@@ -1337,6 +1340,7 @@ async def collect_by_url(
             existing_stmt = select(CPModel).where(
                 CPModel.source_site == "LOTTEON",
                 CPModel.site_product_id == item_id,
+                CPModel.deleted_at.is_(None),
             )
             existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 
@@ -1621,10 +1625,13 @@ async def collect_single_musinsa(
         "price_history": [initial_snapshot],
     }
 
-    # 기존 상품 체크 (upsert)
+    # 기존 상품 체크 (upsert) — 휴지통 상품은 "기존"으로 취급하지 않음(I4): 자동
+    # 재수집이 트래시 로우를 조용히 되살리거나 덮어쓰지 않도록, 여기서 못 찾으면
+    # 아래 create_collected_product()의 IntegrityError 경로가 deleted_at을 보고 skip.
     existing_stmt = select(CPModel).where(
         CPModel.source_site == "MUSINSA",
         CPModel.site_product_id == goods_no,
+        CPModel.deleted_at.is_(None),
     )
     existing_row = (await session.execute(existing_stmt)).scalar_one_or_none()
 

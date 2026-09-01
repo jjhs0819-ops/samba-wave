@@ -456,7 +456,7 @@ class SmartStorePlugin(MarketPlugin):
             pass
 
         # 디버그: 전송 직전 detail_html 로그
-        _dh = product_copy.get("detail_html", "")
+        _dh = product_copy.get("detail_html") or ""
         logger.info(
             f"[스마트스토어] detailContent 전송 직전 — 길이:{len(_dh)}, 미리보기:{_dh[:300]}"
         )

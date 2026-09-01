@@ -1,5 +1,6 @@
 """플레이오토 EMP API 클라이언트."""
 
+import re
 from typing import Any
 
 import httpx
@@ -26,6 +27,40 @@ def _truncate_to_bytes(text: str, max_bytes: int) -> str:
     if len(encoded) <= max_bytes:
         return text
     return encoded[:max_bytes].decode("utf-8", errors="ignore").strip()
+
+
+# 마켓이 상품명에서 거부하는 특수문자.
+# 현대H몰 실거부(2026-08-14): "판매상품명에 특수문자 ';' 는 포함될 수 없습니다."
+# EMP 마스터 상품명은 연결된 전 쇼핑몰로 그대로 내려가므로, 한 몰이라도 거부하는
+# 문자는 마스터 단계에서 제거해야 그 몰만 통째로 실패하는 일이 없다.
+_NAME_DROP_CHARS = "'’ʼ\"“”`"  # 따옴표류 — 삭제(단어 안 쪼개짐)
+_NAME_SPACE_CHARS = ";:|\\<>{}^~"  # 구분자류 — 공백 치환
+# 슬래시만 하이픈 — 공백으로 바꾸면 "(P/Yellow)"가 "(P Yellow)"로 흩어져
+# 색상 표기가 두 단어로 읽힌다. GS이숍이 '/' 를 거부하므로 제거는 해야 한다.
+_NAME_DASH_CHARS = "/"
+
+
+def sanitize_prod_name(name: Any) -> str:
+    """마켓 거부 특수문자를 제거한 상품명.
+
+    따옴표류는 삭제한다 — 공백으로 바꾸면 "Levi's"가 "Levi s"로 쪼개진다.
+    나머지 구분자류는 공백으로 바꾸고 연속 공백을 접는다. 슬래시만 하이픈이다.
+
+    GS이숍 금지문자는 : " < > | \\ / 다 — 하나라도 남으면 채널등록이
+    "상품명에는 :, ", <, >, |, \\, / 문자를 사용할 수 없습니다" 로 거부된다
+    (2026-08-18 다이나핏 202건, 소싱처 원문의 "정상가:159,000"·"(P/Yellow)" 표기).
+    #738 은 현대H몰만 보고 만들어 ':' 와 '/' 가 빠져 있었다.
+    """
+    text = str(name or "")
+    for _c in _NAME_DROP_CHARS:
+        text = text.replace(_c, "")
+    for _c in _NAME_DASH_CHARS:
+        text = text.replace(_c, "-")
+    for _c in _NAME_SPACE_CHARS:
+        text = text.replace(_c, " ")
+    # 제어문자 제거 + 공백 정리
+    text = "".join(ch if ch >= " " else " " for ch in text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 def is_derived_order(ro: dict) -> bool:
@@ -372,6 +407,17 @@ class PlayAutoClient:
         found = name_map.get(name)
         return found[0] if found else ""
 
+    def invalidate_name_master_cache(self) -> None:
+        """이름→MasterCode 캐시 즉시 무효화.
+
+        register 시도 직후에 호출한다. 등록(성공·타임아웃 불문) 이후에도 60초
+        캐시가 살아 있으면, 초 단위 재시도의 사전 중복조회가 방금 만든 상품을
+        못 보고 통과해 EMP 복제본이 쌓인다(2026-08-06 데상트 189건 실사고 —
+        복제본 생성 간격 6초 < TTL 60초). 캐시를 비워 다음 조회가 실목록을
+        다시 읽게 한다.
+        """
+        _NAME_MASTER_CACHE.pop(self.api_key, None)
+
     # ── 주문 API ──
 
     async def get_orders(
@@ -592,7 +638,7 @@ class PlayAutoClient:
         # 기본 정보
         data: dict[str, Any] = {
             "MasterCode": "__AUTO__",
-            "ProdName": str(product.get("name", "")),
+            "ProdName": sanitize_prod_name(product.get("name", "")),
             "Price": str(int(product.get("sale_price", 0))),
             "Count": str(stock_qty),
             "MadeIn": _normalize_origin(product.get("origin")),
@@ -698,7 +744,9 @@ class PlayAutoClient:
         # 옵션 변환
         options = product.get("options") or []
         if options and isinstance(options, list):
-            emp_opts = _build_options(options, stock_qty)
+            emp_opts = _build_options(
+                options, stock_qty, source_site=str(product.get("source_site") or "")
+            )
             if emp_opts:
                 data["Opts"] = emp_opts
                 # 옵션 타입 결정 (옵션축 개수에 따라)
@@ -762,8 +810,10 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
       02 구두/신발(12):  1 주소재 · 2 운동화여부(Y/N) · 3 색상 · 4 발길이 · 5 굽높이 ·
                         6 제조자 · 7 수입품여부(Y/N) · 8 수입자 · 9 제조국 ·
                         10 취급시주의 · 11 품질보증기준 · 12 AS전화
-      03 가방(10):       1 종류 · 2 소재 · 3 색상 · 4 크기 · 5 제조자 · 6 수입품여부(Y/N) ·
-                        7 제조국 · 8 취급시주의 · 9 품질보증기준 · 10 AS전화
+      03 가방(11):       1 종류 · 2 소재 · 3 색상 · 4 크기 · 5 제조자 · 6 수입품여부(Y/N) ·
+                        7 수입자 · 8 제조국 · 9 취급시주의 · 10 품질보증기준 · 11 AS전화
+                        (2026-08-07 EMP 웹 재실측 — 수입자 필드 추가로 10→11필드,
+                        구 10필드 전송 시 "품목정보 누락 (03)" 전량 거절되던 실사고)
       04 패션잡화(10):   1 종류 · 2 소재 · 3 치수 · 4 제조자 · 5 수입품여부(Y/N) ·
                         6 수입자 · 7 제조국 · 8 취급시주의 · 9 품질보증기준 · 10 AS전화
 
@@ -868,7 +918,7 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
             11: quality,
             12: as_phone,
         }
-    elif code == "03":  # 가방 (10)
+    elif code == "03":  # 가방 (11) — 2026-08-07 재실측: 수입자 필드 추가
         fields = {
             1: fallback,
             2: material,
@@ -876,10 +926,11 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
             4: fallback,
             5: maker,
             6: is_imported,
-            7: made_country,
-            8: care,
-            9: quality,
-            10: as_phone,
+            7: importer,
+            8: made_country,
+            9: care,
+            10: quality,
+            11: as_phone,
         }
     elif code == "04":  # 패션잡화 (10, 색상 없음·치수 있음)
         fields = {
@@ -913,15 +964,24 @@ def _build_siil_entry(product: dict, data: dict) -> dict:
     return entry
 
 
-def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
+def _build_options(
+    options: list[dict], default_stock: int = 999, source_site: str = ""
+) -> list[dict]:
     """삼바웨이브 옵션 → EMP 옵션 변환.
 
     삼바웨이브 옵션 형식:
+        구조화 형식: [{name: "펄 그레이(W7)/S", optionName1: "펄 그레이(W7)",
+                      optionName2: "S", ...}, ...]  (SSG 등 — 축이 필드로 분리됨)
         소싱처 형식: [{name: "WHITE / M", ...}, ...]  (value 필드 없음)
         명시적 형식: [{option_name: "색상/사이즈", option_value: "빨강/M", ...}, ...]
+
+    축 판정 우선순위: optionName1/2/3 > option_value > " / " 분리.
+    optionName 필드를 무시하고 name만 파싱하면 SSG 상품이
+    "펄 그레이(W7)/S" 통짜 단일옵션으로 등록된다(다이나핏 1,261건 실측).
     """
     emp_opts: list[dict] = []
     seen_keys: set[tuple] = set()
+    _is_ssg = source_site.upper().startswith("SSG")
 
     for opt in options:
         emp_opt: dict[str, str] = {"type": "SELECT"}
@@ -930,7 +990,19 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         opt_name = opt.get("option_name", "") or opt.get("name", "")
         opt_value = opt.get("option_value", "") or opt.get("value", "")
 
-        if opt_value:
+        # 구조화 축 필드 (optionName1/2/3) — 있으면 최우선
+        axis_values = []
+        for _ax in (1, 2, 3):
+            _v = str(opt.get(f"optionName{_ax}") or "").strip()
+            if not _v:
+                break
+            axis_values.append(_v)
+
+        if axis_values:
+            for i, p in enumerate(axis_values, 1):
+                emp_opt[f"title{i}"] = f"옵션{i}" if len(axis_values) > 1 else "옵션"
+                emp_opt[f"opt{i}"] = p
+        elif opt_value:
             # 명시적 형식: option_name=제목, option_value=값 (cafe24 등)
             names = opt_name.split("/") if "/" in opt_name else [opt_name]
             values = opt_value.split("/") if "/" in opt_value else [opt_value]
@@ -945,6 +1017,12 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
                 if " / " in opt_name
                 else [opt_name.strip()]
             )
+            if len(parts) == 1 and _is_ssg and "/" in opt_name:
+                # SSG 레거시 행 — optionName1/2가 없던 시절 수집분. SSG 수집기 자체가
+                # 공백 없는 '/'를 축 구분자로 추론(ssg_sourcing._parse_raw_uitem_blocks)
+                # 하므로 동일 규칙 적용. 타 소싱처는 투톤 색상("블랙/화이트") 등
+                # 단일 값 내 '/' 가능성이 있어 SSG로 한정한다.
+                parts = [p.strip() for p in opt_name.split("/") if p.strip()][:3]
             for i, p in enumerate(parts[:3], 1):
                 emp_opt[f"title{i}"] = f"옵션{i}" if len(parts) > 1 else "옵션"
                 emp_opt[f"opt{i}"] = p
@@ -970,7 +1048,8 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
         opt_stock = opt.get("stock", opt.get("quantity", default_stock))
         if default_stock > 0:
             opt_stock = min(int(opt_stock), default_stock)
-        if opt.get("is_sold_out") or opt.get("sold_out"):
+        # isSoldOut(camelCase)가 수집 저장 표준 키 — snake_case만 보면 품절을 놓친다
+        if opt.get("isSoldOut") or opt.get("is_sold_out") or opt.get("sold_out"):
             emp_opt["soldout"] = "1"
             emp_opt["stock"] = "0"
         else:
@@ -978,7 +1057,19 @@ def _build_options(options: list[dict], default_stock: int = 999) -> list[dict]:
             emp_opt["stock"] = str(int(opt_stock))
 
         emp_opt["weight"] = "0"
-        emp_opt["manage_code"] = ""
+        # 옵션 관리코드 — GS이숍은 옵션별 공급사 단품코드(attrPrdListSupAttrPrdCd)가
+        # 필수라, 빈 값이면 EMP→GS이숍 전송이 "필수 값을 확인 해주세요"로 전량 거부됨
+        # (2026-08-14 에잇세컨즈 GS이숍 등록 실패로 발견). 수집 옵션의 관리코드
+        # (무신사 managedCode "흰색^M" 등) 우선, 없으면 옵션 고유번호(no) 폴백.
+        # 타 마켓은 관리코드가 있어도 무해(판매자 참조용 필드).
+        _mcode = str(
+            opt.get("managedCode")
+            or opt.get("managed_code")
+            or opt.get("itemCode")
+            or opt.get("no")
+            or ""
+        ).strip()
+        emp_opt["manage_code"] = _mcode[:50]
         emp_opt["barcode_user"] = ""
 
         emp_opts.append(emp_opt)

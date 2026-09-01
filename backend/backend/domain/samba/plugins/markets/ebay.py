@@ -310,23 +310,37 @@ class EbayPlugin(MarketPlugin):
             }
 
         # 중복 상품 등록 방지 — 신규 등록(existing_no 없음)일 때만 체크.
-        # 같은 계정에 name_en 동일한 다른 상품이 이미 registered_accounts로 등록돼
-        # 있으면 스킵 (2026-07-13 잉어킹 62건 중복등록 → 정책위반 삭제 위험 사고 재발 방지).
+        # (2026-07-13 잉어킹 62건 중복등록 → 정책위반 삭제 위험 사고 재발 방지)
+        #
+        # [2026-08-17] 판별키를 품번(style_code) 우선으로 변경.
+        #   이름만 비교하면 TCG 카드에서 오차단이 난다. 예: 피카츄 V-UNION 3장
+        #   (S8A025-028 / S8A026-028 / S8A027-028)은 크림 상품명이 전부 같지만
+        #   서로 다른 카드다. "같은 이름"이 아니라 "같은 카드"를 막아야 한다.
+        #   품번이 없는 소싱처(번장 등)는 기존대로 name_en 으로 폴백한다.
         if not existing_no and session and account is not None:
             _acc_id = str(getattr(account, "id", "") or "")
             _self_id = product.get("id") if isinstance(product, dict) else None
             _name_en = product.get("name_en") or product.get("ebay_title")
-            if _acc_id and _self_id and _name_en:
+            _style = str(product.get("style_code") or "").strip()
+            if _acc_id and _self_id and (_style or _name_en):
                 from sqlalchemy import text as _sa_text
 
+                if _style and _style not in ("-",):
+                    _key_col, _key_val, _key_label = (
+                        "style_code",
+                        _style,
+                        f"품번 {_style}",
+                    )
+                else:
+                    _key_col, _key_val, _key_label = "name_en", _name_en, _name_en
                 _dup = await session.execute(
                     _sa_text(
-                        "SELECT id FROM samba_collected_product "
-                        "WHERE name_en = :name_en AND id != :self_id "
+                        f"SELECT id FROM samba_collected_product "  # noqa: S608 — 컬럼명은 위 분기 리터럴만
+                        f"WHERE {_key_col} = :key_val AND id != :self_id "
                         "AND registered_accounts::text LIKE :acc_pattern LIMIT 1"
                     ),
                     {
-                        "name_en": _name_en,
+                        "key_val": _key_val,
                         "self_id": _self_id,
                         "acc_pattern": f"%{_acc_id}%",
                     },
@@ -335,7 +349,7 @@ class EbayPlugin(MarketPlugin):
                 if _dup_row:
                     return {
                         "success": False,
-                        "message": f"중복 등록 차단 — 같은 상품({_name_en})이 이미 이 계정에 등록됨 ({_dup_row[0]})",
+                        "message": f"중복 등록 차단 — 같은 카드({_key_label})가 이미 이 계정에 등록됨 ({_dup_row[0]})",
                     }
 
         # Business Policy ID — 계정 extras 또는 samba_settings에서 조회.
@@ -684,33 +698,55 @@ class EbayPlugin(MarketPlugin):
                     "product_no": existing_no,
                 }
             else:
-                # 중복 상품 등록 방지 — 신규 등록 전, 같은 계정에 name_en이 동일한
-                # 다른 상품이 이미 등록돼 있으면 스킵. 2026-07-13 잉어킹 프로모카드
+                # 중복 상품 등록 방지 — 신규 등록 전, 같은 계정에 이미 등록된
+                # 같은 카드가 있으면 스킵. 2026-07-13 잉어킹 프로모카드
                 # 62건 중복등록(정책위반 삭제 리스크) 사고 재발 방지.
+                #
+                # [2026-08-17] 판별키를 품번(style_code) 우선으로 변경.
+                #   상품명만 비교하면 TCG 카드에서 오차단이 난다. 예: 피카츄 V-UNION
+                #   4장(S8A-025~028-028)은 크림 상품명이 전부 같지만 서로 다른 카드다.
+                #   품번 없는 소싱처(번장 등)는 기존대로 name_en 으로 폴백.
                 _name_en = product.get("name_en") if isinstance(product, dict) else None
                 _pid = product.get("id") if isinstance(product, dict) else None
                 _acc_id = str(getattr(account, "id", "") or "")
-                if _name_en and _pid and _acc_id and session:
+                _style = (
+                    str(product.get("style_code") or "").strip()
+                    if isinstance(product, dict)
+                    else ""
+                )
+                if (_style or _name_en) and _pid and _acc_id and session:
                     from sqlalchemy import text as _sa_text
 
+                    if _style and _style != "-":
+                        _key_col, _key_val, _key_label = (
+                            "style_code",
+                            _style,
+                            f"품번 {_style}",
+                        )
+                    else:
+                        _key_col, _key_val, _key_label = (
+                            "name_en",
+                            _name_en,
+                            str(_name_en),
+                        )
                     _dup = await session.execute(
                         _sa_text(
-                            "SELECT id FROM samba_collected_product "
-                            "WHERE name_en = :name_en AND id != :pid "
+                            f"SELECT id FROM samba_collected_product "  # noqa: S608 — 컬럼명은 위 분기 리터럴만
+                            f"WHERE {_key_col} = :key_val AND id != :pid "
                             "AND registered_accounts::jsonb ? :acc_id LIMIT 1"
                         ),
-                        {"name_en": _name_en, "pid": _pid, "acc_id": _acc_id},
+                        {"key_val": _key_val, "pid": _pid, "acc_id": _acc_id},
                     )
                     _dup_row = _dup.first()
                     if _dup_row:
                         logger.warning(
-                            "[eBay] 중복등록 스킵 — 동일 name_en 이미 등록됨: %s (기존 %s)",
-                            _name_en,
+                            "[eBay] 중복등록 스킵 — 같은 카드 이미 등록됨: %s (기존 %s)",
+                            _key_label,
                             _dup_row[0],
                         )
                         return {
                             "success": False,
-                            "message": f"중복 상품 — 이미 등록된 동일 상품 존재({_dup_row[0]})",
+                            "message": f"중복 상품 — 이미 등록된 같은 카드 존재({_key_label} / {_dup_row[0]})",
                         }
 
                 # 신규 등록

@@ -36,6 +36,10 @@ EXTENSION_SITES = {
 # 프로세스 lifetime 내 자가등록 완료 dev 캐시 — DB read 중복 차단.
 _daemon_autoreg_done: set[str] = set()
 
+# device_id → 확장앱 버전 (폴링 헤더 X-Ext-Version 기록).
+# 어느 PC 가 구버전인지 즉시 확인하기 위한 진단용. GET /proxy/sourcing/ext-versions.
+_pc_ext_version: dict[str, str] = {}
+
 
 async def _ensure_daemon_extension_key(session, device_id: str) -> None:
     """데몬 device 가 samba_extension_key 에 없으면 placeholder INSERT.
@@ -249,6 +253,20 @@ async def sourcing_collect_queue(request: Request) -> Any:
     except Exception:
         pass
     ext_version = request.headers.get("X-Ext-Version", "").strip()
+    # [2026-08-06] PC별 확장앱 버전 기록 — 헤더로 오는데 버리고 있어서, 어느 PC가
+    # 구버전인지 알 방법이 없었다. SSG 카드혜택가처럼 "특정 PC에서만 값이 틀린"
+    # 문제를 추적하려면 이 정보가 필수다. 바뀔 때만 로그를 남겨 폴링마다 도배되지
+    # 않게 한다. 조회는 GET /proxy/sourcing/ext-versions.
+    if _clean_device_id and ext_version:
+        _prev = _pc_ext_version.get(_clean_device_id)
+        if _prev != ext_version:
+            _pc_ext_version[_clean_device_id] = ext_version
+            logger.info(
+                "[확장앱버전] %s: %s → %s",
+                _clean_device_id[:20],
+                _prev or "(최초)",
+                ext_version,
+            )
     job = await SourcingQueue.get_next_job(
         device_id=_clean_device_id,
         allowed_sites=allowed_sites,
@@ -394,6 +412,26 @@ async def extension_latest_version() -> dict[str, Any]:
     응답 = {version}.
     """
     return {"version": EXTENSION_LATEST_VERSION}
+
+
+@sourcing_queue_router.get("/sourcing/ext-versions")
+async def sourcing_ext_versions() -> dict[str, Any]:
+    """PC별 확장앱 버전 현황 — 어느 PC 가 구버전인지 즉시 확인용(2026-08-06).
+
+    폴링 헤더 X-Ext-Version 을 기록해둔 값이다. 프로세스 메모리라 재기동하면
+    비고, 각 PC 가 다시 폴링하면 수 초 내 다시 채워진다.
+    """
+    latest = EXTENSION_LATEST_VERSION
+    rows = [
+        {"deviceId": dev, "version": ver, "outdated": ver != latest}
+        for dev, ver in sorted(_pc_ext_version.items())
+    ]
+    return {
+        "latest": latest,
+        "count": len(rows),
+        "outdated": [r["deviceId"] for r in rows if r["outdated"]],
+        "devices": rows,
+    }
 
 
 @sourcing_queue_router.get("/autotune-daemon/health")

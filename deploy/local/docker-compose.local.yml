@@ -54,7 +54,7 @@ services:
     env_file:
       - ./local.env
     environment:
-      ENVIRONMENT: production
+      ENVIRONMENT: development
       # 로컬 PG 는 SSL 미사용 → SSL 강제 해제
       DB_SSL_REQUIRED: "false"
       WRITE_DB_HOST: postgres
@@ -62,12 +62,17 @@ services:
       READ_DB_HOST: postgres
       READ_DB_PORT: "5432"
       WEB_CONCURRENCY: "1"
-      PROCESS_ROLE: api
-      # [Phase A 안전장치] 백그라운드 전면 비활성 — 라이브 마켓/EMS/스크래핑 무영향.
-      # Phase D 컷오버 시 제거(또는 0)하고 워커 활성.
-      DISABLE_BACKGROUND_WORKERS: "1"
+      # [스코프 워커] order_sync/returns_sync/collect 잡을 처리하는 워커 상시 기동.
+      #  - PROCESS_ROLE=worker: JobWorker 만 띄우고 오토튠/주문폴러/리컨실러는 미기동.
+      #  - WORKER_ONLY_TYPES=order_sync,returns_sync,collect: 워커가 주문/반품 동기화 + 상품수집 잡만 클레임.
+      #    · collect = 소스사이트(무신사 등) 상품 수집 = 읽기 + 로컬 DB 저장뿐. 라이브 마켓으로 나가는 write 없음.
+      #    · transmit/autotune_transmit(라이브 마켓 전송)은 의도적으로 제외 유지 — 로컬에서 실제 마켓 등록 방지.
+      # → "주문 가져오기" + "반품 가져오기" + "상품수집" 버튼이 상시 자동 동작. 라이브 마켓 전송은 여전히 무영향.
+      # (전송/오토튠까지 살리려면 PROCESS_ROLE=api + DISABLE_BACKGROUND_WORKERS 제거 — Phase D)
+      PROCESS_ROLE: worker
+      WORKER_ONLY_TYPES: order_sync,returns_sync,collect
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:28080:28080"
     networks: [samba-local]
 
 volumes:

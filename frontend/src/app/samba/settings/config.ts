@@ -392,6 +392,11 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'apiService', label: 'API Service', type: 'text', placeholder: '예: direct (직연동) / hubnet (허브넷)' },
     { name: 'apiKey', label: 'API Key', type: 'text', placeholder: '크림 발급 API 키' },
     { name: 'apiSecret', label: 'API Secret', type: 'password', placeholder: '크림 발급 시크릿' },
+    // [2026-08-28] 판매자센터 로그인 비밀번호. 크림은 refresh 토큰을 회전해주지 않아
+    // (수명 24h) 하루 한 번 재로그인이 강제된다. 이 값이 있어야 자동 로그인이 돌고,
+    // 없으면 고시등록이 401 로 막혀 신규 입찰이 통째로 거부된다.
+    // 아이디는 위 '스토어 ID'(로그인 이메일)를 그대로 쓴다.
+    { name: 'password', label: '판매자센터 비밀번호', type: 'password', placeholder: 'partner.kream.co.kr 로그인 비밀번호 — 자동 로그인용' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '사업자 연락처 — 상품 고시정보 필수' },
   ]},
   { key: 'poison', label: '포이즌', authField: 'apiKey', guideUrl: 'https://open.poizon.com', fields: [
@@ -466,29 +471,9 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'storeId', label: '셀러 ID', type: 'text' },
     { name: 'apiKey', label: 'API Key / Token', type: 'text' },
     { name: 'apiSecret', label: 'API Secret', type: 'password' },
-    { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '' },
-    { name: 'asMessage', label: 'A/S 안내 문구', type: 'text', placeholder: '' },
-    { name: 'discountRate', label: '즉시할인율(%)', type: 'number', placeholder: '0 (미설정)' },
-    { name: 'returnFee', label: '반품배송비(편도)', type: 'number', placeholder: '3000' },
-    { name: 'exchangeFee', label: '교환배송비(왕복)', type: 'number', placeholder: '6000' },
-    { name: 'jejuFee', label: '제주/도서산간 추가비', type: 'number', placeholder: '3000' },
-    { name: 'stockQuantity', label: '재고수량', type: 'number', placeholder: '999 (기본값)' },
-    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '∞ 무제한' },
-    { name: '_divider_purchase', label: '구매/리뷰 혜택 조건', type: 'divider' },
-    { name: 'multiPurchaseDiscount', label: '복수구매할인', type: 'select', options: [
-      { value: '', label: '설정안함' }, { value: 'true', label: '설정함' },
-    ]},
-    { name: 'multiPurchaseQty', label: '복수구매 수량 (N개 이상)', type: 'number', placeholder: '2' },
-    { name: 'multiPurchaseRate', label: '복수구매 할인율 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_point', label: '포인트', type: 'divider' },
-    { name: 'purchasePointEnabled', label: '상품 구매 시 지급', type: 'checkbox' },
-    { name: 'purchasePointRate', label: '구매 적립률 (%)', type: 'number', placeholder: '1' },
-    { name: '_divider_review', label: '상품리뷰 작성시 지급', type: 'divider' },
-    { name: 'reviewPointEnabled', label: '리뷰 포인트 지급', type: 'checkbox' },
-    { name: 'reviewTextPoint', label: '텍스트 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewPhotoPoint', label: '포토/동영상 리뷰 작성', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthTextPoint', label: '한달사용 텍스트 리뷰', type: 'number', placeholder: '원' },
-    { name: 'reviewMonthPhotoPoint', label: '한달사용 포토/동영상 리뷰', type: 'number', placeholder: '원' },
+    // BUYMA(일본 무재고 구매대행) 전용 — 한국 마켓용 필드(A/S·반품/교환배송비·제주도서산간·
+    // 즉시할인·복수구매·포인트·리뷰)는 바이마에 해당 없어 제외. 배송/취소 정책은 정책관리 바이마 탭.
+    { name: 'maxCount', label: '최대 등록 갯수', type: 'number', placeholder: '5000 (초기 제한)', description: 'BUYMA 초기 출품 상한은 5000개 (등급 상승 시 증가)' },
   ]},
   { key: 'lazada', label: 'Lazada', authField: 'accessToken', guideUrl: 'https://open.lazada.com/', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },

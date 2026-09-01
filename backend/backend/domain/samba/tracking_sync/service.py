@@ -94,6 +94,10 @@ def build_tracking_url(site: str, sourcing_order_number: str) -> str:
     if s == "KREAM":
         # KREAM 송장 URL 추정값 — 마이페이지 주문 상세. 실측 검증 필요.
         return f"https://kream.co.kr/my/orders/{ord_no}"
+    if s == "29CM":
+        # 29CM 주문상세 — 주문번호 파라미터 형식 미실측이라 주문목록으로 보낸다.
+        # (마이페이지 최근주문에 ORD... 번호가 그대로 노출된다)
+        return "https://www.29cm.co.kr/order/my-order/list"
     raise ValueError(f"지원하지 않는 소싱처 송장조회: {site}")
 
 
@@ -134,6 +138,10 @@ COURIER_NAME_ALIASES: dict[str, str] = {
     "cls": "쿠팡로지스틱스",
     "쿠팡로지스틱스": "쿠팡로지스틱스",
     "agility": "Agility",
+    # GS샵 택배사코드 DH를 스크래퍼가 DHL로 오매핑하던 보정 — 국내 소싱배송에 DHL 없음,
+    # 실체는 CJ대한통운 (GS샵 공식 명세 _GS_COURIER_MAP도 "CJ대한통운": "DH")
+    "dhl": "CJ대한통운",
+    "dh": "CJ대한통운",
 }
 
 
@@ -204,6 +212,8 @@ def _detect_site_from_url(url: str) -> str:
         return "OLIVEYOUNG"
     if "thehyundai.com" in host:
         return "THEHYUNDAI"
+    if "29cm.co.kr" in host:
+        return "29CM"
     return ""
 
 
@@ -220,6 +230,7 @@ _KNOWN_SOURCE_SITES = {
     "FASHIONPLUS",
     "OLIVEYOUNG",
     "THEHYUNDAI",
+    "29CM",
 }
 
 

@@ -879,11 +879,7 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
     실패해도 무시 — 사용자 클릭 시 정상 동작함.
     """
     try:
-        from sqlalchemy import func, case, and_, literal, text as _text
         from sqlmodel import select
-
-        _AI_TAGGED_JSONB = _text("'[\"__ai_tagged__\"]'::jsonb")
-        _AI_IMAGE_JSONB = _text("'[\"__ai_image__\"]'::jsonb")
 
         from backend.db.orm import get_read_session
         from backend.domain.samba.cache import cache
@@ -920,51 +916,10 @@ async def _warmup_filter_tree_counts_cache(logger: logging.Logger) -> None:
 
                     _CP = SambaCollectedProduct
                     from backend.api.v1.routers.samba.collector_common import (  # noqa: F811
-                        has_registered_accounts as _has_reg,
+                        build_filter_tree_counts_stmt,
                     )
 
-                    count_stmt = (
-                        select(
-                            _CP.search_filter_id,
-                            func.count().label("cnt"),
-                            func.count(case((_has_reg(_CP), literal(1)))).label(
-                                "market_registered"
-                            ),
-                            func.count(
-                                case(
-                                    (
-                                        _CP.tags.op("@>")(_AI_TAGGED_JSONB),
-                                        literal(1),
-                                    )
-                                )
-                            ).label("ai_tagged"),
-                            func.count(
-                                case(
-                                    (
-                                        _CP.tags.op("@>")(_AI_IMAGE_JSONB),
-                                        literal(1),
-                                    )
-                                )
-                            ).label("ai_image"),
-                            func.count(
-                                case(
-                                    (
-                                        and_(
-                                            _CP.tags.isnot(None),
-                                            func.jsonb_typeof(_CP.tags) == "array",
-                                            func.jsonb_array_length(_CP.tags) > 0,
-                                        ),
-                                        literal(1),
-                                    )
-                                )
-                            ).label("tag_applied"),
-                            func.count(
-                                case((_CP.applied_policy_id.isnot(None), literal(1)))
-                            ).label("policy_applied"),
-                        )
-                        .where(_CP.search_filter_id.in_(leaf_ids))
-                        .group_by(_CP.search_filter_id)
-                    )
+                    count_stmt = build_filter_tree_counts_stmt(_CP, leaf_ids)
                     count_result = await session.execute(count_stmt)
                     counts: dict[str, dict] = {}
                     for row in count_result.all():
@@ -1033,10 +988,70 @@ async def _warmup_tetris_board_cache(logger: logging.Logger) -> None:
         logger.warning("[startup] 테트리스 보드 캐시 워밍업 전체 실패: %s", exc)
 
 
+async def _purge_unmatched_snkr_loop() -> None:
+    """크림 짝이 없는 스니덩크 상품 주기 삭제 [2026-08-25 지시].
+
+    검수화면 ③④(재고O/X + 크림미매칭)에 해당하는 것들 — 크림에 팔 짝이 없으니
+    보관할 이유가 없다. 매칭 해제·검수 거부가 날 때마다 계속 새로 생기므로
+    손으로 치우지 않고 6시간마다 자동으로 지운다.
+
+    거부(kream_snkr_rejected)된 매칭은 없는 것으로 친다(검수화면과 같은 기준).
+    **입찰이 살아있는 건은 건드리지 않는다** — 지우면 크림에 입찰만 남고
+    관리 주체가 사라져 유령 입찰이 된다.
+    """
+    _log = logging.getLogger("backend.lifecycle")
+    await asyncio.sleep(600)  # 기동 직후 혼잡 회피
+    cond = """
+        source_site='SNKRDUNK'
+        AND CASE WHEN EXISTS (
+              SELECT 1 FROM kream_snkr_rejected rj
+              WHERE rj.snkr_id = site_product_id
+                AND rj.kream_pid = resell_matches->'kream'->>'product_id')
+            THEN '' ELSE COALESCE(resell_matches->'kream'->>'product_id','') END = ''
+        AND COALESCE((
+              SELECT count(*) FROM jsonb_array_elements(
+                  COALESCE(resell_matches->'kream_candidates','[]'::jsonb)) cd
+              WHERE NOT EXISTS (
+                  SELECT 1 FROM kream_snkr_rejected rj
+                  WHERE rj.snkr_id = site_product_id
+                    AND rj.kream_pid = cd->>'product_id')), 0) = 0
+        AND NOT EXISTS (
+              SELECT 1 FROM kream_live_asks la
+              WHERE la.product_id = resell_matches->'kream'->>'product_id')
+    """
+    while True:
+        try:
+            from sqlalchemy import text as _sa_text
+
+            from backend.db.orm import get_write_session
+
+            async with get_write_session() as ws:
+                res = await ws.execute(
+                    _sa_text(
+                        "DELETE FROM samba_collected_product WHERE id IN ("
+                        "  SELECT id FROM samba_collected_product WHERE "
+                        + cond
+                        + "  LIMIT 5000)"
+                    )
+                )
+                await ws.commit()
+                if res.rowcount:
+                    _log.info(
+                        "[크림정리] 크림 짝 없는 스니덩크 %s건 삭제",
+                        f"{res.rowcount:,}",
+                    )
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            _log.warning("[크림정리] 실패(무시): %s", exc)
+        await asyncio.sleep(6 * 3600)
+
+
 async def _start_tetris_sync_scheduler() -> None:
     global _tetris_sync_task, _pc_sync_task, _pc_cleanup_task, _daemon_poll_watch_task
 
     _tetris_sync_task = asyncio.create_task(_tetris_sync_loop())
+    asyncio.create_task(_purge_unmatched_snkr_loop())
     _pc_sync_task = asyncio.create_task(_pc_sync_loop())
     _pc_cleanup_task = asyncio.create_task(_pc_cleanup_loop())
     _daemon_poll_watch_task = asyncio.create_task(_daemon_poll_watch_loop())
@@ -1055,7 +1070,15 @@ async def _kream_shadow_loop() -> None:
 
     _log = logging.getLogger("backend.lifecycle")
     await _asyncio.sleep(90)  # 서버 기동 대기
+    # JP/CN 번갈아 돈다. CN 은 식화(SHIHUO) 매칭이 verified 될 때 등록해야 하므로
+    # 사이클은 계속 돈다(식화 미확인이면 후보 0 이라 입찰 없음).
+    # [2026-09-01] JP 소싱상품이 CN 계정에 오등록되는 사고는 CN 을 끄는 게 아니라
+    # kream_shadow._exec_create_ask 의 소싱처↔그룹 가드로 막는다(그게 진짜 방어).
+    _groups = ("JP", "CN")
+    _gi = 0
     while True:
+        _group = _groups[_gi % len(_groups)]
+        _gi += 1
         try:
             # [2026-08-04] 구 ask 단위 섀도(run_kream_shadow_once)는 제거했다.
             # KREAM_UNIFIED=1 로 1년 가까이 통합 경로만 돌았는데도 같은 판단 로직이
@@ -1064,11 +1087,11 @@ async def _kream_shadow_loop() -> None:
                 run_kream_unified_once,
             )
 
-            await run_kream_unified_once()
+            await run_kream_unified_once(_group)
         except _asyncio.CancelledError:
             return
         except Exception as exc:
-            _log.warning("[크림섀도] 루프 오류(무시): %s", exc)
+            _log.warning("[크림섀도][%s] 루프 오류(무시): %s", _group, exc)
         # 배치 로테이션 주기 — 사이클 자체는 수십초라 대기가 길면 전 카탈로그 1회전이 수십시간.
         # 90초 + 배치 1,500 → 약 40분/1회전 (로컬 봇 수준의 시세 추종).
         await _asyncio.sleep(int(os.environ.get("KREAM_LOOP_SLEEP") or 90))
@@ -2026,6 +2049,11 @@ async def _soldout_cleanup_loop() -> None:
                             upd_sp.registered_accounts = new_regs if new_regs else None
                             if not new_regs:
                                 upd_sp.market_product_nos = None
+                                # 전 계정 삭제 완료 → 정규 삭제 경로(shipment/service.py,
+                                # collector.py)와 동일하게 status도 되돌림 (#702) —
+                                # 안 되돌리면 등록정보는 비었는데 status만 'registered'로
+                                # 남는 부분 유령 상품이 생겨 오토튠 대상 SELECT 등을 오염시킴.
+                                upd_sp.status = "collected"
                             upd_session.add(upd_sp)
                             await upd_session.commit()
 

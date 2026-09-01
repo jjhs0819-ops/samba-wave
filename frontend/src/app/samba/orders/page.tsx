@@ -146,7 +146,7 @@ export default function OrdersPage() {
     smsTemplates,
     templateEditModal, setTemplateEditModal,
     isNewTemplate,
-    openNewTemplate, openEditTemplate, saveTemplate, deleteTemplate,
+    openNewTemplate, openEditTemplate, saveTemplate, deleteTemplate, addDefaultTemplates,
     insertMsgTag, openMsgModal, handleSendMsg,
   } = sms
 
@@ -166,6 +166,10 @@ export default function OrdersPage() {
   const [startLocked, setStartLocked] = useState(false)
   const [customEnd, setCustomEnd] = useState(() => formatDateInput(getKstTodayDate()))
   const loadOrders = useCallback(async () => {
+    // 날짜 입력 중 지우면 customStart/customEnd가 빈 문자열이 되는 순간이 있음 —
+    // 그 상태로 API를 호출하면 백엔드가 '' 를 파싱 실패해 500(연결 끊김/Failed to fetch)까지 간다.
+    // 유효한 날짜가 채워질 때까지 요청 자체를 보내지 않는다.
+    if (!isProductMode && (!customStart || !customEnd)) return
     setLoading(true)
     try {
       const data = isProductMode
@@ -1056,6 +1060,7 @@ export default function OrdersPage() {
         openEditTemplate={openEditTemplate}
         openNewTemplate={openNewTemplate}
         deleteTemplate={deleteTemplate}
+        addDefaultTemplates={addDefaultTemplates}
         handleSendMsg={handleSendMsg}
       />
 

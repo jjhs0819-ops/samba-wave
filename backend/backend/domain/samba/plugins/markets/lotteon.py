@@ -1177,10 +1177,47 @@ def _strip_brand_suffix(name: str) -> str:
     return name
 
 
+def _norm_brand_for_match(name: str) -> str:
+    """브랜드명 정확일치 비교용 정규화 — 공백 제거 + 소문자화."""
+    return "".join(str(name or "").split()).lower()
+
+
+# 우리 브랜드 표기 → 롯데ON 등록 표기 별칭.
+# 정확일치가 원칙이지만, 롯데ON 카탈로그 표기가 우리와 다른 경우가 있어
+# 그 차이만 여기서 흡수한다(2026-08-14 수집 66개 브랜드 전수 감사 결과).
+#   엠엘비        : 롯데ON 은 영문 'MLB' 로만 등록 — 한글 검색 0건
+#   폴로 랄프 로렌 : 롯데ON 표기 '폴로 랄프로렌' (랄프/로렌 사이 공백 없음).
+#                   검색 API 가 띄어쓰기 차이를 0건으로 돌려줘 첫단어('폴로')
+#                   폴백이 '비버리힐스 폴로클럽' 등을 잡을 위험이 있었다.
+#   예루살렘 샌들  : 롯데ON 표기 '예루살렘샌들'
+#   브룩스러닝    : 롯데ON 에 별도 등록이 없어 상위 브랜드 '브룩스' 로 연결
+# 키는 _norm_brand_for_match 로 정규화해 비교하므로 띄어쓰기/대소문자 무관.
+_LOTTEON_BRAND_ALIASES: dict[str, str] = {
+    "엠엘비": "MLB",
+    "폴로랄프로렌": "폴로 랄프로렌",
+    "예루살렘샌들": "예루살렘샌들",
+    "브룩스러닝": "브룩스",
+}
+
+
 async def _search_brand_no(client: Any, brand_name: str) -> str:
-    """접미사 제거 → 첫 단어만 → 스킵 순서로 브랜드 검색. brdNo 반환."""
+    """접미사 제거 → 첫 단어만 → 스킵 순서로 브랜드 검색. brdNo 반환.
+
+    **정확일치 전용**이다. 롯데ON 브랜드 검색(cheetahBrnd)은 부분일치 검색이라
+    검색어를 포함하는 다른 브랜드가 상위에 오는 경우가 많다. 예전에는 items[0]
+    을 검증 없이 채택해 엉뚱한 브랜드로 등록됐다 (2026-08-14 실측):
+      '푸마' → 라푸마(P864)   ※ 진짜 푸마는 P4559 로 2번째
+      '조마' → 리조마(P21970) ※ 진짜 조마는 P48800 으로 2번째
+    브랜드 오등록은 지재권/표시광고 리스크로 직결되므로, 이름이 정확히 일치하는
+    항목이 없으면 브랜드를 공란으로 두고 등록한다(오등록보다 공란이 안전).
+    """
     stripped = _strip_brand_suffix(brand_name)
     candidates = [stripped]
+
+    # 별칭(롯데ON 표기)이 있으면 원표기 다음으로 시도 — _LOTTEON_BRAND_ALIASES 참고
+    _alias = _LOTTEON_BRAND_ALIASES.get(_norm_brand_for_match(stripped))
+    if _alias and _alias not in candidates:
+        candidates.append(_alias)
 
     # 첫 단어만 시도 (접미사 제거 결과와 다를 때만)
     first_word = stripped.split()[0] if stripped else ""
@@ -1188,21 +1225,41 @@ async def _search_brand_no(client: Any, brand_name: str) -> str:
         candidates.append(first_word)
 
     for candidate in candidates:
+        _target = _norm_brand_for_match(candidate)
+        if not _target:
+            continue
         try:
             result = await client.search_brand(candidate)
             items = result.get("itemList") or result.get("data") or []
-            if isinstance(items, list) and items:
-                item = items[0]
+            if not (isinstance(items, list) and items):
+                continue
+            for item in items:
                 d = item.get("data", item) if isinstance(item, dict) else item
-                # 브랜드 검색 응답(cheetahBrnd)의 실제 키: brnd_id
+                if not isinstance(d, dict):
+                    continue
+                # 브랜드 검색 응답(cheetahBrnd)의 실제 키: brnd_id / brnd_nm
                 brd_no = (
                     d.get("brnd_id", "") or d.get("brnd_no", "") or d.get("brdNo", "")
                 )
-                if brd_no:
-                    logger.info(
-                        f"[롯데ON] 브랜드 검색 성공: {brand_name!r} → {candidate!r} brdNo={brd_no}"
-                    )
-                    return str(brd_no)
+                if not brd_no:
+                    continue
+                # 한글명/영문명 중 하나라도 정확히 일치해야 채택
+                _names = (
+                    d.get("brnd_nm", ""),
+                    d.get("brnd_nm_kr", ""),
+                    d.get("brnd_nm_en", ""),
+                )
+                if not any(_norm_brand_for_match(n) == _target for n in _names):
+                    continue
+                logger.info(
+                    f"[롯데ON] 브랜드 정확일치: {brand_name!r} → "
+                    f"{d.get('brnd_nm') or d.get('brnd_nm_kr')!r} brdNo={brd_no}"
+                )
+                return str(brd_no)
+            logger.info(
+                f"[롯데ON] 브랜드 정확일치 없음 ({candidate!r}) — "
+                f"후보 {[(i.get('data', i) or {}).get('brnd_nm') for i in items[:5]]}"
+            )
         except Exception as e:
             logger.warning(f"[롯데ON] 브랜드 검색 실패 ({candidate!r}): {e}")
 
@@ -1980,26 +2037,109 @@ class LotteonPlugin(MarketPlugin):
             f"extras.shippingType={extras.get('shippingType')!r}"
         )
 
-        # ── 차단 CDN 사전 R2 미러링 (HEAD 검증 0장 회피) ──
-        # GS샵(asset.m-gs.kr / static.m-gs.kr), 무신사(msscdn.net),
-        # 롯데온(contents.lotteon.com) 등 핫링크 차단 도메인은 일반 httpx HEAD에
-        # 403/거절을 내려 filter_alive_urls가 전부 드롭 → "유효한 이미지 0장" 가드 발동.
-        # 롯데홈쇼핑(lottehome.py)과 동일하게 R2로 선미러해 R2 URL로 교체한다.
-        # _HOTLINK_BLOCKED_HOSTS에 등록된 도메인만 미러 — 다른 소싱처는 원본 유지.
+        # ── 긴 URL 단축용 R2 미러링 (호스트 기반 미러는 롯데ON 에서 금지) ──
+        # 롯데ON 은 다른 마켓과 정반대다. 무신사(msscdn.net)/ABC마트(image.a-rt.com)
+        # 같은 "핫링크 차단" 원본 CDN 은 정상 수용하는 반면, 우리 R2 공개 도메인
+        # (img.sambawave-cdn.shop)을 origFileNm URL 검증에서 9999 로 거부한다.
+        # 2026-08-14 실측: 동일 상품(크록스 cp_01KZ1NV3JG…, 살로몬 cp_01KZJT3XC9…)이
+        # R2 URL 이면 "[원본파일명(WDTH:origFileNm)] URL 형식이 올바르지 않습니다" 실패,
+        # 원본 CDN URL 로 바꾸면 즉시 등록 성공. R2 자체는 정상(200/JPEG)이라 우리
+        # 인프라 문제가 아니라 롯데ON 측 URL 수용 규칙 문제다.
+        # → skip_blocked_hosts=True 로 호스트 기반 미러만 끄고, min_bytes=200 초과
+        #   (origImgFileNm 200byte 한도) 단축 미러는 그대로 유지한다.
+        #   다른 마켓(SSG/11번가 등)은 기본값 False 라 기존 동작 그대로다.
         try:
             from backend.domain.samba.image.service import ImageTransformService
 
             _img_svc = ImageTransformService(session)
             if product_copy.get("images"):
-                # min_bytes=200: 롯데ON origImgFileNm 은 200byte 한도 — 인코딩된 한글
-                # 파일명 등 긴 URL(예: img.dk-on.com 236byte)은 호스트 무관 미러해
-                # 짧은 R2 URL로 단축, "origImgFileNm는 200 Byte 이하" 거부 방지.
                 _mirrored, _ = await _img_svc.mirror_with_persistence(
-                    product_copy.get("id"), product_copy["images"], min_bytes=200
+                    product_copy.get("id"),
+                    product_copy["images"],
+                    min_bytes=200,
+                    skip_blocked_hosts=True,
                 )
                 product_copy["images"] = _mirrored
         except Exception as e:
-            logger.warning(f"[롯데ON] 차단 CDN R2 미러링 실패 — 원본 유지: {e}")
+            logger.warning(f"[롯데ON] 긴 URL R2 단축 미러링 실패 — 원본 유지: {e}")
+
+        # ── R2 URL → 자체 도메인 프록시로 재작성 ─────────────────────────
+        # 롯데ON 은 R2 공개 도메인을 origFileNm 검증에서 거부한다(9999). 같은
+        # 이미지를 Caddy R2 리버스 프록시(/images/*) 경유 URL 로 보내면 통과한다
+        # (2026-08-14 실측: settings.lotteon_image_proxy_base 주석 참고).
+        # AI 변환 이미지는 R2 에 저장되므로 이 재작성이 없으면 데상트/엠엘비/
+        # 마뗑킴처럼 이미지 변환이 판매 전제인 브랜드를 롯데ON 에 올릴 수 없다.
+        # images / detail_images / detail_html 세 경로 모두 갈아끼운다 —
+        # 상세HTML 안 <img src> 도 같은 도메인이라 하나만 고치면 반쪽이 된다.
+        try:
+            from backend.core.config import settings as _cfg
+
+            _proxy_base = (getattr(_cfg, "lotteon_image_proxy_base", "") or "").rstrip(
+                "/"
+            )
+            if _proxy_base:
+                from backend.domain.samba.image.service import ImageTransformService
+
+                _r2 = await ImageTransformService(session)._get_r2_client()
+                _r2_public = (_r2[2] or "").rstrip("/") if _r2 else ""
+                if _r2_public:
+
+                    def _to_proxy(u: Any) -> Any:
+                        if isinstance(u, str) and u.startswith(_r2_public + "/"):
+                            return f"{_proxy_base}/{u[len(_r2_public) + 1 :]}"
+                        return u
+
+                    # 재작성 대상이 실제로 있는지 먼저 확인하고, 프록시가 살아있을
+                    # 때만 교체한다. 프록시 경로가 아직 배포 안 된 환경에서 죽은 URL로
+                    # 갈아끼우면 사전검증에서 전부 드롭돼 "유효한 이미지 0장"으로
+                    # 등록이 막힌다 — 재작성 안 한 것만 못하다.
+                    _cands = [
+                        u
+                        for u in (product_copy.get("images") or [])
+                        if isinstance(u, str) and u.startswith(_r2_public + "/")
+                    ]
+                    _proxy_alive = False
+                    if _cands:
+                        import httpx as _httpx
+
+                        _probe = _to_proxy(_cands[0])
+                        try:
+                            async with _httpx.AsyncClient(
+                                timeout=10, follow_redirects=True
+                            ) as _c:
+                                _r = await _c.head(_probe)
+                                _proxy_alive = _r.status_code == 200
+                        except Exception as _pe:
+                            logger.warning(
+                                f"[롯데ON] 프록시 확인 실패({_probe}): {_pe}"
+                            )
+                        if not _proxy_alive:
+                            logger.warning(
+                                f"[롯데ON] 이미지 프록시 미가용 — R2 URL 그대로 전송한다"
+                                f" (프록시 배포 전이면 R2 도메인 거부로 9999 가능): {_probe}"
+                            )
+
+                    if _cands and _proxy_alive:
+                        _n = 0
+                        for _fld in ("images", "detail_images"):
+                            _vals = product_copy.get(_fld)
+                            if isinstance(_vals, list):
+                                _new = [_to_proxy(u) for u in _vals]
+                                _n += sum(1 for a, b in zip(_vals, _new) if a != b)
+                                product_copy[_fld] = _new
+                        _html = product_copy.get("detail_html")
+                        if isinstance(_html, str) and _r2_public in _html:
+                            product_copy["detail_html"] = _html.replace(
+                                _r2_public + "/", _proxy_base + "/"
+                            )
+                            _n += 1
+                        if _n:
+                            logger.info(
+                                f"[롯데ON] R2 URL → 프록시 도메인 재작성 {_n}건 "
+                                f"({_r2_public} → {_proxy_base})"
+                            )
+        except Exception as e:
+            logger.warning(f"[롯데ON] R2 프록시 URL 재작성 실패 — 원본 유지: {e}")
 
         # ── 외부 이미지 URL 사전 검증 (9999 회피) ──
         # 죽은 URL 또는 거부 확장자가 origImgFileNm에 들어가면 롯데ON이

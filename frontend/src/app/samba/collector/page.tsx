@@ -114,6 +114,8 @@ export default function CollectorPage() {
     setAiImgMode,
     aiModelPreset,
     setAiModelPreset,
+    aiImgProvider,
+    setAiImgProvider,
     aiImgTransforming,
     setAiImgTransforming,
     aiPresetList,
@@ -611,6 +613,7 @@ export default function CollectorPage() {
           aiImgScope={aiImgScope}
           aiImgMode={aiImgMode}
           aiModelPreset={aiModelPreset}
+          aiImgProvider={aiImgProvider}
           aiPresetList={aiPresetList}
           aiImgTransforming={aiImgTransforming}
           imgFiltering={imgFiltering}
@@ -622,6 +625,7 @@ export default function CollectorPage() {
           setAiImgScope={setAiImgScope}
           setAiImgMode={setAiImgMode}
           setAiModelPreset={setAiModelPreset}
+          setAiImgProvider={setAiImgProvider}
           setAiImgTransforming={setAiImgTransforming}
           setImgFiltering={setImgFiltering}
           setImgFilterScopes={setImgFilterScopes}

@@ -23,7 +23,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/samba/collector", label: "상품수집" },
   { href: "/samba/products", label: "상품관리" },
-  { href: "/samba/manual-products", label: "수동등록" },
   { href: "/samba/policies", label: "정책관리" },
   { href: "/samba/categories", label: "카테고리매핑" },
   { href: "/samba/shipments", label: "상품전송" },
@@ -86,6 +85,20 @@ export default function SambaLayout({
   // → 오토튠 시작 시 이 deviceId를 백엔드에 전달해 "이 브라우저"에만 탭이 열리게 한다.
   useEffect(() => {
     return attachDeviceIdListener();
+  }, []);
+
+  // 마우스 휠로 <select> 값이 바뀌는 브라우저 기본동작 차단.
+  // 윈도우 Chrome 은 포커스된 select 위에서 휠을 굴리면 옵션이 한 칸씩 이동한다.
+  // 상품관리에서 "11번가 등록" 등 마켓현황 필터를 고른 뒤 결과를 보려고 스크롤하면
+  // 값이 목록 맨 위("마켓현황" = 빈값)까지 걸어 올라가 필터가 저절로 풀렸다.
+  // 캡처 단계에서 포커스를 떼어 기본동작이 값을 바꾸지 못하게 한다.
+  useEffect(() => {
+    const onWheel = () => {
+      const el = document.activeElement;
+      if (el instanceof HTMLSelectElement) el.blur();
+    };
+    window.addEventListener("wheel", onWheel, { passive: true, capture: true });
+    return () => window.removeEventListener("wheel", onWheel, { capture: true });
   }, []);
 
   // 확장앱 키 자동 발급 — content script 가 API_KEY_STATUS(hasKey)를 보내면,

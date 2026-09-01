@@ -22,6 +22,104 @@ from backend.utils.logger import logger
 # boto3 S3 클라이언트는 인증정보가 동일하면 재사용 — TCP 커넥션 풀 유지로 R2 업로드 오버헤드 감소
 _r2_client_cache: dict[str, tuple] = {}
 
+# 이미지 매직 헤더 (JPEG/PNG/GIF/WebP·BMP) — 이 목록에 없으면 이미지가 아니다
+_IMAGE_MAGIC_PREFIXES = (b"\xff\xd8", b"\x89PNG", b"GIF8", b"RIFF", b"BM")
+
+# ── 신규등록 경합 차단 (2026-08-20 코오롱 48건 복제 사고) ────────────────────
+# 사전 중복조회(find_master_code_by_name)와 register 사이에 잠금이 없어서, 같은
+# 상품을 두 흐름이 몇 초 차이로 처리하면 **둘 다 '없음'으로 통과**해 EMP 복제본이
+# 두 개 생긴다(전형적 TOCTOU). 워커의 계정 락은 playauto 를 "API stateless" 라며
+# 명시적으로 제외하고 있어(job/worker.py `_need_lock`) 동시 진입이 실제로 열려 있다.
+#
+# 실측(8/19 코오롱 777건 전송): 복제쌍 48개, 생성 간격 2~6초 33개·21~29초 13개.
+# 발생 시각이 14:51~15:09 에 몰렸는데 그 구간이 OOM 재기동이 가장 잦던 때다 —
+# 재개될 때마다 같은 구간을 다시 처리해 경합 확률이 폭증했다.
+#
+# ① 이름 단위 락으로 '조회 → 등록'을 원자화한다.
+# ② 방금 등록한 이름은 프로세스 메모리에 남긴다 — EMP 목록 API 가 갓 만든 상품을
+#    즉시 보여주지 않으면(인덱싱 지연) 락만으로는 두 번째가 또 통과한다.
+_REGISTER_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
+_RECENT_REGISTERED: dict[tuple[str, str], tuple[float, str]] = {}
+_RECENT_REGISTERED_TTL = 900.0
+
+
+def _register_lock(api_key: str, prod_name: str) -> asyncio.Lock:
+    """계정×상품명 단위 등록 락 — 같은 상품의 동시 신규등록을 직렬화."""
+    key = (str(api_key or ""), str(prod_name or ""))
+    lock = _REGISTER_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _REGISTER_LOCKS[key] = lock
+        # 이름이 무한정 쌓이지 않도록 상한 — 초과 시 잠기지 않은 것부터 버린다
+        if len(_REGISTER_LOCKS) > 20000:
+            for k in [k for k, v in _REGISTER_LOCKS.items() if not v.locked()][:10000]:
+                _REGISTER_LOCKS.pop(k, None)
+    return lock
+
+
+def _recent_registered(api_key: str, prod_name: str) -> str:
+    """방금 이 프로세스가 등록한 상품의 MasterCode — 없으면 ""."""
+    import time as _time
+
+    key = (str(api_key or ""), str(prod_name or ""))
+    hit = _RECENT_REGISTERED.get(key)
+    if not hit:
+        return ""
+    if _time.monotonic() - hit[0] > _RECENT_REGISTERED_TTL:
+        _RECENT_REGISTERED.pop(key, None)
+        return ""
+    return hit[1]
+
+
+def _mark_registered(api_key: str, prod_name: str, master_code: str) -> None:
+    import time as _time
+
+    if not master_code:
+        return
+    _RECENT_REGISTERED[(str(api_key or ""), str(prod_name or ""))] = (
+        _time.monotonic(),
+        str(master_code),
+    )
+    if len(_RECENT_REGISTERED) > 50000:
+        _RECENT_REGISTERED.clear()
+
+
+def _looks_like_image(head: bytes) -> bool:
+    """응답 첫 바이트가 실제 이미지인지 판정.
+
+    소싱처가 원본 이미지를 삭제하면 S3/CDN이 404 에러 XML을 반환하는데,
+    이를 검증 없이 넘기면 에러 문서가 .jpg로 위장한 채 EMP까지 전파된다
+    (2026-08-12 데상트 391건 — GS이숍 채널등록 '이미지헤더체크:xml' 전량 거절).
+    XML/HTML 에러 문서는 '<'로 시작하므로 매직 헤더로만 판정한다.
+    """
+    if not head:
+        return False
+    if head.lstrip()[:1] == b"<":  # XML/HTML 에러 문서
+        return False
+    return any(head.startswith(m) for m in _IMAGE_MAGIC_PREFIXES)
+
+
+def _resolve_stock_qty(options: list, real_stock: int, max_stock: int) -> int:
+    """상품(마스터) 재고수량 결정 — 옵션 재고가 진실의 원천.
+
+    옵션이 있는데 판매가능 재고가 0이면 상품 재고도 0이어야 한다. 계정 설정값
+    (_max_stock)이나 99로 폴백하면 EMP에 "상품 재고 20 · 전 단품 0"이라는 모순
+    상태가 만들어진다 — 계정 설정은 상한이지 품절 상품의 기본값이 아니다.
+    (2026-08-14 에잇세컨즈: 저재고 캡으로 전 옵션 0이 된 상품 413건이 EMP에
+    재고 20으로 올라가 GS이숍 채널등록이 단품코드 필수값 오류로 전량 거절)
+
+    옵션이 아예 없는 단일상품은 옵션 재고라는 개념이 없으므로 기존 폴백 유지.
+    """
+    if options and real_stock <= 0:
+        return 0
+    if max_stock > 0 and real_stock > 0:
+        return min(real_stock, max_stock)
+    if max_stock > 0:
+        return max_stock
+    if real_stock > 0:
+        return real_stock
+    return 99
+
 
 class PlayAutoPlugin(MarketPlugin):
     """플레이오토 EMP 마켓 플러그인."""
@@ -43,14 +141,7 @@ class PlayAutoPlugin(MarketPlugin):
         real_stock = sum(
             int(o.get("stock") or 0) for o in options if not o.get("isSoldOut")
         )
-        if max_stock > 0 and real_stock > 0:
-            stock_qty = min(real_stock, max_stock)
-        elif max_stock > 0:
-            stock_qty = max_stock
-        elif real_stock > 0:
-            stock_qty = real_stock
-        else:
-            stock_qty = 99
+        stock_qty = _resolve_stock_qty(options, real_stock, max_stock)
         return PlayAutoClient.transform_product(
             product=product,
             category_id=category_id if category_id != "__SKIP__" else "",
@@ -100,6 +191,17 @@ class PlayAutoPlugin(MarketPlugin):
         # 이미지를 R2에 업로드 후 공개 URL로 교체 (소싱처 URL은 외부 접근 불가)
         if not product.get("_skip_image_upload"):
             product = await self._upload_images_to_r2(session, product)
+            # [가드] 유효 이미지 0장 — 소싱처가 원본을 전부 삭제한 상태.
+            # 그대로 진행하면 이미지 없는 등록/수정으로 상품이 훼손되므로
+            # 명시적으로 실패시켜 재수집 후 재전송을 유도한다 (2026-08-12 데상트).
+            if product.pop("_all_images_dead", False):
+                return {
+                    "success": False,
+                    "message": (
+                        "유효한 상품 이미지가 0장 — 소싱처 원본 소실(404/에러XML). "
+                        "이미지 재수집 후 재전송이 필요합니다."
+                    ),
+                }
 
         client = PlayAutoClient(api_key)
 
@@ -116,14 +218,7 @@ class PlayAutoPlugin(MarketPlugin):
                 real_stock = sum(
                     int(o.get("stock") or 0) for o in options if not o.get("isSoldOut")
                 )
-                if max_stock > 0 and real_stock > 0:
-                    stock_qty = min(real_stock, max_stock)
-                elif max_stock > 0:
-                    stock_qty = max_stock
-                elif real_stock > 0:
-                    stock_qty = real_stock
-                else:
-                    stock_qty = 99
+                stock_qty = _resolve_stock_qty(options, real_stock, max_stock)
 
                 sale_price = int(product.get("sale_price") or 0)
                 minimal: dict[str, Any] = {
@@ -132,7 +227,11 @@ class PlayAutoPlugin(MarketPlugin):
                     "Count": str(stock_qty),
                 }
                 if options and isinstance(options, list):
-                    emp_opts = _build_options(options, stock_qty)
+                    emp_opts = _build_options(
+                        options,
+                        stock_qty,
+                        source_site=str(product.get("source_site") or ""),
+                    )
                     if emp_opts:
                         minimal["Opts"] = emp_opts
                         has_two_axes = any(o.get("title2") for o in emp_opts)
@@ -181,26 +280,66 @@ class PlayAutoPlugin(MarketPlugin):
                     # 쌓이던 문제를 등록 '전' 사전확인으로 차단한다.
                     # (타임아웃 자체를 성공으로 보는 금지 패턴과 무관)
                     _prod_name = str(emp_data.get("ProdName", "")).strip()
-                    _dup_code = ""
-                    try:
-                        _dup_code = await client.find_master_code_by_name(_prod_name)
-                    except Exception as _pre_e:
-                        logger.warning(
-                            f"[플레이오토] 중복 사전조회 실패(등록 계속): {_pre_e}"
-                        )
-                    if _dup_code:
-                        logger.warning(
-                            f"[플레이오토] 중복등록 방지 — 기등록 재연결: "
-                            f"{_prod_name[:30]} → {_dup_code}"
-                        )
-                        return {
-                            "success": True,
-                            "product_no": _dup_code,
-                            "message": "플레이오토 기등록 재연결 (중복등록 차단)",
-                            "data": {"market_product_no": _dup_code},
-                        }
-                    logger.info("[플레이오토] 신규 등록(POST)")
-                    results = await client.register_product([emp_data])
+                    # 특수문자 정제 전(레거시) 이름으로 등록된 기존 상품도 찾아야 한다.
+                    # 정제본으로만 조회하면 EMP엔 원본명으로 있는 상품을 못 찾아
+                    # 복제본이 새로 생긴다 (이름이 유일 키인 구조).
+                    _raw_name = str(product.get("name", "")).strip()
+                    # 조회~등록을 이름 단위 락으로 원자화 — 락이 없으면 같은 상품을
+                    # 두 흐름이 동시에 '없음' 판정하고 각자 등록해 복제본이 생긴다
+                    # (2026-08-20 코오롱 48건). 락 밖에서 조회하던 것을 안으로 옮긴다.
+                    async with _register_lock(client.api_key, _prod_name):
+                        # ① 이 프로세스가 방금 등록한 이름인가 — EMP 목록 API 가
+                        #    갓 만든 상품을 바로 안 보여줘도 여기서 잡힌다.
+                        _dup_code = _recent_registered(client.api_key, _prod_name)
+                        if _dup_code:
+                            logger.warning(
+                                "[플레이오토] 직전 등록분 재연결(경합 차단): "
+                                f"{_prod_name[:30]} → {_dup_code}"
+                            )
+                        # ② EMP 실목록 조회 (정제명 → 레거시 원본명 순)
+                        if not _dup_code:
+                            try:
+                                _dup_code = await client.find_master_code_by_name(
+                                    _prod_name
+                                )
+                                if (
+                                    not _dup_code
+                                    and _raw_name
+                                    and _raw_name != _prod_name
+                                ):
+                                    _dup_code = await client.find_master_code_by_name(
+                                        _raw_name
+                                    )
+                                    if _dup_code:
+                                        logger.info(
+                                            "[플레이오토] 레거시 원본명으로 기등록 발견 — "
+                                            f"재연결: {_raw_name[:30]}"
+                                        )
+                            except Exception as _pre_e:
+                                logger.warning(
+                                    f"[플레이오토] 중복 사전조회 실패(등록 계속): {_pre_e}"
+                                )
+                        if _dup_code:
+                            logger.warning(
+                                f"[플레이오토] 중복등록 방지 — 기등록 재연결: "
+                                f"{_prod_name[:30]} → {_dup_code}"
+                            )
+                            return {
+                                "success": True,
+                                "product_no": _dup_code,
+                                "message": "플레이오토 기등록 재연결 (중복등록 차단)",
+                                "data": {"market_product_no": _dup_code},
+                            }
+                        logger.info("[플레이오토] 신규 등록(POST)")
+                        # register 시도 후에는 성공·실패·타임아웃 불문 이름캐시를
+                        # 비운다 — EMP에 상품이 만들어졌을 수 있는데 60초 캐시가
+                        # 살아 있으면 초 단위 재시도의 사전 중복조회가 그걸 못 보고
+                        # 통과해 복제본이 쌓인다(2026-08-06 데상트 189건: 복제 간격
+                        # 6초 < TTL 60초). finally라 타임아웃 예외 경로도 덮는다.
+                        try:
+                            results = await client.register_product([emp_data])
+                        finally:
+                            client.invalidate_name_master_cache()
 
             if not results:
                 return {
@@ -214,6 +353,14 @@ class PlayAutoPlugin(MarketPlugin):
 
             if status == "true":
                 master_code = msg if not existing_no else existing_no
+                # 신규등록 성공분은 프로세스 메모리에 남긴다 — 뒤이어 같은 이름이
+                # 들어오면 EMP 목록 반영을 기다리지 않고 바로 재연결로 빠진다.
+                if not existing_no:
+                    _mark_registered(
+                        client.api_key,
+                        str(emp_data.get("ProdName", "")).strip(),
+                        str(master_code or "").strip(),
+                    )
                 # 신규등록인데 EMP가 성공(status=true)만 주고 MasterCode(msg)를
                 # 비워 주는 경우가 있다(실측 56건). 빈 코드로 저장되면 이후 수정/
                 # 품절/삭제가 전부 불가 → status=true(EMP가 명시한 확정 성공)일
@@ -229,6 +376,7 @@ class PlayAutoPlugin(MarketPlugin):
                         logger.error(f"[플레이오토] 마스터코드 회수 조회 실패: {_rc_e}")
                         master_code = ""
                     if master_code:
+                        _mark_registered(client.api_key, _prod_name, master_code)
                         logger.info(
                             f"[플레이오토] 코드 미회신 → 이름조회로 회수: "
                             f"{_prod_name[:30]} → {master_code}"
@@ -328,6 +476,8 @@ class PlayAutoPlugin(MarketPlugin):
             async with httpx.AsyncClient(
                 timeout=30, follow_redirects=True, proxy=proxy if proxy else None
             ) as dl_client:
+                # [가드] 최종 URL 생존 검증 캐시 (동일 URL 중복 프로브 방지)
+                _alive_cache: dict[str, bool] = {}
 
                 async def _upload_one(img_entry):
                     url = (
@@ -338,15 +488,38 @@ class PlayAutoPlugin(MarketPlugin):
                     if not url:
                         return None
                     try:
-                        return await _cached_ensure(dl_client, url)
+                        final = await _cached_ensure(dl_client, url)
                     except Exception as e:
                         logger.warning(f"[플레이오토] 이미지 처리 실패: {e}")
-                        return url
+                        final = url
+                    # [가드] EMP에 넘기기 전에 최종 URL이 실제 이미지인지 검증.
+                    # 무신사 등 화이트리스트 밖 도메인은 원본 URL을 그대로 넘기는데,
+                    # 소싱처가 원본을 삭제했으면 404 에러 XML이 .jpg로 위장한 채
+                    # EMP에 저장된다 (2026-08-12 데상트 391건 — EMP 등록은 통과하고
+                    # GS이숍 채널등록의 이미지 헤더 체크에서 전량 거절). 죽은 이미지는
+                    # 여기서 걸러 EMP 전파를 차단한다.
+                    if final not in _alive_cache:
+                        _alive_cache[final] = await self._probe_image_alive(
+                            dl_client, final
+                        )
+                    if not _alive_cache[final]:
+                        logger.warning(
+                            f"[플레이오토] 죽은 이미지 제외(원본 소실/에러문서): "
+                            f"{str(final)[:100]}"
+                        )
+                        return None
+                    return final
 
                 results = await asyncio.gather(
                     *[_upload_one(img) for img in images[:10]]
                 )
-            product["images"] = [r for r in results if r]
+            valid_images = [r for r in results if r]
+            if not valid_images:
+                # 전 이미지 소실 — 이미지 없는 등록/수정은 상품 훼손이므로 명시적 실패
+                product["images"] = []
+                product["_all_images_dead"] = True
+            else:
+                product["images"] = valid_images
 
         # detail_html 보강: detail_images 리스트가 detail_html의 <img>보다 많으면 재구성.
         # ABC마트/롯데ON 등 lazy-load 사이트는 detail_html에 placeholder src 1개만 들어있어
@@ -470,6 +643,45 @@ class PlayAutoPlugin(MarketPlugin):
             dl_client, s3_client, bucket_name, public_url, image_url, r2_key, r2_pub_url
         )
 
+    @staticmethod
+    def _download_headers(image_url: str) -> dict[str, str]:
+        """이미지 다운로드용 헤더 (소싱처별 Referer 설정)."""
+        parsed = urlparse(image_url)
+        referer = f"{parsed.scheme}://{parsed.netloc}/"
+        if "msscdn.net" in (parsed.netloc or "") or "musinsa" in (parsed.netloc or ""):
+            referer = "https://www.musinsa.com/"
+        return {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": referer,
+            "Accept": "image/jpeg,image/png,image/gif,*/*",
+        }
+
+    async def _probe_image_alive(
+        self, dl_client: httpx.AsyncClient, image_url: str
+    ) -> bool:
+        """URL이 실제 이미지를 서빙하는지 경량 검증 (Range 32바이트 + 매직 헤더).
+
+        소싱처가 원본을 삭제하면 404 또는 '200인데 본문은 에러 XML'이 온다 —
+        상태코드만으로는 못 거르므로 첫 바이트의 매직 헤더로 판정한다.
+        일시 네트워크 오류로 정상 이미지를 죽었다고 오판하지 않도록 1회 재시도.
+        """
+        if not str(image_url).lower().startswith(("http://", "https://")):
+            return True  # 프로브 불가 스킴은 기존 동작 유지
+        headers = {**self._download_headers(image_url), "Range": "bytes=0-31"}
+        for attempt in range(2):
+            try:
+                resp = await dl_client.get(image_url, headers=headers)
+                if resp.status_code in (200, 206):
+                    return _looks_like_image(resp.content[:32])
+                if resp.status_code in (404, 410):
+                    return False
+                # 403/5xx 등 애매한 상태 — 재시도 후에도 애매하면 살아있다고 간주
+                # (Range 미지원·핫링크 차단 등 서버 특성일 수 있어 오차단 방지)
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        return True
+
     async def _upload_single_image(
         self,
         dl_client: httpx.AsyncClient,
@@ -482,17 +694,7 @@ class PlayAutoPlugin(MarketPlugin):
     ) -> str:
         """이미지 1장 다운로드 → R2 업로드 → 공개 URL 반환."""
 
-        # 다운로드 (소싱처별 Referer 설정)
-        parsed = urlparse(image_url)
-        referer = f"{parsed.scheme}://{parsed.netloc}/"
-        if "msscdn.net" in (parsed.netloc or "") or "musinsa" in (parsed.netloc or ""):
-            referer = "https://www.musinsa.com/"
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": referer,
-            "Accept": "image/jpeg,image/png,image/gif,*/*",
-        }
+        headers = self._download_headers(image_url)
         resp = await dl_client.get(image_url, headers=headers)
         resp.raise_for_status()
         image_bytes = resp.content

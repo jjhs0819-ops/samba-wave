@@ -122,6 +122,77 @@ async def _safe_delete(
 # 검증 / 디스패치 (플러그인 기반)
 # ═══════════════════════════════════════════════
 
+# 대표 썸네일 1:1 정사각 강제 대상 (2026-08-15 팀장 지침).
+# 오픈마켓은 공통적으로 대표이미지 1000x1000 정사각을 요구한다.
+# 실측 사례 — 토스 첫 등록: 무신사 세로형 원본을 그대로 보냈다가
+#   "썸네일 이미지는 1:1 정사각형 비율만 업로드 가능합니다"
+# 로 반려됐다. 등록 API 는 성공을 응답하고 판매자센터 검수에서 반려되므로,
+# API 결과만 보면 성공한 줄 안다 — 마켓별로 흩어놓지 않고 전 마켓 공통 진입점인
+# dispatch_to_market 에서 한 번에 처리한다.
+#
+# 리셀 플랫폼(포이즌/크림)은 카탈로그형이라 브랜드 품번으로 매칭되고 우리가 올린
+# 대표이미지가 상품 노출에 쓰이지 않으므로 제외한다.
+#
+# 1000 은 각 마켓 최소 규격을 모두 충족한다 — 쿠팡 500~5000, ESM(지마켓/옥션) 600 이상.
+# 각 플러그인의 기존 이미지 보정(min_dim 등)은 그대로 두고 그 앞단에서 정사각만
+# 맞춘다. 1000x1000 은 이후 보정 조건에 걸리지 않아 이중 처리되지 않는다.
+_SQUARE_THUMBNAIL_MARKETS = frozenset(
+    {"smartstore", "lotteon", "11st", "gmarket", "auction", "coupang", "toss"}
+)
+_SQUARE_THUMBNAIL_DIM = 1000
+# 중앙 크롭으로 잘라낼 수 있는 최대 비율. 무신사 원본 실측(무작위 60건):
+#   500x600(5:6) 65% — 크롭 시 16.7% 잘림 (통과)
+#   500x500(1:1) 32% — 이미 정사각, 변화 없음
+#   500x750/500x667 각 2% — 33%/25% 잘림 → 상한 초과로 여백 처리
+_SQUARE_THUMBNAIL_MAX_CUT = 0.20
+
+
+async def _ensure_square_thumbnail(
+    session: AsyncSession, market_type: str, product: dict[str, Any]
+) -> dict[str, Any]:
+    """대표(첫) 이미지를 1000x1000 정사각으로 보정 — 중앙 크롭. 상세는 건드리지 않는다.
+
+    상세 이미지는 마켓들이 비율을 강제하지 않고, 정사각으로 만들면 흰 여백이
+    끼어 상세페이지가 지저분해진다.
+    """
+    if market_type not in _SQUARE_THUMBNAIL_MARKETS:
+        return product
+    images = product.get("images") or []
+    main_image = product.get("coupang_main_image") or ""
+    if not images and not main_image:
+        return product
+
+    from backend.domain.samba.image.service import ImageTransformService
+
+    svc = ImageTransformService(session)
+    # 크롭 방식 — 여백을 넣으면 반려된다(토스 실측). 짧은 변을 1000 이상으로 키운 뒤
+    # 긴 변을 중앙에서 잘라 정사각을 만든다. max_dim 을 크게 두는 이유: 1000 으로
+    # 묶으면 업스케일이 막혀 크롭 후 1000 을 못 채운다(500x600 → 1000x1200 → 1000x1000).
+    # 잘림이 20% 를 넘는 극단 비율(500x750 등)은 크롭하지 않고 여백으로 대체된다.
+    _kw = dict(
+        max_dim=5000,
+        min_dim=_SQUARE_THUMBNAIL_DIM,
+        crop_square=True,
+        crop_max_cut=_SQUARE_THUMBNAIL_MAX_CUT,
+    )
+    product = dict(product)  # 호출자 dict 변형 방지
+    try:
+        if images:
+            squared, _, _ = await svc.mirror_oversized_to_r2(images[:1], **_kw)
+            if squared:
+                product["images"] = squared + images[1:]
+        # 쿠팡은 대표이미지를 별도 필드로도 보낸다 — 같이 맞춰야 반쪽이 안 된다.
+        if main_image:
+            squared_main, _, _ = await svc.mirror_oversized_to_r2([main_image], **_kw)
+            if squared_main:
+                product["coupang_main_image"] = squared_main[0]
+    except Exception as exc:
+        # 변환 실패로 전송 자체를 막지는 않는다 — 마켓이 반려하면 사유가 남는다.
+        logger.warning(
+            f"[{market_type}] 썸네일 정사각 변환 실패 — 원본 이미지로 진행: {exc}"
+        )
+    return product
+
 
 def validate_transform(market_type: str, product: dict) -> list[str]:
     """전송 전 필수필드 누락 검사 → 누락 필드명 리스트 반환."""
@@ -170,6 +241,9 @@ async def dispatch_to_market(
         }
 
     from backend.domain.samba.proxy.elevenst import ElevenstRateLimitError
+
+    # 대표 썸네일 1:1 정사각 보정 — 오픈마켓 공통 요구사항 (_SQUARE_THUMBNAIL_MARKETS)
+    product = await _ensure_square_thumbnail(session, market_type, product)
 
     try:
         return await plugin.handle(
@@ -891,6 +965,20 @@ async def _delete_cafe24(
     return await plugin.delete(session, product_no, account)
 
 
+async def _delete_buyma(
+    session: AsyncSession,
+    product: dict[str, Any],
+    account: Any = None,
+) -> dict[str, Any]:
+    """BUYMA 상품 삭제 — 플러그인 delete() 위임 (PS-API control=delete)."""
+    from backend.domain.samba.plugins.markets.buyma import BuymaPlugin
+
+    product_no = product.get("market_product_no", {}).get("buyma", "")
+    if not product_no:
+        return {"success": True, "message": "바이마 상품번호 없음 (건너뜀)"}
+    return await BuymaPlugin().delete(session, product_no, account)
+
+
 async def _delete_gmarket(
     session: AsyncSession,
     product: dict[str, Any],
@@ -1212,6 +1300,7 @@ MARKET_DELETE_HANDLERS: dict[str, Any] = {
     "lottehome": _delete_lottehome,
     "gsshop": _delete_gsshop,
     "cafe24": _delete_cafe24,
+    "buyma": _delete_buyma,
     "playauto": _delete_playauto,
     "gmarket": _delete_gmarket,
     "auction": _delete_auction,

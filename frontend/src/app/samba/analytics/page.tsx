@@ -241,7 +241,7 @@ export default function AnalyticsPage() {
           borderBottom: `1px solid ${c.border}`,
         }}>{title}</div>
         <div style={{ ...card, padding: '1.25rem', borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
-        <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
+        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 'calc(100vh - 220px)', maxWidth: '100%' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: `${(columns.length + 2) * 120}px` }}>
             <thead>
               <tr>

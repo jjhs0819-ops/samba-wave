@@ -507,7 +507,7 @@ async def snkrdunk_kream_compare(
 
     count_sql = text("""
         SELECT COUNT(*) FROM samba_collected_product
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA')
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS')
         AND resell_matches->'kream'->>'product_id' IS NOT NULL
         AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
         AND EXISTS (
@@ -528,7 +528,7 @@ async def snkrdunk_kream_compare(
                resell_matches->'kream'->>'style_code' AS kream_style_code_db,
                options
         FROM samba_collected_product
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA')
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS')
         AND resell_matches->'kream'->>'product_id' IS NOT NULL
         AND NOT (resell_matches->'kream'->>'product_id' = ANY(:excl))
         AND EXISTS (
@@ -604,7 +604,7 @@ async def _snkrdunk_remove_match_impl(
         INSERT INTO kream_snkr_rejected (snkr_id, kream_pid, reason)
         SELECT :sid, resell_matches->'kream'->>'product_id', '검수 매칭해제'
         FROM samba_collected_product
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
           AND COALESCE(resell_matches->'kream'->>'product_id', '') <> ''
         ON CONFLICT (snkr_id, kream_pid) DO NOTHING
     """).bindparams(sid=snkr_id)
@@ -646,12 +646,30 @@ async def _snkrdunk_remove_match_impl(
             sid=snkr_id
         )
     )  # type: ignore[arg-type]
+    # [2026-08-06] 상품 행 안의 후보(resell_matches.kream_candidates)도 거부 등록한다.
+    # 위 세 경로(확정 kream / match_candidates / ambig_pairs)는 등록했는데 정작
+    # **검수화면이 실제로 보여주는** 이 후보만 거부 없이 지우고 있었다. 그래서 확정 없이
+    # 후보만 있는 상품을 해제하면 거부목록에 한 줄도 안 들어가고, 다음 배치가 같은 쌍을
+    # 그대로 다시 붙였다 — 사용자가 같은 상품을 20번 넘게 해제한 원인.
+    # (실사례: snkr 141830 ↔ kream 989693, snkr 141835 ↔ 990245·990244)
+    await session.exec(
+        text("""
+        INSERT INTO kream_snkr_rejected (snkr_id, kream_pid, reason)
+        SELECT :sid, cd->>'product_id', '검수 매칭해제(행내 후보)'
+        FROM samba_collected_product p,
+             jsonb_array_elements(
+                 COALESCE(p.resell_matches->'kream_candidates', '[]'::jsonb)) cd
+        WHERE p.source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND p.site_product_id = :sid
+          AND COALESCE(cd->>'product_id', '') <> ''
+        ON CONFLICT (snkr_id, kream_pid) DO NOTHING
+    """).bindparams(sid=snkr_id)
+    )  # type: ignore[arg-type]
     # 후보(kream_candidates)를 남기면 재로드 시 후보 1개 자동선택으로 매칭이 되살아나는
     # 도돌이 발생 [2026-07-20 라이츄·샤워즈 사고] — 해제 시 함께 삭제
     sql = text("""
         UPDATE samba_collected_product
         SET resell_matches = resell_matches - 'kream' - 'kream_candidates', updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
     await session.commit()
@@ -706,7 +724,7 @@ async def _snkrdunk_update_match_impl(
             ),
             '{{kream_candidates}}', '[]'::jsonb, true
         ){name_set}, updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     params: dict[str, Any] = {"sid": snkr_id, "kream_id": kream_id}
     if style_code:
@@ -802,8 +820,6 @@ async def get_kream_margin_policy_public(
                 "non_card_margin_rate": k.get("kreamNonCardMarginRate", 5),
                 # 입찰 최고 원가(엔) — 초과 상품은 갱신·리스톡 제외
                 "max_cost_jpy": k.get("kreamMaxCostJpy", 250000),
-                # 조정 데드밴드(원) — 이 금액 미만 차이는 조정 생략(헛조정 차단)
-                "adjust_deadband_krw": k.get("kreamAdjustDeadbandKrw", 2000),
                 # 해외판매(박스·카드팩) 정산 수수료 — 기본수수료(원) + 판매가 비율(%).
                 "overseas_base_fee": k.get("kreamOverseasBaseFee", 1370),
                 "overseas_fee_rate": k.get("kreamOverseasFeeRate", 3.3),
@@ -895,16 +911,57 @@ async def snkrdunk_compare_all_public(
             -- 최근 가격/재고 확인 시각(KST) — restock/갱신이 snkr price·stock 갱신 시 updated_at=NOW()
             to_char(updated_at AT TIME ZONE 'Asia/Seoul', 'MM-DD HH24:MI') AS price_checked_at,
             COALESCE(style_code, '') AS style_code,
+            -- [2026-08-16] 스니덩크는 품번이 두 개다. officialProductNumber(제조사 품번)와
+            -- productNumber(스니덩크 자체번호). style_code 에는 official 우선으로 하나만
+            -- 들어가 있어서, official 이 빈 상품은 자체번호(HM-845)가 들어간다.
+            -- 그 자체번호를 크림 품번(HM26GD018)과 비교하면 전부 '불일치'로 오판한다.
+            -- 검수 화면에서 둘 다 보여야 사람이 가릴 수 있으므로 분리해 내려준다.
+            COALESCE(extra_data->>'snkr_official_no', '') AS snkr_official_no,
+            COALESCE(extra_data->>'snkr_product_no', '') AS snkr_product_no,
             COALESCE(brand, '') AS brand,
             COALESCE(extra_data->>'name_ja', '') AS name_ja,
             COALESCE(extra_data->>'name_en', '') AS name_en,
             COALESCE((images::jsonb)->>0, '') AS snkr_image,
-            COALESCE(resell_matches->'kream'->>'product_id', '') AS kream_id,
-            COALESCE(resell_matches->'kream'->>'name_ko', '') AS kream_name_ko,
-            COALESCE(resell_matches->'kream'->>'name_en', '') AS kream_name_en,
-            COALESCE(resell_matches->'kream'->>'image', '') AS kream_image,
-            COALESCE(resell_matches->'kream'->>'style_code', '') AS kream_style_code,
-            (COALESCE(resell_matches->'kream'->>'verified', '') = 'true') AS verified,
+            -- [2026-08-06] 거부한 쌍이 확정 자리에 되살아난 경우도 없는 것으로 취급한다.
+            -- 재매칭 배치가 거부를 못 보고 다시 붙인 건이 실측 3건 있었다. 여기서 가려야
+            -- 검수 화면에 다시 뜨지 않는다(원본 resell_matches 는 배치가 정리).
+            --
+            -- [2026-08-25] 가릴 때는 **크림 필드 전부** 가린다. 종전엔 product_id 만
+            -- 비우고 이름·이미지는 그대로 내려보내, 거부된 551건이 '크림 미매칭'(cat3/4)
+            -- 으로 분류되면서 화면에는 크림 상품 사진이 같이 뜨는 모순이 있었다.
+            -- cat3/4 는 스니덩크만 보여야 한다.
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'product_id', '') END AS kream_id,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'name_ko', '') END AS kream_name_ko,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'name_en', '') END AS kream_name_en,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'image', '') END AS kream_image,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN '' ELSE COALESCE(resell_matches->'kream'->>'style_code', '') END AS kream_style_code,
+            CASE WHEN EXISTS (
+                SELECT 1 FROM kream_snkr_rejected rj
+                WHERE rj.snkr_id = site_product_id
+                  AND rj.kream_pid = resell_matches->'kream'->>'product_id'
+            ) THEN false
+                 ELSE (COALESCE(resell_matches->'kream'->>'verified', '') = 'true')
+            END AS verified,
             -- 이상감지 승인(리스톡 허용) — 사용자가 검수페이지에서 확인 후 체크
             (COALESCE(resell_matches->'kream'->>'anomaly_ok', '') = 'true') AS anomaly_ok,
             -- 이상감지 차단됨 — 봇이 저가위험으로 등록/갱신 막은 상품(검수페이지 필터용)
@@ -913,7 +970,22 @@ async def snkrdunk_compare_all_public(
             COALESCE(resell_matches->'kream'->>'anomaly_reason', '') AS anomaly_reason,
             -- 다중매칭 후보 [2026-07-19] — 품번 매칭이 후보 여럿(재판/홀로 등)으로 못 가른 상품.
             -- 검수페이지에서 사용자가 후보 선택 후 일치 확정 (PATCH /match → /verify)
-            COALESCE(resell_matches->'kream_candidates', '[]'::jsonb)::text AS kream_candidates,
+            --
+            -- [2026-08-06] 거부한 쌍은 여기서 제외한다. 종전엔 매칭해제로 거부목록
+            -- (kream_snkr_rejected)에 넣어도 이 응답이 후보를 그대로 뿌려, 해제해도
+            -- 화면에 같은 오매칭이 계속 떠 사용자가 같은 상품을 20번 넘게 해제했다.
+            -- 거부는 (snkr_id, kream_pid) 쌍 단위 — 그 크림 상품이 다른 스니덩크와
+            -- 맺은 정상 매칭은 건드리지 않는다.
+            COALESCE((
+                SELECT jsonb_agg(cd)
+                FROM jsonb_array_elements(
+                    COALESCE(resell_matches->'kream_candidates', '[]'::jsonb)) cd
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM kream_snkr_rejected rj
+                    WHERE rj.snkr_id = site_product_id
+                      AND rj.kream_pid = cd->>'product_id'
+                )
+            ), '[]'::jsonb)::text AS kream_candidates,
             COALESCE((
                 SELECT NULLIF(o->>'stock', '')::int
                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
@@ -981,22 +1053,31 @@ async def snkrdunk_compare_all_public(
             -- 브랜드(상품수집처럼 동적 브랜드 드롭다운용) — DB brand 컬럼
             COALESCE(NULLIF(TRIM(brand), ''), '기타') AS brand,
             (COALESCE(extra_data->>'supply_gap', '') = 'true') AS supply_gap,
-            -- 신발만 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL)
-            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN options ELSE NULL END AS size_options,
+            -- 사이즈옵션 배열 전달(카드는 payload 절약 위해 NULL).
+            -- [2026-08-27] 조건에 **공홈 소싱처**를 더한다. snkr_type 은 스니덩크가 주는
+            -- 값이라 유니클로·GU·오니츠카는 전부 비어 있고, 그 탓에 size_options 가
+            -- 통째로 NULL 이 돼 검수화면이 '무재고'로 표시했다
+            --   실측: 유니클로 4,951건 중 4,946건이 무재고 처리(실제로는 재고 11).
+            -- 스니덩크는 카드가 섞여 있어 화이트리스트를 유지하고(성능), 공홈은
+            -- 사이즈 상품뿐이므로 소싱처로 가른다 — 새 공홈이 붙어도 자동 적용된다.
+            CASE WHEN (extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch')
+                  OR source_site <> 'SNKRDUNK') THEN options ELSE NULL END AS size_options,
             COALESCE(extra_data->>'currency', '') AS currency,
             -- SUM/MIN 서브쿼리는 신발(스니커즈)만 계산 — 카드 2.5만행 전체에 돌리면
             -- /all 이 29초로 느려져 페이지 로드마다 DB 부하(2026-07-09 성능 회귀 수정).
-            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
+            CASE WHEN (extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch')
+                  OR source_site <> 'SNKRDUNK') THEN COALESCE((
                 SELECT SUM(NULLIF(o->>'stock', '')::int)
                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
             ), 0) ELSE 0 END AS total_stock,
-            CASE WHEN extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch') THEN COALESCE((
+            CASE WHEN (extra_data->>'snkr_type' IN ('sneaker', 'apparel', 'watch')
+                  OR source_site <> 'SNKRDUNK') THEN COALESCE((
                 SELECT MIN(NULLIF(o->>'price', '')::numeric)::int
                 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
                 WHERE NULLIF(o->>'price', '')::numeric > 0
             ), 0) ELSE 0 END AS min_opt_price
         FROM samba_collected_product
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA')
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS')
         ORDER BY site_product_id
     """)
     result = await session.exec(sql)  # type: ignore[arg-type]
@@ -1031,7 +1112,11 @@ async def snkrdunk_compare_all_public(
         is_sneaker = d.get("snkr_type") == "sneaker"
         d["is_sneaker"] = is_sneaker
         # 신발/의류/시계 = 사이즈(또는 ONE SIZE)옵션 기반 재고·가격. PSA칸 없음.
-        is_sized = d.get("snkr_type") in ("sneaker", "apparel", "watch")
+        # [2026-08-27] 위 SQL 과 같은 규칙 — 공홈 소싱처는 snkr_type 이 비어 있으므로
+        # 소싱처로 가른다. 여기만 옛 조건이면 size_options 를 받아놓고도 버린다.
+        is_sized = d.get("snkr_type") in ("sneaker", "apparel", "watch") or str(
+            d.get("source_site") or ""
+        ) not in ("", "SNKRDUNK")
         # 사이즈옵션 파싱(재고>0만, 사이즈 오름차순) — 프론트 사이즈별 표시용
         if is_sized and d.get("size_options"):
 
@@ -1110,7 +1195,7 @@ class SnkrdunkAnomalyOkPatchRequest(BaseModel):
     anomaly_ok: bool
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/verify")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/verify")
 async def snkrdunk_update_verify_public(
     snkr_id: str,
     body: SnkrdunkVerifyPatchRequest,
@@ -1131,7 +1216,7 @@ async def snkrdunk_update_verify_public(
                 || jsonb_build_object('verified', CAST(:verified AS jsonb)),
             true
         ), updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     await session.exec(  # type: ignore[arg-type]
         sql.bindparams(sid=snkr_id, verified="true" if body.verified else "false")
@@ -1140,7 +1225,7 @@ async def snkrdunk_update_verify_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/anomaly-ok")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/anomaly-ok")
 async def snkrdunk_update_anomaly_ok_public(
     snkr_id: str,
     body: SnkrdunkAnomalyOkPatchRequest,
@@ -1168,7 +1253,7 @@ async def snkrdunk_update_anomaly_ok_public(
                 ),
                 '{kream,anomaly_reason}', '""'::jsonb, true
             ), updated_at = NOW()
-            WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+            WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
         """)
     else:
         # 승인 취소 → anomaly_ok=false (flagged는 봇이 다시 판단)
@@ -1178,14 +1263,14 @@ async def snkrdunk_update_anomaly_ok_public(
                 COALESCE(resell_matches, '{}'::jsonb),
                 '{kream,anomaly_ok}', 'false'::jsonb, true
             ), updated_at = NOW()
-            WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+            WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
         """)
     await session.exec(sql.bindparams(sid=snkr_id))  # type: ignore[arg-type]
     await session.commit()
     return {"ok": True}
 
 
-@snkrdunk_public_router.get("/kream/snkrdunk-compare/{snkr_id}/kream-image")
+@snkrdunk_public_router.get("/kream/snkrdunk-compare/{snkr_id:path}/kream-image")
 async def snkrdunk_kream_image_public(
     snkr_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -1203,7 +1288,7 @@ async def snkrdunk_kream_image_public(
                 SELECT resell_matches->'kream'->>'product_id' AS pid,
                        resell_matches->'kream'->>'image' AS img
                 FROM samba_collected_product
-                WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+                WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
             """).bindparams(sid=snkr_id)  # type: ignore[arg-type]
         )
     ).first()
@@ -1230,14 +1315,14 @@ async def snkrdunk_kream_image_public(
                     COALESCE(resell_matches, '{}'::jsonb), '{kream,image}',
                     to_jsonb(CAST(:img AS text))
                 ), updated_at = NOW()
-                WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+                WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
             """).bindparams(img=img, sid=snkr_id)  # type: ignore[arg-type]
         )
         await session.commit()
     return {"image": img}
 
 
-@snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id}/match")
+@snkrdunk_public_router.delete("/kream/snkrdunk-compare/{snkr_id:path}/match")
 async def snkrdunk_remove_match_public(
     snkr_id: str,
     session: AsyncSession = Depends(get_write_session_dependency),
@@ -1246,7 +1331,7 @@ async def snkrdunk_remove_match_public(
     return await _snkrdunk_remove_match_impl(snkr_id, session)
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/match")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/match")
 async def snkrdunk_update_match_public(
     snkr_id: str,
     body: SnkrdunkMatchPatchRequest,
@@ -1258,7 +1343,7 @@ async def snkrdunk_update_match_public(
     )
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/style-code")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/style-code")
 async def snkrdunk_update_style_code_public(
     snkr_id: str,
     body: SnkrdunkStyleCodePatchRequest,
@@ -1275,14 +1360,14 @@ async def snkrdunk_update_style_code_public(
             to_jsonb(CAST(:style_code AS text)),
             true
         ), updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, style_code=body.style_code))  # type: ignore[arg-type]
     await session.commit()
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/fixed-price")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/fixed-price")
 async def snkrdunk_update_fixed_price_public(
     snkr_id: str,
     body: SnkrdunkFixedPricePatchRequest,
@@ -1302,7 +1387,7 @@ async def snkrdunk_update_fixed_price_public(
                      ELSE o END)
             FROM jsonb_array_elements(CASE WHEN jsonb_typeof(options::jsonb)='array' THEN options::jsonb ELSE '[]'::jsonb END) o
         ), updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     await session.exec(
         sql.bindparams(
@@ -1317,7 +1402,7 @@ async def snkrdunk_update_fixed_price_public(
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/kream-name")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/kream-name")
 async def snkrdunk_update_kream_name_public(
     snkr_id: str,
     body: SnkrdunkKreamNamePatchRequest,
@@ -1329,14 +1414,14 @@ async def snkrdunk_update_kream_name_public(
     sql = text("""
         UPDATE samba_collected_product
         SET name = CAST(:kream_name_ko AS text), updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, kream_name_ko=body.kream_name_ko))  # type: ignore[arg-type]
     await session.commit()
     return {"ok": True}
 
 
-@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id}/kream-name-en")
+@snkrdunk_public_router.patch("/kream/snkrdunk-compare/{snkr_id:path}/kream-name-en")
 async def snkrdunk_update_kream_name_en_public(
     snkr_id: str,
     body: SnkrdunkKreamNameEnPatchRequest,
@@ -1353,7 +1438,7 @@ async def snkrdunk_update_kream_name_en_public(
             to_jsonb(CAST(:name_en AS text)),
             true
         ), updated_at = NOW()
-        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA') AND site_product_id = :sid
+        WHERE source_site IN ('SNKRDUNK', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS') AND site_product_id = :sid
     """)
     await session.exec(sql.bindparams(sid=snkr_id, name_en=body.kream_name_en))  # type: ignore[arg-type]
     await session.commit()
@@ -1381,3 +1466,109 @@ async def kream_image_proxy(
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+class JpBrowserProduct(BaseModel):
+    """확장앱(실브라우저)이 읽은 일본 소싱 상품 — ABC/그랜드/atmos."""
+
+    site: str
+    siteProductId: str
+    code: str = ""
+    color: str = ""
+    brand: str = ""
+    name: str = ""
+    price: int = 0
+    sizes: list[dict[str, Any]] = []
+    image: list[str] = []
+    sourceUrl: str = ""
+
+
+@snkrdunk_public_router.post("/kream/jp-browser-ingest")
+async def jp_browser_ingest(
+    body: JpBrowserProduct,
+    session: AsyncSession = Depends(get_write_session_dependency),
+) -> dict[str, Any]:
+    """[2026-08-30] 일본 소싱(ABC마트·그랜드스테이지·atmos)은 봇차단으로 서버수집 불가.
+    확장앱이 실브라우저에서 읽은 DOM 을 여기로 보내 적재한다. 크림 매칭은 로컬 매처가
+    별도로(카탈로그 보유) code 로 붙인다 — 여기선 pending 마커만 남긴다."""
+    import json as _json
+
+    from sqlalchemy import text as _t
+
+    site = (body.site or "").upper()
+    if site not in ("ABCMART_JP", "GRANDSTAGE_JP", "ATMOS"):
+        raise HTTPException(status_code=400, detail="지원 안 하는 소싱처")
+    sid = str(body.siteProductId or "").strip()
+    if not sid:
+        raise HTTPException(status_code=400, detail="siteProductId 필요")
+    price = int(body.price or 0)
+    opts = [
+        {
+            "name": str(s.get("name") or ""),
+            "price": price,
+            "stock": int(s.get("stock") or 0),
+        }
+        for s in (body.sizes or [])
+        if s.get("name")
+    ]
+    has = any(o["stock"] > 0 for o in opts)
+    imgs = [i for i in (body.image or []) if i]
+    tid = (
+        await session.execute(
+            _t(
+                "SELECT tenant_id FROM samba_collected_product "
+                "WHERE source_site='ONITSUKA' AND tenant_id IS NOT NULL LIMIT 1"
+            )
+        )
+    ).scalar()
+    pol = (
+        await session.execute(
+            _t("SELECT id FROM samba_policy WHERE name LIKE '%가디%' LIMIT 1")
+        )
+    ).scalar()
+    ed = {
+        "snkr_type": "sneaker",
+        "source": site.lower(),
+        "currency": "JPY",
+        "name_ja": body.name or "",
+        "browser_collected": True,
+    }
+    _pfx = {"ABCMART_JP": "ab", "GRANDSTAGE_JP": "gs", "ATMOS": "at"}.get(site, "xx")
+    _id = "cph_" + _pfx + "_" + sid[:22]
+    # 로컬 매처가 code 로 크림 붙일 때까지 pending. 이미 매칭된 행은 아래 UPDATE 가 안 건드림.
+    resell = {"pending": {"code": body.code or "", "color": body.color or ""}}
+    await session.execute(
+        _t(
+            "INSERT INTO samba_collected_product "
+            "(id, source_site, site_product_id, name, brand, style_code, "
+            " original_price, sale_price, status, lock_delete, sale_status, "
+            " monitor_priority, source_url, options, images, extra_data, "
+            " resell_matches, tenant_id, applied_policy_id, created_at, updated_at) "
+            "VALUES (:id,:site,:sid,:name,:brand,:code, 0,:price,'active',false,:ss, "
+            " 'cold',:url, CAST(:opts AS json), CAST(:imgs AS json), CAST(:ed AS json), "
+            " CAST(:rm AS jsonb), :tid, :pol, NOW(), NOW()) "
+            "ON CONFLICT (id) DO UPDATE SET "
+            " options=EXCLUDED.options, images=EXCLUDED.images, sale_price=EXCLUDED.sale_price, "
+            " sale_status=EXCLUDED.sale_status, extra_data=EXCLUDED.extra_data, "
+            " brand=EXCLUDED.brand, name=EXCLUDED.name, updated_at=NOW()"
+        ),
+        {
+            "id": _id,
+            "site": site,
+            "sid": sid,
+            "name": body.name or "",
+            "brand": body.brand or "",
+            "code": body.code or "",
+            "price": price,
+            "ss": "in_stock" if has else "soldout",
+            "url": body.sourceUrl or "",
+            "opts": _json.dumps(opts, ensure_ascii=False),
+            "imgs": _json.dumps(imgs, ensure_ascii=False),
+            "ed": _json.dumps(ed, ensure_ascii=False),
+            "rm": _json.dumps(resell, ensure_ascii=False),
+            "tid": tid,
+            "pol": pol,
+        },
+    )
+    await session.commit()
+    return {"ok": True, "id": _id, "options": len(opts)}

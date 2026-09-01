@@ -11,6 +11,7 @@ import {
   type SambaPolicy,
   type SambaMarketAccount,
   type SambaCollectedProduct,
+  type SambaSearchFilter,
 } from "@/lib/samba/api/commerce"
 import {
   detailTemplateApi,
@@ -30,6 +31,7 @@ import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { fmtTime } from '@/lib/samba/utils'
 import NumInput from '@/components/samba/NumInput'
 import TetrisBoard from './tetris/TetrisBoard'
+import FilterConditionsTable from './collection-conditions/FilterConditionsTable'
 
 interface RangeMargin {
   min: number
@@ -130,6 +132,8 @@ interface MarketPolicyForm {
   ssgBrandMappings?: { brandId: string; brandNm: string }[]
   ssgExtraFeeRate?: number
   extraFeeRate?: number
+  // 쿠팡 전용
+  coupangNoAdditionalImages?: boolean // 추가이미지(DETAIL) 미등록 — 대표이미지만 전송
   // 포이즌(리셀) 전용
   minFeeAmount?: number        // 최소 수수료 (원) — POIZON 건당 최소 15,000원
   ignoreCommonMargin?: boolean // 정책 공통 마진 설정 무시
@@ -144,12 +148,19 @@ interface MarketPolicyForm {
   kreamBoxPackMarginRate?: number     // 박스/카드팩(PSA제외 실링) 원가 추가마진율 (%)
   kreamNonCardMarginRate?: number     // 나머지(신발/의류 등) 원가 추가마진율 (%)
   kreamMaxCostJpy?: number            // 입찰 최고 원가 (엔) — 초과 상품은 갱신·리스톡 제외
-  kreamAdjustDeadbandKrw?: number     // 조정 데드밴드 (원) — 미만 차이는 조정 생략
-  kreamOverseasBaseFee?: number       // 해외판매 기본수수료 (원) — 정산 차감
-  kreamOverseasFeeRate?: number       // 해외판매 수수료율 (%) — 판매가 대비, 정산 차감
+  kreamOverseasBaseFee?: number       // 카드팩·박스 기본수수료 (원) — 정산 차감
+  kreamOverseasFeeRate?: number       // 카드팩·박스 수수료율 (%) — 판매가 대비, 정산 차감
   kreamItemFeeBase?: number           // 실물(신발/의류/시계) 기본수수료 (원) — 정산 차감
   kreamSellerLevel?: number           // 크림 판매등급 (1~5) — 등급수수료율 자동 도출(매달 변동)
   kreamItemFeeVat?: number            // 실물 수수료 VAT율 (%) — 별도 부과
+  // 바이마(무재고 구매대행) 전용
+  buymaMinMarginKrw?: number          // 최소마진금액 (원) — 미만이면 등록 제외
+  buymaFeeRate?: number               // 성약수수료율 (%) — 레귤러 7.7
+  buymaShippingKrw?: number           // 배송비(K패킷 등, 원) — 향후 서포트유/KSE로 교체 가능
+  buymaSettleFeeKrw?: number          // 정산 수수료 (원)
+  buymaExchangeRate?: number          // 환율 (엔→원)
+  buymaPriceBasis?: string            // 가격기준 'median' | 'min'
+  buymaMaxSellers?: number            // 최대 경쟁 셀러수 — 초과 시 선별 제외
   // 이베이 전용
   minMarginUsd?: number // 최소마진($) — 최종가에서 원가+배송비 뺀 마진이 이 금액보다 작으면 인상
   adEnabled?: boolean // eBay General 광고 사용 여부 — 등록/수정 시 자동 활성
@@ -266,8 +277,23 @@ export default function PoliciesPage() {
   const searchParams = useSearchParams()
   const [policies, setPolicies] = useState<SambaPolicy[]>([])
   const [, setLoading] = useState(true)
+
+  // 상품수집조건 관리 탭 — collectorApi.listFilters 를 이 탭 진입 시에만 로드
+  const [collectionFilters, setCollectionFilters] = useState<SambaSearchFilter[]>([])
+  const [collectionFiltersLoading, setCollectionFiltersLoading] = useState(true)
+  const loadCollectionFilters = useCallback(async () => {
+    setCollectionFiltersLoading(true)
+    try {
+      const f = await collectorApi.listFilters()
+      setCollectionFilters(f.filter(x => !x.is_folder))
+    } finally {
+      setCollectionFiltersLoading(false)
+    }
+  }, [])
   const [showForm, setShowForm] = useState(true)
   const [editingId, setEditingId] = useState<string | null>(null)
+  // '정책 미선택' 경고는 입력할 때마다 뜨면 방해된다 — 정책을 고를 때까지 1회만.
+  const unsavedWarnedRef = useRef(false)
   const [name, setName] = useState("새 정책")
   const [policyColor, setPolicyColor] = useState('#3B82F6')
   const [siteName, setSiteName] = useState("")
@@ -279,8 +305,9 @@ export default function PoliciesPage() {
   // 소싱처별 추가 마진 UI 토글
   const [showSourceSiteMargins, setShowSourceSiteMargins] = useState(false)
 
-  // 메인 탭 (정책관리 vs 테트리스 매칭)
-  const [mainTab, setMainTab] = useState<'정책관리' | '테트리스 매칭'>('테트리스 매칭')
+  // 메인 탭 (상품수집조건 관리 vs 정책관리 vs 테트리스 매칭)
+  const [mainTab, setMainTab] = useState<'상품수집조건 관리' | '정책관리' | '테트리스 매칭'>('정책관리')
+  useEffect(() => { loadCollectionFilters() }, [loadCollectionFilters])
   const [tetrisMatchingEnabled, setTetrisMatchingEnabled] = useState(false)
   const [tetrisMatchingSaving, setTetrisMatchingSaving] = useState(false)
   const [syncIntervalInput, setSyncIntervalInput] = useState<number>(1)
@@ -620,6 +647,7 @@ export default function PoliciesPage() {
   }, [selectedDetailTemplateId, detailTemplates])
 
   const openEdit = (p: SambaPolicy) => {
+    unsavedWarnedRef.current = false
     setEditingId(p.id)
     setName(p.name)
     setSiteName(p.site_name || "")
@@ -743,7 +771,16 @@ export default function PoliciesPage() {
   latestExtrasRef.current = { detail_template_id: selectedDetailTemplateId, name_rule_id: selectedNameRuleId, market_detail_templates: marketDetailTemplates, color: policyColor }
 
   const triggerAutoSave = useCallback(() => {
-    if (!editingId) return
+    // 정책을 아직 고르지 않았으면 저장할 대상이 없다. 예전엔 여기서 조용히
+    // 리턴해서, 사용자는 입력이 반영된 줄 알고 새로고침 후 값이 사라졌다
+    // (바이마 정책 7개 항목이 2주간 저장되지 않음). 이제는 알린다.
+    if (!editingId) {
+      if (!unsavedWarnedRef.current) {
+        unsavedWarnedRef.current = true
+        showAlert('정책을 먼저 선택하거나 저장해야 마켓정책이 저장됩니다', 'error')
+      }
+      return
+    }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     autoSaveTimer.current = setTimeout(async () => {
       try {
@@ -763,7 +800,13 @@ export default function PoliciesPage() {
         // 리스트만 갱신 (현재 편집 폼은 유지)
         const list = await policyApi.list().catch(() => [])
         setPolicies(list)
-      } catch { /* 자동저장 실패 무시 */ }
+      } catch (e) {
+        // 삼키면 사용자는 저장된 줄 안다. 실패는 반드시 보여준다.
+        showAlert(
+          `자동저장 실패 — ${e instanceof Error ? e.message : '알 수 없는 오류'}`,
+          'error',
+        )
+      }
     }, 800)
   }, [editingId, name, siteName])
 
@@ -865,21 +908,6 @@ export default function PoliciesPage() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
-            onClick={() => setMainTab('테트리스 매칭')}
-            style={{
-              padding: '0.375rem 0.75rem',
-              fontSize: '0.75rem',
-              borderRadius: '6px',
-              border: mainTab === '테트리스 매칭' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
-              background: mainTab === '테트리스 매칭' ? '#e3f4f0' : 'transparent',
-              color: mainTab === '테트리스 매칭' ? '#0f6a5b' : c.textMuted,
-              cursor: 'pointer',
-              fontWeight: 600,
-            }}
-          >
-            테트리스 매칭
-          </button>
-          <button
             onClick={() => setMainTab('정책관리')}
             style={{
               padding: '0.375rem 0.75rem',
@@ -894,12 +922,57 @@ export default function PoliciesPage() {
           >
             정책관리
           </button>
+          <button
+            onClick={() => setMainTab('상품수집조건 관리')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '상품수집조건 관리' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+              background: mainTab === '상품수집조건 관리' ? '#e3f4f0' : 'transparent',
+              color: mainTab === '상품수집조건 관리' ? '#0f6a5b' : c.textMuted,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            상품수집조건 관리
+          </button>
+          <button
+            onClick={() => setMainTab('테트리스 매칭')}
+            style={{
+              padding: '0.375rem 0.75rem',
+              fontSize: '0.75rem',
+              borderRadius: '6px',
+              border: mainTab === '테트리스 매칭' ? '1px solid #a9ddd2' : `1px solid ${c.border}`,
+              background: mainTab === '테트리스 매칭' ? '#e3f4f0' : 'transparent',
+              color: mainTab === '테트리스 매칭' ? '#0f6a5b' : c.textMuted,
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            테트리스 매칭
+          </button>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <a href="/samba/categories" style={{ fontSize: '0.75rem', color: c.link, textDecoration: 'none' }}>카테고리매핑 →</a>
           <a href="/samba/shipments" style={{ fontSize: '0.75rem', color: c.textMuted, textDecoration: 'none' }}>상품전송 →</a>
         </div>
       </div>
+
+      {/* 상품수집조건 관리 탭 */}
+      {mainTab === '상품수집조건 관리' && (
+        <div style={{ padding: '1rem 0' }}>
+          {collectionFiltersLoading ? (
+            <div style={{ padding: '2rem' }}>로딩 중...</div>
+          ) : (
+            <FilterConditionsTable
+              filters={collectionFilters}
+              policies={policies}
+              onReload={loadCollectionFilters}
+            />
+          )}
+        </div>
+      )}
 
       {/* 정책관리 탭 내용 */}
       <div style={{ display: mainTab === '정책관리' ? 'block' : 'none' }}>
@@ -1237,6 +1310,13 @@ export default function PoliciesPage() {
               <h4 style={{ fontSize: '0.8125rem', fontWeight: 600, color: c.text, textTransform: 'uppercase', letterSpacing: '0.05em' }}>마켓정책 설정</h4>
               <span style={{ fontSize: '0.75rem', color: c.textMuted }}>** 마켓 선택 후 전송에 필요한 기본 설정값 입력</span>
             </div>
+            {/* 정책 미선택 상태에서는 자동저장이 돌지 않는다. 그대로 두면
+                입력이 반영된 것처럼 보이다가 새로고침에서 통째로 사라진다. */}
+            {!editingId && (
+              <div style={{ marginBottom: '1rem', padding: '0.625rem 0.875rem', borderRadius: '6px', background: '#5a1e1e', border: '1px solid #8b3a3a', color: '#ffd9d9', fontSize: '0.8125rem' }}>
+                정책이 선택되지 않아 <b>여기서 바꾼 값은 저장되지 않습니다</b>. 위에서 정책을 고르거나, 아래 저장 버튼으로 먼저 정책을 만들어 주세요.
+              </div>
+            )}
             <div style={{ marginBottom: '1rem' }}>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.25rem', alignItems: 'center', marginBottom: '0.375rem' }}>
                 <span style={{ fontSize: '0.68rem', color: c.text, fontWeight: 600, padding: '0.25rem 0.375rem 0.25rem 0', whiteSpace: 'nowrap' }}>국내</span>
@@ -1586,7 +1666,7 @@ export default function PoliciesPage() {
                   </label>
                 </div>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && marketPolicyTab !== 'KREAM' && (
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== 'GS샵' && marketPolicyTab !== 'KREAM' && marketPolicyTab !== '바이마' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>수수료</span>
                   <NumInput value={mp.feeRate} onChange={(v) => { setCurrentMarketPolicy({ ...mp, feeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
@@ -1633,11 +1713,6 @@ export default function PoliciesPage() {
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>1순위·경쟁 없을 때 원가 대비 배수(예: 40 → 원가×1.4)</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>조정 데드밴드</span>
-                    <NumInput value={mp.kreamAdjustDeadbandKrw ?? 2000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamAdjustDeadbandKrw: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>목표가와 현재가 차이가 이 금액 미만이면 조정 생략(헛조정 차단). 마진 하한 미달 복구는 항상 조정</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>입찰 최고 원가</span>
                     <NumInput value={mp.kreamMaxCostJpy ?? 250000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamMaxCostJpy: v }); triggerAutoSave() }} style={{ width: '90px' }} suffix="엔" />
                     <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이 원가를 넘는 상품은 갱신·리스톡 모두 제외(체결 시 그 값으로 소싱해야 하므로)</span>
@@ -1645,12 +1720,12 @@ export default function PoliciesPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>박스/카드팩 추가마진율</span>
                     <NumInput value={mp.kreamBoxPackMarginRate ?? 0} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamBoxPackMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>PSA 등급 제외한 박스·카드팩(실링) 상품 원가에 추가 가산(예: 5 → 원가×1.05)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크 한정 — PSA 등급 제외한 박스·카드팩(실링) 상품 원가에 추가 가산(예: 5 → 원가×1.05). 공홈 소싱(유니클로·GU·오니츠카)에는 적용 안 함</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>나머지 추가마진율</span>
                     <NumInput value={mp.kreamNonCardMarginRate ?? 5} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamNonCardMarginRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드·박스·카드팩 외 나머지(신발·의류 등) 원가에 추가 가산(예: 5 → 원가×1.05)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크 한정 — 카드·박스·카드팩 외 나머지(신발·의류 등) 원가에 추가 가산(예: 5 → 원가×1.05). 공홈 소싱(유니클로·GU·오니츠카)에는 적용 안 함</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(카드)</span>
@@ -1659,27 +1734,27 @@ export default function PoliciesPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>스니덩크배송비(박스)</span>
                     <NumInput value={mp.kreamShippingFeeBox ?? 900} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamShippingFeeBox: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="엔" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크→배대지 일본내 배송비(엔). 카드 300엔 / 박스·카드팩 900엔</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>스니덩크→배대지 일본내 배송비(엔). 카드 300엔 / 박스·카드팩 900엔. 공홈 소싱(유니클로·GU·오니츠카)은 그 구간이 없어 미적용 — 공홈 원가에 각 사이트 국내배송비·결제수수료 4%가 이미 포함</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배대지비용</span>
                     <NumInput value={mp.kreamForwardingFee ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamForwardingFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>배대지→한국 배송비(원). 원가에 별도 가산. 원가=(snkr엔+배송엔)×환율+배대지</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>배대지→한국 배송비(원). 원가에 별도 가산. 원가=(snkr엔+배송엔)×환율+배대지. 공홈 소싱은 배송엔·추가마진 없이 (원가엔×환율)+배대지</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 기본수수료</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>카드팩·박스 기본수수료</span>
                     <NumInput value={mp.kreamOverseasBaseFee ?? 1370} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasBaseFee: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송(박스·카드팩) 주문 정산에서 차감하는 크림 기본수수료</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드팩·박스(해외배송) 주문 정산에서 차감하는 크림 기본수수료. PSA 낱장 카드는 수수료 무료</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>해외 수수료율</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>카드팩·박스 수수료율</span>
                     <NumInput value={mp.kreamOverseasFeeRate ?? 3.3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamOverseasFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외배송 주문 판매가 대비 수수료율. 정산=판매가−(기본수수료+판매가×이율)</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>카드팩·박스 주문 판매가 대비 수수료율. 정산=판매가−(기본수수료+판매가×이율). PSA 낱장은 무료이고, 신발·의류는 아래 판매등급 수수료를 쓴다</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>실물 기본수수료</span>
                     <NumInput value={mp.kreamItemFeeBase ?? 2500} onChange={(v) => { setCurrentMarketPolicy({ ...mp, kreamItemFeeBase: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
-                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발/의류/시계 주문 정산 차감(PSA 낱장 무료·해외배송 제외). 크림 판매등급 기본수수료</span>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>신발·의류·시계 주문 정산 차감. **판매자 등급에 따라 요율이 달라진다**(아래 판매등급 참조). PSA 낱장 카드는 무료, 카드팩·박스는 위 항목을 쓴다</span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>내 판매등급</span>
@@ -1699,7 +1774,50 @@ export default function PoliciesPage() {
                   </div>
                 </>
               )}
-              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && marketPolicyTab !== 'KREAM' && (
+              {/* 바이마(무재고 구매대행) 전용: 최소마진/성약수수료율/배송비/정산/환율/가격기준/경쟁셀러수 */}
+              {marketPolicyTab === '바이마' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최소마진금액</span>
+                    <NumInput value={mp.buymaMinMarginKrw ?? 8000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaMinMarginKrw: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이 마진 미만이면 등록 제외(선별 하한)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>성약수수료율</span>
+                    <NumInput value={mp.buymaFeeRate ?? 7.7} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaFeeRate: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="%" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>BUYMA 成約手数料. 레귤러 7.7%(매출 등급 상승 시 인하)</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
+                    <NumInput value={mp.buymaShippingKrw ?? 10000} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaShippingKrw: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>한→일 발송비(K패킷 등). 향후 서포트유/KSE 사용 시 그 값으로 변경</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>정산 수수료</span>
+                    <NumInput value={mp.buymaSettleFeeKrw ?? 2500} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaSettleFeeKrw: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix="원" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>해외 정산(송금) 수수료. 마진 계산 시 차감</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>환율(엔→원)</span>
+                    <NumInput value={mp.buymaExchangeRate ?? 9} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaExchangeRate: v }); triggerAutoSave() }} style={{ width: '80px' }} suffix="원/엔" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>엔화 판매가→원화 환산에 사용</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>가격기준</span>
+                    <select style={{ ...makeInputStyle(c), width: 'auto' }} value={mp.buymaPriceBasis ?? 'median'} onChange={(e) => { setCurrentMarketPolicy({ ...mp, buymaPriceBasis: e.target.value }); triggerAutoSave() }}>
+                      <option value="median">시세 중앙값(median)</option>
+                      <option value="min">시세 최저가(min)</option>
+                    </select>
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>바이마 경쟁 시세 기준 — 판매가 산정에 사용</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>최대 경쟁셀러수</span>
+                    <NumInput value={mp.buymaMaxSellers ?? 40} onChange={(v) => { setCurrentMarketPolicy({ ...mp, buymaMaxSellers: v }); triggerAutoSave() }} style={{ width: '70px' }} suffix="명" />
+                    <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>이보다 경쟁 셀러 많은 상품은 선별 제외(레드오션 회피)</span>
+                  </div>
+                </>
+              )}
+              {marketPolicyTab !== '롯데홈쇼핑' && marketPolicyTab !== '신세계몰(전시)' && marketPolicyTab !== '포이즌' && marketPolicyTab !== 'KREAM' && marketPolicyTab !== '바이마' && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                   <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>배송비</span>
                   <NumInput value={mp.shippingCost} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingCost: v }); triggerAutoSave() }} style={{ width: '100px' }} suffix={marketPolicyTab === 'eBay' ? '$' : '원'} />
@@ -1735,6 +1853,17 @@ export default function PoliciesPage() {
                 <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>출고일</span>
                 <NumInput value={mp.shippingDays || 3} onChange={(v) => { setCurrentMarketPolicy({ ...mp, shippingDays: v }); triggerAutoSave() }} style={{ width: '60px' }} suffix="일" />
               </div>
+              )}
+              {/* 쿠팡 전용: 추가이미지 등록 여부 */}
+              {marketPolicyTab === '쿠팡' && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ color: c.textMuted, fontSize: '0.8125rem', minWidth: '80px' }}>추가이미지</span>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.8125rem', color: c.text }}>
+                    <input type="checkbox" checked={!mp.coupangNoAdditionalImages}
+                      onChange={(e) => { setCurrentMarketPolicy({ ...mp, coupangNoAdditionalImages: !e.target.checked }); triggerAutoSave() }} /> 등록
+                  </label>
+                  <span style={{ color: c.textMuted, fontSize: '0.72rem' }}>끄면 대표이미지만 등록 — 옵션별 추가(측면/뒷면 등) 이미지 미전송</span>
+                </div>
               )}
               {/* 플레이오토 전용: 원산지, 시중가 */}
               {marketPolicyTab === '플레이오토' && (
@@ -2132,7 +2261,7 @@ export default function PoliciesPage() {
                   <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                     <input
                       type="checkbox"
-                      checked={t.gallery_include_sub ?? true}
+                      checked={t.gallery_include_sub ?? false}
                       onChange={async (e) => {
                         const checked = e.target.checked
                         setDetailTemplates(prev => prev.map(x => x.id === t.id ? { ...x, gallery_include_sub: checked } : x))
@@ -2498,26 +2627,28 @@ export default function PoliciesPage() {
                   <button onClick={() => updateRule({ replacements: [...(r.replacements || []), { from: '', to: '', caseInsensitive: true }] })}
                     style={{ ...btn('secondary', c), fontSize: '0.68rem', borderRadius: '4px', padding: '1px 8px' }}>+ 조건추가</button>
                 </div>
-                {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
-                  <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
-                    <input value={rep.from} placeholder="변경전"
-                      onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], from: e.target.value }; updateRule({ replacements: reps }) }}
-                      style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem' }} />
-                    <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>→</span>
-                    <input value={rep.to} placeholder="변경후"
-                      onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], to: e.target.value }; updateRule({ replacements: reps }) }}
-                      style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem' }} />
-                    {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
-                    {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: c.textMuted, whiteSpace: 'nowrap' }}>
-                      <input type="checkbox" checked={rep.caseInsensitive ?? true}
-                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
-                        style={{ accentColor: c.primary, width: '11px', height: '11px' }} />대소문자무시
-                    </label>
-                    <button onClick={() => updateRule({ replacements: (r.replacements || []).filter((_: unknown, i: number) => i !== idx) })}
-                      style={{ color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
-                  </div>
-                ))}
+                <div style={{ maxHeight: '360px', overflowY: 'auto', paddingRight: '0.25rem' }}>
+                  {(r.replacements || []).map((rep: {from: string; to: string; caseInsensitive?: boolean}, idx: number) => (
+                    <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.25rem' }}>
+                      <input value={rep.from} placeholder="변경전"
+                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], from: e.target.value }; updateRule({ replacements: reps }) }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem' }} />
+                      <span style={{ color: c.textMuted, fontSize: '0.75rem' }}>→</span>
+                      <input value={rep.to} placeholder="변경후"
+                        onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], to: e.target.value }; updateRule({ replacements: reps }) }}
+                        style={{ ...makeInputStyle(c), flex: 1, fontSize: '0.75rem' }} />
+                      {idx > 0 && <button onClick={() => moveRep(idx, idx - 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▲</button>}
+                      {idx < (r.replacements || []).length - 1 && <button onClick={() => moveRep(idx, idx + 1)} style={{ color: c.textMuted, background: 'none', border: `1px solid ${c.border}`, borderRadius: '3px', cursor: 'pointer', fontSize: '0.7rem', padding: '1px 4px' }}>▼</button>}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '2px', fontSize: '0.65rem', color: c.textMuted, whiteSpace: 'nowrap' }}>
+                        <input type="checkbox" checked={rep.caseInsensitive ?? true}
+                          onChange={(e) => { const reps = [...(r.replacements || [])]; reps[idx] = { ...reps[idx], caseInsensitive: e.target.checked }; updateRule({ replacements: reps }) }}
+                          style={{ accentColor: c.primary, width: '11px', height: '11px' }} />대소문자무시
+                      </label>
+                      <button onClick={() => updateRule({ replacements: (r.replacements || []).filter((_: unknown, i: number) => i !== idx) })}
+                        style={{ color: c.danger, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.8rem' }}>×</button>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* ── 옵션명 치환 ── */}

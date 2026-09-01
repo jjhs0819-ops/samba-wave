@@ -149,6 +149,10 @@ const _AL_SITE_NAME_MAP = {
   kream: 'KREAM',
   gs: 'GSShop',
   '11st': '11ST',
+  // [2026-08-13] ABC-CAMP 멤버십(member.a-rt.com)은 ABC마트와 같은 통합회원 계정을 쓴다.
+  // 이 매핑이 없어 site_name 이 undefined → 자격증명 조회 null → 출석체크 자동로그인이
+  // 시도조차 안 되고 비로그인 탭만 열렸다 닫혔다(계정ID 없이 오는 라디오 기본계정 모드).
+  member: 'ABCmart',
 }
 
 // 백엔드 fetch — 자격증명 조회.
@@ -181,9 +185,14 @@ async function _fetchLoginCredential(siteKey, accountId) {
 // 계정 전환 실패 → 로그인폼 미표시 → 송장 timeout. 데몬 v1.4.29 와 동일하게 쿠키를 직접
 // 비워 강제 로그아웃한다. (getAll({domain:'ssg.com'})은 ssg.com + 모든 서브도메인 포함)
 async function _clearSsgCookies() {
+  return await _clearCookiesByDomain('ssg.com')
+}
+
+// 도메인(+서브도메인) 쿠키 전체 삭제 — 로그아웃 URL 이 없거나 안 먹는 사이트의 강제 로그아웃.
+async function _clearCookiesByDomain(domain) {
   let n = 0
   try {
-    const cookies = await chrome.cookies.getAll({ domain: 'ssg.com' })
+    const cookies = await chrome.cookies.getAll({ domain })
     for (const ck of cookies) {
       const host = ck.domain.replace(/^\./, '')
       const proto = ck.secure ? 'https' : 'http'
@@ -193,7 +202,7 @@ async function _clearSsgCookies() {
       } catch {}
     }
   } catch (e) {
-    console.warn(`[자동로그인][SPA] SSG 쿠키 클리어 실패: ${e?.message || e}`)
+    console.warn(`[자동로그인][SPA] ${domain} 쿠키 클리어 실패: ${e?.message || e}`)
   }
   return n
 }
@@ -363,6 +372,15 @@ async function _spaDirectLogin(siteKey, username, password) {
     const _cleared = await _clearSsgCookies()
     await wait(800)
     console.log(`[자동로그인][SPA] SSG 쿠키 클리어 강제 로그아웃 (${_cleared}개, logout URL 에러 회피)`)
+  } else if (siteKey === 'member') {
+    // [2026-08-13] ABC-CAMP(member.a-rt.com)는 로그아웃 URL 이 확인된 게 없다.
+    // 다른 계정 세션이 살아있으면 /p/login 이 폼을 안 그리고 튕겨서(통합회원) 로그인 폼 미발견
+    // → 자동로그인 실패 → 비로그인으로 출첵창만 열렸다 닫힘. a-rt.com 쿠키를 통째로 비워
+    // 확실히 로그아웃한 뒤 잡 계정으로 새로 로그인한다.
+    // (abcmart.a-rt.com 세션도 같이 끊기지만, ABC마트 잡은 자체 ensureLoggedIn 으로 복구된다)
+    const _cleared = await _clearCookiesByDomain('a-rt.com')
+    await wait(800)
+    console.log(`[자동로그인][SPA] ABC캠프 a-rt.com 쿠키 클리어 강제 로그아웃 (${_cleared}개)`)
   } else {
     const _logoutUrl = _LOGOUT_URLS[siteKey]
     if (_logoutUrl) {
@@ -781,25 +799,44 @@ const _ensureLoggedInInflight = new Map()  // siteKey → Promise<boolean>
 
 // 진입점 — 외부에서 자동로그인을 트리거할 때 호출 (3회 재시도)
 // opts.accountId — 주문 매칭 계정으로 강제 로그인 (송장 수집 등 계정별 격리 필요시)
+// opts.force    — 성공 캐시 무시하고 실제 로그아웃 + 재로그인 (적립금 계정별 잡)
 function ensureLoggedIn(siteKey, opts) {
   const accountId = (opts && opts.accountId) || ''
+  const force = !!(opts && opts.force)
   // accountId별 inflight key — 같은 사이트라도 계정별로는 독립 처리
   const inflightKey = accountId ? `${siteKey}::${accountId}` : siteKey
-  if (_ensureLoggedInInflight.has(inflightKey)) {
-    return _ensureLoggedInInflight.get(inflightKey)
-  }
+  const prev = _ensureLoggedInInflight.get(inflightKey)
+  // [2026-08-14] force 호출은 진행 중인 호출에 편승하면 안 된다.
+  // 편승하면 그 호출이 성공 캐시로 true 를 돌려줄 수 있어(= 실제 로그인 안 함) force 의
+  // 목적('지금 이 세션이 정확히 이 계정')이 깨진다. 앞 호출이 끝나기를 기다린 뒤
+  // 내 재로그인을 수행한다(동시 로그인으로 쿠키가 엉키지 않게 편승 대신 직렬).
+  if (prev && !force) return prev
   const p = (async () => {
+    if (prev) { try { await prev } catch {} }
     try {
-      return await _ensureLoggedInImpl(siteKey, accountId)
+      return await _ensureLoggedInImpl(siteKey, accountId, force)
     } finally {
-      _ensureLoggedInInflight.delete(inflightKey)
+      // 내가 마지막 등록자일 때만 정리 — 뒤에 다른 force 가 붙었으면 그쪽이 소유권을 가진다.
+      if (_ensureLoggedInInflight.get(inflightKey) === p) {
+        _ensureLoggedInInflight.delete(inflightKey)
+      }
     }
   })()
   _ensureLoggedInInflight.set(inflightKey, p)
   return p
 }
 
-async function _ensureLoggedInImpl(siteKey, accountId) {
+// [2026-08-14] 쿠키 자(jar) 그룹 — 로그인 세션을 공유하는 사이트키 묶음.
+// abcmart(abcmart.a-rt.com)와 member(ABC캠프, member.a-rt.com)는 a-rt.com 쿠키를 공유해서
+// 한쪽이 로그인하면 다른 쪽 세션도 그 계정으로 바뀐다. 그런데 성공 캐시는 사이트키별로 따로라
+// "member 캐시엔 내 계정 성공이 남아있는데 실제 세션은 abcmart 잡이 갈아끼운 남의 계정" 이
+// 될 수 있었다 → 로그인 스킵 → 남의 계정으로 출석. 자 단위로 마지막 로그인 계정을 추적한다.
+const _COOKIE_JAR_BY_SITE = { abcmart: 'a-rt', member: 'a-rt' }
+function _cookieJarOf(siteKey) {
+  return _COOKIE_JAR_BY_SITE[siteKey] || siteKey
+}
+
+async function _ensureLoggedInImpl(siteKey, accountId, force) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) {
     console.log(`[자동로그인] 미지원 사이트: ${siteKey}`)
@@ -857,12 +894,23 @@ async function _ensureLoggedInImpl(siteKey, accountId) {
 
   // 계정별 최근 성공 캐시 체크 — 같은 계정으로 10분 이내 로그인 확인됐으면 스킵
   // (송장수집 100건 잡 돌릴 때 매 주문마다 ensureLoggedIn 트리거되는 비용 + alert 폭주 차단)
+  // [2026-08-14] force=true 면 캐시를 아예 보지 않는다. 적립금(출첵 등) 계정별 잡은
+  // '지금 이 세션이 정확히 이 계정' 이어야 하는데, 캐시는 그걸 보장하지 못한다.
+  // (사용자가 브라우저에서 손으로 다른 계정 로그인 / 세션 만료 등은 캐시에 안 잡힘)
   const ACCOUNT_LOGIN_TTL_MS = 10 * 60 * 1000
-  try {
+  if (force) {
+    console.log(`[자동로그인] ${site.name}(${accountId || '_default'}) 강제 재로그인 — 성공 캐시 무시`)
+  } else try {
     const cache = globalThis._lastAutoLoginSuccessAt?.[siteKey]
     const accKey = accountId || '_default'
     const lastTs = (cache && typeof cache === 'object') ? (cache[accKey] || 0) : 0
-    if (lastTs && (Date.now() - lastTs) < ACCOUNT_LOGIN_TTL_MS) {
+    // 쿠키 자를 공유하는 다른 사이트키가 나중에 다른 계정으로 로그인했으면 캐시는 무효다.
+    const jar = _cookieJarOf(siteKey)
+    const jarAcc = globalThis._lastJarLoginAccount?.[jar]
+    const jarMismatch = !!jarAcc && jarAcc !== accKey
+    if (jarMismatch && lastTs) {
+      console.log(`[자동로그인] ${site.name}(${accKey}) 성공캐시 있으나 ${jar} 세션은 ${jarAcc} — 캐시 무시하고 재로그인`)
+    } else if (lastTs && (Date.now() - lastTs) < ACCOUNT_LOGIN_TTL_MS) {
       const ageSec = Math.round((Date.now() - lastTs) / 1000)
       console.log(`[자동로그인] ${site.name}(${accKey}) ${ageSec}초 전 성공 — 스킵`)
       return true
@@ -919,7 +967,14 @@ async function _ensureLoggedInImpl(siteKey, accountId) {
         // CDP 3단계 검증(무신사): 캐시 클리어 시 ensureLoggedIn 이 실제 로그아웃+병기 로그인으로
         // 세션 전환 성공(myinfo ID=cannonfort) → 캐시 교체가 정확한 스왑 유도.
         globalThis._lastAutoLoginSuccessAt[siteKey] = { [accKey]: Date.now() }
-        chrome.storage.local.set({ _lastAutoLoginSuccessAt: globalThis._lastAutoLoginSuccessAt }).catch(() => {})
+        // 쿠키 자 단위 '지금 이 세션의 주인' 기록 — a-rt.com 처럼 abcmart/member 가 세션을
+        // 공유하는 경우, 한쪽 로그인이 다른 쪽 캐시를 무효화하는 근거가 된다.
+        globalThis._lastJarLoginAccount = globalThis._lastJarLoginAccount || {}
+        globalThis._lastJarLoginAccount[_cookieJarOf(siteKey)] = accKey
+        chrome.storage.local.set({
+          _lastAutoLoginSuccessAt: globalThis._lastAutoLoginSuccessAt,
+          _lastJarLoginAccount: globalThis._lastJarLoginAccount,
+        }).catch(() => {})
       } catch {}
       console.log(`[자동로그인] ✅ ${site.name} 성공 — 폴링 자동 재개`)
     } else {
@@ -1574,4 +1629,6 @@ async function _alTripleClick(tabId, x, y) {
 // 외부 모듈에서 사용 가능하도록 globalThis에 노출
 globalThis.ensureLoggedIn = ensureLoggedIn
 globalThis.alExternalSiteToKey = alExternalSiteToKey
+// 잡 계정의 로그인 아이디 조회용 — 적립금 잡이 '지금 로그인된 계정이 잡 계정 맞는지' 검증할 때 쓴다.
+globalThis.alFetchLoginCredential = _fetchLoginCredential
 globalThis.AUTO_LOGIN_SITES = AUTO_LOGIN_SITES

@@ -372,6 +372,41 @@ def is_buyer_cancelable(order: dict[str, Any], window_min: int | None = None) ->
     return datetime.now(tz=kst) - paid < timedelta(minutes=win)
 
 
+def kr_size_mm(size_candidates: dict[str, Any] | None) -> int | None:
+    """POIZON 사이즈 대조표에서 한국 사이즈(mm)를 읽는다 — 표에 없으면 None.
+
+    포이즌은 SKU 마다 사이즈 대조표(KR/EU/UK/JP/US ...)를 함께 준다. 소싱은 mm
+    표기로 하므로 주문에 들어온 EU 사이즈 옆에 이 값을 같이 보여준다.
+
+    **표에 적힌 값만 쓴다. 환산식으로 지어내지 않는다.**
+    - KR / CHN — 신발은 둘 다 mm 기준이라 그대로 읽는다.
+    - JP — cm 표기라 ×10 (단위 변환일 뿐, 추측이 아니다).
+    - 그 외(EU/UK/US 만 있는 SKU)는 None 을 돌려주고 표기를 비운다.
+
+    US 환산식(남성 mm=180+US×10)을 폴백으로 쓰다가 제거했다(2026-08-24).
+    그 식은 성인 남성 박스실측(US10=280mm) 기준이라 아동·유스 구간에서 10mm 씩
+    짧게 나온다. 실측 — MLB 아동화 7ASXLM06N-50WHS 는 포이즌이 EU/US/UK 만 주는데
+    (`sizeKey` 가 EU·UK·US 셋뿐, 응답에 KR 없음) EU 33.5·US 2 에 이 식을 대면
+    200mm 가 나오고 실제 한국 사이즈는 210mm 다. DB 도 같은 증상을 보인다 —
+    KR 을 받은 SKU 는 EU 35→220mm(371건)인데 US 폴백으로 채워진 SKU 는
+    EU 35→210mm(77건)로 갈렸다.
+
+    사이즈가 틀리면 그걸 보고 잘못 사게 되므로, 비워두는 편이 낫다.
+    소싱처(무신사 등) 공용 사이즈표로 채우는 것도 금지 — 신뢰서열이
+    박스실측 > 포이즌 > 소싱처라, 소싱처 표로 덮으면 오구매가 난다.
+    """
+    cand = size_candidates or {}
+    # KR/CHN 그대로. '280 (EU 44⅔)' 처럼 괄호 설명이 붙는 경우가 있어 앞 숫자만 취한다.
+    m = re.match(r"\s*(\d{2,3})", str(cand.get("KR") or cand.get("CHN") or ""))
+    if m:
+        return int(m.group(1))
+    # JP 는 cm 표기 → ×10
+    m = re.match(r"\s*(\d{2}(?:\.5)?)", str(cand.get("JP") or ""))
+    if m:
+        return int(float(m.group(1)) * 10)
+    return None
+
+
 class PoisonClient:
     """POIZON 셀러 오픈 API 클라이언트 (카탈로그 조회 + 판매 등록)."""
 
@@ -482,7 +517,10 @@ class PoisonClient:
     # ------------------------------------------------------------------
 
     async def query_sku_by_article_number_any(
-        self, style_code: str, region: str | None = None
+        self,
+        style_code: str,
+        region: str | None = None,
+        language: str | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
         """품번 후보를 순서대로 시도 — (SKU목록, 실제로 맞은 품번).
 
@@ -490,22 +528,25 @@ class PoisonClient:
         원본 → 접미사 제거본 순으로 시도하고, 어느 품번이 맞았는지 함께 돌려준다.
         """
         for cand in article_number_candidates(style_code):
-            skus = await self.query_sku_by_article_number(cand, region)
+            skus = await self.query_sku_by_article_number(cand, region, language)
             if skus:
                 return skus, cand
         return [], ""
 
     async def query_sku_by_article_number(
-        self, article_number: str, region: str | None = None
+        self,
+        article_number: str,
+        region: str | None = None,
+        language: str | None = None,
     ) -> list[dict[str, Any]]:
         """브랜드 공식품번으로 카탈로그 SKU 조회 → 사이즈별 globalSkuId 목록.
 
-        Returns: [{globalSkuId, skuId, sizeValue, sizeCandidates}]
+        Returns: [{globalSkuId, skuId, sizeValue, sizeCandidates, color}]
         """
         business = {
             "articleNumber": article_number,
             "region": region or self.region,
-            "language": self.language,
+            "language": language or self.language,
         }
         data = await self._post(self.PATH_SKU_BY_ARTICLE, business)
         if data.get("code") != 200:
@@ -521,24 +562,27 @@ class PoisonClient:
                 global_sku_id = sku.get("globalSkuId")
                 if not global_sku_id:
                     continue
-                # 사이즈 후보 추출 (regionSalePvInfoList의 Size 속성 sizeInfos)
+                # 사이즈/색상 후보 추출 (regionSalePvInfoList: level1=색상, level2=사이즈)
                 size_candidates: dict[str, str] = {}
                 rep_size = ""
+                rep_color = ""
                 for pv in sku.get("regionSalePvInfoList") or []:
                     for si in pv.get("sizeInfos") or []:
                         size_key = (si.get("sizeKey") or "").strip()
                         size_val = (si.get("value") or "").strip()
                         if size_key and size_val:
                             size_candidates[size_key] = size_val
-                    # level==2 가 사이즈 속성 (level1=색상, level3=구성)
                     if pv.get("level") == 2 and pv.get("value"):
                         rep_size = str(pv.get("value")).strip()
+                    if pv.get("level") == 1 and pv.get("value"):
+                        rep_color = str(pv.get("value")).strip()
                 results.append(
                     {
                         "globalSkuId": int(global_sku_id),
                         "skuId": int(sku["skuId"]) if sku.get("skuId") else None,
                         "sizeValue": rep_size,
                         "sizeCandidates": size_candidates,
+                        "color": rep_color,
                     }
                 )
         return results

@@ -3,6 +3,7 @@
 import re
 from typing import Any, Dict, List, Optional
 
+from backend.domain.samba.forbidden.matcher import matches_forbidden
 from backend.domain.samba.forbidden.model import SambaForbiddenWord, SambaSettings
 from backend.domain.samba.forbidden.repository import (
     SambaForbiddenWordRepository,
@@ -112,10 +113,9 @@ class SambaForbiddenService:
         filtered = []
         for product in products:
             is_valid = True
-            name = (product.get("name") or "").lower()
+            name = product.get("name") or ""
             for fw in forbidden_active:
-                word = fw.word.lower()
-                if fw.scope in ("title", "both") and word in name:
+                if fw.scope in ("title", "both") and matches_forbidden(name, fw.word):
                     is_valid = False
                     break
             if is_valid:
@@ -160,11 +160,10 @@ class SambaForbiddenService:
         forbidden_found: List[str] = []
         deletion_found: List[str] = []
         raw_name = product.get("name", "")
-        name = (raw_name or "").lower()
+        name = raw_name or ""
 
         for fw in all_active:
-            word = fw.word.lower()
-            in_title = word in name if name else False
+            in_title = matches_forbidden(name, fw.word)
 
             if in_title and fw.scope in ("title", "both"):
                 if fw.type == "forbidden":

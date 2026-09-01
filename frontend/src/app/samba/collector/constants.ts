@@ -16,6 +16,7 @@ export const SITES: { id: string; label: string; disabled?: boolean }[] = [
   { id: 'BUNJANG', label: '번개장터' },
   // 백엔드 ENABLE_THEHYUNDAI=1 게이트와 세트 (2026-07-13 운영 활성화)
   { id: 'THEHYUNDAI', label: '더현대Hi' },
+  { id: '29CM', label: '29CM' },
   // 개발예정 (비활성)
   { id: 'DANAWA', label: '다나와', disabled: true },
   { id: 'Adidas', label: 'Adidas', disabled: true },
@@ -64,6 +65,11 @@ export const SITE_OPTIONS: Record<string, SiteOption[]> = {
     ...COMMON_OPTIONS,
   ],
   THEHYUNDAI: [
+    { id: 'maxDiscount', label: '최대혜택가' },
+    ...COMMON_OPTIONS,
+  ],
+  // 29CM 은 상세 API 가 노출가(쿠폰 반영 최종가)를 항상 같이 준다 — 별도 호출 없음
+  '29CM': [
     { id: 'maxDiscount', label: '최대혜택가' },
     ...COMMON_OPTIONS,
   ],

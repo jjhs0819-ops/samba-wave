@@ -106,7 +106,7 @@ export default function OrdersFilterBar(props: Props) {
     }
     loadOrders()
   }
-  const handleExcelDownload = async (format: 'ub1' | 'lotte' = 'ub1') => {
+  const handleExcelDownload = async (format: 'ub1' | 'lotte' | 'cj' = 'ub1') => {
     if (excelDownloading) return
     setExcelDownloading(true)
     try {
@@ -430,6 +430,7 @@ export default function OrdersFilterBar(props: Props) {
                       textAlign: 'left',
                       background: 'transparent',
                       border: 'none',
+                      borderBottom: `1px solid ${c.border}`,
                       color: c.text,
                       cursor: 'pointer',
                     }}
@@ -439,6 +440,30 @@ export default function OrdersFilterBar(props: Props) {
                     <div style={{ fontWeight: 600 }}>롯데택배 송장 양식</div>
                     <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '2px' }}>
                       수령자·연락처·주소·상품명·수량·배송메세지 7컬럼
+                    </div>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setExcelMenuOpen(false)
+                      handleExcelDownload('cj')
+                    }}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: '0.5rem 0.75rem',
+                      fontSize: '0.78rem',
+                      textAlign: 'left',
+                      background: 'transparent',
+                      border: 'none',
+                      color: c.text,
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = c.surfaceAlt }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
+                  >
+                    <div style={{ fontWeight: 600 }}>CJ대한통운 송장 양식</div>
+                    <div style={{ fontSize: '0.68rem', color: c.textMuted, marginTop: '2px' }}>
+                      수령인·주소·전화번호·상품명 4컬럼
                     </div>
                   </button>
                 </div>

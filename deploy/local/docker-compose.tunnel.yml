@@ -13,6 +13,7 @@ services:
     # 큰 쿼리(전체 상품 스캔 등) 실패하던 것 방지 (2026-07-03)
     shm_size: 1gb
     environment:
+      TZ: Asia/Seoul   # 로그·스케줄 표기를 KST 로 고정 [2026-08-19]
       POSTGRES_USER: ${LOCAL_DB_USER:-samba}
       POSTGRES_PASSWORD: ${LOCAL_DB_PASSWORD:?LOCAL_DB_PASSWORD 필요}
       POSTGRES_DB: ${LOCAL_DB_NAME:-samba}
@@ -37,6 +38,7 @@ services:
     sysctls:
       - net.ipv4.conf.all.src_valid_mark=1
     environment:
+      - TZ=Asia/Seoul   # 로그·스케줄 표기를 KST 로 고정 [2026-08-19]
       - PUID=1000
       - PGID=1000
     volumes:
@@ -57,6 +59,7 @@ services:
     network_mode: "service:wireguard"
     env_file: [./local.env]
     environment:
+      TZ: Asia/Seoul   # 로그·스케줄 표기를 KST 로 고정 [2026-08-19]
       ENVIRONMENT: production
       DB_SSL_REQUIRED: "false"
       WRITE_DB_HOST: postgres
@@ -66,7 +69,7 @@ services:
       WEB_CONCURRENCY: "1"
       PROCESS_ROLE: api
       # 크림 섀도는 전용 프로세스(samba-kream, PROCESS_ROLE=kream)로 분리 — api 격리(503 방지)
-      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync"
+      WORKER_EXCLUDE_TYPES: "transmit,autotune_transmit,order_sync,returns_sync"
       AUTOTUNE_TRANSMIT_VIA_QUEUE: "1"
       AUTOTUNE_QUEUE_CAP: "0"
       AUTOTUNE_QUEUE_CAP_PER_MARKET: "0"
@@ -83,6 +86,7 @@ services:
     network_mode: "service:wireguard"
     env_file: [./local.env]
     environment:
+      TZ: Asia/Seoul   # 로그·스케줄 표기를 KST 로 고정 [2026-08-19]
       ENVIRONMENT: production
       DB_SSL_REQUIRED: "false"
       WRITE_DB_HOST: postgres
@@ -90,7 +94,7 @@ services:
       READ_DB_HOST: postgres
       READ_DB_PORT: "5432"
       PROCESS_ROLE: worker
-      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync"
+      WORKER_ONLY_TYPES: "transmit,autotune_transmit,order_sync,returns_sync"
       # 8코어 활용 — worker 8개. 프로세스당 풀 축소(write 20, read 10 = 30)로
       # 8×30 + api(80) = 320 < max_connections 400 안에 들어옴.
       WORKER_REPLICAS: "8"
@@ -151,6 +155,7 @@ services:
     network_mode: "service:wireguard"
     env_file: [./local.env]
     environment:
+      TZ: Asia/Seoul   # 로그·스케줄 표기를 KST 로 고정 [2026-08-19]
       ENVIRONMENT: production
       DB_SSL_REQUIRED: "false"
       WRITE_DB_HOST: postgres
@@ -184,6 +189,7 @@ services:
     network_mode: "service:wireguard"
     env_file: [./local.env]
     environment:
+      TZ: Asia/Seoul   # 로그·스케줄 표기를 KST 로 고정 [2026-08-19]
       ENVIRONMENT: production
       DB_SSL_REQUIRED: "false"
       WRITE_DB_HOST: postgres
@@ -197,8 +203,17 @@ services:
       KREAM_SHADOW_EXECUTE: "1"  # [Step 5] 실행 전환 — 실제 크림 PATCH/POST/DELETE (로컬 정지·가드 검증 완료 2026-07-22)
       KREAM_EXEC_BOX: "1"  # [A] 박스(해외배송) 갱신/삭제 실행 — 섀도 검증 완료(175건 계산정확)
       KREAM_EXEC_SHOE: "1"  # [B] 신발(mm) 갱신/삭제 실행 — 실시간 사이즈시세 이식 후 섀도검증
+      # [2026-08-13] 비카드(신발/의류) 갱신·삭제를 통합 루프에서 처리 — 별도
+      # 신발 단계를 건너뛴다. 같은 시세를 두 번 조회하던 중복 제거 + 순차 루프
+      # 정지(3시간)·단계 누락 해소. 대조 검증용으로 켠다.
+      KREAM_UNIFIED_NONCARD: "1"
+      KREAM_UNIFIED_SEALED: "1"   # 밀봉(박스·카드팩)도 통합 루프에서 갱신·삭제
+      # [2026-08-14] 특정 상품이 지나가는 분기를 전부 로그로 남긴다.
+      # 670179(클레이버스트박스·박스경로) / 459800(NikeDunk·통합루프)
+      # 갱신이 왜 안 도는지 추적용 — 진단 끝나면 비운다.
+      KREAM_TRACE_KIDS: "670179,459800"
                             # (247상품 100% 조회, 갱신198·삭제60, 샘플 전건 인상/삭제·인하 0)
-      KREAM_WATCHDOG_STALL_SEC: "600"  # 루프 행 감시 — 5분 무진행 시 자동 재기동(반복 정지 대응)
+      KREAM_WATCHDOG_STALL_SEC: "1200"  # 루프 행 감시 — 5분 무진행 시 자동 재기동(반복 정지 대응)
       # [2026-08-01 임시차단] 신발/박스 신규등록 restock 이 매사이클 크림/스니덩크 API 대량조회 →
       # 소켓 압박으로 카드 갱신루프까지 행 유발 의심. 카드 루프 안정화 확인 후 재활성.
       KREAM_EXEC_SHOE_RESTOCK: "1"  # [B-2] 신발 신규 자동등록 — 임시 OFF(안정화 진단)

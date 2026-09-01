@@ -1067,6 +1067,27 @@ class EbayClient:
                     _cond_desc = str(
                         _ed.get("ebay_condition_description") or ""
                     ).strip()
+        # 자유서술이 없으면 TCG 싱글 기본 고지문을 넣는다.
+        # [2026-08-18] 설명란이 비어 있으면 구매자가 볼 수 있는 정보가 컨디션 라벨
+        # "Ungraded - Near mint or better" 뿐이라, 미세 흠집도 '설명과 다름' 클레임으로
+        # 이어진다(잉어킹 프로모 실제 클레임). 등급 미평가 카드의 판정 범위와
+        # 밀봉 발송 시 검수 불가 사실을 미리 고지해 분쟁 소지를 줄인다.
+        if (
+            not _cond_desc
+            and _is_tcg_card_category(category_id)
+            and str(inventory_item.get("condition", "")).startswith("USED")
+        ):
+            _cond_desc = (
+                "Ungraded card. Condition is assessed by eye, not by a professional "
+                "grading company. Cards are pack-pulled and may show minor factory "
+                "imperfections such as slight print lines, small surface marks or "
+                "light edge wear, which are normal for ungraded product and are "
+                "within the Near Mint or better range. If you request the item to be "
+                "shipped sealed/unopened, the card cannot be inspected before "
+                "shipping and its exact condition cannot be guaranteed. For a "
+                "guaranteed condition, please consider a professionally graded (PSA, "
+                "BGS, CGC) card."
+            )
         if _cond_desc and str(inventory_item.get("condition", "")).startswith("USED"):
             inventory_item["conditionDescription"] = _cond_desc[:1000]
 
@@ -1279,14 +1300,21 @@ class EbayClient:
             except Exception:
                 _live_offer = None
         if _live_offer is not None:
-            offer_data["availableQuantity"] = int(
-                _live_offer.get("availableQuantity", 0) or 0
-            )
-            logger.info(
-                "[eBay] 기존 리스팅 재고 유지: sku=%s qty=%s",
-                sku,
-                offer_data["availableQuantity"],
-            )
+            _offer_status = _live_offer.get("status", "")
+            _db_qty = int(offer_data.get("availableQuantity", 1) or 1)
+            if _offer_status != "PUBLISHED" and _db_qty > 0:
+                # 미게시/종료 offer → DB 수량으로 복원. 아래 재게시 로직이 살려줌.
+                offer_data["availableQuantity"] = _db_qty
+                logger.info(
+                    "[eBay] offer 미게시(%s) → 재고 복원: sku=%s qty=%s",
+                    _offer_status,
+                    sku,
+                    _db_qty,
+                )
+            else:
+                # 활성 offer → 셀러센터 직접 관리, 수량 건드리지 않음.
+                offer_data.pop("availableQuantity", None)
+                logger.info("[eBay] 기존 리스팅 재고 유지(건드리지 않음): sku=%s", sku)
 
         # (신규 등록 경로) 재고수량이 1보다 크게 설정된 상품은 이미 팔린 수량을
         # 반영해야 함 — 그대로 밀어넣으면 매 동기화마다 판매분이 복구되는 오버셀 재발.

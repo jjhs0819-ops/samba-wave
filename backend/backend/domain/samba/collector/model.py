@@ -298,6 +298,13 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=False, sa_column=Column(Boolean, nullable=False, server_default="false")
     )
 
+    # 소프트 삭제(휴지통) — null이면 살아있는 상품, 값이 있으면 휴지통행 시각.
+    # 하드 삭제(완전삭제)와는 별개 — 하드 삭제는 지금처럼 행 자체를 지운다.
+    deleted_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True, index=True),
+    )
+
     # 태그
     tags: Optional[List[str]] = Field(
         default=None, sa_column=Column(JSONB, nullable=True)
@@ -416,9 +423,9 @@ class SambaCollectedProduct(SQLModel, table=True):
         default=None, sa_column=Column(JSON, nullable=True)
     )
 
-    # 리셀 플랫폼(KREAM/POIZON/StockX) 카탈로그 상품번호 매칭
+    # 리셀 플랫폼(KREAM/POIZON) 카탈로그 상품번호 매칭
     # { "kream":  {"product_id":"942002","confidence":99,"matched_by":["name","pnum"],"matched_at":"..."},
-    #   "poizon": {...}, "stockx": {...} }
+    #   "poizon": {...} }
     # 등록(매도입찰) 시 해당 플랫폼 product_id 로 사용. 미매칭 플랫폼은 키 없음/빈값.
     resell_matches: Optional[Any] = Field(
         default=None, sa_column=Column(JSONB, nullable=True)

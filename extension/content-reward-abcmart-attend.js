@@ -1,11 +1,15 @@
 // content-reward-abcmart-attend.js
-// ABC마트 출석체크 자동 수행 (kream-auto-review 포팅)
-// 흐름: POST /rest/attend → overlapAttend Y(이미완료) / stampYN Y(스탬프획득) / 그외(정상완료)
+// ABC마트(ABC-CAMP) 출석체크 자동 수행
+//
+// [2026-08-12] 화면이 ABC-CAMP 로 바뀌면서 방식이 달라졌다.
+//   예전: POST /rest/attend 한 방이면 출석 인정
+//   지금: 출석체크 화면(member.a-rt.com/p/attendance-check)의 타임라인에서
+//         **'출석하기' 버튼을 실제로 눌러야** 인정된다.
+// 그래서 API 만 던지던 예전 코드는 아무것도 안 하고 '완료' 로 보고했다.
+// 이제는 버튼을 누르고, '이번달 출석 N회' 가 늘었는지 확인해야 성공으로 본다.
 ;(async () => {
   if (window.__sambaRewardAbcAttendSent__) return
   window.__sambaRewardAbcAttendSent__ = true
-
-  const BASE = 'https://member.a-rt.com'
 
   function send(extra) {
     return chrome.runtime.sendMessage({
@@ -19,67 +23,205 @@
     console.log('[적립금-ABC마트출석]', msg)
   }
 
-  await new Promise(r => setTimeout(r, 1500))
-  log('ABC마트 출석체크 페이지 진입')
+  const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+  async function waitUntil(fn, timeout = 10000, step = 400) {
+    const end = Date.now() + timeout
+    while (Date.now() < end) {
+      try { const v = fn(); if (v) return v } catch (_) {}
+      await sleep(step)
+    }
+    return null
+  }
+
+  // 합성 click() 을 무시하는 위젯이 있어 실제 마우스처럼 좌표를 실어 보낸다.
+  function realClick(el) {
+    if (!el) return false
+    const r = el.getBoundingClientRect()
+    if (!r.width || !r.height) return false
+    const opt = {
+      bubbles: true, cancelable: true, composed: true, button: 0,
+      clientX: r.left + r.width / 2, clientY: r.top + r.height / 2,
+    }
+    for (const type of ['pointerover', 'pointermove', 'pointerdown', 'mousedown',
+                        'pointerup', 'mouseup', 'click']) {
+      const Ctor = type.startsWith('pointer') ? PointerEvent : MouseEvent
+      try { el.dispatchEvent(new Ctor(type, opt)) } catch (_) {
+        el.dispatchEvent(new MouseEvent(type.replace('pointer', 'mouse'), opt))
+      }
+    }
+    try { el.click() } catch (_) {}
+    return true
+  }
+
+  // '이번달 출석 4회' — 출석이 실제로 됐는지 판정하는 기준.
+  function attendCount() {
+    const m = (document.body.innerText || '').match(/이번달\s*출석\s*(\d+)\s*회/)
+    return m ? Number(m[1]) : null
+  }
+
+  // '출석하기' 는 버튼이 아닐 수 있어(툴팁/뱃지) 글자로 찾아 올라간다.
+  function findAttendButton() {
+    const nodes = Array.from(document.querySelectorAll('button, a, span, div, p'))
+      .filter(el => {
+        const t = (el.textContent || '').trim()
+        return t === '출석하기' && el.offsetParent !== null
+      })
+    if (!nodes.length) return null
+    // 가장 안쪽(글자만 든) 요소를 고른다 — 큰 컨테이너를 누르면 안 먹는다.
+    return nodes.sort((a, b) => a.textContent.length - b.textContent.length)[0]
+  }
+
+  // [2026-08-13] 로그인 여부 판정 — 예전엔 본문 글자만 봐서, 로그인 페이지로 리다이렉트된
+  // 경우(글자가 이미지/SPA 라 안 잡힘)를 놓치고 그냥 '출석하기 버튼 없음' 으로 끝났다.
+  function loginNeeded() {
+    if (/\/p?\/?login/i.test(location.pathname)) return true
+    const body = document.body.innerText || ''
+    if (/로그인/.test(body) && /아이디|비밀번호/.test(body)) return true
+    if (document.querySelector('#loginId, input[name="loginId"], #loginPwd, input[name="loginPwd"]')) return true
+    return false
+  }
+
+  // [2026-08-13] 지금 화면에 로그인된 계정이 잡 계정인지 확인(가능한 범위에서).
+  // 세컨PC 실측: 다른 계정을 손으로 로그인해 두면 그 계정 출석이 찍혔다.
+  // 계정 보장 자체는 백그라운드가 a-rt 쿠키를 비우고 잡 계정으로 새로 로그인해서 하고,
+  // 여기선 아이디 흔적(화면/스토리지)을 훑어 '확인됨' 을 로그로 남긴다.
+  // 흔적이 없어도 실패로 몰지 않는다 — 다른 계정 아이디를 알 수 없어 오탐이 되기 때문.
+  function accountConfirmed() {
+    const expected = window.__sambaRewardExpectedUser__
+    if (!expected) return null
+    const idOnly = String(expected).split('@')[0]
+    if (idOnly.length < 4) return null // 너무 짧은 아이디는 우연 일치 위험 → 검사 생략
+    const parts = [document.body.innerText || '']
+    try { for (let i = 0; i < localStorage.length; i++) parts.push(localStorage.getItem(localStorage.key(i)) || '') } catch (_) {}
+    try { for (let i = 0; i < sessionStorage.length; i++) parts.push(sessionStorage.getItem(sessionStorage.key(i)) || '') } catch (_) {}
+    const blob = parts.join('\n').toLowerCase()
+    return blob.includes(idOnly.toLowerCase()) ? true : null
+  }
+
+  // [2026-08-14] 지금 로그인된 아이디를 **실제로 읽어낸다**.
+  // 위 accountConfirmed 는 '기대 아이디가 어딘가 보이나' 만 봐서, 다른 계정이 로그인돼 있으면
+  // 그냥 흔적 없음(null)으로 넘어가 그 계정으로 출석을 찍어버렸다.
+  // 아이디를 특정할 수 있으면 대조해서 다르면 즉시 실패시킨다. 못 읽으면 null(기존대로 진행).
+  // ⚠ 출처는 **서버가 이번 요청에 그려준 인라인 script** 로 한정한다.
+  // localStorage 는 쿠키를 지우고 다른 계정으로 로그인해도 그대로 남아서, 예전 계정 아이디가
+  // 튀어나와 '정상 로그인인데 불일치' 로 오판정하게 된다(= 출첵이 영영 실패).
+  // 인라인 script 의 전역값은 매 페이지 로드마다 현재 세션 기준으로 다시 그려지므로 신뢰 가능.
+  function currentLoginId() {
+    const pats = [
+      /loginId\s*[:=]\s*['"]([\w.@-]{4,})['"]/i,
+      /"loginId"\s*:\s*"([\w.@-]{4,})"/i,
+      /mbrLoginId\s*[:=]\s*['"]([\w.@-]{4,})['"]/i,
+    ]
+    const blobs = []
+    try {
+      for (const s of document.querySelectorAll('script')) {
+        // 외부 스크립트(src)는 본문이 비어 있고, 있어도 세션값이 아니다.
+        if (s.src) continue
+        const t = s.textContent || ''
+        if (t && t.length < 20000) blobs.push(t)
+      }
+    } catch (_) {}
+    for (const b of blobs) {
+      for (const re of pats) {
+        const m = b.match(re)
+        // 폼 기본값·플레이스홀더('loginId', 'null', 'undefined', '')는 거른다.
+        const v = m && m[1]
+        if (v && !['loginid', 'null', 'undefined', 'false', 'true'].includes(v.toLowerCase())) return v
+      }
+    }
+    return null
+  }
+
+  // 기대 계정과 실제 로그인 계정이 다르면 사유 문자열, 같거나 확인 불가면 null.
+  function accountMismatch() {
+    const expected = window.__sambaRewardExpectedUser__
+    if (!expected) return null
+    const actual = currentLoginId()
+    if (!actual) return null // 못 읽음 → 판정 보류(오탐 방지)
+    const norm = v => String(v).split('@')[0].trim().toLowerCase()
+    if (norm(actual) === norm(expected)) return null
+    return `다른 계정 로그인됨 (기대=${expected} / 실제=${actual})`
+  }
+
+  await sleep(2000)
+  log('ABC-CAMP 출석체크 페이지 진입')
 
   try {
-    const resp = await fetch(`${BASE}/rest/attend`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-        Referer: 'https://member.a-rt.com/p/attendance-check',
-      },
-      body: JSON.stringify({}),
-    })
-
-    const text = await resp.text()
-    let data = null
-    try { data = JSON.parse(text) } catch (_) {}
-
-    if (!resp.ok) {
-      log(`출석 실패 ${resp.status}`)
-      send({ success: false, error: `status ${resp.status}` })
-      return
-    }
-
-    if (data?.code === 'LOGIN' || data?.resultCode === 'LOGIN') {
+    if (loginNeeded()) {
       log('로그인이 필요합니다')
       send({ success: false, error: '로그인 필요' })
       return
     }
 
-    const result = data?.resultData
-    if (result === undefined || result === null) {
-      log(`응답 파싱 실패: ${text.substring(0, 100)}`)
-      send({ success: false, error: '응답 파싱 실패' })
+    // [2026-08-14] 다른 계정 세션으로 출석을 찍어버리는 사고 차단.
+    // 계정이 여러 개일 때 이게 없으면, 앞 계정 세션에서 '이미 출석' 을 보고 성공으로 보고한다.
+    const mismatch = accountMismatch()
+    if (mismatch) {
+      log(mismatch)
+      send({ success: false, error: mismatch })
       return
     }
 
-    if (result.overlapAttend === 'Y') {
-      log('오늘 이미 출석 완료')
-      send({
-        success: true,
-        alreadyDone: true,
-        stampCount: result.stampCount ?? 0,
-        stampScore: result.stampScore ?? 0,
-      })
-    } else if (result.stampYN === 'Y') {
-      log(`✓ 출석 + 스탬프 획득 (스탬프 ${result.stampCount}개, 점수 ${result.stampScore})`)
-      send({
-        success: true,
-        alreadyDone: false,
-        stampCount: result.stampCount ?? 0,
-        stampScore: result.stampScore ?? 0,
-      })
+    if (window.__sambaRewardExpectedUser__) {
+      log(accountConfirmed()
+        ? `계정 확인 (${window.__sambaRewardExpectedUser__})`
+        : `로그인 계정 흔적 없음 — 자동로그인 세션 신뢰하고 진행 (기대: ${window.__sambaRewardExpectedUser__})`)
+    }
+
+    const before = attendCount()
+    let btn = findAttendButton()
+    if (!btn) {
+      // 버튼이 늦게 그려질 수 있다.
+      btn = await waitUntil(findAttendButton, 6000)
+    }
+
+    if (!btn) {
+      // 오늘 이미 했으면 '출석하기' 가 사라진다 — 출석 횟수가 읽히면 완료로 본다.
+      if (before !== null && before > 0) {
+        log(`오늘 이미 출석 완료 (이번달 ${before}회)`)
+        send({ success: true, alreadyDone: true, stampCount: before, stampScore: 0 })
+      } else {
+        log('출석하기 버튼을 찾지 못했습니다')
+        send({ success: false, error: '출석하기 버튼 없음' })
+      }
+      return
+    }
+
+    btn.scrollIntoView({ behavior: 'instant', block: 'center' })
+    await sleep(600)
+    realClick(btn)
+    log(`'출석하기' 클릭 (클릭 전 이번달 ${before ?? '?'}회)`)
+
+    // 확인 팝업이 뜨면 눌러준다.
+    const confirmBtn = await waitUntil(() => {
+      return Array.from(document.querySelectorAll('button, a'))
+        .find(b => ['확인', '출석하기', '닫기'].includes((b.textContent || '').trim())
+                   && b.offsetParent !== null && b !== btn)
+    }, 3000)
+    if (confirmBtn) { await sleep(500); realClick(confirmBtn) }
+
+    // 실제로 늘었는지 확인 — 이게 없으면 안 눌려도 '완료' 가 된다.
+    const ok = await waitUntil(() => {
+      const now = attendCount()
+      if (before === null) return now !== null && now > 0
+      return now !== null && now > before
+    }, 10000)
+
+    if (ok) {
+      const now = attendCount()
+      log(`✓ 출석 완료 (이번달 ${now}회)`)
+      send({ success: true, alreadyDone: false, stampCount: now ?? 0, stampScore: 0 })
+      return
+    }
+
+    // 숫자가 안 늘었는데 버튼이 사라졌으면 화면 갱신이 늦는 것일 수 있다.
+    if (!findAttendButton()) {
+      log('출석 버튼은 사라졌으나 횟수 확인 실패 — 미확정으로 보고')
+      send({ success: false, error: '출석 확인 안 됨(버튼은 사라짐)' })
     } else {
-      log(`✓ 출석 완료 (스탬프 ${result.stampCount}개, 남은일 ${result.attendanceCnt ?? '?'})`)
-      send({
-        success: true,
-        alreadyDone: false,
-        stampCount: result.stampCount ?? 0,
-        stampScore: result.stampScore ?? 0,
-      })
+      log('출석하기 클릭이 반영되지 않음')
+      send({ success: false, error: '출석 클릭 반영 안 됨' })
     }
   } catch (e) {
     log(`오류: ${e.message}`)

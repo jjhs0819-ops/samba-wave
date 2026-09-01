@@ -165,7 +165,8 @@ async def main(
         tpl.img_checks = IMG_CHECKS
         tpl.img_order = IMG_ORDER
         tpl.main_image_index = 0
-        tpl.gallery_include_sub = True
+        # 마켓 갤러리에는 대표이미지 1장만 — 추가이미지 미전송 방침
+        tpl.gallery_include_sub = False
 
         # 쿠팡 정책에 연결
         policies = (await session.execute(select(SambaPolicy))).scalars().all()

@@ -70,3 +70,46 @@ def test_get_product_count_unwraps_wrapper_list(monkeypatch):
 
     monkeypatch.setattr(client, "_call_api", fake_call)
     assert asyncio.run(client.get_product_count()) == 105
+
+
+def test_find_live_item_id_unwraps_wrapper_list(monkeypatch):
+    """안정키(splVenItemId) 검색도 래퍼 리스트를 언랩해야 한다 — #699 누락분 회귀.
+
+    래퍼를 상품으로 오인하면 항상 미발견 → 멱등가드 무력화 → 재전송이
+    "동일상품 존재" __exists__ 마커로 전락 (8/5 스케쳐스 파일럿 실사고).
+    """
+    client = SSGClient("k")
+
+    async def fake_call(method, path, params=None, **kw):
+        return _fake_resp(3)
+
+    monkeypatch.setattr(client, "_call_api", fake_call)
+    assert asyncio.run(client.find_live_item_id_by_spl_ven("cp_1")) == "I1"
+    assert asyncio.run(client.find_live_item_id_by_spl_ven("cp_없음")) == ""
+
+
+def test_find_live_item_id_excludes_deleted(monkeypatch):
+    client = SSGClient("k")
+    resp = {
+        "result": {
+            "resultCode": "SUCCESS",
+            "items": [
+                {
+                    "item": [
+                        {
+                            "itemId": "I9",
+                            "splVenItemId": "cp_9",
+                            "sellStatCd": "90",
+                            "itemNm": "삭제됨",
+                        }
+                    ]
+                }
+            ],
+        }
+    }
+
+    async def fake_call(method, path, params=None, **kw):
+        return resp
+
+    monkeypatch.setattr(client, "_call_api", fake_call)
+    assert asyncio.run(client.find_live_item_id_by_spl_ven("cp_9")) == ""

@@ -4,6 +4,34 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 $compose = "docker-compose.tunnel.yml"
 
+# ── 세션 간 배포 잠금 [2026-08-14] ─────────────────────────────────────────
+# 여러 세션(사람/크론)이 동시에 배포하면 컨테이너가 두 번 갈리고, 진행 중이던
+# 크림 사이클이 통째로 날아간다. 실측: 판정 43~51% 까지 간 사이클이 다른 세션
+# 배포로 초기화되기를 반복했다.
+# 락 파일을 잡고 배포하며, 남이 잡고 있으면 최대 20분 기다린다.
+$lockPath = Join-Path $PSScriptRoot ".deploy.lock"
+$lockFs = $null
+$lockWaited = 0
+while ($true) {
+  try {
+    $lockFs = [System.IO.File]::Open($lockPath, 'OpenOrCreate', 'ReadWrite', 'None')
+    break
+  } catch {
+    if ($lockWaited -eq 0) {
+      Write-Host "다른 세션이 배포 중 — 끝날 때까지 대기(최대 20분)" -ForegroundColor Yellow
+    }
+    Start-Sleep -Seconds 10
+    $lockWaited += 10
+    if ($lockWaited -ge 1200) {
+      Write-Host "배포 락 대기 20분 초과 — 중단. 남은 락이 비정상이면 $lockPath 삭제" -ForegroundColor Red
+      exit 1
+    }
+  }
+}
+if ($lockWaited -gt 0) { Write-Host "락 획득 (대기 $lockWaited 초)" -ForegroundColor Green }
+try {
+
+
 Write-Host "[1/4] ruff 정리..." -ForegroundColor Cyan
 Push-Location ..\..\backend
 try {
@@ -38,14 +66,21 @@ if ($LASTEXITCODE -ne 0) { throw "빌드 실패" }
 #   슬랙 요약이 3시간 넘게 안 나갔다. 대기 30분 / 로그 40분으로 늘린다.
 function Wait-KreamCycle {
   param([int]$MaxSec = 1800)
-  if ($env:SKIP_KREAM_WAIT -eq '1') {
-    Write-Host "크림 사이클 대기 건너뜀(SKIP_KREAM_WAIT=1)" -ForegroundColor Yellow
+  # [2026-08-08] 기본 동작 반전 — 이제 기본은 "기다리지 않음".
+  # 대기 가드가 배포를 30분씩 막아 긴급 수정 반영이 계속 지연됐다. 매번
+  # SKIP_KREAM_WAIT 를 붙이거나 API 컨테이너만 따로 교체하는 우회를 반복하는 것보다
+  # 기본을 바꾸는 게 맞다.
+  # 크림 사이클 보호가 필요한 배포에서만 KREAM_WAIT=1 로 켠다
+  # (등록 실행 중 컨테이너 교체 시 그 회차 등록분이 유실된다 — 2026-08-06 4,206건).
+  if ($env:KREAM_WAIT -ne '1') {
+    Write-Host "크림 사이클 대기 안 함(기본). 보호하려면 KREAM_WAIT=1" -ForegroundColor DarkGray
     return
   }
   $running = docker ps --filter name=local-samba-kream-1 --format "{{.Names}}" 2>$null
   if (-not $running) { return }
   $t0 = Get-Date
   $waited = $false
+  $postWait = $false
   while (((Get-Date) - $t0).TotalSeconds -lt $MaxSec) {
     # 최근 로그에 사이클 시작만 있고 종료(실행ON 요약)가 없으면 진행 중으로 본다
     # 크림통합 로그 전체를 보고 "마지막 줄이 완료 요약(실행ON)인가"로 판정한다.
@@ -55,6 +90,16 @@ function Wait-KreamCycle {
     if (-not $log) { break }
     $last = ($log | Select-Object -Last 1).ToString()
     if ($last -match "실행ON") { break }   # 마지막이 요약 = 사이클 끝남
+    # [2026-08-06] 등록 실행 중이면 반드시 기다린다.
+    # 등록은 '실행ON' 요약보다 앞 단계라 위 조건만으로는 감지되지 않는다. 6,604건을
+    # 내보내는 데 10분 넘게 걸리는데, 그 사이 컨테이너를 교체하면 남은 건이 통째로
+    # 날아간다(실측 2026-08-06 11:00 KST: 2,398건만 반영, 4,206건 유실).
+    if ($last -match "STAGE 실행-등록") {
+      if (-not $postWait) {
+        Write-Host "   등록 실행 중 — 완료까지 대기(중단하면 등록분이 날아간다)" -ForegroundColor Yellow
+        $postWait = $true
+      }
+    }
     if (-not $waited) {
       Write-Host "크림 사이클 진행 중 — 완주까지 대기(최대 $([int]($MaxSec/60))분)..." -ForegroundColor Yellow
       $waited = $true
@@ -143,6 +188,17 @@ for ($i = 0; $i -lt 18; $i++) {
     if ($r.status -eq "healthy") { $ok = $true; break }
     $lastErr = "status=$($r.status)"
   } catch { $lastErr = $_.Exception.Message }
+  # [2026-08-06] 호스트 포트 폴백 — Docker Desktop 포트 프록시가 죽으면
+  # localhost:8080 이 TCP 만 붙고 바로 끊긴다(앱은 멀쩡). 그 탓에 정상 배포가
+  # 매번 exit 1 로 끝나 실패로 오인됐다. 컨테이너 안에서 직접 물어 확인한다.
+  if (-not $ok) {
+    $inner = docker exec local-samba-api-1 curl -s --max-time 5 http://127.0.0.1:8080/api/v1/health 2>$null
+    if ($inner -match '"status"\s*:\s*"healthy"') {
+      $ok = $true
+      Write-Host "   (호스트 포트 미응답 — 컨테이너 내부 확인으로 통과)" -ForegroundColor DarkGray
+      break
+    }
+  }
 }
 if ($ok) {
   Write-Host "배포 완료 - 로컬 healthy" -ForegroundColor Green
@@ -156,4 +212,10 @@ if ($ok) {
   docker logs local-samba-api-1 --tail 30 2>&1 | ForEach-Object { Write-Host $_ }
   Write-Host "전체 로그: docker compose --env-file local.env -f $compose logs samba-api" -ForegroundColor Red
   exit 1
+}
+}
+finally {
+  # 락 해제 — 실패해도 반드시 푼다(안 풀면 다음 배포가 20분 막힌다).
+  if ($lockFs) { $lockFs.Close(); $lockFs.Dispose() }
+  Remove-Item $lockPath -ErrorAction SilentlyContinue
 }

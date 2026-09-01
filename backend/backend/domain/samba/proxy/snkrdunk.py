@@ -17,7 +17,9 @@
 
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import re
 from typing import Any
 
@@ -107,6 +109,43 @@ _CATEGORY_LABELS = {
 }
 
 
+# ── 스니덩크 인증 프록시 [2026-08-13] ────────────────────────────────────────
+# 이 모듈은 httpx.AsyncClient 를 프록시 없이 만들고 있었다(7곳 전부).
+# 스니덩크는 우리 IP 를 차단해 **직결은 전부 403** 이다(실측).
+#   그 결과 해외송장 조회가 6일째 전량 실패했는데, 로그에는 "조회 53 / 수집 0"
+#   으로만 보여 '아직 발송 전'으로 오인됐고 허브넷 송장 누락이 계속 쌓였다.
+# kream_shadow 는 같은 SNKR_PROXY 를 _mounts() 로 물려 정상 동작 중이다.
+# 같은 방식으로 snkrdunk.com 요청만 인증 프록시로 우회한다.
+_SNKR_PROXIES = [
+    _p.strip() for _p in os.environ.get("SNKR_PROXY", "").split(",") if _p.strip()
+]
+_snkr_rr = itertools.count()
+
+
+class _RoundRobinProxyTransport(httpx.AsyncBaseTransport):
+    """요청마다 프록시를 번갈아 쓴다 — 한 IP 로 몰리면 스니덩크가 조인다."""
+
+    def __init__(self, proxies: list[str]) -> None:
+        self._tr = [httpx.AsyncHTTPTransport(proxy=p) for p in proxies]
+
+    async def handle_async_request(self, request):
+        return await self._tr[next(_snkr_rr) % len(self._tr)].handle_async_request(
+            request
+        )
+
+    async def aclose(self) -> None:
+        for t in self._tr:
+            await t.aclose()
+
+
+def _snkr_mounts():
+    """snkrdunk.com 전용 프록시 마운트. 미설정이면 None(직결)."""
+    if not _SNKR_PROXIES:
+        return None
+    tr = _RoundRobinProxyTransport(_SNKR_PROXIES)
+    return {"all://snkrdunk.com": tr, "all://*.snkrdunk.com": tr}
+
+
 def _category_label(snkr_type: str | None) -> str:
     return _CATEGORY_LABELS.get(snkr_type or "", "스트릿웨어")
 
@@ -117,17 +156,23 @@ def _is_streetwear_id(site_product_id: str) -> bool:
 
 
 # 트레이딩카드 브랜드(프랜차이즈) 추론 — 이름 키워드 + 품번 접두어
+# [2026-08-06] 브랜드 표기는 **크림 브랜드명 그대로** 쓴다(크림 고시정보 목록 기준:
+# 'Pokemon TCG', 'One Piece TCG', 'Yu-Gi-Oh OCG'). 검수는 스니덩크↔크림 대조인데
+# 표기가 갈리면 한 브랜드가 화면에서 여러 줄로 쪼개지고, 거래이력 게이트의 브랜드
+# 화이트리스트(kream_shadow._TCG_BRANDS)에도 안 걸려 게이트를 통째로 빠져나간다
+# (원피스 2,080건이 'One Piece TCG' 표기라 게이트 누락된 채 돌고 있었다).
+# 여기 값을 바꾸면 _TCG_BRANDS / _POKEMON_BRANDS 도 반드시 같이 맞출 것.
 _CARD_BRAND_NAME_MAP = [
-    ("one piece", "ONE PIECE"),
-    ("pokemon", "Pokémon"),
-    ("pokémon", "Pokémon"),
+    ("one piece", "One Piece TCG"),
+    ("pokemon", "Pokemon TCG"),
+    ("pokémon", "Pokemon TCG"),
     ("dragon ball", "DRAGON BALL"),
-    ("yu-gi-oh", "Yu-Gi-Oh!"),
-    ("yugioh", "Yu-Gi-Oh!"),
+    ("yu-gi-oh", "Yu-Gi-Oh OCG"),
+    ("yugioh", "Yu-Gi-Oh OCG"),
     ("weiss", "Weiss Schwarz"),
     ("duel masters", "Duel Masters"),
     ("lorcana", "Disney Lorcana"),
-    ("union arena", "Union Arena"),
+    ("union arena", "Union Arena TCG"),
     ("gundam", "GUNDAM"),
     ("digimon", "Digimon"),
     ("hololive", "hololive"),
@@ -136,11 +181,11 @@ _CARD_BRAND_NAME_MAP = [
     ("magic", "Magic: The Gathering"),
 ]
 _CARD_BRAND_PREFIX_MAP = [
-    ("pkmn", "Pokémon"),
-    ("ygo", "Yu-Gi-Oh!"),
+    ("pkmn", "Pokemon TCG"),
+    ("ygo", "Yu-Gi-Oh OCG"),
     ("dbsc", "DRAGON BALL"),
     ("dbsd", "DRAGON BALL"),
-    ("uatcg", "Union Arena"),
+    ("uatcg", "Union Arena TCG"),
     ("ws", "Weiss Schwarz"),
     ("dm", "Duel Masters"),
     ("mtg", "Magic: The Gathering"),
@@ -149,13 +194,13 @@ _CARD_BRAND_PREFIX_MAP = [
     ("holo", "hololive"),
     ("gcg", "GUNDAM"),
     ("cnn", "Detective Conan"),
-    ("opcd", "ONE PIECE"),
-    ("opc", "ONE PIECE"),
-    ("op", "ONE PIECE"),
-    ("eb", "ONE PIECE"),
-    ("st", "ONE PIECE"),
-    ("prb", "ONE PIECE"),
-    ("p-", "ONE PIECE"),
+    ("opcd", "One Piece TCG"),
+    ("opc", "One Piece TCG"),
+    ("op", "One Piece TCG"),
+    ("eb", "One Piece TCG"),
+    ("st", "One Piece TCG"),
+    ("prb", "One Piece TCG"),
+    ("p-", "One Piece TCG"),
 ]
 
 
@@ -279,7 +324,10 @@ class SnkrdunkClient:
         products: list[dict[str, Any]] = []
         total = 0
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             cur_page = page
             while len(products) < max_count:
@@ -389,7 +437,10 @@ class SnkrdunkClient:
         products: list[dict[str, Any]] = []
         per_page = max(1, min(int(per_page or 100), 100))
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             page = 1
             seen: set[str] = set()
@@ -478,7 +529,10 @@ class SnkrdunkClient:
         products: list[dict[str, Any]] = []
         seen: set[str] = set()
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             page = max(1, int(start_page or 1))
             last_page = page + max_pages - 1
@@ -604,7 +658,10 @@ class SnkrdunkClient:
         box_min_price = 0
 
         async with httpx.AsyncClient(
-            headers=JP_HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=JP_HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             # 1) JP 상세 — name(영문 유지)·품번·이미지·박스 minPrice(엔)
             try:
@@ -754,7 +811,10 @@ class SnkrdunkClient:
             return await self.get_trading_card_detail(site_product_id)
         url = _detail_url(site_product_id, snkr_type)
         async with httpx.AsyncClient(
-            headers=HEADERS, timeout=self._timeout, follow_redirects=True
+            mounts=_snkr_mounts(),
+            headers=HEADERS,
+            timeout=self._timeout,
+            follow_redirects=True,
         ) as client:
             try:
                 r = await client.get(url)
@@ -797,6 +857,7 @@ class SnkrdunkClient:
         """JP 상세페이지에서 사이즈별 엔화 최저가 조회. 실패 시 빈 리스트(=USD 폴백)."""
         try:
             async with httpx.AsyncClient(
+                mounts=_snkr_mounts(),
                 headers={**HEADERS, "Accept-Language": "ja"},
                 timeout=self._timeout,
                 follow_redirects=True,
@@ -946,7 +1007,7 @@ async def fetch_order_overseas_tracking(
         "Referer": f"{BASE}/",
     }
     async with httpx.AsyncClient(
-        headers=headers, timeout=timeout, follow_redirects=True
+        mounts=_snkr_mounts(), headers=headers, timeout=timeout, follow_redirects=True
     ) as client:
         # 1) 주문 상세 — trackingNumber(해외송장)·orderStatus·orderAdminShippedAt
         try:

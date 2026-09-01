@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import {
   collectorApi,
   accountApi,
@@ -66,7 +66,6 @@ export default function ProductsPage() {
     return () => { cancelled = true; clearInterval(t) }
   }, [])
   const searchParams = useSearchParams();
-  const router = useRouter();
   const [queryReady, setQueryReady] = useState(false)
   // URL searchParams에서 필터 읽기 — 한 번 읽은 뒤 URL에서 제거 (새로고침 시 풀림)
   // searchParams를 dep에 포함해야 클라이언트 네비게이션 시에도 동작함
@@ -177,6 +176,7 @@ export default function ProductsPage() {
   // AI 이미지 변환
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
+  const [aiImgProvider, setAiImgProvider] = useState('gemini')
   const [aiPresetList, setAiPresetList] = useState<{ key: string; label: string; desc: string; image: string | null }[]>([])
   const [aiImgScope, setAiImgScope] = useState({ thumbnail: true, additional: true, detail: false })
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
@@ -358,6 +358,47 @@ export default function ProductsPage() {
     await loadProducts(currentPage)
   }, [loadProducts, currentPage])
 
+  // 휴지통 보기
+  const [showTrash, setShowTrash] = useState(false)
+  const [trashedProducts, setTrashedProducts] = useState<SambaCollectedProduct[]>([])
+
+  const loadTrash = useCallback(async () => {
+    try {
+      const rows = await collectorApi.listTrashedProducts()
+      setTrashedProducts(rows)
+    } catch { /* 무시 — 빈 목록으로 유지 */ }
+  }, [])
+
+  useEffect(() => {
+    if (showTrash) loadTrash()
+  }, [showTrash, loadTrash])
+
+  const handleRestore = async (id: string) => {
+    try {
+      await collectorApi.bulkRestoreProducts([id])
+      showAlert('복구되었습니다.', 'success')
+      loadTrash()
+      reloadProducts()
+    } catch (e) {
+      showAlert(`복구 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  };
+
+  const handlePermanentDelete = async (id: string) => {
+    if (!await showConfirm('완전히 삭제하면 복구할 수 없습니다. 계속하시겠습니까?')) return;
+    try {
+      const res = await collectorApi.bulkDeleteProducts([id])
+      if (res.market_delete_failed && res.market_delete_failed.length > 0) {
+        showAlert('마켓 삭제에 실패하여 완전 삭제하지 못했습니다. 마켓 등록 상태를 확인해주세요.', 'error')
+      } else {
+        showAlert('완전 삭제되었습니다.', 'success')
+      }
+      loadTrash()
+    } catch (e) {
+      showAlert(`삭제 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  };
+
   // 메타데이터 + 상품 로드 — 2-phase
   // Phase 1: scrollProducts만 먼저 → 상품 즉시 표시
   // Phase 2: 메타데이터 8개 백그라운드 → 정책/계정 정보 채움
@@ -537,6 +578,26 @@ export default function ProductsPage() {
     setDeleteConfirm({ ids: [id], label: p ? `"${p.name.slice(0, 30)}"` : "이 상품" });
   };
 
+  const handleTrash = async (id: string) => {
+    const p = allProducts.find((x) => x.id === id);
+    if (p?.lock_delete) {
+      showAlert('삭제잠금이 설정된 상품입니다. 잠금을 해제한 후 휴지통으로 이동하세요.')
+      return;
+    }
+    if (!await showConfirm(`"${p?.name.slice(0, 30) || '이 상품'}"을(를) 휴지통으로 이동하시겠습니까? (나중에 복구 가능)`)) return;
+    try {
+      const res = await collectorApi.bulkTrashProducts([id])
+      if (res.market_delete_failed && res.market_delete_failed.length > 0) {
+        showAlert('마켓 삭제에 실패하여 휴지통으로 이동하지 못했습니다. 마켓 등록 상태를 확인해주세요.', 'error')
+      } else {
+        showAlert('휴지통으로 이동했습니다.', 'success')
+      }
+      reloadProducts()
+    } catch (e) {
+      showAlert(`휴지통 이동 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
+  };
+
   const fetchProductsByIds = useCallback(async (ids: string[]) => {
     const result: SambaCollectedProduct[] = []
     for (let i = 0; i < ids.length; i += 500) {
@@ -575,6 +636,39 @@ export default function ProductsPage() {
     ].filter(Boolean)
     const excludeMsg = excludes.length > 0 ? ` (${excludes.join(', ')} 제외)` : ''
     setDeleteConfirm({ ids: deletableIds, label: `${fmt(deletableIds.length)}개 상품${excludeMsg}` });
+  };
+
+  const handleBulkTrash = async () => {
+    if (selectedIds.size === 0) return;
+    let selected = allProducts.filter(p => selectedIds.has(p.id))
+    if (selected.length < selectedIds.size) {
+      try {
+        selected = await fetchProductsByIds([...selectedIds])
+      } catch { /* 폴백: 현재 페이지만 */ }
+    }
+    const deletableIds = selected.filter(p => !p.lock_delete).map(p => p.id)
+    if (deletableIds.length === 0) {
+      showAlert('휴지통으로 이동 가능한 상품이 없습니다 (삭제잠금)')
+      return;
+    }
+    if (!await showConfirm(`${fmt(deletableIds.length)}개 상품을 휴지통으로 이동하시겠습니까?`)) return;
+    try {
+      const res = await collectorApi.bulkTrashProducts(deletableIds)
+      const failedCount = res.market_delete_failed?.length ?? 0
+      if (failedCount > 0) {
+        showAlert(
+          `${fmt(res.trashed)}건 휴지통 이동 완료 (${fmt(failedCount)}건은 마켓 삭제 실패로 휴지통 이동에서 제외됨)`,
+          'error'
+        )
+      } else {
+        showAlert(`${fmt(res.trashed)}건 휴지통 이동 완료`, 'success')
+      }
+      setSelectedIds(new Set())
+      setSelectAll(false)
+      reloadProducts()
+    } catch (e) {
+      showAlert(`휴지통 이동 실패: ${e instanceof Error ? e.message : ''}`, 'error')
+    }
   };
 
   const handleLockToggle = async (productId: string, field: 'lock_delete' | 'lock_stock', value: boolean) => {
@@ -641,6 +735,18 @@ export default function ProductsPage() {
       p.id === productId ? { ...p, applied_policy_id: policyId || undefined } as SambaCollectedProduct : p
     ))
     await collectorApi.updateProduct(productId, { applied_policy_id: policyId || undefined } as Partial<SambaCollectedProduct>).catch(() => {})
+  };
+
+  // 사진 뷰: 추가사진 썸네일 클릭 → 대표(썸네일)로 승격 (해당 URL을 맨 앞으로, 기존 대표는 추가로 밀림)
+  const handleSetMainImage = async (product: SambaCollectedProduct, url: string) => {
+    const cur = product.images || []
+    if (!cur.length || cur[0] === url) return
+    const newImgs = [url, ...cur.filter(u => u !== url)]
+    const newTags = (product.tags || []).includes('__img_edited__') ? (product.tags || []) : [...(product.tags || []), '__img_edited__']
+    setAllProducts(prev => prev.map(p =>
+      p.id === product.id ? { ...p, images: newImgs, tags: newTags } as SambaCollectedProduct : p
+    ))
+    await collectorApi.updateProduct(product.id, { images: newImgs, tags: newTags } as Partial<SambaCollectedProduct>).catch(() => {})
   };
 
   const handleEnrich = async (productId: string) => {
@@ -2239,6 +2345,12 @@ export default function ProductsPage() {
           <option value="scene">연출컷</option>
           <option value="model">모델 착용</option>
         </select>
+        {aiImgMode !== 'background' && (
+          <select value={aiImgProvider} onChange={e => setAiImgProvider(e.target.value)} style={{ background: c.surface, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', padding: '2px 6px', fontSize: '0.78rem' }}>
+            <option value="gemini">Gemini</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        )}
         {aiImgMode === 'model' && (
           <select
             value={aiModelPreset}
@@ -2433,7 +2545,7 @@ export default function ProductsPage() {
                     await new Promise(r => setTimeout(r, delays[attempt - 1]))
                   }
                   try {
-                    const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset)
+                    const res = await proxyApi.transformImages([ids[i]], aiImgScope, aiImgMode, aiModelPreset, aiImgProvider)
                     if (res.success && res.total_transformed > 0) {
                       success++; addLog(`[${ts()}] [${fmt(i + 1)}/${fmt(ids.length)}] ${label} — 완료 (${fmt(res.total_transformed)}장)`)
                     } else {
@@ -2727,6 +2839,13 @@ export default function ProductsPage() {
               color: c.textSub, background: c.btnBg, cursor: "pointer", whiteSpace: "nowrap",
             }}
           >상품삭제</button>
+          <button onClick={handleBulkTrash} style={{ ...btn('secondary', c), padding: '5px 12px', fontSize: '0.8rem' }}>
+            🗑 휴지통으로 이동
+          </button>
+          <button
+            onClick={() => setShowTrash(v => !v)}
+            style={{ ...btn(showTrash ? 'primary' : 'secondary'), padding: '5px 12px', fontSize: '0.8rem' }}
+          >{showTrash ? '전체상품 보기' : `🗑 휴지통 보기 (${fmt(trashedProducts.length)})`}</button>
           <button
             onClick={async () => {
               if (selectedIds.size === 0) { showAlert('상품을 선택해주세요'); return }
@@ -2948,7 +3067,21 @@ export default function ProductsPage() {
       )}
 
       {/* Product list */}
-      {loading && products.length === 0 ? (
+      {showTrash ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {trashedProducts.length === 0 ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: '#888' }}>휴지통이 비어있습니다.</div>
+          ) : trashedProducts.map(p => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', border: '1px solid #eee', borderRadius: '8px' }}>
+              <span>{p.name}</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button onClick={() => handleRestore(p.id)} style={{ ...btn('secondary', c), fontSize: '0.75rem', padding: '4px 10px' }}>복구</button>
+                <button onClick={() => handlePermanentDelete(p.id)} style={{ ...btn('danger', c), fontSize: '0.75rem', padding: '4px 10px' }}>영구삭제</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : loading && products.length === 0 ? (
         /* 스켈레톤 — 빈 화면 대신 카드 형태 placeholder (체감 속도 향상) */
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: viewMode === 'compact' ? '4px' : '8px' }}>
           {Array.from({ length: Math.min(pageSize, 10) }).map((_, i) => (
@@ -2994,17 +3127,37 @@ export default function ProductsPage() {
               borderRadius: "8px",
               overflow: "hidden", cursor: "pointer", position: "relative",
             }} onClick={() => handleCheckboxToggle(p.id, !selectedIds.has(p.id))}>
-              <input
-                type="checkbox"
-                checked={selectedIds.has(p.id)}
-                onChange={e => handleCheckboxToggle(p.id, e.target.checked)}
+              {/* 체크박스 — 클릭영역을 넓혀(패딩) 오조준해도 선택되게. 카드 전체도 선택 토글이라 이중토글 방지 위해 stopPropagation. */}
+              <label
                 onClick={e => e.stopPropagation()}
                 style={{
-                  position: "absolute", top: "6px", left: "6px", zIndex: 1,
-                  accentColor: c.primary, width: "14px", height: "14px", cursor: "pointer",
+                  position: "absolute", top: 0, left: 0, zIndex: 2,
+                  padding: "6px 10px 10px 6px", cursor: "pointer",
                 }}
-              />
-              <div onClick={(e) => { e.stopPropagation(); router.push(`/samba/products?search_type=id&search=${p.id}&highlight=${p.id}`); }} style={{ cursor: 'pointer' }}>
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(p.id)}
+                  onChange={e => handleCheckboxToggle(p.id, e.target.checked)}
+                  style={{
+                    accentColor: c.primary, width: "17px", height: "17px", cursor: "pointer",
+                    display: "block", boxShadow: "0 0 0 2px rgba(0,0,0,0.35)", borderRadius: "3px",
+                  }}
+                />
+              </label>
+              {/* 상세보기 — 새 탭으로 열어 그리드 스크롤·선택상태·뒤로가기 보존 */}
+              <button
+                onClick={(e) => { e.stopPropagation(); window.open(`/samba/products?search_type=id&search=${p.id}`, '_blank'); }}
+                title="상세보기 (새 탭)"
+                style={{
+                  position: "absolute", top: "6px", right: "6px", zIndex: 2,
+                  fontSize: "0.62rem", padding: "2px 7px", borderRadius: "4px", cursor: "pointer",
+                  border: `1px solid ${c.border}`, background: "rgba(0,0,0,0.45)", color: "#fff",
+                  lineHeight: 1.4, whiteSpace: "nowrap",
+                }}
+              >상세 ↗</button>
+              {/* 이미지 클릭 = 카드 선택 토글(별도 onClick 없이 상위 div로 버블) */}
+              <div>
                 <ProductImage src={p.images?.[0]} name={p.name} size={140} />
               </div>
               {(p.free_shipping || p.same_day_delivery) && (
@@ -3018,6 +3171,18 @@ export default function ProductsPage() {
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
                 </p>
                 <p style={{ fontSize: "0.75rem", color: c.text, fontWeight: 600, margin: 0 }}>₩{fmt(p.sale_price)}</p>
+                {(p.images?.length || 0) > 1 && (
+                  <div style={{ display: 'flex', gap: '3px', marginTop: '5px', flexWrap: 'wrap' }}>
+                    {(p.images || []).slice(1).map((img, ii) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={ii} src={img} alt="" loading="lazy" referrerPolicy="no-referrer"
+                        title="클릭 → 이 사진을 대표로"
+                        onClick={(e) => { e.stopPropagation(); handleSetMainImage(p, img) }}
+                        onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                        style={{ width: 34, height: 34, objectFit: 'cover', borderRadius: '4px', border: `1px solid ${c.border}`, cursor: 'pointer' }} />
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -3041,6 +3206,7 @@ export default function ProductsPage() {
                 deletionWords={deletionWords}
                 onCheckboxToggle={handleCheckboxToggle}
                 onDelete={handleDelete}
+                onTrash={handleTrash}
                 onPolicyChange={handlePolicyChange}
                 onToggleMarket={handleToggleMarket}
                 onEnrich={handleEnrich}
@@ -3062,7 +3228,7 @@ export default function ProductsPage() {
       )}
 
       {/* 페이지네이션 */}
-      {serverTotal > 0 && (
+      {!showTrash && serverTotal > 0 && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem', padding: '1rem 0', flexWrap: 'wrap' }}>
           <button onClick={() => goToPage(1)} disabled={currentPage === 1}
             style={{ padding: '4px 8px', fontSize: '0.75rem', border: `1px solid ${c.border}`, borderRadius: '4px', background: 'transparent', color: currentPage === 1 ? c.textMuted : c.text, cursor: currentPage === 1 ? 'default' : 'pointer' }}>{'<<'}</button>

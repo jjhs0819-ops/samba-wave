@@ -12,6 +12,7 @@ import { STORAGE_KEYS } from '@/lib/samba/constants'
 import { fmtNum } from '@/lib/samba/styles'
 import { STATUS_MAP } from '@/app/samba/orders/constants'
 import { useOrderLinks } from '@/app/samba/orders/hooks/useOrderLinks'
+import { useSettlement } from '@/app/samba/orders/hooks/useSettlement'
 
 // KST 기준 'YYYY-MM-DD' (sv-SE 로케일이 ISO 포맷 반환)
 const kstDate = (offsetDays = 0): string => {
@@ -77,6 +78,15 @@ const sourceSiteFromUrl = (url?: string | null): string => {
 const hasOrderNo = (o: SambaOrder): boolean =>
   !!(o.sourcing_order_number && o.sourcing_order_number.trim())
 
+// 실수익/수익률 — PC 주문화면 calcProfit/calcProfitRate(useOrderActions.ts)와 동일 공식.
+// 폰 화면엔 인라인 편집 중인 원가가 없으므로 o.cost/o.shipping_fee 그대로 사용.
+const calcProfit = (o: SambaOrder, revenue: number): number =>
+  revenue - (o.cost ?? 0) - (o.shipping_fee ?? 0)
+const calcProfitRate = (o: SambaOrder, profit: number): string => {
+  const paymentAmount = o.total_payment_amount ?? o.sale_price
+  return paymentAmount > 0 ? ((profit / paymentAmount) * 100).toFixed(1) : '0'
+}
+
 // 발송/미발송/취소 판정 — 백엔드 기준(order.py EXCLUDED_ORDER_STATUSES)과 완전히 일치
 // status 컬럼만 기준 — shipping_status/tracking_number는 일절 관여 금지(PC와 동일 규칙)
 // 크림 등 배송중(delivering) 주문은 status='pending' 유지 + tracking_number 선반영되므로
@@ -123,6 +133,9 @@ export default function SambaMobileOrdersPage() {
   // 마켓 계정 — PC 주문화면과 동일하게 useOrderLinks에 그대로 넘겨 원문/판매링크 생성 위임
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const { handleSourceLink, handleMarketLink } = useOrderLinks(accounts)
+
+  // 정산금 — PC 주문화면과 동일한 계산(크림 수수료 차감 포함) 공유
+  const { getRevenue } = useSettlement()
 
   useEffect(() => {
     accountApi.listActiveCached(setAccounts)
@@ -291,6 +304,15 @@ export default function SambaMobileOrdersPage() {
   const unshippedCount = orders.filter(isUnshipped).length
   // 표시(필터 적용)된 주문 기준 매출 합계
   const shownSale = shown.reduce((s, o) => s + (amountOf(o) || 0), 0)
+  // 정산금 합계 — 취소/반품류는 정산 대상이 아니라 제외
+  const shownSettle = shown.reduce((s, o) => s + (isCancelled(o) ? 0 : getRevenue(o) || 0), 0)
+  // 실수익/수익률 — 발주 미입력 건은 원가(cost)가 실구매가로 확정되지 않은 예상값이라
+  // 수익 계산에서 제외 (발주 입력 + 취소/반품 아닌 건만 합산)
+  const profitEligible = shown.filter((o) => hasOrderNo(o) && !isCancelled(o))
+  const shownProfit = profitEligible.reduce((s, o) => s + calcProfit(o, getRevenue(o)), 0)
+  const profitEligibleSale = profitEligible.reduce((s, o) => s + (amountOf(o) || 0), 0)
+  const shownProfitRate =
+    profitEligibleSale > 0 ? ((shownProfit / profitEligibleSale) * 100).toFixed(1) : '0'
 
   // ── 로딩 게이트 ──
   if (!ready) {
@@ -556,8 +578,31 @@ export default function SambaMobileOrdersPage() {
       </div>
 
       {/* 요약 */}
-      <div style={{ padding: '0.6rem 0.85rem', fontSize: 12, color: c.textSub }}>
-        표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원 · 기간 총 {fmtNum(orders.length)}건
+      {/* 좌: 건수·매출 / 우: 정산금 + 실수익·수익률 (우측 2줄 스택, 좌우 각 줄 nowrap) */}
+      <div
+        style={{
+          padding: '0.6rem 0.85rem',
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 8,
+          fontSize: 12,
+          color: c.textSub,
+        }}
+      >
+        <span style={{ whiteSpace: 'nowrap' }}>
+          표시 {fmtNum(shown.length)}건 · 매출 {fmtNum(Math.round(shownSale))}원
+        </span>
+        <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+          <div style={{ fontWeight: 700, color: c.text }}>
+            정산 {fmtNum(Math.round(shownSettle))}원
+          </div>
+          {profitEligible.length > 0 && (
+            <div style={{ marginTop: 2, color: shownProfit >= 0 ? c.success : c.danger }}>
+              {shownProfit >= 0 ? '+' : ''}{fmtNum(Math.round(shownProfit))}원 ({shownProfitRate}%)
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 상태 메시지 */}
@@ -703,9 +748,30 @@ export default function SambaMobileOrdersPage() {
                 <span style={{ fontSize: 12, color: c.textSub }}>
                   {o.customer_name || '-'} · 수량 {fmtNum(o.quantity)}
                 </span>
-                <span style={{ fontSize: 15, fontWeight: 700 }}>
-                  {fmtNum(Math.round(amountOf(o)))}원
-                </span>
+                {/* 우측: 결제금액(큰 글씨) + 그 아래 정산금. 정산 미산출(0)이면 숨김 */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700 }}>
+                    {fmtNum(Math.round(amountOf(o)))}원
+                  </div>
+                  {getRevenue(o) > 0 && (() => {
+                    const revenue = getRevenue(o)
+                    const profit = calcProfit(o, revenue)
+                    const profitRate = calcProfitRate(o, profit)
+                    return (
+                      <>
+                        <div style={{ fontSize: 12, color: c.textSub, marginTop: 1 }}>
+                          정산 {fmtNum(Math.round(revenue))}원
+                        </div>
+                        {/* 발주 미입력 — 원가 미확정 예상값이라 수익 표시 생략 */}
+                        {hasOrderNo(o) && (
+                          <div style={{ fontSize: 12, color: profit >= 0 ? c.success : c.danger, marginTop: 1 }}>
+                            {profit >= 0 ? '+' : ''}{fmtNum(Math.round(profit))}원 ({profitRate}%)
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+                </div>
               </div>
 
               <div style={{ fontSize: 11, color: c.textMuted, marginTop: 4 }}>

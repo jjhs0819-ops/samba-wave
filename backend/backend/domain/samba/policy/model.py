@@ -114,11 +114,11 @@ class SambaDetailTemplate(SQLModel, table=True):
     )
     # 마켓 썸네일/갤러리(Image1~N) 추가이미지 포함 여부 (#342)
     # 상세페이지 img_checks.sub 와 독립 — 상세는 상세대로, 갤러리는 이 토글대로.
-    # 기본 True = #309 이전 동작(갤러리에 추가이미지 전부). 기존 데이터는
-    # 마이그레이션에서 img_checks.sub 값으로 backfill 하여 현행 동작 보존.
+    # 기본 False — 운영 방침상 마켓 갤러리에는 대표이미지 1장만 올린다.
+    # (원래 기본은 True 였으나 전 템플릿을 False 로 내리면서 신규 생성 기본값도 통일)
     gallery_include_sub: bool = Field(
-        default=True,
-        sa_column=Column(Boolean, nullable=False, server_default="true"),
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
     )
 
     # Timestamps

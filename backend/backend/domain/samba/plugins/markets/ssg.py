@@ -1015,4 +1015,49 @@ class SSGPlugin(MarketPlugin):
         # (선제검색으로 찾은 itemId 는 DB 미저장 상태이므로 명시 전달 필요)
         elif existing_no:
             _ret["product_no"] = existing_no
+        else:
+            # 신규 insertItem 응답에 itemId 가 없으면 호출자의 상품번호 추출이 빈손이 되어
+            # market_product_nos 미저장 → "번호 없는 등록"(오토튠 품절연동·주문매칭·마켓삭제
+            # 전부 불가)이 조용히 쌓인다. 안정키(splVenItemId=수집상품 id) 재검색으로
+            # 번호를 복구해 저장을 보장한다.
+            def _deep_find_item_id(obj: Any) -> str:
+                stack = [obj]
+                while stack:
+                    cur = stack.pop()
+                    if isinstance(cur, dict):
+                        v = cur.get("itemId")
+                        if v not in (None, ""):
+                            return str(v)
+                        stack.extend(
+                            x for x in cur.values() if isinstance(x, (dict, list))
+                        )
+                    elif isinstance(cur, list):
+                        stack.extend(x for x in cur if isinstance(x, (dict, list)))
+                return ""
+
+            if not _deep_find_item_id(result):
+                import asyncio as _aio
+
+                _spl = str(product.get("id") or "")
+                _iid = ""
+                for _wait in (0, 2):
+                    if _wait:
+                        await _aio.sleep(_wait)
+                    try:
+                        _iid = await client.find_live_item_id_by_spl_ven(_spl)
+                    except Exception as _fe:
+                        logger.warning(f"[SSG] itemId 복구검색 실패: {_fe}")
+                    if _iid:
+                        break
+                if _iid:
+                    logger.info(
+                        f"[SSG] insert 응답 itemId 부재 → 안정키 복구 저장: "
+                        f"product={_spl} itemId={_iid}"
+                    )
+                    _ret["product_no"] = _iid
+                else:
+                    logger.warning(
+                        f"[SSG] insert 응답 itemId 부재 + 안정키 검색 미발견 — "
+                        f"번호 미저장 위험: product={_spl}"
+                    )
         return _ret

@@ -53,10 +53,10 @@ export const MARKETS = [
   { id: 'playauto', name: '플레이오토', url: '', searchUrl: '' },
 ]
 
-// 리셀 판매처(KREAM/POIZON/StockX) — resellRows 에서 매칭·정책계산으로 별도 표시하므로
+// 리셀 판매처(KREAM/POIZON) — resellRows 에서 매칭·정책계산으로 별도 표시하므로
 // 일반 마켓가격 행/이름편집 행에서는 제외(중복 방지). 키=정책 market_policies 키(마켓명).
-const RESELL_MARKET_KEYS = new Set(['KREAM', 'POIZON', '포이즌', 'StockX'])
-const RESELL_MARKET_IDS = new Set(['kream', 'poison', 'stockx'])
+const RESELL_MARKET_KEYS = new Set(['KREAM', 'POIZON', '포이즌'])
+const RESELL_MARKET_IDS = new Set(['kream', 'poison'])
 
 // 마켓별 상품명 글자수 제한
 const MARKET_NAME_LIMITS: Record<string, number> = {
@@ -136,6 +136,10 @@ function buildMarketProductUrl(
       return `https://kream.co.kr/products/${productNo}`
     case 'ebay':
       return `https://www.ebay.com/itm/${productNo}`
+    case 'buyma':
+      // 바이마 상품ID는 등록 응답이 아니라 webhook(product/create)으로 들어온다.
+      // 백필로 market_product_nos 에 채워지면 여기서 상품 페이지로 바로 간다.
+      return `https://www.buyma.com/item/${productNo}/`
     case 'cafe24':
       return `https://${sellerId}.cafe24.com/product/detail.html?product_no=${productNo}`
     default:
@@ -311,6 +315,35 @@ function simultaneousReplace(
   return result
 }
 
+// 조합 배열 정규화 — 손상된 저장값 방어 (백엔드 _normalize_composition와 동일 규칙).
+// 비문자열 항목을 버린다. 그대로 map/filter를 돌면 v.trim is not a function 으로
+// 상세 패널 전체가 죽는다.
+function normalizeComposition(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  return raw.filter((t): t is string => typeof t === 'string')
+}
+
+// "후보 배열의 배열"이면 폴백 체인 — 손상이 아니라 의도된 형태다.
+// 백엔드 _compose_product_name 과 동일하게 앞에서부터 마켓 상품명 한도 안에
+// 들어가는 첫 조합을 쓰고, 전부 넘치면 마지막(가장 짧은) 조합을 쓴다.
+// 카드에 보이는 "등록 상품명"이 실제 전송값과 어긋나지 않게 하기 위함.
+function normalizeCompositionChain(raw: unknown): string[][] {
+  if (!Array.isArray(raw)) return []
+  if (raw.some(Array.isArray)) {
+    return raw
+      .filter(Array.isArray)
+      .map(normalizeComposition)
+      .filter(c => c.length > 0)
+  }
+  const flat = normalizeComposition(raw)
+  return flat.length ? [flat] : []
+}
+
+// 마켓별 상품명 최대 바이트 — 백엔드 _MARKET_NAME_MAX_BYTES 와 같아야 한다.
+const MARKET_NAME_MAX_BYTES: Record<string, number> = { '11st': 99, lotteon: 149 }
+
+const utf8Len = (s: string) => new TextEncoder().encode(s).length
+
 // 상품명 조합 적용 (name_composition 태그 기반)
 // market_type이 지정되고 market_name_compositions에 해당 마켓 설정이 있으면 마켓별 조합 사용 (백엔드 _compose_product_name와 동일)
 function composeProductName(
@@ -320,10 +353,29 @@ function composeProductName(
   marketType?: string,
 ): string {
   // 마켓별 조합 우선, 없으면 일반 조합 폴백
-  const composition =
+  const chain = normalizeCompositionChain(
     (marketType && nameRule?.market_name_compositions?.[marketType]) ||
     nameRule?.name_composition
-  if (!composition?.length) return product.name
+  )
+  if (!chain.length) return product.name
+  // 폴백 체인 — 한도 안에 들어가는 첫 후보를 쓴다. 각 후보를 끝까지 조립해 실측한다
+  // (치환/접두접미/중복제거가 길이를 바꾸므로 태그만 보고 판단하면 어긋난다).
+  if (chain.length > 1) {
+    const limit = MARKET_NAME_MAX_BYTES[marketType || ''] ?? 0
+    for (let i = 0; i < chain.length; i++) {
+      const built = composeWithComposition(product, nameRule, deletionWords, chain[i])
+      if (!limit || i === chain.length - 1 || utf8Len(built) <= limit) return built
+    }
+  }
+  return composeWithComposition(product, nameRule, deletionWords, chain[0])
+}
+
+function composeWithComposition(
+  product: SambaCollectedProduct,
+  nameRule: SambaNameRule | undefined,
+  deletionWords: string[] | undefined,
+  composition: string[],
+): string {
   const seoKws = product.seo_keywords || []
   const tagMap: Record<string, string> = {
     '{상품명}': product.name || '',
@@ -409,6 +461,7 @@ interface ProductCardProps {
   deletionWords: string[]
   onCheckboxToggle: (id: string, checked: boolean) => void
   onDelete: (id: string) => void
+  onTrash: (id: string) => void
   onPolicyChange: (productId: string, policyId: string) => void
   onToggleMarket: (productId: string, marketId: string) => void
   onEnrich: (productId: string) => void
@@ -430,7 +483,7 @@ interface ProductCardProps {
 
 const ProductCard = React.memo(function ProductCard({
   product: p, idx, policies, accounts, nameRules, selectedIds, filterNameMap, deletionWords,
-  onCheckboxToggle, onDelete, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
+  onCheckboxToggle, onDelete, onTrash, onPolicyChange, onToggleMarket, onEnrich, onLockToggle, onBlockCollect, onTagUpdate, onMarketDelete, onProductUpdate, logMessage,
   catMappingMap, filters, detailTemplates, usdRate = 1400, jpyRate = 9.5, compact, expanded, onToggleExpand,
 }: ProductCardProps) {
   const c = useTheme() // 테마 팔레트 (라이트/다크 반응형)
@@ -490,6 +543,20 @@ const ProductCard = React.memo(function ProductCard({
     }).catch(() => {})
   }, [compact, expanded, actualSizeLoaded, p.id, p.source_site])
 
+  // 추가이미지를 대표(썸네일)로 승격 — 해당 URL을 맨 앞으로 이동(기존 대표는 추가로 밀림)
+  const promoteImageToMain = async (url: string) => {
+    const newImgs = [url, ...productImages.filter(u => u !== url)]
+    try {
+      const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+      if (!(p.tags || []).includes('__img_edited__')) ud.tags = [...(p.tags || []), '__img_edited__']
+      await collectorApi.updateProduct(p.id, ud)
+      setProductImages(newImgs)
+      onProductUpdate(p.id, ud)
+    } catch (e) {
+      setCardAlert({ msg: '대표 변경 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' })
+    }
+  }
+
   // 모달 열 때 상세이미지/HTML 단일 fetch (목록 API에서는 defer되어 비어있음)
   const openImageModal = () => {
     setProductImages(p.images || [])
@@ -508,7 +575,8 @@ const ProductCard = React.memo(function ProductCard({
   // SNKRDUNK는 일본 사이트(JP API) 수집이라 엔화(¥).
   const _site = (p.source_site || '').toUpperCase()
   const _cur = (p.extra_data as Record<string, unknown> | undefined)?.currency
-  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA']
+  // UNIQLO/GU 는 일본 공홈(jp/api) 수집이라 엔화. 원가에 3,000엔 미만 배송비 500엔 포함.
+  const JPY_SOURCE_SITES = ['SNKRDUNK', 'RAKUTEN', 'BUYMA', 'ONITSUKA', 'UNIQLO', 'GU', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS']
   const USD_SOURCE_SITES = ['AMAZON', 'EBAY', 'SHOPIFY', 'LAZADA', 'SHOPEE', 'QOO10']
   const curSym = (JPY_SOURCE_SITES.includes(_site) || _cur === 'JPY') ? '¥'
     : (USD_SOURCE_SITES.includes(_site) || _cur === 'USD') ? '$'
@@ -521,7 +589,20 @@ const ProductCard = React.memo(function ProductCard({
   const _excludeHeldPoint = Boolean(_ssmAll?.[p.source_site]?.excludeHeldPoint)
   const _costExclHeldPoint = (p as unknown as { cost_excl_held_point?: number }).cost_excl_held_point
   const _useExcl = _excludeHeldPoint && (_costExclHeldPoint ?? 0) > 0
-  const cost = (_useExcl ? _costExclHeldPoint : p.cost) || p.sale_price || p.original_price || 0
+  // [2026-08-29] 원가 폴백 — 공홈 소싱(오니츠카·ABC·그랜드·아트모스·유니클로·GU)은
+  // 수집기가 original_price/sale_price 를 0 으로 두고 **실가격은 옵션에** 담는다.
+  // sale_price 만 보면 원가 ¥0 로 뜨므로, 값이 없으면 옵션 최저가(재고 있는 것 우선)로
+  // 폴백한다. 소싱처 무관 공통 처리 — 새 소싱처 추가 시 재세팅 불필요.
+  const _optCost = (() => {
+    const _os = Array.isArray(p.options)
+      ? (p.options as Array<{ price?: number; stock?: number }>)
+      : []
+    const _inStock = _os.filter(o => Number(o?.price) > 0 && Number(o?.stock) > 0).map(o => Number(o.price))
+    if (_inStock.length) return Math.min(..._inStock)
+    const _any = _os.filter(o => Number(o?.price) > 0).map(o => Number(o.price))
+    return _any.length ? Math.min(..._any) : 0
+  })()
+  const cost = (_useExcl ? _costExclHeldPoint : p.cost) || p.sale_price || p.original_price || _optCost || 0
   const baseMarginRate = (pricing.marginRate as number) || 15
   // 가격범위별 마진 매칭 (백엔드 _calculate_range_margin과 동일: cost >= min && cost < max)
   const useRangeMargin = Boolean(pricing.useRangeMargin)
@@ -559,7 +640,7 @@ const ProductCard = React.memo(function ProductCard({
   const no = String(idx + 1).padStart(6, '0')
 
   // 마켓별 개별 가격 계산 (useMemo 캐싱)
-  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; minMarginUsd?: number; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
+  const mp = (policy?.market_policies || {}) as Record<string, { accountId?: string; accountIds?: string[]; feeRate?: number; shippingCost?: number; marginRate?: number; brand?: string; minMarginUsd?: number; adRate?: number; adEnabled?: boolean; gsSettingsByAccount?: Record<string, { feeRate?: number; gsMarginRate?: number }> }>
   // 리셀 판매처(KREAM/POIZON)는 아래 resellRows 에서 별도 표시(매칭·정책계산) → 일반 마켓행 중복 제거.
   const marketPriceList = useMemo(() => Object.entries(mp)
     .filter(([marketName, v]) => v.accountId && !RESELL_MARKET_KEYS.has(marketName))
@@ -579,7 +660,10 @@ const ProductCard = React.memo(function ProductCard({
       // 이베이: 배송비($)는 환율 안 곱히고 USD 그대로 수수료만 그로스업해서 최종가에 더함
       // (backend shipment/service.py + plugins/markets/ebay.py 와 동일 — 실제 등록되는 값).
       if (marketName === 'eBay') {
-        const feeR = Number(v.feeRate ?? feeRate ?? 0)
+        // 광고(General Ad) 사용 시 adRate도 수수료와 함께 그로스업 — 안 그러면 광고비만큼
+        // 마진이 그냥 깎여나간다(backend shipment/service.py:calc_market_price 와 동일 로직).
+        const adR = v.adEnabled ? Number(v.adRate || 0) : 0
+        const feeR = Number(v.feeRate ?? feeRate ?? 0) + adR
         const shipUsd = Number(v.shippingCost || 0)
         const base = calcPrice(cost, marginRate, 0, feeR, extraCharge, minMarginAmount, ssMRate, ssMAmount, '₩')
         const baseUsd = usdRate > 0 ? base.price / usdRate : 0
@@ -700,7 +784,7 @@ const ProductCard = React.memo(function ProductCard({
       })
   }, [regAccIds, accounts, p.name, marketProductNos]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 리셀 판매처(KREAM/POIZON/StockX) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
+  // 리셀 판매처(KREAM/POIZON) — 타 마켓처럼 판매가 계산 + 매칭 상품번호
   const resellRows = useMemo(() => {
     const rm = (p.resell_matches || {}) as Record<string, { product_id?: string; confidence?: number; style_code?: string; name_ko?: string; anomaly_ok?: boolean; anomaly_flagged?: boolean; anomaly_reason?: string }>
     const PLAT: { key: string; name: string; url?: (id: string) => string }[] = [
@@ -715,7 +799,6 @@ const ProductCard = React.memo(function ProductCard({
         name: 'POIZON',
         url: (id) => `https://kr.poizon.com/search?keyword=${encodeURIComponent(id)}`,
       },
-      { key: 'stockx', name: 'StockX' },
     ]
     // 크림(리셀) 전용 정책 — 원가는 스니덩크 엔화라 환율 적용 필수. 일반 마켓 calcPrice(환율 없음)로
     // 계산하면 엔 원가에 원 마진을 그냥 더해 값이 틀리고 통화도 ¥로 오표기됨. 크림 정책(경쟁/무경쟁
@@ -725,15 +808,35 @@ const ProductCard = React.memo(function ProductCard({
       kreamMinMarginAmount?: number; kreamShippingFeeCard?: number
       kreamShippingFeeBox?: number; kreamForwardingFee?: number
       kreamBoxPackMarginRate?: number; kreamNonCardMarginRate?: number
+      kreamOverseasBaseFee?: number; kreamOverseasFeeRate?: number
+      kreamItemFeeBase?: number; kreamItemFeeVat?: number; kreamSellerLevel?: number
     }
-    const kComp = Number(kp.kreamCompetitiveMarginRate ?? 13)
-    const kNoComp = Number(kp.kreamNoCompetitionMarginRate ?? 40)
-    const kMinMargin = Number(kp.kreamMinMarginAmount ?? 9000)
-    const kShipCard = Number(kp.kreamShippingFeeCard ?? 300)
-    const kShipBox = Number(kp.kreamShippingFeeBox ?? 900)
-    const kFwd = Number(kp.kreamForwardingFee ?? 8000)
-    const kBoxPack = Number(kp.kreamBoxPackMarginRate ?? 0) // 박스/카드팩 추가마진율(%)
-    const kNonCard = Number(kp.kreamNonCardMarginRate ?? 5) // 나머지(신발/의류) 추가마진율(%)
+    // [2026-08-27] 하드코딩 폴백 제거. 백엔드는 2026-08-23 에 정책 하드코딩을 전부
+    // 걷어내고 못 읽으면 계산을 중단하게 바꿨는데(require_policy) 여기만 남아 있었다.
+    // 그래서 가디정책 최소마진 8,000원 대신 폴백 9,000원으로 계산해 화면 금액이
+    // 백엔드와 어긋났다. 정책을 못 읽으면 계산하지 않는다(아래 kPolicyOk).
+    const _kNum = (v: unknown): number | null =>
+      v === null || v === undefined || v === '' || !Number.isFinite(Number(v))
+        ? null
+        : Number(v)
+    const kComp = _kNum(kp.kreamCompetitiveMarginRate)
+    const kNoComp = _kNum(kp.kreamNoCompetitionMarginRate)
+    const kMinMargin = _kNum(kp.kreamMinMarginAmount)
+    const kShipCard = _kNum(kp.kreamShippingFeeCard)
+    const kShipBox = _kNum(kp.kreamShippingFeeBox)
+    const kFwd = _kNum(kp.kreamForwardingFee)
+    const kBoxPack = _kNum(kp.kreamBoxPackMarginRate) // 박스/카드팩 추가마진율(%)
+    const kNonCard = _kNum(kp.kreamNonCardMarginRate) // 나머지(신발/의류) 추가마진율(%)
+    // 크림 판매수수료 — 정산에서 차감되므로 등록가에 역산해서 얹는다(백엔드 gross_up_kream_fee 동일).
+    const kOvBase = _kNum(kp.kreamOverseasBaseFee) // 박스·카드팩: 기본수수료(원)
+    const kOvRate = _kNum(kp.kreamOverseasFeeRate) // 박스·카드팩: 판매가 대비 %(3%+VAT 반영)
+    const kItemBase = _kNum(kp.kreamItemFeeBase) // 신발·의류·시계: 기본수수료(원)
+    const kItemVat = _kNum(kp.kreamItemFeeVat) // 실물 수수료 VAT율(%)
+    // 실물 등급요율(%)은 저장값이 아니라 판매등급(kreamSellerLevel 1~5)에서 도출 — 백엔드 동일 표.
+    const _ITEM_RATE_BY_LEVEL: Record<number, number> = { 5: 5.50, 4: 5.60, 3: 5.70, 2: 5.85, 1: 6.00 }
+    const kItemRate = _ITEM_RATE_BY_LEVEL[Number(_kNum(kp.kreamSellerLevel) ?? 4)] ?? 5.60
+    const kPolicyOk = [kComp, kNoComp, kMinMargin, kShipCard, kShipBox, kFwd,
+      kBoxPack, kNonCard, kOvBase, kOvRate, kItemBase, kItemVat].every(v => v !== null)
     // 로컬 봇과 동일 — 배송비(is_box)와 5%가산(is_card)은 별개 축:
     //  · 배송비: PSA 단품 카드 = 300엔, 그외(박스/카드팩/신발) = 900엔 (옵션 유형)
     //  · 5% 가산: 비(非)트레이딩카드=신발/의류만. 카드·카드박스는 미적용 (snkr_type 축)
@@ -744,20 +847,57 @@ const ProductCard = React.memo(function ProductCard({
     const _isShoe = _kOpts.some(o => /^\d+(?:\.\d+)?\s*cm$|^\d{3}$/i.test(String(o?.name || '').trim()))
     // PSA 단품이 하나라도 있으면 카드 배송(300), 아니면 박스 배송(900). 옵션 없으면 상품명 추정.
     const kIsCardShip = _kOpts.length > 0 ? _hasPSA : !_nameBox
-    const kShip = kIsCardShip ? kShipCard : kShipBox
+    // [2026-08-27] 공홈 소싱(유니클로·GU·오니츠카)은 이 배송비를 붙이지 않는다.
+    // 정책 화면 설명대로 이 값은 **스니덩크→배대지** 일본내 구간 요금이고, 공홈은
+    // 그 구간이 없다. 공홈 원가에는 각 사이트의 국내 배송비가 이미 포함돼 있어
+    // (유니클로·GU 4,990엔 미만 500엔 / 오니츠카 회원 무료, 총액의 4% 결제수수료)
+    // 여기서 또 얹으면 이중 부과다 — 백엔드 calc_base 의 home_direct 와 같은 규칙.
+    const _srcUp = String(p.source_site || '').toUpperCase()
+    const _homeDirect = ['UNIQLO', 'GU', 'ONITSUKA', 'ABCMART_JP', 'GRANDSTAGE_JP', 'ATMOS'].includes(_srcUp)
+    const kShip = _homeDirect ? 0 : (kIsCardShip ? kShipCard! : kShipBox!)
     // 추가마진 분류: PSA=0 / 박스·카드팩(비PSA·비신발)=박스팩율 / 신발·의류=나머지율
-    const kSurcharge = _kOpts.length > 0
-      ? (_hasPSA ? 0 : _isShoe ? kNonCard : kBoxPack)
-      : (_nameBox ? kBoxPack : 0)
-    const kCostEff = Math.round(cost * (1 + kSurcharge / 100))
-    const kBase = (kCostEff + kShip) * jpyRate + kFwd
-    const kMarginAmt = Math.max(kMinMargin, kBase * kComp / 100)
-    const kMinPrice = Math.ceil((kBase + kMarginAmt) / 1000) * 1000
-    const kNoCompPrice = Math.ceil(kBase * (1 + kNoComp / 100) / 1000) * 1000
-    const kKindLabel = _isShoe ? '신발' : kIsCardShip ? '카드' : '박스'
-    const kCalcStr = cost > 0
-      ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}+${kKindLabel}배송 ¥${fmt(kShip)})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin)}) · 무경쟁 ₩${fmt(kNoCompPrice)}`
-      : '원가 없음'
+    // [2026-08-27] 추가마진은 **스니덩크 한정**이다. 공홈 소싱은 가산하지 않는다.
+    const kSurcharge = _homeDirect ? 0
+      : _kOpts.length > 0
+        ? (_hasPSA ? 0 : _isShoe ? kNonCard! : kBoxPack!)
+        : (_nameBox ? kBoxPack! : 0)
+    // 공홈 원가(landed) = (상품가 + 국내배송비) × 결제수수료. 백엔드 _home_landed 동일 규칙.
+    //  · 유니클로·GU 4,990엔 미만 배송비 500엔 / 오니츠카·ABC·그랜드·아트모스 무료
+    //  · 결제수수료 4% — 한국카드 불가로 대행결제(pay_rate 1.04). 셋(넷) 공통.
+    const _homeFee = (_srcUp === 'UNIQLO' || _srcUp === 'GU') && cost < 4990 ? 500 : 0
+    const kCostEff = _homeDirect
+      ? Math.round((cost + _homeFee) * 1.04)
+      : Math.round(cost * (1 + kSurcharge / 100))
+    const kBase = (kCostEff + kShip) * jpyRate + kFwd!
+    // 크림 수수료 분류: PSA 낱장=무료 / 박스·카드팩=overseas / 신발·의류(공홈 포함)=item
+    const kFeeKind: 'none' | 'overseas' | 'item' = _homeDirect ? 'item'
+      : _kOpts.length > 0
+        ? (_hasPSA ? 'none' : _isShoe ? 'item' : 'overseas')
+        : (_nameBox ? 'overseas' : 'none')
+    const _grossUp = (net: number): number => {
+      if (kFeeKind === 'overseas') {
+        if (kOvRate! >= 100) return net
+        return (net + kOvBase!) / (1 - kOvRate! / 100)
+      }
+      if (kFeeKind === 'item') {
+        const vat = 1 + kItemVat! / 100
+        const fixed = kItemBase! * vat
+        const rate = kItemRate * vat
+        if (rate >= 100) return net
+        return (net + fixed) / (1 - rate / 100)
+      }
+      return net
+    }
+    const kMarginAmt = Math.max(kMinMargin!, kBase * kComp! / 100)
+    const kMinPrice = Math.ceil(_grossUp(kBase + kMarginAmt) / 1000) * 1000
+    const kNoCompPrice = Math.ceil(_grossUp(kBase * (1 + kNoComp! / 100)) / 1000) * 1000
+    const kKindLabel = _homeDirect ? '공홈' : _isShoe ? '신발' : kIsCardShip ? '카드' : '박스'
+    const _feeLabel = kFeeKind === 'none' ? '' : ' + 크림수수료'
+    const kCalcStr = !kPolicyOk
+      ? '정책 미로드 (정책관리 KREAM 탭 확인)'
+      : cost > 0
+        ? `₩${fmt(kMinPrice)} = (원가 ¥${fmt(kCostEff)}${_homeDirect ? ' · 공홈배송·결제수수료 포함' : `+${kKindLabel}배송 ¥${fmt(kShip)}`})×${jpyRate.toFixed(1)} + 배대지 ${fmt(kFwd!)} + 경쟁마진 ${fmt(Math.round(kMarginAmt))}(${kComp}%·최소 ${fmt(kMinMargin!)})${_feeLabel} · 무경쟁 ₩${fmt(kNoCompPrice)}`
+        : '원가 없음'
     return PLAT.map(pl => {
       const m = rm[pl.key]
       const id = m?.product_id ? String(m.product_id) : ''
@@ -1089,7 +1229,7 @@ const ProductCard = React.memo(function ProductCard({
         })
 
         // 이미지 행 렌더
-        const renderImageRow = (img: string, i: number, list: string[], setList: (imgs: string[]) => void, label?: string) => (
+        const renderImageRow = (img: string, i: number, list: string[], setList: (imgs: string[]) => void, label?: string, onSetMain?: () => void) => (
           <div key={i} style={{
             display: 'flex', alignItems: 'center', gap: '12px', padding: '8px', borderRadius: '8px',
             background: label ? 'rgba(255,140,0,0.06)' : c.surface,
@@ -1118,6 +1258,8 @@ const ProductCard = React.memo(function ProductCard({
               <p style={{ margin: 0, fontSize: '0.68rem', color: c.textMuted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img}</p>
             </div>
             <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
+              {onSetMain && <button onClick={onSetMain}
+                style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: '1px solid #a9ddd2', background: '#e3f4f0', color: '#0f6a5b', fontWeight: 600, whiteSpace: 'nowrap' }}>대표로</button>}
               {i > 0 && <button onClick={() => { const a = [...list]; [a[i-1], a[i]] = [a[i], a[i-1]]; setList(a) }}
                 style={{ padding: '3px 8px', fontSize: '0.7rem', borderRadius: '4px', cursor: 'pointer', border: `1px solid ${c.border}`, background: 'transparent', color: c.textMuted }}>▲</button>}
               {i < list.length - 1 && <button onClick={() => { const a = [...list]; [a[i+1], a[i]] = [a[i], a[i+1]]; setList(a) }}
@@ -1208,6 +1350,27 @@ const ProductCard = React.memo(function ProductCard({
                                   input.value = ''
                                 }
                               }} style={{ ...btn('primary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
+                              <label style={{ ...btn('secondary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                파일첨부
+                                <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                                  const file = e.target.files?.[0]
+                                  e.target.value = ''
+                                  if (!file) return
+                                  try {
+                                    const url = await collectorApi.uploadImage(file)
+                                    const newImgs = [url, ...productImages.slice(1)]
+                                    setProductImages(newImgs)
+                                    const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+                                    if (!(p.tags || []).includes('__img_edited__')) {
+                                      ud.tags = [...(p.tags || []), '__img_edited__']
+                                    }
+                                    await collectorApi.updateProduct(p.id, ud)
+                                    onProductUpdate(p.id, ud)
+                                  } catch (err) {
+                                    setCardAlert({ msg: '이미지 업로드 실패: ' + (err instanceof Error ? err.message : String(err)), type: 'error' })
+                                  }
+                                }} />
+                              </label>
                             </div>
                             <button onClick={() => {
                               const remaining = productImages.slice(1)
@@ -1274,6 +1437,22 @@ const ProductCard = React.memo(function ProductCard({
                               }).catch(() => {})
                               if (input) input.value = ''
                             }} style={{ ...btn('primary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>변경완료</button>
+                            <label style={{ ...btn('secondary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                              파일첨부
+                              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                                const file = e.target.files?.[0]
+                                e.target.value = ''
+                                if (!file) return
+                                try {
+                                  const url = await collectorApi.uploadImage(file)
+                                  const ud: Partial<SambaCollectedProduct> = { coupang_main_image: url }
+                                  await collectorApi.updateProduct(p.id, ud)
+                                  onProductUpdate(p.id, ud)
+                                } catch (err) {
+                                  setCardAlert({ msg: '이미지 업로드 실패: ' + (err instanceof Error ? err.message : String(err)), type: 'error' })
+                                }
+                              }} />
+                            </label>
                           </div>
                           {coupangMainImg && (
                             <button onClick={() => {
@@ -1317,7 +1496,7 @@ const ProductCard = React.memo(function ProductCard({
                             console.error('[이미지삭제] 저장 실패:', e)
                             setCardAlert({ msg: '이미지 변경 저장 실패: ' + (e instanceof Error ? e.message : String(e)), type: 'error' })
                           }
-                        }, i === 0 ? `추가 1` : undefined))}
+                        }, i === 0 ? `추가 1` : undefined, () => promoteImageToMain(img)))}
                       </div>
                     )}
                     {/* URL로 추가 */}
@@ -1339,6 +1518,27 @@ const ProductCard = React.memo(function ProductCard({
                           input.value = ''
                         }
                       }} style={{ ...btn('secondary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap' }}>추가</button>
+                      <label style={{ ...btn('secondary', c), padding: '6px 14px', fontSize: '0.78rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                        파일첨부
+                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={async e => {
+                          const file = e.target.files?.[0]
+                          e.target.value = ''
+                          if (!file) return
+                          try {
+                            const url = await collectorApi.uploadImage(file)
+                            const newImgs = [...productImages, url]
+                            setProductImages(newImgs)
+                            const ud: Partial<SambaCollectedProduct> = { images: newImgs }
+                            if (!(p.tags || []).includes('__img_edited__')) {
+                              ud.tags = [...(p.tags || []), '__img_edited__']
+                            }
+                            await collectorApi.updateProduct(p.id, ud)
+                            onProductUpdate(p.id, ud)
+                          } catch (err) {
+                            setCardAlert({ msg: '이미지 업로드 실패: ' + (err instanceof Error ? err.message : String(err)), type: 'error' })
+                          }
+                        }} />
+                      </label>
                     </div>
                   </div>
                 )}
@@ -1544,6 +1744,11 @@ const ProductCard = React.memo(function ProductCard({
             onClick={() => onDelete(p.id)}
             style={{ ...btn('danger', c), fontSize: '0.7rem', padding: '3px 10px' }}
           >삭제</button>
+          <button
+            onClick={() => onTrash(p.id)}
+            title="휴지통으로 이동 (복구 가능)"
+            style={{ ...btn('secondary', c), fontSize: '0.7rem', padding: '3px 10px' }}
+          >🗑 휴지통</button>
         </div>
       </div>
 
@@ -1964,7 +2169,7 @@ const ProductCard = React.memo(function ProductCard({
                               <React.Fragment key={rm.accId}>
                               {rm.url ? (
                                 <button
-                                  onClick={() => window.open(rm.url, '_blank')}
+                                  onClick={() => window.open(rm.url, '_blank', 'noreferrer')}
                                   style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                   onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
@@ -2047,7 +2252,7 @@ const ProductCard = React.memo(function ProductCard({
                   </td>
                 </tr>
               )}
-              {/* 리셀 판매처 (KREAM/POIZON/StockX) — 판매가 계산 + 매칭 상품번호 */}
+              {/* 리셀 판매처 (KREAM/POIZON) — 판매가 계산 + 매칭 상품번호 */}
               {resellRows.map(rr => (
                 <tr key={`resell-${rr.key}`} style={{ borderBottom: `1px solid ${c.border}` }}>
                   <td style={tdLabel}>{rr.name}</td>
@@ -2058,7 +2263,7 @@ const ProductCard = React.memo(function ProductCard({
                         {rr.id ? (
                           rr.url ? (
                             <button
-                              onClick={() => window.open(rr.url, '_blank')}
+                              onClick={() => window.open(rr.url, '_blank', 'noreferrer')}
                               style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                               onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}
@@ -2142,7 +2347,7 @@ const ProductCard = React.memo(function ProductCard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                             {rm.url ? (
                               <button
-                                onClick={() => window.open(rm.url, '_blank')}
+                                onClick={() => window.open(rm.url, '_blank', 'noreferrer')}
                                 style={{ fontSize: '0.6rem', padding: '1px 5px', background: 'rgba(81,207,102,0.08)', color: c.success, border: '1px solid rgba(81,207,102,0.25)', borderRadius: '3px', cursor: 'pointer', whiteSpace: 'nowrap' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.2)' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = 'rgba(81,207,102,0.08)' }}

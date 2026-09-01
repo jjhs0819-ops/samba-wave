@@ -2464,7 +2464,10 @@ class SSGSourcingClient:
                     options.append(
                         {
                             "name": opt_name,
-                            "price": self._safe_int(opt.get("sellprc", 0)),
+                            # bestAmt(최적가) 우선 — sellprc 는 정상가라 원가를
+                            # 정가로 올려 cost > sale_price 를 만든다(2026-08-07).
+                            "price": self._safe_int(opt.get("bestAmt", 0))
+                            or self._safe_int(opt.get("sellprc", 0)),
                             "stock": stock,
                             "isSoldOut": bool(is_soldout),
                         }
@@ -2744,7 +2747,13 @@ class SSGSourcingClient:
                         for idx, value in enumerate(option_values, start=1)
                     },
                     "optionDepth": len(option_values) if option_values else 1,
-                    "price": gn("sellprc"),
+                    # [2026-08-07] 옵션 가격은 bestAmt(최적가) 우선, sellprc 는 폴백.
+                    # sellprc 는 이 파일 1839 주석대로 "정상가(할인 전)" 이다.
+                    # 옵션 가격이 정가로 들어가면 ssg.py 의 "가장 비싼 판매가능 옵션"
+                    # 기준 원가 산정이 정가를 집어, cost > sale_price 가 된다
+                    # (실측 2026-08-07: 옵션 전부 44,000(정가)/판매가 37,400 →
+                    #  원가 44,000. SSG 등록상품 20,210건 중 4,325건이 이 상태).
+                    "price": gn("bestAmt") or gn("sellprc"),
                     "stock": stock,
                     "isSoldOut": is_soldout,
                 }

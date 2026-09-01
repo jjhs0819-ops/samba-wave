@@ -41,6 +41,19 @@ _KOREAN_MARKET_MAP = {
 }
 
 
+def normalize_tracking_number(inv: str | None) -> str:
+    """송장번호 정규화 — 구분자(슬래시·하이픈·공백·점 등)를 제거하고 영숫자만 유지.
+
+    마켓 전송·저장·조회를 한 규칙으로 통일한다(get_tracking 의 `[^0-9A-Za-z]`
+    제거와 동일). 마켓 원장/택배사는 구분자 없는 번호를 기대하므로 슬래시·하이픈이
+    섞인 채 전송되면 등록 실패·오조회 위험.
+
+    주의: 국내 택배(숫자)뿐 아니라 크림/해외송장(HBL·EMS 등 영문+숫자)도 있으므로
+    숫자-only 로 깎지 않고 영문자는 보존한다.
+    """
+    return re.sub(r"[^0-9A-Za-z]", "", (inv or "").strip())
+
+
 async def _resolve_account_with_fallback(order, session: AsyncSession):
     """channel_id 직접 매칭 실패 시 channel_name + tenant_id + active 로 폴백.
 
@@ -121,7 +134,9 @@ async def send_invoice_to_market(
 
     market_type = (account.market_type or "").lower()
     courier = shipping_company or ""
-    tracking = tracking_number or ""
+    # 구분자(슬래시·하이픈·공백) 제거 — 모든 마켓 전송이 이 함수를 거치므로
+    # 여기서 한 번만 정규화하면 수동/자동/카톡 전송 전부 정제됨.
+    tracking = normalize_tracking_number(tracking_number)
 
     try:
         if market_type == "lotteon":
@@ -483,7 +498,22 @@ async def _send_coupang(order, account, courier, tracking, session):
     )
     if isinstance(api_resp, dict) and api_resp.get("ok", True):
         return True, "쿠팡 송장 전송 완료"
-    return False, f"쿠팡 송장 전송 실패: {(api_resp or {}).get('error') or 'unknown'}"
+    _err = (api_resp or {}).get("error") or "unknown"
+    # 이미 등록/종결된 주문 재전송 시 쿠팡이 UNDEFINED_ERROR_OCCUR 등으로 거부하는
+    # 케이스 — 원장(ordersheet)에 동일 송장이 이미 있으면 성공으로 간주해 영구 실패를 막는다.
+    try:
+        sheets = await client.get_ordersheets_by_order_id(order_id_val)
+        for _sh in sheets if isinstance(sheets, list) else [sheets]:
+            if not isinstance(_sh, dict):
+                continue
+            if (
+                str(_sh.get("shipmentBoxId") or "") == str(shipment_box_id)
+                and str(_sh.get("invoiceNumber") or "").strip() == str(tracking).strip()
+            ):
+                return True, "쿠팡에 동일 송장 이미 등록됨 — 성공 처리"
+    except Exception:
+        pass
+    return False, f"쿠팡 송장 전송 실패: {_err}"
 
 
 async def _send_lottehome(order, account, courier, tracking, session):
@@ -607,7 +637,29 @@ async def _send_ssg(order, account, courier, tracking, session):
         )
         if _is_cancel_req:
             return True, "SSG 운송장 등록 완료 (취소요청 주문 — 출고처리 생략)"
-        await client.process_outbound(shpp_no=shpp_no, shpp_seq=shpp_seq, qty=qty)
+        try:
+            await client.process_outbound(shpp_no=shpp_no, shpp_seq=shpp_seq, qty=qty)
+        except RuntimeError as _pe:
+            # "피킹완료 상태에서만" 오류여도 SSG 원장에 출고수량이 이미
+            # 반영돼 있으면(자동 전환/수기 처리) 성공으로 간주.
+            if "피킹완료" in str(_pe):
+                try:
+                    _items = await client.get_order_detail(order.order_number)
+                    _ok = bool(_items) and all(
+                        int(it.get("shpmtQty") or 0)
+                        >= int(it.get("dircQty") or it.get("ordQty") or 0)
+                        > 0
+                        for it in _items
+                        if isinstance(it, dict)
+                    )
+                    if _ok:
+                        return (
+                            True,
+                            "SSG 운송장 등록 완료 (출고 이미 반영 — 출고처리 생략)",
+                        )
+                except Exception:
+                    pass
+            raise
         return True, "SSG 운송장 등록 및 출고처리 완료"
     except RuntimeError as e:
         return False, str(e)

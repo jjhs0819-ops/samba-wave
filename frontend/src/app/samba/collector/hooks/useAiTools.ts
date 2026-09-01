@@ -41,6 +41,7 @@ export default function useAiTools() {
   const [aiImgScope, setAiImgScope] = useState<AiImgScope>({ thumbnail: true, additional: true, detail: false })
   const [aiImgMode, setAiImgMode] = useState('background')
   const [aiModelPreset, setAiModelPreset] = useState('auto')
+  const [aiImgProvider, setAiImgProvider] = useState('gemini')
   const [aiImgTransforming, setAiImgTransforming] = useState(false)
   const [aiPresetList, setAiPresetList] = useState<AiPreset[]>([])
 
@@ -83,6 +84,8 @@ export default function useAiTools() {
     setAiImgMode,
     aiModelPreset,
     setAiModelPreset,
+    aiImgProvider,
+    setAiImgProvider,
     aiImgTransforming,
     setAiImgTransforming,
     aiPresetList,

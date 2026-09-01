@@ -316,6 +316,16 @@ let _abcLoginConfirmedAt = 0  // ABCmart 마지막 로그인 확인 시각 (ms) 
 // 단, 재확인 인터벌(5분) 경과 시 프로브 잡을 1회 통과시켜 쿠키 복구를 자동 감지한다
 // (drop이 _processJobWithCap 상류라 통과시키지 않으면 reportLoginSuccess가 영영 안 떠
 //  플래그가 영구 고착됨 → 백엔드 _musinsa_auth_lost_recent와 동일한 프로브 패턴).
+// [2026-08-18] MV3 워커 재시작 대비 — SSG 연속 차단 횟수 복원.
+try {
+  chrome.storage.local.get('_ssgBlockStreak').then((d) => {
+    const n = d && d._ssgBlockStreak
+    if (typeof n === 'number' && n > (globalThis._ssgBlockStreak || 0)) {
+      globalThis._ssgBlockStreak = n
+    }
+  }).catch(() => {})
+} catch { /* 무시 */ }
+
 let _musinsaCookieLostAt = 0
 let _musinsaCookieLostNotifiedAt = 0  // 데스크탑 경고 중복 차단 (ms)
 const _MUSINSA_NOTIFY_COOLDOWN_MS = 60 * 60 * 1000  // 1시간
@@ -480,6 +490,22 @@ function _serializeMusinsaTracking(fn) {
   return next
 }
 
+// [2026-08-14] 계정 지정 적립금 잡 직렬화 — 사이트당 1건씩.
+// 브라우저는 사이트당 로그인 세션을 하나만 가진다. 그런데 팝업 사이트(ABCmart/SSG/LOTTEON)는
+// 큐 적체 방지로 동시실행 캡이 최소 4로 강제돼 있어(_POPUP_SITES_MIN_CAP), 계정이 여러 개면
+// 출첵 잡 4건이 동시에 '쿠키 삭제 → 로그인' 을 해서 서로 세션을 덮어썼다.
+// 결과: 마지막에 로그인한 계정으로만 출석이 찍히고, 나머지 탭은 그 세션에서 '이미 출석' 을 보고
+// 성공으로 보고 — 실측된 'ABC마트 맨 위 계정만 출첵되고 나머지는 완료로만 찍힘' 의 원인.
+// 계정별 로그아웃 → 로그인 → 작업 완료까지를 한 덩어리로 묶어 사이트당 순차 처리한다.
+const _accountJobChains = new Map() // 사이트키 → Promise
+function _serializeAccountJob(site, fn) {
+  const key = _normalizeSiteForCap(site)
+  const prev = _accountJobChains.get(key) || Promise.resolve()
+  const next = prev.then(() => fn(), () => fn())
+  _accountJobChains.set(key, next.catch(() => {}))
+  return next
+}
+
 async function _processJobWithCap(job) {
   const site = job.site || 'unknown'
   // [우선 모드] rewardOnlyMode(적립금만) / purchaseOnlyMode(가구매만) 켜져 있으면 해당 타입 외 잡은
@@ -492,14 +518,19 @@ async function _processJobWithCap(job) {
   } catch {}
   // 적립금 자동 적립 잡(type=reward) — 가격수집과 격리, 사이트 세마포어 사용
   if (job.type === 'reward') {
-    await _siteSemAcquire(site)
-    _markSourcingSiteActive(site)
-    try {
-      return await handleRewardJob(job)
-    } finally {
-      _markSourcingSiteInactive(site)
-      _siteSemRelease(site)
+    // 계정 지정 잡은 사이트당 1건씩 순차 처리 — 동시 로그인이 서로 세션을 덮어쓰는 것 차단.
+    // (계정 미지정 잡은 세션 전환이 없으므로 기존대로 캡 안에서 병렬 처리)
+    const run = async () => {
+      await _siteSemAcquire(site)
+      _markSourcingSiteActive(site)
+      try {
+        return await handleRewardJob(job)
+      } finally {
+        _markSourcingSiteInactive(site)
+        _siteSemRelease(site)
+      }
     }
+    return job.sourcingAccountId ? await _serializeAccountJob(site, run) : await run()
   }
   // 마켓 점수·품절률 수집 잡(type=store_metrics) — 적립금과 동일 격리/세마포어.
   if (job.type === 'store_metrics') {
@@ -1552,13 +1583,37 @@ async function handleRewardJob(job) {
 
   // 자동 로그인: 잡의 sourcingAccountId 로 ensureLoggedIn 시도 (현재 다른 계정이면 스왑)
   const autoKey = _REWARD_ACTION_AUTO_LOGIN[action]
+  let autoLoginOk = null // null = 시도 안 함(계정ID 없음 등)
   if (autoKey && typeof globalThis.ensureLoggedIn === 'function' && sourcingAccountId) {
     try {
-      const ok = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId })
-      if (!ok) console.warn(`[적립금] 자동 로그인 실패 — 그대로 진행 (site=${site})`)
+      // [2026-08-14] force — 성공 캐시를 믿지 않고 항상 로그아웃 후 잡 계정으로 새로 로그인한다.
+      // 적립금은 '이 세션이 정확히 이 계정' 이어야 적립이 그 계정에 붙는다. 캐시는 그걸 보장 못 한다:
+      // 사용자가 브라우저에서 손으로 다른 계정에 로그인했거나, 세션이 만료됐거나, 같은 쿠키를 쓰는
+      // 다른 사이트키 잡(ABC마트↔ABC캠프)이 세션을 갈아끼운 경우가 캐시엔 안 잡힌다.
+      autoLoginOk = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId, force: true })
+      if (!autoLoginOk) console.warn(`[적립금] 자동 로그인 실패 (site=${site} action=${action})`)
     } catch (e) {
+      autoLoginOk = false
       console.warn(`[적립금] 자동 로그인 예외: ${e?.message || e}`)
     }
+  }
+
+  // [2026-08-13] 로그인 실패면 진행하지 않는다.
+  // 예전엔 실패해도 '그대로 진행' 이라 비로그인 상태로 출첵/미션 탭만 열렸다 닫혀서
+  // (ABC캠프 실측) 원인이 안 보인 채 실패만 쌓였다. 이제 로그인 실패 자체를 사유로 보고한다.
+  if (autoLoginOk === false && !action.endsWith('_review')) {
+    const loginErr = globalThis._lastEnsureLoginError?.message
+      || `로그인 실패(${site} 자동로그인 실패 — acc=${sourcingAccountId || '기본'})`
+    await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
+      request_id: requestId,
+      account_id: sourcingAccountId || '',
+      site_name: site,
+      action,
+      success: false,
+      error: loginErr,
+    })
+    console.warn(`[적립금] 로그인 실패로 잡 중단 — ${loginErr}`)
+    return
   }
 
   // 리뷰 액션은 멀티페이지 orchestrator 사용
@@ -1613,6 +1668,25 @@ async function handleRewardJob(job) {
       }, timeoutMs)
       _rewardPending.set(tabId, { resolve, timeoutId, tabId, action, requestId })
     })
+
+    // [2026-08-13] 잡 계정의 로그인 아이디를 페이지에 먼저 심는다.
+    // 출첵 스크립트가 '지금 이 화면에 로그인된 계정이 잡 계정 맞는지' 대조해서,
+    // 다른 계정이 로그인돼 있으면 그 계정으로 출석해버리는 사고를 막는다.
+    // (content script 는 isolated world 라 앞뒤 executeScript 가 같은 window 를 공유한다)
+    if (sourcingAccountId && typeof globalThis.alFetchLoginCredential === 'function') {
+      try {
+        const cred = await globalThis.alFetchLoginCredential(autoKey || '', sourcingAccountId)
+        if (cred?.username) {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (u) => { window.__sambaRewardExpectedUser__ = u },
+            args: [cred.username],
+          })
+        }
+      } catch (e) {
+        console.log(`[적립금] 기대 계정 주입 실패 (무시): ${e?.message || e}`)
+      }
+    }
 
     // content script 주입
     try {
@@ -3204,6 +3278,236 @@ async function _checkAbcmartLoggedInByApi(productId, site) {
   }
 }
 
+// ── SSG 상세 in-tab fetch (2026-08-04) ───────────────────────────────────
+// SSG 는 서버·헤드리스 접근을 Akamai 로 차단해 실브라우저가 필수지만, 상품마다
+// popup 창을 새로 띄워 "렌더링"까지 할 이유는 없다. 필요한 값이 전부 itemView.ssg
+// HTML 문서 안에 들어 있기 때문 — 웨일 CDP 실측(2026-08-04, 실제 상품 2건):
+//   · resultItemObj / sellprc(정상가) / bestAmt(원가)
+//   · 카드혜택가 dt + .cdtl_new_price 판매가
+//   · uitemObjArr = 옵션별 uitemId·옵션명·usablInvQty(재고)  ← 사이즈 5개 정상 확인
+// 렌더링이 추가로 하는 일은 광고·리뷰·추천 등 30여 개 부가 요청뿐이고, 그게
+// 건당 130초의 실체였다. fetch 는 실측 834ms.
+// 열려 있는 SSG 탭 컨텍스트에서 실행하므로 쿠키·TLS·Akamai 토큰을 그대로 사용한다.
+// 실패(탭 없음/차단/파싱 불가)하면 null 을 반환해 기존 popup 경로로 폴백한다.
+const SSG_FETCH_TAB_URL = 'https://department.ssg.com/item/itemView.ssg?itemId=1000633600861&siteNo=6009'
+// 작업탭 식별용 — 이 상품번호가 URL 에 있으면 우리가 만든 탭이다(사용자가 직접
+// 열어 둔 SSG 탭은 건드리지 않는다).
+const SSG_FETCH_TAB_ID_MARK = 'itemId=1000633600861'
+let _ssgFetchTabId = null
+
+// [2026-08-19] 탭 id 도 storage 에 남긴다.
+// MV3 워커는 30초쯤 놀면 죽었다가 다시 뜨는데, 그때 _ssgFetchTabId 가 null 이
+// 된다. 그러면 "내가 만든 작업탭"을 잊고 새로 만들어, SSG 탭이 끝없이 쌓였다
+// (실측 2026-08-19: 사용자 화면에 itemView 탭이 계속 열림).
+const _SSG_TAB_KEY = '_ssgFetchTabId'
+try {
+  chrome.storage.local.get(_SSG_TAB_KEY).then((d) => {
+    const v = d && d[_SSG_TAB_KEY]
+    if (_ssgFetchTabId == null && typeof v === 'number') _ssgFetchTabId = v
+  }).catch(() => {})
+} catch { /* 무시 */ }
+
+function _setSsgFetchTabId(id) {
+  _ssgFetchTabId = id
+  try { chrome.storage.local.set({ [_SSG_TAB_KEY]: id }) } catch { /* 무시 */ }
+}
+
+// 작업탭은 1개만 남기고 나머지는 닫는다 — 이미 쌓인 것도 이 경로에서 정리된다.
+async function _closeExtraSsgFetchTabs(keepId) {
+  try {
+    const all = await chrome.tabs.query({ url: '*://department.ssg.com/*' })
+    const extras = all.filter(
+      (t) => t.id !== keepId && String(t.url || '').includes(SSG_FETCH_TAB_ID_MARK),
+    )
+    for (const t of extras) {
+      try { await chrome.tabs.remove(t.id) } catch { /* 이미 닫힘 */ }
+    }
+    if (extras.length) console.log(`[SSG] 남은 작업탭 ${extras.length}개 정리`)
+  } catch { /* 무시 */ }
+}
+
+// [2026-08-18] 잠든 탭(status='unloaded') 대응.
+//
+// 크롬은 메모리 회수를 위해 백그라운드 탭을 통째로 재운다(discard). 잠든 탭에
+// chrome.scripting.executeScript 를 걸면 호스트 권한이 있어도 다음으로 실패한다:
+//   "Cannot access contents of the page. Extension manifest must request
+//    permission to access the respective host."
+// 실측(2026-08-18, 웨일 CDP): 같은 탭을 reload 해 status='complete' 로 깨우면
+// 동일 executeScript 가 정상 동작. 즉 권한이 아니라 탭 상태 문제다.
+//
+// 기존 코드는 tabs.query 결과의 found[0] 을 상태 확인 없이 집었고, 서비스워커가
+// 재시작되면 _ssgFetchTabId 가 null 이 되어 매번 이 경로를 탔다. 그래서 잠든
+// 탭이 하나 남아 있으면 SSG 전건이 in-tab fetch 실패 → popup 폴백(건당 130초)
+// 으로 흘렀다. 건당 305초의 실제 원인.
+async function _wakeTabIfNeeded(tabId) {
+  try {
+    const t = await chrome.tabs.get(tabId)
+    if (!t) return false
+    if (t.status === 'complete' && !t.discarded) return true
+    await chrome.tabs.reload(tabId)
+    await waitForTabLoad(tabId, 20000)
+    const t2 = await chrome.tabs.get(tabId)
+    return !!t2 && t2.status === 'complete'
+  } catch {
+    return false
+  }
+}
+
+async function _getSsgFetchTab() {
+  // 기존 탭 재사용 — 살아있으면 그대로 쓴다(창 여닫이 자체를 없애는 게 목적).
+  if (_ssgFetchTabId != null) {
+    try {
+      const t = await chrome.tabs.get(_ssgFetchTabId)
+      if (t && /department\.ssg\.com/.test(t.url || '')) {
+        if (await _wakeTabIfNeeded(_ssgFetchTabId)) return _ssgFetchTabId
+      }
+    } catch { /* 닫힘 — 아래에서 재생성 */ }
+    _setSsgFetchTabId(null)
+  }
+  // 사용자가 이미 열어둔 SSG 탭이 있으면 그걸 빌려 쓴다.
+  // 단, "깨어 있는" 탭을 먼저 고른다. 전부 잠들었으면 하나를 깨워서 쓴다.
+  try {
+    const found = await chrome.tabs.query({ url: '*://department.ssg.com/*' })
+    if (found && found.length) {
+      const live = found.find((t) => t.status === 'complete' && !t.discarded)
+      const pick = live || found[0]
+      if (await _wakeTabIfNeeded(pick.id)) {
+        _setSsgFetchTabId(pick.id)
+        await _closeExtraSsgFetchTabs(pick.id)
+        return _ssgFetchTabId
+      }
+      // 깨우기 실패 — 아래에서 새 탭 생성
+    }
+  } catch { /* 무시 */ }
+  // 없으면 백그라운드 탭 1개만 생성해 계속 재사용한다(상품마다 만들지 않음).
+  const tab = await chrome.tabs.create({ url: SSG_FETCH_TAB_URL, active: false })
+  _setSsgFetchTabId(tab.id)
+  await waitForTabLoad(_ssgFetchTabId, 30000)
+  await _closeExtraSsgFetchTabs(tab.id)
+  return _ssgFetchTabId
+}
+
+async function _ssgFetchDetail(productId) {
+  if (!productId) return null
+  const tabId = await _getSsgFetchTab()
+  if (tabId == null) return null
+  const [res] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    args: [String(productId)],
+    func: async (prdId) => {
+      const _wonInt = (txt) => {
+        const m = (txt || '').match(/[\d,]+/)
+        if (!m) return 0
+        const n = parseInt(m[0].replace(/,/g, ''), 10) || 0
+        return n >= 100000000 ? 0 : n
+      }
+      try {
+        const url = `/item/itemView.ssg?itemId=${prdId}&siteNo=6009`
+        const r = await fetch(url, { credentials: 'include' })
+        // [2026-08-26 중요] 본문을 먼저 읽고 차단부터 판정한다.
+        //
+        // 예전엔 !r.ok 에서 곧바로 빠져나가 아래 차단 문구 검사를 아예 못 했다.
+        // SSG 봇차단은 403 + 차단 문구로 오는데(실측: status 403, 본문 2,588자,
+        // '비정상적인 접근' 포함), 그 경우가 전부 blocked 가 아닌 일반 실패로
+        // 회신됐다. 그래서 백엔드 집계에서 "값 미확보"로 잡혀 차단 카운터가 거의
+        // 오르지 않았고(30분간 차단 4건 / 미확보 275건), 백오프가 걸리지 않아
+        // 차단 상태에서 계속 두드렸다 — 차단이 안 풀린 진짜 이유.
+        const h = await r.text()
+        if (h.includes('비정상적인 접근') || h.includes('자동화된 환경') ||
+            h.includes('연속적인 접근') || h.includes('로봇이 아닙니다')) {
+          return { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
+        }
+        // 문구가 없어도 403/429 는 차단으로 본다(문구가 바뀌어도 놓치지 않게).
+        if (r.status === 403 || r.status === 429) {
+          return { success: false, blocked: true, message: `SSG 차단 의심 HTTP ${r.status}` }
+        }
+        if (!r.ok) return { success: false, message: `SSG fetch HTTP ${r.status}` }
+        if (h.indexOf('임직원 및 사업자 회원') !== -1 || h.indexOf('임직원만 구매') !== -1) {
+          return { success: false, staffOnly: true, message: 'SSG 임직원/사업자 회원 전용 상품' }
+        }
+        const doc = new DOMParser().parseFromString(h, 'text/html')
+
+        // 판매가 — resultItemObj.sellprc 는 정상가라 사용 금지(영구 금지 규칙).
+        let domSalePrice = 0
+        const spEl = doc.querySelector('.cdtl_new_price.notranslate em.ssg_price')
+          || doc.querySelector('.cdtl_new_price.notranslate .ssg_price')
+          || doc.querySelector('.cdtl_price.point em.ssg_price')
+          || doc.querySelector('.cdtl_price.point .ssg_price')
+        if (spEl) domSalePrice = _wonInt(spEl.textContent)
+
+        // 카드혜택가(원가)
+        let domCardPrice = 0
+        for (const dt of doc.querySelectorAll('dt')) {
+          if (dt.textContent.trim() === '카드혜택가') {
+            const em = dt.parentElement?.querySelector('em.ssg_price')
+              || dt.nextElementSibling?.querySelector('em.ssg_price, .ssg_price')
+              || dt.closest('dl')?.querySelector('em.ssg_price')
+            if (em) domCardPrice = _wonInt(em.textContent)
+            break
+          }
+        }
+
+        // 옵션·재고 — uitemObjArr 블록 파싱. 렌더링된 ul.selectLists 는 HTML 에
+        // 없지만(JS 생성) 원본 데이터는 여기 다 있다.
+        const uitemOptions = []
+        const rx = /uitemObj\s*=\s*\{([\s\S]{0,2000}?)\};/g
+        let m
+        while ((m = rx.exec(h)) !== null) {
+          const s = m[1]
+          const g = (k) => {
+            const mm = s.match(new RegExp(k + "\\s*:\\s*'([^']*)'"))
+            return mm ? mm[1] : ''
+          }
+          const uid = g('uitemId')
+          if (!uid) continue
+          const names = [1, 2, 3, 4, 5]
+            .map((i) => g('uitemOptnNm' + i))
+            .filter((v) => v)
+          const qtyRaw = g('usablInvQty')
+          const qty = qtyRaw === '' ? null : (parseInt(qtyRaw, 10) || 0)
+          uitemOptions.push({
+            uitemId: uid,
+            name: names.join(' / '),
+            stock: qty,
+            isSoldOut: qty === 0,
+            bestAmt: parseInt(g('bestAmt') || '0', 10) || 0,
+          })
+        }
+        // 대표단품(00000)만 있고 옵션명이 비면 단품 상품 — 그대로 둔다.
+        const domOptions = uitemOptions
+          .filter((o) => o.name)
+          .map((o) => ({ name: o.name, stock: o.stock, isSoldOut: o.isSoldOut }))
+
+        // resultItemObj 원본 스크립트 — 백엔드 파서가 쓰는 html 필드와 동일 용도.
+        const scripts = Array.from(doc.querySelectorAll('script:not([src])'))
+          .map((s) => s.textContent).join('\n')
+        if (!scripts.includes('resultItemObj') && !domSalePrice) {
+          return { success: false, message: 'SSG 빈 응답(resultItemObj 없음)' }
+        }
+
+        const detailEl = doc.querySelector('#item_detail, .cdtl_detail_area, #contents')
+        return {
+          success: true,
+          site_product_id: prdId,
+          source_site: 'SSG',
+          html: scripts,
+          uitemOptions,
+          domOptions,
+          domCardPrice,
+          domSalePrice,
+          detailHtml: detailEl ? detailEl.innerHTML : '',
+          url: location.origin + url,
+          _viaFetch: true,
+        }
+      } catch (e) {
+        return { success: false, message: 'SSG fetch 실패: ' + (e && e.message) }
+      }
+    },
+  })
+  return res?.result || null
+}
+
 // 사이트별 사전 로그인 게이트 — detail 잡 진입 시 비로그인이면 자동로그인 완료까지 대기.
 // 비로그인 상태 그대로 가격 수집되는 것을 원천 차단 (사후 검증 정책의 한계 보완).
 // 반환: true(로그인됨/판단불가, 진행) / false(비로그인, 잡 보류 필요)
@@ -3460,6 +3764,91 @@ async function handleSourcingJob(job) {
 
     // 작업취소 직후 탭 생성 막기
     if (_sourcingForceStop) { clearTimeout(hangTimer); return }
+
+    // [2026-08-18] 쉬는 사이트 잡은 창을 열지 않고 즉시 반려한다.
+    //
+    // 차단으로 그 사이트를 쉬는 중(pauseSiteCollect)인데도 백엔드가 잡을 보내면,
+    // 기존 코드는 그대로 popup 창을 띄워 페이지를 렌더링했다. 어차피 차단이라
+    // 실패할 작업인데 사용자 화면 앞으로 창이 튀어나와 작업을 방해한다
+    // (실측 2026-08-18: 1시간 정지 중에도 팝업이 계속 떴다).
+    // 창을 안 여니 차단을 더 자극하지도 않는다.
+    try {
+      const _pausedNow = typeof getPausedSites === 'function' ? getPausedSites() : []
+      if (job.site && _pausedNow.includes(String(job.site).toUpperCase())) {
+        clearTimeout(hangTimer)
+        cleanedUp = true
+        console.log(`[소싱] ${job.site} 휴식 중 — 창 없이 반려: ${job.productId || ''}`)
+        await postResult('sourcing/collect-result', {
+          requestId: job.requestId,
+          // blocked:true 를 주면 안 된다 — 백엔드가 이걸 차단 신호로 세어
+          // 사이트 전체 백오프(임계 30건) 카운터를 부풀린다. 메시지에도 '차단'
+          // 단어를 넣지 않는다(_r_is_block 이 문자열로 판정).
+          data: { success: false, skipped: true, message: `${job.site} 휴식 중 — 건너뜀` },
+        })
+        return
+      }
+    } catch { /* 판단 실패 시 기존 경로 그대로 — 회귀 안전 */ }
+
+    // ── SSG 상세: in-tab fetch 고속 경로 (2026-08-04) ─────────────────────
+    // 기존엔 상품마다 popup 창을 새로 띄워 페이지를 통째로 렌더링했다. 그런데
+    // 가격 데이터(resultItemObj / bestAmt / 카드혜택가 DOM)는 전부 itemView.ssg
+    // "HTML 문서 안에" 이미 들어 있고, 렌더링이 추가로 하는 일은 광고·리뷰·추천
+    // 등 30여 개 부가 요청뿐이다. 웨일 CDP 실측(2026-08-04): 이미 열린 SSG 탭에서
+    // 다른 itemId 를 fetch 하면 status 200 / 834ms / 차단 없음 / resultItemObj·
+    // bestAmt·카드혜택가 dt 전부 정상 확보. 창 여닫이 130초 → 1초 수준.
+    // Akamai 봇차단은 실브라우저 컨텍스트(쿠키·TLS)를 그대로 쓰므로 통과한다.
+    // 실패하면 아래 기존 popup 경로로 자연 폴백한다(회귀 안전).
+    if (job.type === 'detail' && job.site === 'SSG') {
+      try {
+        const _fast = await _ssgFetchDetail(job.productId)
+        // 성공 + 확정 실패(임직원 전용)는 즉시 회신. 차단은 popup 으로 재확인하지
+        // 않고 그대로 회신 — fetch 가 차단이면 렌더링도 차단이라 창만 낭비된다.
+        if (_fast && (_fast.success || _fast.staffOnly || _fast.blocked)) {
+          clearTimeout(hangTimer)
+          cleanedUp = true
+          // 한 건이라도 정상 회신되면 차단이 풀린 것 — 연속 카운터 리셋해
+          // 휴식 시간을 즉시 기본값(5분)으로 되돌린다.
+          if (_fast.success || _fast.staffOnly) {
+            globalThis._ssgBlockStreak = 0
+            try { chrome.storage.local.set({ _ssgBlockStreak: 0 }) } catch {}
+          }
+          if (_fast.blocked) {
+            // SSG 만 쉰다 — 같은 PC 의 무신사/스니덩크는 계속 돈다.
+            // 여기서도 연속 차단이면 휴식을 늘린다(아래 재확인 경로와 동일 규칙).
+            globalThis._ssgBlockStreak = (globalThis._ssgBlockStreak || 0) + 1
+            pauseSiteCollect(
+              'SSG',
+              Math.min(60000 * Math.pow(2, globalThis._ssgBlockStreak - 1), 3600000),
+              `SSG 차단 감지(fetch, 연속 ${globalThis._ssgBlockStreak}회)`,
+            )
+          }
+          await postResult('sourcing/collect-result', {
+            requestId: job.requestId,
+            data: _fast,
+          })
+          return
+        }
+        console.log(`[SSG] in-tab fetch 미확보 — 이번 회차 건너뜀: ${job.productId}`)
+      } catch (e) {
+        console.log(`[SSG] in-tab fetch 오류 — 이번 회차 건너뜀: ${e?.message || e}`)
+      }
+      // [2026-08-23] SSG 는 popup 폴백을 쓰지 않는다.
+      //
+      // 폴백은 focused:true 팝업 창을 띄운다(카드혜택가 AJAX 가 백그라운드에서
+      // 발화하지 않아 그렇게 만들었다). 그래서 in-tab fetch 가 실패할 때마다
+      // 사용자 화면 앞으로 창이 튀어나와 하루 종일 작업을 방해했다.
+      // SSG 는 in-tab fetch 로 값이 전부 나오는 것이 실증돼 있고(2026-08-04),
+      // 실패하는 경우는 대개 차단이라 팝업으로 다시 열어도 어차피 실패한다.
+      // 그래서 폴백 대신 이번 회차만 건너뛴다 — 다음 사이클에 다시 시도한다.
+      // (ABCmart/GrandStage 는 팝업이 실제로 필요해 그대로 둔다.)
+      clearTimeout(hangTimer)
+      cleanedUp = true
+      await postResult('sourcing/collect-result', {
+        requestId: job.requestId,
+        data: { success: false, skipped: true, message: 'SSG 값 미확보 — 다음 회차 재시도' },
+      })
+      return
+    }
 
     // active:false — 병렬 처리 시 여러 탭 동시 오픈 (백그라운드 탭도 JS 렌더링 됨)
     // SSG/ABCmart/GrandStage는 active 탭에서만 카드/최대 혜택가 AJAX 발동 →
@@ -3956,8 +4345,29 @@ async function handleSourcingJob(job) {
         console.log(`[SSG] reCAPTCHA 차단 감지(재확인 완료): ${job.productId}`)
         result = { success: false, blocked: true, message: 'SSG reCAPTCHA 차단' }
         // 차단 감지됐는데도 곧바로 다음 잡을 계속 당겨오면 차단 중에 계속 두드리는
-        // 꼴이라 더 굳어질 위험 — 감지된 순간 전체 폴링 5분 멈춰서 식힌다.
-        pauseCollectPolling(300000, 'SSG reCAPTCHA 차단 감지')
+        // 꼴이라 더 굳어질 위험 — 감지된 순간 멈춰서 식힌다.
+        // [2026-08-18] 단, 멈추는 대상은 SSG 뿐이다. 예전엔 전체 폴링을 멈춰
+        // 같은 PC 의 무신사(27cc2c53)·스니덩크(1ec58a10)까지 5분씩 같이 죽었다.
+        //
+        // 휴식 시간은 연속 차단마다 2배로 늘린다(5→10→20→40→60분 상한).
+        // 고정 5분이면 차단이 안 풀린 상태에서 5분마다 영원히 노크한다 —
+        // 실측(2026-08-18) 25분간 한 PC 가 6회 두드렸고 차단이 계속 유지됐다.
+        // 쉬는 게 아니라 계속 자극하는 꼴이라 차단이 더 길어진다.
+        // 한 번이라도 성공하면 _ssgBlockStreak 이 0으로 리셋돼 즉시 5분으로 복귀.
+        globalThis._ssgBlockStreak = (globalThis._ssgBlockStreak || 0) + 1
+        // 정지시간과 마찬가지로 카운터도 storage 에 남긴다 — MV3 워커가 죽었다
+        // 살아나면 전역이 초기화돼 연속 6회가 다시 1회로 떨어진다(휴식 1시간 →
+        // 5분으로 후퇴). 실측 2026-08-18.
+        try { chrome.storage.local.set({ _ssgBlockStreak: globalThis._ssgBlockStreak }) } catch {}
+        const _ssgPauseMs = Math.min(
+          300000 * Math.pow(2, globalThis._ssgBlockStreak - 1),
+          3600000,
+        )
+        pauseSiteCollect(
+          'SSG',
+          _ssgPauseMs,
+          `SSG reCAPTCHA 차단 감지(연속 ${globalThis._ssgBlockStreak}회)`,
+        )
       } else if (_pc.staffOnly) {
         // 임직원/사업자 회원 전용 — 일반 고객 구매 불가 → 백엔드에서 sold_out 처리하도록 명시적 신호 전달
         console.log(`[SSG] 임직원 전용 상품 감지 → staffOnly 신호 전송: ${job.productId}`)
@@ -5001,7 +5411,8 @@ async function extractDetailData(tabId, site, productId) {
 // (롯데ON 데몬의 self-update 와 동일 패턴 — sourcing.py)
 // ============================================================
 const _SELF_UPDATE_ALARM = 'sambaSelfUpdate'
-const _SELF_UPDATE_INTERVAL_MIN = 360 // 6시간
+// 6시간은 너무 느렸다 — 급한 수정이 반나절씩 안 퍼졌다. 30분으로 단축.
+const _SELF_UPDATE_INTERVAL_MIN = 30
 
 function _cmpSemver(a, b) {
   const pa = String(a).split('.').map((n) => parseInt(n, 10) || 0)
@@ -5016,8 +5427,15 @@ function _cmpSemver(a, b) {
 
 async function _checkSelfUpdate() {
   try {
-    // 오토튠/잡 실행 중인 PC는 reload 보류 — 작업 끊김 방지. 다음 주기에 재시도.
-    if (_localAutotuneJoined) return
+    // [2026-08-26] 예전엔 `if (_localAutotuneJoined) return` 이라 오토튠에 참여
+    // 중인 PC는 자가 업데이트를 통째로 건너뛰었다. 그런데 오토튠 참여는 상시
+    // 상태라, 정작 일하는 PC들이 영영 옛 버전에 머물렀다(실측 2026-08-26:
+    // 27cc2c53=2.14.76, 76290318=2.14.77 — 최신은 2.14.84).
+    // 그 결과 차단 오분류 같은 중요한 수정이 현장에 반영되지 않았다.
+    //
+    // 이제는 "잡을 실제로 처리하는 중"일 때만 미룬다. 잡 사이 유휴 구간에
+    // reload 하므로 작업이 끊기지 않는다.
+    if (globalThis._pollSourcingInflight) return
 
     const { proxyUrl } = await chrome.storage.local.get('proxyUrl')
     if (!proxyUrl) return

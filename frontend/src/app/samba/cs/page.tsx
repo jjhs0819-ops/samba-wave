@@ -695,7 +695,7 @@ export default function CSPage() {
                           </div>
                         )}
                         {item.market_inquiry_no && (
-                          <div style={{ fontSize: '0.6rem', color: c.textMuted, marginTop: '0.25rem', wordBreak: 'break-all' }}>{item.market_inquiry_no}</div>
+                          <div style={{ fontSize: '0.68rem', color: c.textSub, marginTop: '0.25rem', wordBreak: 'break-all' }}>{item.market_inquiry_no}</div>
                         )}
                       </td>
 
@@ -918,10 +918,10 @@ export default function CSPage() {
 
                       {/* 문의일시 + 액션 */}
                       <td style={{ padding: '0.75rem 1rem', textAlign: 'center', verticalAlign: 'top', whiteSpace: 'nowrap' }}>
-                        <div style={{ fontSize: '0.75rem', color: c.textMuted, marginBottom: '0.5rem' }}>
+                        <div style={{ fontSize: '0.8125rem', color: c.textSub, fontWeight: 600, marginBottom: '0.375rem' }}>
                           {fmtDate(item.inquiry_date)}
                         </div>
-                        <div style={{ fontSize: '0.6875rem', color: c.textMuted, marginBottom: '0.5rem' }}>
+                        <div style={{ fontSize: '0.75rem', color: c.textSub, marginBottom: '0.5rem' }}>
                           {fmtDate(item.collected_at)}
                         </div>
                         <div style={{ display: 'flex', gap: '0.375rem', justifyContent: 'center' }}>

@@ -359,6 +359,25 @@ class ImageTransformService:
             raise ValueError("Gemini API Key가 비어있습니다.")
         return api_key, model
 
+    async def _get_openai_config(self) -> tuple[str, str]:
+        """OpenAI API 키, 모델 반환 (이미지 편집 — gpt-image-1)."""
+        creds = await self._get_setting("openai")
+        if not creds:
+            raise ValueError(
+                "OpenAI 설정이 없습니다. 설정 페이지에서 API Key를 입력하세요."
+            )
+        api_key = str(creds.get("apiKey", "")).strip()
+        model = str(creds.get("model", "gpt-image-1"))
+        if not api_key:
+            raise ValueError("OpenAI API Key가 비어있습니다.")
+        return api_key, model
+
+    async def _get_ai_config(self, provider: str) -> tuple[str, str]:
+        """provider(gemini|openai)별 API 키/모델 반환 — 이미지 변환 공용 진입점."""
+        if provider == "openai":
+            return await self._get_openai_config()
+        return await self._get_gemini_config()
+
     async def _get_r2_client(self) -> tuple[Any, str, str] | None:
         """R2 설정이 있으면 boto3 클라이언트 반환, 없으면 None."""
         creds = await self._get_setting("cloudflare_r2")
@@ -802,6 +821,109 @@ class ImageTransformService:
 
             raise ValueError("Gemini 응답에 이미지 없음")
 
+    async def _transform_image_openai(
+        self,
+        api_key: str,
+        model: str,
+        image_bytes: bytes,
+        prompt: str,
+        ref_image_bytes: bytes | None = None,
+        design_ref_bytes: bytes | None = None,
+    ) -> bytes:
+        """OpenAI Images Edit API(gpt-image-1)로 이미지 변환.
+
+        Gemini와 동일한 입력 순서(상품 이미지 → 대표이미지 참고 → 모델 프리셋)를
+        유지해 프롬프트/결과 일관성을 맞춘다. gpt-image-1은 URL이 아닌 b64_json으로만
+        응답하며, 여러 참조 이미지를 image[] 배열로 함께 전달하면 이를 참고해 합성한다.
+        """
+        import base64
+
+        def _ext_for(mime: str) -> str:
+            if mime == "image/png":
+                return "png"
+            if mime == "image/webp":
+                return "webp"
+            return "jpg"
+
+        files: list[tuple[str, tuple[str, bytes, str]]] = []
+
+        def _add_image(label: str, data: bytes) -> None:
+            mime = self._detect_mime(data)
+            files.append(("image[]", (f"{label}.{_ext_for(mime)}", data, mime)))
+
+        # 1) 상품 이미지 (최우선)
+        _add_image("product", image_bytes)
+        # 2) 디자인 기준 대표이미지 (있으면)
+        if design_ref_bytes:
+            _add_image("design_ref", design_ref_bytes)
+        # 3) 모델 프리셋 (얼굴/체형만 참고)
+        if ref_image_bytes:
+            _add_image("model_ref", ref_image_bytes)
+
+        form_data = {
+            "model": model,
+            "prompt": prompt,
+            "n": "1",
+            "size": "1024x1024",
+        }
+
+        import asyncio as _aio_openai
+
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = None
+            for attempt in range(3):
+                resp = await client.post(
+                    "https://api.openai.com/v1/images/edits",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    data=form_data,
+                    files=files,
+                )
+                if resp.status_code == 429 and attempt < 2:
+                    wait = 30 * (attempt + 1)
+                    logger.warning(
+                        f"[이미지] OpenAI 429 rate limit — {wait}초 대기 후 재시도"
+                    )
+                    await _aio_openai.sleep(wait)
+                    continue
+                break
+
+            if resp is None or resp.status_code != 200:
+                raise RuntimeError(
+                    f"OpenAI 이미지 편집 오류 {resp.status_code if resp else 'no response'}: "
+                    f"{resp.text[:300] if resp else ''}"
+                )
+
+            data = resp.json()
+            items = data.get("data", [])
+            if not items or not items[0].get("b64_json"):
+                raise ValueError("OpenAI 응답에 이미지 없음")
+
+            result = base64.b64decode(items[0]["b64_json"])
+            if ref_image_bytes and self._is_same_image(result, ref_image_bytes):
+                raise ValueError(
+                    "OpenAI가 참조 프리셋 이미지를 그대로 반환 — 변환 실패"
+                )
+            return result
+
+    async def _transform_image_ai(
+        self,
+        provider: str,
+        api_key: str,
+        model: str,
+        image_bytes: bytes,
+        prompt: str,
+        ref_image_bytes: bytes | None = None,
+        design_ref_bytes: bytes | None = None,
+    ) -> bytes:
+        """provider(gemini|openai)에 따라 적절한 이미지 편집 API 호출 — 공용 진입점."""
+        if provider == "openai":
+            return await self._transform_image_openai(
+                api_key, model, image_bytes, prompt, ref_image_bytes, design_ref_bytes
+            )
+        return await self._transform_image_gemini(
+            api_key, model, image_bytes, prompt, ref_image_bytes, design_ref_bytes
+        )
+
     async def _save_image(self, image_bytes: bytes, original_url: str) -> str:
         """R2 또는 로컬에 이미지 저장 후 URL 반환.
 
@@ -982,7 +1104,11 @@ class ImageTransformService:
     )
 
     async def mirror_external_to_r2(
-        self, urls: list[str], min_bytes: int = 0, force: bool = False
+        self,
+        urls: list[str],
+        min_bytes: int = 0,
+        force: bool = False,
+        skip_blocked_hosts: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         """차단 도메인의 이미지 URL을 R2로 미러링하여 R2 URL로 치환.
 
@@ -993,6 +1119,13 @@ class ImageTransformService:
         - force=True 면 차단목록/min_bytes 무관하게 R2 아닌 외부 URL 전부 미러링.
           SSG처럼 "미러 안 된 외부 <img>는 어차피 strip" 인 경로에서 사용
           (화이트리스트로는 호스트 롱테일을 못 따라감 — 2026-07-25 실측 25종+).
+        - skip_blocked_hosts=True 면 호스트 기반 미러링을 건너뛰고 min_bytes 초과분만
+          미러한다. 롯데ON 전용 — 롯데ON 은 원본 CDN(msscdn/a-rt 등)은 정상 수용하는
+          반면 R2 공개 도메인(.shop)을 origFileNm URL 검증에서 9999 로 거부한다
+          (2026-08-14 실측: 동일 상품이 R2 URL 이면 실패, 원본 URL 이면 등록 성공).
+          길이 초과분은 여전히 미러해야 200byte 한도에 걸리지 않는다.
+        - force 와 skip_blocked_hosts 는 서로 다른 마켓(SSG/롯데ON) 전용이라
+          동시에 켜지 않는다.
         - 이미 R2 publicUrl 도메인이거나 (차단 대상도 아니고 min_bytes도 안 넘으면) 원본 유지
         - 다운로드/업로드 실패 시 해당 URL은 결과에서 제외(드롭)
         - 원본 포맷(MIME) 보존: webp 변환 없이 그대로 저장
@@ -1023,22 +1156,30 @@ class ImageTransformService:
         for _i, url in enumerate(urls):
             if not url:
                 continue
+            parsed = urlparse(url)
+            host = (parsed.netloc or "").lower()
+            # 차단 도메인이 아니고 min_bytes도 안 넘으면 원본 유지
+            _blocked = not skip_blocked_hosts and any(
+                b in host for b in self._HOTLINK_BLOCKED_HOSTS
+            )
+            _too_long = bool(min_bytes) and len(url.encode("utf-8")) > min_bytes
+            # skip_blocked_hosts 마켓(롯데ON)은 과거 미러 캐시/DB 매핑도 무시하고
+            # 원본을 쓴다 — 캐시 hit 로 R2 URL 이 되살아나면 우회가 무의미해진다.
+            # (미러가 꼭 필요한 200byte 초과분은 아래 캐시/다운로드 경로로 내려간다.)
+            if skip_blocked_hosts and not _blocked and not _too_long:
+                result_slots[_i] = url
+                continue
             # 프로세스 캐시 hit — 다운로드/재인코딩/업로드 전부 skip
             _cached = self._R2_MIRROR_CACHE.get(url)
             if _cached:
                 result_slots[_i] = _cached
                 url_map[url] = _cached
                 continue
-            parsed = urlparse(url)
-            host = (parsed.netloc or "").lower()
             # 이미 R2(publicUrl) 호스트면 그대로 사용
             if public_host and host == public_host:
                 result_slots[_i] = url
                 continue
-            # 차단 도메인이 아니고 min_bytes도 안 넘으면 원본 유지
             # (force=True 면 외부 호스트는 무조건 미러 — 위 docstring 참조)
-            _blocked = any(b in host for b in self._HOTLINK_BLOCKED_HOSTS)
-            _too_long = bool(min_bytes) and len(url.encode("utf-8")) > min_bytes
             if not _blocked and not _too_long and not force:
                 result_slots[_i] = url
                 continue
@@ -1145,6 +1286,7 @@ class ImageTransformService:
         urls: list[str],
         min_bytes: int = 0,
         force: bool = False,
+        skip_blocked_hosts: bool = False,
     ) -> tuple[list[str], dict[str, str]]:
         """DB 영속 매핑(samba_collected_product.image_mirror_map) 활용 + 신규 매핑 저장.
 
@@ -1155,7 +1297,10 @@ class ImageTransformService:
         """
         if not urls or not product_id:
             return await self.mirror_external_to_r2(
-                urls, min_bytes=min_bytes, force=force
+                urls,
+                min_bytes=min_bytes,
+                force=force,
+                skip_blocked_hosts=skip_blocked_hosts,
             )
 
         from sqlalchemy import select, update
@@ -1181,7 +1326,10 @@ class ImageTransformService:
             self._R2_MIRROR_CACHE.setdefault(_k, _v)
 
         _result, _url_map = await self.mirror_external_to_r2(
-            urls, min_bytes=min_bytes, force=force
+            urls,
+            min_bytes=min_bytes,
+            force=force,
+            skip_blocked_hosts=skip_blocked_hosts,
         )
 
         # 신규(또는 변경) 매핑만 DB에 머지
@@ -1274,6 +1422,8 @@ class ImageTransformService:
         min_dim: int = 0,
         enforce_max_dim: bool = False,
         pad_square: bool = False,
+        crop_square: bool = False,
+        crop_max_cut: float = 0.20,
     ) -> tuple[list[str], dict[str, str], set[str]]:
         """용량/픽셀 초과·미달 이미지를 다운로드/리사이즈하여 R2로 업로드.
 
@@ -1285,6 +1435,17 @@ class ImageTransformService:
         - min_dim > 0 또는 enforce_max_dim=True 이면 HEAD 분기 우회하고 무조건 다운로드 →
           PIL 로 픽셀 크기 확인 → min_dim 미만이면 LANCZOS 업스케일, max_dim 초과면 다운스케일.
         - 기본값(min_dim=0, enforce_max_dim=False)은 기존 동작 그대로 (1038/lottehome 무영향).
+
+        정사각 강제 — 두 방식:
+        - pad_square: 짧은 변에 흰 여백을 붙여 정사각. 내용 손실이 없어 롯데홈쇼핑처럼
+          여백을 허용하는 마켓에 쓴다.
+        - crop_square: 긴 변을 중앙 기준으로 잘라 정사각. 여백 없이 꽉 찬 썸네일을
+          요구하는 마켓용(2026-08-15 토스 실측 — 여백 방식은 "썸네일은 정해진 비율에
+          맞게 꽉 채워주세요. 이미지에 여백이 없도록 수정해 주세요."로 반려됐다).
+          crop_max_cut(기본 20%)을 넘게 잘려야 하면 내용 손실이 커 크롭하지 않고
+          pad 로 대체한다 — 무신사 원본은 대부분 5:6(16.7% 잘림)이라 통과하지만
+          500x750(33%) 같은 극단 비율이 소수 섞여 있다.
+          둘 다 True 면 crop 을 먼저 시도하고, 상한 초과 시 pad 로 떨어진다.
 
         반환: (치환 결과 URL 리스트, 원본→R2 매핑)
         """
@@ -1305,6 +1466,7 @@ class ImageTransformService:
         # #543 정책키 — 같은 URL도 검증 파라미터가 다르면 다른 결과라 키에 포함.
         _policy = (
             f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
+            f"{int(crop_square)}:{crop_max_cut}:"
         )
 
         # #543 순차 → 병렬. 죽은/느린 소스 이미지 대기가 분산돼 상품당 300초 초과 해소.
@@ -1326,7 +1488,9 @@ class ImageTransformService:
                     host = (parsed.netloc or "").lower()
                     # min_dim/enforce_max_dim 모드: HEAD 우회하고 무조건 다운로드
                     # — HEAD 로는 픽셀 크기를 알 수 없으므로 PIL 로 직접 확인 필요.
-                    strict_pixel = bool(min_dim > 0 or enforce_max_dim or pad_square)
+                    strict_pixel = bool(
+                        min_dim > 0 or enforce_max_dim or pad_square or crop_square
+                    )
                     # R2 본인 호스트면 그대로 — 단, strict_pixel(min_dim/enforce_max_dim)
                     # 모드에선 이미 R2 인 이미지도 픽셀 규격을 재검증해야 하므로 통과 금지.
                     # 롯데홈은 mirror_with_persistence 로 먼저 R2 미러(예: 833x1000)한 뒤
@@ -1379,7 +1543,12 @@ class ImageTransformService:
                     # 안 켜서, 정사각 대형이미지(1024x1024)가 need_downscale=False → 조기반환
                     # 으로 그대로 통과되던 누락. pad_square=False 호출부는 조건 불변(무회귀).
                     need_downscale = bool(
-                        (enforce_max_dim or pad_square or not strict_pixel)
+                        (
+                            enforce_max_dim
+                            or pad_square
+                            or crop_square
+                            or not strict_pixel
+                        )
                         and max(w, h) > max_dim
                     )
                     over_bytes = len(image_bytes) > max_bytes
@@ -1390,7 +1559,7 @@ class ImageTransformService:
 
                     # 픽셀/용량 모두 통과하고 차단 도메인도 아니면 원본 유지
                     # (단, pad_square 요청 시 이미 정사각인 경우만 통과)
-                    already_square = (not pad_square) or (w == h)
+                    already_square = (not pad_square and not crop_square) or (w == h)
                     if (
                         not need_upscale
                         and not need_downscale
@@ -1429,9 +1598,31 @@ class ImageTransformService:
                             canvas.paste(img, ((pad_w - w2) // 2, (pad_h - h2) // 2))
                             img = canvas
 
-                    # 정사각 강제 (롯데홈 대표/추가 정사각 규격) — 긴 변 기준 흰 여백 패딩.
+                    # 정사각 강제 ① 중앙 크롭 — 여백 없이 꽉 찬 썸네일을 요구하는
+                    # 마켓용(토스). 긴 변을 중앙 기준으로 잘라낸다. 잘림이 crop_max_cut
+                    # 을 넘으면 내용 손실이 커서 크롭하지 않고 아래 패딩으로 넘긴다.
+                    _did_crop = False
+                    if crop_square and img.size[0] != img.size[1]:
+                        _cw, _ch = img.size
+                        _side_c = min(_cw, _ch)
+                        _cut_ratio = (max(_cw, _ch) - _side_c) / max(_cw, _ch)
+                        if _cut_ratio <= crop_max_cut:
+                            _l = (_cw - _side_c) // 2
+                            _t = (_ch - _side_c) // 2
+                            img = img.crop((_l, _t, _l + _side_c, _t + _side_c))
+                            _did_crop = True
+                        else:
+                            logger.info(
+                                f"[이미지] 중앙 크롭 건너뜀 — 잘림 {_cut_ratio:.0%} > "
+                                f"상한 {crop_max_cut:.0%} ({_cw}x{_ch}): {url}"
+                            )
+                    # 정사각 강제 ② 흰 여백 패딩 (롯데홈 대표/추가 정사각 규격) —
                     # 내용 왜곡·잘림 없이 짧은 변에 흰 여백만 추가해 N×N 정사각 생성.
-                    if pad_square and img.size[0] != img.size[1]:
+                    # crop_square 요청이었는데 상한 초과로 크롭을 못 한 경우도 여기로 온다
+                    # (정사각 자체는 만들어야 하므로).
+                    if (pad_square or (crop_square and not _did_crop)) and img.size[
+                        0
+                    ] != img.size[1]:
                         _w3, _h3 = img.size
                         _side = max(_w3, _h3)
                         _sq = Image.new("RGB", (_side, _side), (255, 255, 255))
@@ -1769,6 +1960,7 @@ class ImageTransformService:
         image_url: str,
         mode: str = "video",
         model_preset: str = "female_v1",
+        provider: str = "gemini",
     ) -> str | None:
         """단일 이미지를 AI 변환 후 URL 반환. 대표이미지를 건드리지 않는 독립 변환."""
         from backend.domain.samba.collector.repository import (
@@ -1801,18 +1993,18 @@ class ImageTransformService:
                 transformed = await self._remove_background_rembg(img)
             elif mode == "model":
                 ref_image = await self._load_preset_image(model_preset)
-                api_key, gm_model = await self._get_gemini_config()
-                gemini_prompt = _get_category_prompt(category, mode, model_desc)
-                transformed = await self._transform_image_gemini(
-                    api_key, gm_model, img, gemini_prompt, ref_image
+                api_key, ai_model = await self._get_ai_config(provider)
+                ai_prompt = _get_category_prompt(category, mode, model_desc)
+                transformed = await self._transform_image_ai(
+                    provider, api_key, ai_model, img, ai_prompt, ref_image
                 )
             else:
-                # 씬연출/비디오 등 모든 이미지 생성 → Gemini
-                api_key, gm_model = await self._get_gemini_config()
-                gemini_prompt = _get_category_prompt(category, mode, model_desc)
+                # 씬연출/비디오 등 모든 이미지 생성 → provider(gemini|openai)
+                api_key, ai_model = await self._get_ai_config(provider)
+                ai_prompt = _get_category_prompt(category, mode, model_desc)
                 ref_image = await self._load_preset_image(model_preset)
-                transformed = await self._transform_image_gemini(
-                    api_key, gm_model, img, gemini_prompt, ref_image
+                transformed = await self._transform_image_ai(
+                    provider, api_key, ai_model, img, ai_prompt, ref_image
                 )
             new_url = await self._save_image(transformed, image_url)
             return new_url
@@ -1826,6 +2018,7 @@ class ImageTransformService:
         scope: dict[str, bool],
         mode: str,
         model_preset: str = "female_v1",
+        provider: str = "gemini",
     ) -> dict[str, Any]:
         """여러 상품의 이미지를 일괄 변환."""
         from backend.domain.samba.collector.repository import (
@@ -1834,11 +2027,11 @@ class ImageTransformService:
 
         repo = SambaCollectedProductRepository(self.session)
 
-        # Gemini 키 로드 (배경제거 외 모든 이미지 생성)
-        gemini_key: str | None = None
-        gemini_model_name: str = ""
+        # AI 키 로드 (배경제거 외 모든 이미지 생성 — provider: gemini|openai)
+        ai_key: str | None = None
+        ai_model_name: str = ""
         if mode != "background":
-            gemini_key, gemini_model_name = await self._get_gemini_config()
+            ai_key, ai_model_name = await self._get_ai_config(provider)
 
         is_auto = model_preset == "auto"
 
@@ -1900,12 +2093,12 @@ class ImageTransformService:
                 ref_image = None
 
             async def _transform_ai(img_bytes: bytes) -> bytes:
-                """Gemini로 이미지 변환 (모델컷/씬연출/영상 모든 모드)."""
-                if not gemini_key:
-                    raise ValueError("Gemini 설정이 필요합니다")
-                gemini_prompt = _get_category_prompt(category, mode, model_desc)
-                return await self._transform_image_gemini(
-                    gemini_key, gemini_model_name, img_bytes, gemini_prompt, ref_image
+                """AI로 이미지 변환 (모델컷/씬연출/영상 모든 모드 — provider: gemini|openai)."""
+                if not ai_key:
+                    raise ValueError(f"{provider.capitalize()} 설정이 필요합니다")
+                ai_prompt = _get_category_prompt(category, mode, model_desc)
+                return await self._transform_image_ai(
+                    provider, ai_key, ai_model_name, img_bytes, ai_prompt, ref_image
                 )
 
             # ── 모델 착용 모드: 대표1장 + 추가2장 생성 ──
@@ -2073,12 +2266,12 @@ class ImageTransformService:
                             product_result["failed"] += 1
                     update_data["detail_images"] = new_details
 
-            # ── 모델→상품 모드: Gemini로 모델 제거 → 상품컷 생성 ──
+            # ── 모델→상품 모드: AI로 모델 제거 → 상품컷 생성 (provider: gemini|openai) ──
             #    (issue #665: scope 체크 범위만 변환 — idx0=대표, idx1+=추가, 상세 별도)
             elif mode == "model_to_product" and product_images:
-                if not gemini_key:
+                if not ai_key:
                     product_result["failed"] += 1
-                    logger.error(f"[모델→상품] {pid} Gemini 설정 필요")
+                    logger.error(f"[모델→상품] {pid} {provider.capitalize()} 설정 필요")
                 else:
                     use_thumbnail = scope.get("thumbnail", False)
                     use_additional = scope.get("additional", False)
@@ -2093,8 +2286,8 @@ class ImageTransformService:
                             continue
                         try:
                             img = await self._download_image(img_url, client=_dl_client)
-                            transformed = await self._transform_image_gemini(
-                                gemini_key, gemini_model_name, img, m2p_prompt, None
+                            transformed = await self._transform_image_ai(
+                                provider, ai_key, ai_model_name, img, m2p_prompt, None
                             )
                             new_url = await self._save_image(transformed, img_url)
                             updated_images[idx] = new_url
@@ -2114,8 +2307,13 @@ class ImageTransformService:
                                 img = await self._download_image(
                                     img_url, client=_dl_client
                                 )
-                                transformed = await self._transform_image_gemini(
-                                    gemini_key, gemini_model_name, img, m2p_prompt, None
+                                transformed = await self._transform_image_ai(
+                                    provider,
+                                    ai_key,
+                                    ai_model_name,
+                                    img,
+                                    m2p_prompt,
+                                    None,
                                 )
                                 new_url = await self._save_image(transformed, img_url)
                                 new_details.append(new_url)
@@ -2136,16 +2334,17 @@ class ImageTransformService:
                 is_bg_mode = mode == "background"
 
                 async def _transform(img_bytes: bytes) -> bytes:
-                    """배경제거 → rembg, 그 외 → Gemini."""
+                    """배경제거 → rembg, 그 외 → AI(provider: gemini|openai)."""
                     if is_bg_mode:
                         return await self._remove_background_rembg(img_bytes)
-                    if gemini_key:
-                        gemini_prompt = _get_category_prompt(category, mode, model_desc)
-                        return await self._transform_image_gemini(
-                            gemini_key,
-                            gemini_model_name,
+                    if ai_key:
+                        ai_prompt = _get_category_prompt(category, mode, model_desc)
+                        return await self._transform_image_ai(
+                            provider,
+                            ai_key,
+                            ai_model_name,
                             img_bytes,
-                            gemini_prompt,
+                            ai_prompt,
                             ref_image,
                         )
                     return await self._remove_background_rembg(img_bytes)

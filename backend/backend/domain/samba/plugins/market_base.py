@@ -286,6 +286,9 @@ class MarketPlugin(ABC):
                 product["_delivery_base_fee"] = int(mp["shippingCost"])
             if mp.get("maxStock"):
                 product["_max_stock"] = mp["maxStock"]
+            # 쿠팡 전용: 추가이미지(DETAIL) 미등록 — 대표이미지만 전송
+            if mp.get("coupangNoAdditionalImages"):
+                product["_coupang_no_additional_images"] = True
             # SSG 주문수량 제한 (정책 → 상품에 주입)
             if mp.get("dayMaxQty"):
                 product["_day_max_qty"] = int(mp["dayMaxQty"])

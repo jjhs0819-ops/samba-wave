@@ -112,6 +112,19 @@ class CoupangPlugin(MarketPlugin):
 
         client = CoupangClient(access_key, secret_key, vendor_id)
 
+        # ── 재고 상한 결정 (등록·오토튠 공통) ──
+        # 계정 설정의 "재고수량"(stockQuantity) 값을 우선 적용하고, 없으면 정책 maxStock을
+        # 폴백으로 쓴다. 쿠팡은 재고 99를 걸면 소명(99개 매입내역 요구)이 날아올 수 있어
+        # 낮은 값(예: 3)으로 유지하기 위한 상한이다. 등록(_build_item)·재고갱신 두 경로가
+        # 모두 product["_max_stock"]를 읽으므로 여기서 한 번만 계산해 주입한다.
+        # 우선순위는 11번가(elevenst.py) 방식과 동일. 0/미설정이면 상한 없음(기존 동작).
+        _acct_extras = (account.additional_fields or {}) if account else {}
+        _stock_cap = int(
+            _acct_extras.get("stockQuantity") or product.get("_max_stock") or 0
+        )
+        if _stock_cap > 0:
+            product["_max_stock"] = _stock_cap
+
         # ── 소명 브랜드 가드 ──
         # 쿠팡은 유통경로 소명 없이 특정 브랜드를 팔면 판매정지를 건다.
         # 주 계정은 정지 이력이 있어 재발 시 타격이 크므로, 등록 전에 막는다.
@@ -252,6 +265,13 @@ class CoupangPlugin(MarketPlugin):
                     else:
                         stk = 999
                     new_stk = min(int(stk), 99999)
+                    # 정책 maxStock 상한 적용 — 등록(_build_item) 경로와 동일하게 재고를
+                    # 캡한다. 쿠팡 소명(99개 매입내역 요구) 회피용으로 재고를 낮게 유지하며,
+                    # 오토튠 재전송 때마다 원본 재고가 상한을 넘으면 상한값으로 하향한다.
+                    # 품절(0)은 min 특성상 그대로 0 유지 → 품절 상품에 재고를 붙이지 않음.
+                    _max_stock_cap = int(product.get("_max_stock") or 0)
+                    if _max_stock_cap > 0:
+                        new_stk = min(new_stk, _max_stock_cap)
                     # maximumBuyCount는 1회 구매 한도 필드라 PUT /quantities 후 GET 응답에 반영되지 않음.
                     # 이전 조건 비교는 항상 false로 떨어져 재고 API 호출이 스킵되는 버그가 있었음(issue #200).
                     await _call_with_retry(
@@ -281,8 +301,52 @@ class CoupangPlugin(MarketPlugin):
                 }
 
             except Exception as e:
-                # 재시도 소진 후 도달. 깨진 전체수정 PUT(404)으로 폴백하지 않음 —
-                # 재시도가능 실패 반환 → 잡큐가 다음 사이클에 재시도.
+                # 마켓에서 이미 삭제된 상품(영구 실패) — 재시도가능으로 분류하면 잡큐가
+                # 영원히 재시도한다(이슈 #724: 옵션 3개가 7일간 18,860회 재시도 실측).
+                # lock_stock=True로 다음 오토튠 사이클부터 전송 대상에서 제외
+                # (재고잠금 체크는 collector_autotune.py:3494/4356 이미 존재).
+                _msg = str(e)
+                from backend.domain.samba.shipment.dispatcher import _is_delete_ghost
+
+                if _is_delete_ghost(_msg):
+                    _pid = product.get("id")
+                    if _pid:
+                        try:
+                            from sqlalchemy import update as _sa_update
+                            from backend.domain.samba.collector.model import (
+                                SambaCollectedProduct as _CP,
+                            )
+
+                            await session.execute(
+                                _sa_update(_CP)
+                                .where(_CP.id == _pid)
+                                .values(lock_stock=True)
+                            )
+                            await session.commit()
+                        except Exception as _lock_e:
+                            # commit 실패 시 rollback으로 SessionTransaction PREPARED
+                            # 고착 차단 (idle in transaction 누적 방지, 이슈#276 동일 패턴)
+                            logger.warning(
+                                f"[쿠팡] 삭제상품 재고잠금 처리 실패(무시): {_lock_e}"
+                            )
+                            try:
+                                await session.rollback()
+                            except Exception:
+                                pass
+                    logger.warning(
+                        f"[쿠팡] 경량 업데이트 실패(마켓에서 이미 삭제됨, 재시도 중단 — "
+                        f"재고잠금 처리): {existing_no} — {e}"
+                    )
+                    return {
+                        "success": False,
+                        "product_no": existing_no,
+                        "permanent_failure": True,
+                        "message": f"쿠팡에서 이미 삭제된 상품(재시도 중단): {str(e)[:200]}",
+                        "data": {"sellerProductId": existing_no},
+                    }
+
+                # 그 외(타임아웃 등)는 재시도 소진 후 도달. 깨진 전체수정 PUT(404)으로
+                # 폴백하지 않음 — 재시도가능 실패 반환 → 잡큐가 다음 사이클에 재시도.
                 logger.warning(
                     f"[쿠팡] 경량 업데이트 실패(전체수정 폴백 안 함, 재시도 대기): "
                     f"{existing_no} — {e}"
@@ -350,6 +414,25 @@ class CoupangPlugin(MarketPlugin):
             _main = product.get("coupang_main_image") or ""
             _detail_html = product.get("detail_html") or ""
 
+            # (2026-08-07) 핫링크 차단 CDN 선미러 — lotteon/msscdn 등 외부 CDN
+            # 직링크가 그대로 나가면 쿠팡 검수 화면에서 이미지가 안 떠
+            # "상세페이지 미업로드" 반려가 난다(실사고: 롯데온 소싱 609건).
+            # mirror_oversized_to_r2 는 용량·픽셀 기준만 봐서 정상 용량의 차단
+            # CDN을 통과시킴 → 롯데홈 플러그인과 동일하게 mirror_with_persistence
+            # (차단 CDN → R2 + image_mirror_map 영속)를 먼저 태운다.
+            _pid = product.get("id")
+            if _images:
+                _images, _ = await _img_svc.mirror_with_persistence(_pid, _images)
+            if _detail_images:
+                _detail_images, _ = await _img_svc.mirror_with_persistence(
+                    _pid, _detail_images
+                )
+            if _main:
+                _m1, _ = await _img_svc.mirror_with_persistence(_pid, [_main])
+                _main = _m1[0] if _m1 else _main
+            if _detail_html:
+                _detail_html = await _img_svc.mirror_urls_in_html(_detail_html)
+
             if _images:
                 product["images"], _, _ = await _img_svc.mirror_oversized_to_r2(
                     _images, **_kw
@@ -410,7 +493,17 @@ class CoupangPlugin(MarketPlugin):
             except Exception as _e:
                 logger.warning(f"[쿠팡] 출고지 택배사 코드 조회 실패(무시): {_e}")
         if not outbound_delivery_code:
-            outbound_delivery_code = "CJGLS"  # 최후 폴백
+            # (2026-08-07) CJGLS 무언 폴백 제거 — 실제 출고지 택배사와 다른 코드로
+            # 등록되면 검수 반려가 계정 전체로 번진다(실사고: 승인반려 2,811건,
+            # 롯데택배 출고지 계정이 전량 CJ로 등록됨. 롯데택배의 쿠팡 코드는
+            # HYUNDAI). 코드 미확인은 조용히 CJ로 나가는 대신 명시적 실패로 남겨
+            # 계정 설정(출고지 deliveryCode) 보완을 유도한다.
+            _msg = (
+                f"출고지 택배사 코드 미확인(출고지 {outbound_code or '미설정'}) — "
+                "계정의 출고지 deliveryCode 저장/조회 확인 필요"
+            )
+            logger.error(f"[쿠팡] {_msg}")
+            return {"success": False, "message": _msg}
 
         # AS 전화번호 주입은 base._apply_market_settings 에서 처리됨
         data = CoupangClient.transform_product(

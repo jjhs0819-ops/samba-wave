@@ -66,7 +66,19 @@
       'X-Ext-Version': extVersion,
     }
     if (allowedSites !== null) {
-      headers['X-Allowed-Sites'] = allowedSites.join(',')
+      // [2026-08-18] 사이트별 일시정지 반영 — 차단으로 잠시 쉬는 사이트만 헤더에서
+      // 뺀다. 그 사이트 잡은 백엔드가 안 주고, 나머지 사이트는 평소대로 돈다.
+      // (기존엔 폴링 자체를 전역으로 멈춰 같은 PC 의 무신사·스니덩크까지 정지)
+      let sites = allowedSites
+      try {
+        const paused = typeof globalThis.getPausedSites === 'function'
+          ? globalThis.getPausedSites()
+          : []
+        if (paused.length) {
+          sites = allowedSites.filter((s) => !paused.includes(String(s).toUpperCase()))
+        }
+      } catch { /* 정지 목록을 못 읽으면 원래 목록 그대로 — 회귀 안전 */ }
+      headers['X-Allowed-Sites'] = sites.join(',')
     }
     const res = await fetch(url, { ...init, headers })
     if (res.status === 403) {

@@ -461,7 +461,25 @@ class LotteHomeClient:
                 if _last and (_now - _last) < FORCE_AUTH_COOLDOWN:
                     # 방금 재발급했는데 또 인증 오류 → 재발급으로 풀리는 문제가
                     # 아니다. 계속 발급하면 직전 키까지 무효화되어 같은 계정의
-                    # 다른 호출을 [9001] 로 끌어내린다. 쿨다운 중엔 그대로 raise.
+                    # 다른 호출을 [9001] 로 끌어내린다. 쿨다운 중엔 재발급 금지.
+                    #
+                    # 다만 그대로 raise 하면, "다른 워커/프로세스가 이미 새 키를
+                    # 발급해 DB에 저장해둔" 흔한 상황에서 이 프로세스는 무효 키를
+                    # 든 채 쿨다운 내내 전 건 실패한다(2026-08-07 롯데홈 전송
+                    # 1만 건 [0001] 전면 실패 — 모듈 캐시는 프로세스 로컬이라
+                    # 새 키가 전파되지 않는다). DB의 최신 키가 내가 쓰던 키와
+                    # 다르면 그 키로 1회 재시도한다(재발급 없음 = 무효화 없음).
+                    _db_key = await self._adopt_shared_cert(exclude=self._cert_key)
+                    if _db_key:
+                        logger.info(
+                            f"[롯데홈쇼핑] 쿨다운 중 — DB 공유 인증키 채택 후 재시도 "
+                            f"(endpoint={endpoint}, key={_db_key[:8]}…)"
+                        )
+                        if params and "subscriptionId" in params:
+                            params = {**params, "subscriptionId": _db_key}
+                        return await self._call_api(
+                            endpoint, method, params, timeout_s=timeout_s
+                        )
                     logger.warning(
                         f"[롯데홈쇼핑] 재인증 쿨다운 중 — 재발급 생략하고 오류 전달 "
                         f"(endpoint={endpoint}, code={e.code}, msg={e.lotte_msg}, "
@@ -471,6 +489,19 @@ class LotteHomeClient:
                 # 발급 "시도" 시각을 먼저 남긴다 — createCertification 이 [9001] 로
                 # 거부되는 계정 문제 상황에선 성공 시각만 기록하면 쿨다운이 영원히
                 # 비어 있어 매 오류마다 발급을 재시도(폭주)한다.
+                # 재발급 전에 DB 공유키부터 — 다른 프로세스가 이미 새 키를 받아둔
+                # 경우 재발급은 그 키까지 무효화한다(무효화 도미노의 시작점).
+                _shared = await self._adopt_shared_cert(exclude=self._cert_key)
+                if _shared:
+                    logger.info(
+                        f"[롯데홈쇼핑] 인증키 무효 감지 → DB 공유키 채택 후 재시도 "
+                        f"(endpoint={endpoint}, key={_shared[:8]}…)"
+                    )
+                    if params and "subscriptionId" in params:
+                        params = {**params, "subscriptionId": _shared}
+                    return await self._call_api(
+                        endpoint, method, params, timeout_s=timeout_s
+                    )
                 _last_auth_issue[_ck] = _now
                 logger.info(
                     f"[롯데홈쇼핑] 인증키 무효 감지 → 강제 재인증 후 재시도 (endpoint={endpoint}, code={e.code}, msg={e.lotte_msg})"
@@ -491,6 +522,36 @@ class LotteHomeClient:
                 )
             _ = msg  # suppress unused
             raise
+
+    async def _adopt_shared_cert(self, exclude: str = "") -> str:
+        """DB에 저장된 '다른 프로세스가 발급한' 유효 인증키를 채택 (재발급 없음).
+
+        롯데홈 인증키는 계정당 1개만 유효하고, 새로 발급하면 이전 키가 즉시
+        무효가 된다. 워커가 여러 프로세스면 모듈 캐시(_cert_cache)는 공유되지
+        않으므로, 한쪽이 재발급하는 순간 다른 쪽은 무효 키를 든 채 전 건이
+        [0001] 인증키오류로 떨어진다. 그때 또 재발급하면 도미노가 된다.
+
+        exclude: 방금 실패한 키(= 이미 무효). DB 값이 이것과 같으면 채택하지 않음.
+        Returns: 채택한 새 키(문자열) 또는 "" (쓸 만한 공유키 없음).
+        """
+        try:
+            db_cached = await _load_cert_from_db(self.user_id, self.env)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"[롯데홈쇼핑] 공유 인증키 조회 실패: {exc}")
+            return ""
+        if not db_cached:
+            return ""
+        cert_key, expires_at = db_cached
+        if not cert_key or cert_key == exclude:
+            return ""
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at <= datetime.now(tz=timezone.utc):
+            return ""
+        self._cert_key = cert_key
+        self._cert_expires_at = expires_at
+        _cert_cache[f"{self.user_id}:{self.env}"] = (cert_key, expires_at)
+        return cert_key
 
     async def _ensure_auth(self, force: bool = False) -> str:
         """인증키 자동 관리.
@@ -1075,12 +1136,20 @@ class LotteHomeClient:
         }
 
     async def search_stock(self, goods_no: str = "") -> dict[str, Any]:
-        """재고 목록 조회."""
+        """재고 목록 조회.
+
+        goods_no 지정 시 search_type=goods_no 를 함께 보내야 단건으로 좁혀진다.
+        실측(2026-08-18): goods_no 만 단독으로 보내면 서버가 무시하고 전체
+        덤프(수만 건)를 그대로 반환한다 — search_type 동반 시 753byte 단건 응답.
+        """
         cert_key = await self._ensure_auth()
+        params: dict[str, Any] = {"subscriptionId": cert_key, "goods_no": goods_no}
+        if goods_no:
+            params["search_type"] = "goods_no"
         return await self._call_api_auto_retry(
             "searchStockList.lotte",
             "GET",
-            {"subscriptionId": cert_key, "goods_no": goods_no},
+            params,
         )
 
     # ------------------------------------------------------------------
