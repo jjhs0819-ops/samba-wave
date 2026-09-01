@@ -98,7 +98,7 @@ CATEGORY_MISSING = "전시카테고리가 매핑되지 않았습니다"
 SKIP_PREFIX = "스킵 (신세계몰 미계약 브랜드:"
 
 
-def _execute(product: dict, creds: dict) -> dict:
+def _execute(product: dict, creds: dict, existing_no: str = "") -> dict:
     """가드 단위 검증용 execute 호출 — category_id="" 센티널로 네트워크 차단."""
     return asyncio.run(
         SSGPlugin().execute(
@@ -107,7 +107,7 @@ def _execute(product: dict, creds: dict) -> dict:
             creds=creds,
             category_id="",  # 가드 통과 시 카테고리 미매핑 에러로 즉시 반환
             account=None,
-            existing_no="",
+            existing_no=existing_no,
         )
     )
 
@@ -300,3 +300,192 @@ def test_execute_manufacturer_fallback_no_match_skipped():
     )
     assert result.get("_skip_retry") is True
     assert result["message"] == "스킵 (신세계몰 미계약 브랜드: 노스페이스)"
+
+
+# ── 7) 자→모 브랜드 정규화 (2026-09-01 사장님 지시) ────────────────────────
+# "리 키즈, 아디다스 키즈, 조던 등의 자 브랜드는 모 브랜드로 등록할 것."
+
+from backend.domain.samba.plugins.markets.ssg import (  # noqa: E402
+    PARENT_BRAND_ALIASES,
+    _normalize_to_parent_brand,
+)
+from backend.domain.samba.proxy.ssg import SSGClient  # noqa: E402
+
+# brandId 검증용 — 운영 실측 ID (나이키 2000004827, LEE 3000058584)
+REAL_ID_MAPPINGS = [
+    {"brandNm": "나이키", "brandId": "2000004827"},
+    {"brandNm": "LEE", "brandId": "3000058584"},
+    {"brandNm": "아디다스", "brandId": "2000001361"},
+]
+
+
+@pytest.mark.parametrize(
+    "brand",
+    ["조던", "리", "리 키즈", "아디다스 키즈", "나이키스윔", "휠라키즈"],
+)
+def test_child_brand_whitelist_passes(brand):
+    # 자 브랜드 표기 전부 화이트리스트 통과 (합집합 목록 기준)
+    assert _match_policy_brand(brand, UNION_MAPPINGS) != ""
+
+
+@pytest.mark.parametrize("brand", ["조던", "리", "리 키즈", "jordan", "리키즈"])
+def test_child_brand_whitelist_policy_only(brand):
+    # ★핵심 회귀: 정책 목록만 있는 상황(계정 목록 없음 — 한글 '리'·'조던' 부재).
+    # 별칭 맵이 없으면 조던·리·리 키즈 2,558건이 즉시 스킵된다.
+    assert _match_policy_brand(brand, POLICY_MAPPINGS) != ""
+
+
+@pytest.mark.parametrize("brand", ["조던", "리", "리 키즈"])
+def test_execute_child_brand_policy_only_proceeds(brand):
+    # execute 가드도 정책 목록만으로 통과해야 함 (계정 목록 빈 상황)
+    result = _execute(_product(brand, policy_mappings=POLICY_MAPPINGS), _creds([]))
+    assert CATEGORY_MISSING in result["message"]
+    assert SKIP_PREFIX not in result["message"]
+
+
+def test_normalize_jordan_to_nike():
+    prod = {"name": "조던 1 로우 스니커즈", "brand": "조던", "sale_price": 10000}
+    out = _normalize_to_parent_brand(prod, REAL_ID_MAPPINGS)
+    assert out is not prod  # 얕은 복사 — 원본 비변형
+    assert prod["brand"] == "조던"
+    assert out["brand"] == "나이키"
+    assert "조던" not in out["name"]  # 자 브랜드명은 상품명에서 제거(기존 동작 유지)
+
+
+def test_normalize_lee_kids_to_lee():
+    prod = {"name": "리 키즈 데님 팬츠", "brand": "리 키즈", "sale_price": 10000}
+    out = _normalize_to_parent_brand(prod, REAL_ID_MAPPINGS)
+    assert out["brand"] == "LEE"
+    assert "리 키즈" not in out["name"]
+
+
+def test_normalize_keeps_manufacturer():
+    prod = {
+        "name": "조던 1 로우",
+        "brand": "조던",
+        "manufacturer": "나이키코리아(유)",
+        "sale_price": 10000,
+    }
+    out = _normalize_to_parent_brand(prod, REAL_ID_MAPPINGS)
+    assert out["manufacturer"] == "나이키코리아(유)"  # 제조사는 건드리지 않는다
+
+
+def test_normalize_self_parent_no_substitution():
+    # 계정 목록에 '리'가 그대로 있으면 치환 불필요 (원본 그대로 반환)
+    prod = {"name": "리 슬림 데님", "brand": "리", "sale_price": 10000}
+    out = _normalize_to_parent_brand(prod, UNION_MAPPINGS)
+    assert out is prod
+
+
+@pytest.mark.parametrize("brand", ["코오롱스포츠", "와키윌리", "노스페이스"])
+def test_normalize_non_child_brand_untouched(brand):
+    # ★코오롱스포츠는 자 브랜드가 아니다 — '코오롱' 오치환 금지 (명시 맵 밖 브랜드 불변)
+    prod = {"name": f"{brand} 자켓", "brand": brand, "sale_price": 10000}
+    out = _normalize_to_parent_brand(prod, UNION_MAPPINGS)
+    assert out is prod
+    assert brand not in {k for k in PARENT_BRAND_ALIASES}
+
+
+def test_transform_jordan_gets_nike_brand_id():
+    # ★가장 중요 — 전송 brandId 가 모 브랜드(나이키) ID 여야 한다
+    prod = {
+        "name": "조던 1 로우 스니커즈",
+        "brand": "조던",
+        "sale_price": 10000,
+        "cost": 7000,
+    }
+    normalized = _normalize_to_parent_brand(prod, REAL_ID_MAPPINGS)
+    data = SSGClient("test-key").transform_product(
+        normalized, "12345", brand_mappings=REAL_ID_MAPPINGS, infra={}
+    )
+    assert data["brandId"] == "2000004827"  # 나이키
+    # 상품명에서 자 브랜드('조던')·모 브랜드('나이키') 모두 제거 (기존 동작 유지)
+    assert "조던" not in data["itemNm"]
+    assert "나이키" not in data["itemNm"]
+
+
+def test_transform_lee_kids_gets_lee_brand_id():
+    prod = {
+        "name": "리 키즈 데님 팬츠",
+        "brand": "리 키즈",
+        "sale_price": 10000,
+        "cost": 7000,
+    }
+    normalized = _normalize_to_parent_brand(prod, REAL_ID_MAPPINGS)
+    data = SSGClient("test-key").transform_product(
+        normalized, "12345", brand_mappings=REAL_ID_MAPPINGS, infra={}
+    )
+    assert data["brandId"] == "3000058584"  # LEE
+
+
+# ── 8) 배경제거 대기 게이트 (2026-09-01 사장님 지시) — 신규 등록에만 ────────
+# "배경제거 해야 할 것들은 올리지 말고 대기." GS샵·롯데온·패플 소싱 상품은
+# 배경제거(ai_image_transformed) 완료 전엔 신규 등록 보류. 기존 등록분의
+# 수정/가격·재고 갱신은 막지 않는다(미처리 등록분 18,140건 오토튠 정지 방지).
+
+BG_WAIT_KEYWORD = "배경제거"
+
+
+def _bg_product(site: str, transformed: bool) -> dict:
+    return _product(
+        "나이키",  # 화이트리스트는 통과시키고 배경제거 게이트만 검증
+        policy_mappings=POLICY_MAPPINGS,
+        source_site=site,
+        ai_image_transformed=transformed,
+    )
+
+
+@pytest.mark.parametrize("site", ["GSShop", "LOTTEON", "FashionPlus"])
+def test_bg_gate_holds_new_registration(site):
+    # 배경제거 미완료 + 신규 등록 → 보류(스킵)
+    result = _execute(_bg_product(site, False), _creds(ACCOUNT_MAPPINGS))
+    assert result["success"] is False
+    assert result.get("_skip_retry") is True
+    assert BG_WAIT_KEYWORD in result["message"]
+    assert site in result["message"]
+
+
+@pytest.mark.parametrize("site", ["GSShop", "LOTTEON", "FashionPlus"])
+def test_bg_gate_transformed_proceeds(site):
+    # 배경제거 완료 → 신규 등록 진행
+    result = _execute(_bg_product(site, True), _creds(ACCOUNT_MAPPINGS))
+    assert CATEGORY_MISSING in result["message"]
+    assert BG_WAIT_KEYWORD not in result["message"]
+
+
+@pytest.mark.parametrize("existing_no", ["1000123", "__exists__", "__claiming__"])
+def test_bg_gate_skips_existing_registration(existing_no):
+    # ★핵심 회귀 방지 — 이미 등록된 상품(마커 포함)의 수정/갱신은 막지 않는다
+    result = _execute(
+        _bg_product("GSShop", False), _creds(ACCOUNT_MAPPINGS), existing_no=existing_no
+    )
+    assert CATEGORY_MISSING in result["message"]
+    assert BG_WAIT_KEYWORD not in result["message"]
+
+
+@pytest.mark.parametrize("site", ["MUSINSA", "THEHYUNDAI", "ABCmart"])
+def test_bg_gate_non_target_sites_proceed(site):
+    # 무신사·더현대·ABC마트는 배경제거 대상이 아니다 (bg_remove 실측 0건) — 절대 금지
+    result = _execute(_bg_product(site, False), _creds(ACCOUNT_MAPPINGS))
+    assert CATEGORY_MISSING in result["message"]
+    assert BG_WAIT_KEYWORD not in result["message"]
+
+
+def test_bg_gate_alias_with_parentheses():
+    # 플레이오토 별칭·괄호 표기("GS이숍(고경)")도 GSShop 으로 판정 → 보류
+    result = _execute(_bg_product("GS이숍(고경)", False), _creds(ACCOUNT_MAPPINGS))
+    assert result.get("_skip_retry") is True
+    assert BG_WAIT_KEYWORD in result["message"]
+
+
+def test_bg_gate_brand_guard_takes_precedence():
+    # 미계약 브랜드 + 배경제거 미완료 → 브랜드 사유 스킵이 먼저 (가드 순서 고정)
+    prod = _product(
+        "노스페이스",
+        policy_mappings=POLICY_MAPPINGS,
+        source_site="GSShop",
+        ai_image_transformed=False,
+    )
+    result = _execute(prod, _creds(ACCOUNT_MAPPINGS))
+    assert result["message"] == "스킵 (신세계몰 미계약 브랜드: 노스페이스)"
+    assert BG_WAIT_KEYWORD not in result["message"]

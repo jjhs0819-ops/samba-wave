@@ -79,6 +79,49 @@ async def _resolve_brand_mappings(
     return brand_mappings
 
 
+# ── 자 브랜드 → 모 브랜드 후보 (2026-09-01 사장님 지시) ────────────────────────
+# 신세계몰은 자 브랜드(리 키즈·아디다스 키즈·조던 등)가 아니라 **모 브랜드로만
+# 등록**한다. 키 = SSGClient._norm_brand 와 동일 정규화(소문자+공백제거),
+# 값 = 모 브랜드 후보 튜플 — 정책∪계정 목록에 후보 중 하나라도 있으면 매칭 성공.
+# 접두일치로 이미 해결되는 표기(나이키스윔·아디다스골프·휠라키즈 등)도 나중에
+# 접두 규칙이 바뀌어도 안전하도록 명시한다. 이름이 아예 다른 조던→나이키,
+# 한글↔영문인 리/리 키즈↔LEE 는 이 맵 없이는 매칭 자체가 불가능하다.
+# ★주의: "접미어 자동제거" 같은 일반 규칙 금지 — 코오롱스포츠는 자 브랜드가
+#   아니다(코오롱으로 바꾸면 오등록). 반드시 이 명시 맵으로만 치환한다.
+PARENT_BRAND_ALIASES: dict[str, tuple[str, ...]] = {
+    # 나이키 계열 ("나이키 키즈"/"나이키키즈" 는 정규화하면 같은 키)
+    "조던": ("나이키",),
+    "jordan": ("나이키", "NIKE"),
+    "나이키키즈": ("나이키",),
+    "나이키스윔": ("나이키",),
+    "나이키골프": ("나이키",),
+    # 아디다스 계열 ("아디다스 골프"/"아디다스골프" 동일 키)
+    "아디다스골프": ("아디다스",),
+    "아디다스키즈": ("아디다스",),
+    "아디다스오리지널": ("아디다스",),
+    "아디다스스포츠": ("아디다스",),
+    "아디다스(퍼포먼스)": ("아디다스",),
+    # 뉴발란스 / 휠라 계열
+    "뉴발란스키즈": ("뉴발란스",),
+    "휠라키즈": ("휠라",),
+    # 리(LEE) — 정책 목록엔 영문 LEE 만 있어, 계정 목록에서 한글 '리'가 빠지면
+    # 2,510건(리 2,130 + 리 키즈 380)이 즉시 스킵된다. 한글↔영문 상호 별칭 필수.
+    "리": ("리", "LEE"),
+    "리키즈": ("리", "LEE"),
+    "lee": ("LEE", "리"),
+    "leekids": ("LEE", "리"),
+}
+
+
+# ── 배경제거 대기 게이트 대상 소싱처 (2026-09-01 사장님 지시) ─────────────────
+# GS샵(현대백화점 로고)·롯데온(워터마크)·패션플러스 소싱 상품은 배경제거(누끼)
+# 후에만 신세계몰에 **신규 등록**한다. 무신사·더현대·ABC마트는 배경제거 대상이
+# 아니므로(운영 실측 bg_remove 0건) 절대 이 게이트로 막지 않는다.
+BG_REQUIRED_SOURCE_SITES = {"GSSHOP", "LOTTEON", "FASHIONPLUS"}
+# 플레이오토 별칭 등 표기 변형 → 정규 소싱처 키 (괄호 앞부분·대문자 정규화 후 적용)
+_SOURCE_SITE_ALIASES = {"GS이숍": "GSSHOP"}
+
+
 # ssgBrandMappings 비어있음 경고를 프로세스당 1회만 남기기 위한 플래그
 _EMPTY_MAPPINGS_WARNED = False
 
@@ -139,6 +182,9 @@ def _match_policy_brand(name: str, mappings: list[dict]) -> str:
       2) 접두일치(양방향): nb.startswith(pb) or pb.startswith(nb)
          → "나이키키즈"/"나이키 스윔"/"아디다스(퍼포먼스)" 등 하위·변형 표기가
            정책 브랜드("나이키"/"아디다스") 접두로 매칭되어 통과한다.
+      3) 자→모 브랜드 별칭(PARENT_BRAND_ALIASES): 이름이 아예 다른 자 브랜드
+         (조던→나이키)나 한글↔영문(리 키즈→LEE)은 1·2로 못 잡는다 —
+         명시 맵의 모 브랜드 후보로 완전일치 재판정 (2026-09-01 사장님 지시).
     단순 포함(in) 매칭은 금지 — 1자 정책 브랜드("리"=LEE)가 "와키윌리" 같은
     무관 브랜드를 과매칭해 화이트리스트를 뚫는다(실측 오탐).
     """
@@ -157,7 +203,59 @@ def _match_policy_brand(name: str, mappings: list[dict]) -> str:
         pb = SSGClient._norm_brand(m.get("brandNm") or "")
         if pb and (nb.startswith(pb) or pb.startswith(nb)):
             return m["brandNm"]
+    # 자→모 브랜드 별칭 — 모 브랜드 후보로 완전일치 재판정
+    for cand in PARENT_BRAND_ALIASES.get(nb, ()):
+        cb = SSGClient._norm_brand(cand)
+        if not cb:
+            continue
+        for m in mappings:
+            if SSGClient._norm_brand(m.get("brandNm") or "") == cb:
+                return m["brandNm"]
     return ""
+
+
+def _normalize_to_parent_brand(product: dict, mappings: list[dict]) -> dict:
+    """자 브랜드 상품을 모 브랜드로 치환한 product 반환 (2026-09-01 사장님 지시).
+
+    - brand 가 PARENT_BRAND_ALIASES 의 자 브랜드이고, 모 브랜드 후보가 정책∪계정
+      합집합 목록에 실존하면: brand 를 그 목록 표기로 치환한 **얕은 복사본**을
+      돌려준다 → transform_product 의 brandId 해석이 모 브랜드 ID 로 잡힌다.
+      (원본 product 는 변형하지 않는다 — 호출부 부작용 방지)
+    - 치환하면 transform_product 의 "소싱처 brand 직접 제거" 단계가 원래 자
+      브랜드명('조던' 등)을 못 지우게 되므로, 상품명에서 자 브랜드명을 여기서
+      미리 제거한다 (remove_brand_from_name 동일 함수 — 기존 동작 유지).
+    - manufacturer 는 건드리지 않는다 (제조사 표기는 별개).
+    - 후보가 자기 자신(예: '리'→'리')으로 목록에 이미 있으면 치환 불필요.
+    """
+    from backend.domain.samba.proxy.ssg import SSGClient
+
+    brand = (product.get("brand") or "").strip()
+    if not brand or not mappings:
+        return product
+    nb = SSGClient._norm_brand(brand)
+    for cand in PARENT_BRAND_ALIASES.get(nb, ()):
+        cb = SSGClient._norm_brand(cand)
+        if not cb:
+            continue
+        if cb == nb:
+            # 자기 자신이 목록에 그대로 있으면(계정 목록의 '리' 등) 치환 불필요
+            if any(
+                SSGClient._norm_brand(m.get("brandNm") or "") == cb for m in mappings
+            ):
+                return product
+            continue
+        for m in mappings:
+            if SSGClient._norm_brand(m.get("brandNm") or "") == cb:
+                parent = m["brandNm"]
+                out = dict(product)
+                out["brand"] = parent
+                _name = out.get("name") or ""
+                _cleaned = SSGClient.remove_brand_from_name(_name, brand)
+                if _cleaned != _name:
+                    out["name"] = _cleaned
+                logger.info(f"[SSG] 자→모 브랜드 정규화: {brand} → {parent}")
+                return out
+    return product
 
 
 class SSGPlugin(MarketPlugin):
@@ -235,6 +333,40 @@ class SSGPlugin(MarketPlugin):
                 return {
                     "success": False,
                     "message": f"스킵 (신세계몰 미계약 브랜드: {_g_label})",
+                    "_skip_retry": True,
+                }
+
+            # ── 자→모 브랜드 정규화 (2026-09-01 사장님 지시) ────────────────
+            # 조던→나이키, 리 키즈→LEE 처럼 자 브랜드는 **모 브랜드 brandId** 로
+            # 등록되도록 brand 를 치환한다. 상품명에서 원래 자 브랜드명 제거도
+            # 여기서 처리 (상세: _normalize_to_parent_brand docstring).
+            product = _normalize_to_parent_brand(product, _policy_brands)
+
+        # ── 배경제거 대기 게이트 (2026-09-01 사장님 지시) — 신규 등록에만 ────
+        # GS샵(현대백화점 로고)·롯데온(워터마크)·패션플러스 소싱 상품은
+        # 배경제거(누끼, ai_image_transformed) 후에만 신세계몰에 신규 등록한다.
+        # ★이미 등록된 상품의 수정/가격·재고 갱신(existing_no 有 — __exists__/
+        # __claiming__ 마커 포함)은 절대 막지 않는다: 배경제거 미처리 등록분이
+        # 18,140건이라 수정까지 막으면 오토튠 갱신이 전면 정지한다.
+        if not existing_no:
+            _src_raw = str(product.get("source_site") or "")
+            # "GS이숍(고경)" 같은 별칭·괄호 표기 방어: 괄호 앞부분만 취해
+            # 대문자 비교 + 별칭 정규화 (DB 실값은 GSShop·LOTTEON·FashionPlus)
+            _src_key = _src_raw.split("(")[0].strip().upper()
+            _src_key = _SOURCE_SITE_ALIASES.get(_src_key, _src_key)
+            if _src_key in BG_REQUIRED_SOURCE_SITES and not product.get(
+                "ai_image_transformed"
+            ):
+                logger.info(
+                    f"[SSG] 배경제거 미완료 신규등록 보류: {_src_raw} / "
+                    f"{product.get('name', '')[:30]}"
+                )
+                return {
+                    "success": False,
+                    "message": (
+                        f"대기 (배경제거 미완료 — {_src_raw} 소싱, "
+                        "배경제거 후 신규등록)"
+                    ),
                     "_skip_retry": True,
                 }
 
