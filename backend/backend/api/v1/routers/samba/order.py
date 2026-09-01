@@ -3624,8 +3624,10 @@ async def _push_hubnet_tracking(
     if not creds or not creds.get("email"):
         return {"updated": 0, "error": "hubnet_credentials 없음"}
 
+    # [2026-09-01] 주문번호 접두(A-LI/A-SN/A-AC 등) 구애받지 말고 전 크림주문 처리.
+    # 종전 A-LI% 필터가 스니덩크(A-SN)·CN(A-AC) 등을 통째로 빼먹었다.
     conds = [
-        SambaOrder.order_number.like("A-LI%"),
+        SambaOrder.source_site == "KREAM",
         SambaOrder.overseas_tracking_number.is_not(None),
         SambaOrder.overseas_tracking_number != "",
     ]
@@ -3734,8 +3736,8 @@ async def sync_hubnet_hbl(
     conds = [
         SambaOrder.source_site == "KREAM",
         _or(
-            SambaOrder.overseas_tracking_number.is_(None),
-            SambaOrder.overseas_tracking_number == "",
+            SambaOrder.tracking_number.is_(None),
+            SambaOrder.tracking_number == "",
         ),
     ]
     if tenant_id:
@@ -3807,8 +3809,8 @@ async def sync_hubnet_hbl(
                     _update(SambaOrder)
                     .where(SambaOrder.id == oid)
                     .values(
-                        overseas_tracking_number=h,
-                        overseas_shipping_company="허브넷로지스틱스",
+                        tracking_number=h,
+                        shipping_company="허브넷로지스틱스",
                     )
                 )
                 upd += 1
