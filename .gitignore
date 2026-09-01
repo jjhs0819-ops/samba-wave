@@ -653,3 +653,8 @@ backups/*.json
 backups/*.sql
 deploy/local/.deploy.lock
 deploy/local/kream_ebay_watch.log
+
+# 로컬 운영 부산물 — 자격증명 포함 가능. `git add -A` 사고 방지 (2026-09-01)
+backend/.env.*
+backend/scripts/.venv-bgworker/
+backend/scripts/worker_heartbeat.txt
