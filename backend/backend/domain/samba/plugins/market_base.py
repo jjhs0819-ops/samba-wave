@@ -296,6 +296,11 @@ class MarketPlugin(ABC):
                 product["_once_min_qty"] = int(mp["onceMinQty"])
             if mp.get("onceMaxQty"):
                 product["_once_max_qty"] = int(mp["onceMaxQty"])
+            # 정책관리 화면의 마켓별 브랜드 목록 — 계정 additional_fields 와 별도 저장소.
+            # (예: SSG ssgBrandMappings — 계정 목록과 서로 다른 브랜드를 담고 있어
+            #  플러그인이 정책∪계정 합집합으로 판정해야 한다. 2026-09-01 회귀 수습)
+            if mp.get("ssgBrandMappings"):
+                product["_policy_brand_mappings"] = mp["ssgBrandMappings"]
         if account:
             extras = account.additional_fields or {}
             if extras.get("asPhone"):

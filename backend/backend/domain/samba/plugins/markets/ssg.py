@@ -101,6 +101,34 @@ def _coerce_brand_mappings(raw: Any) -> list[dict]:
     return [m for m in raw if isinstance(m, dict) and m.get("brandNm")]
 
 
+def _merge_brand_mappings(policy_raw: Any, account_raw: Any) -> list[dict]:
+    """정책 ∪ 계정 브랜드 목록 합집합 (정책 우선).
+
+    신세계몰 브랜드 목록은 서로 다른 두 곳에 저장된다 (2026-09-01 실측):
+      - 정책: samba_policy.market_policies['신세계몰(전시)'].ssgBrandMappings
+        (정책관리 화면이 보여주는 목록 — market_base._apply_market_settings 가
+        product['_policy_brand_mappings'] 로 주입)
+      - 계정: samba_market_account.additional_fields.ssgBrandMappings
+    한쪽만 보면 반대쪽에만 있는 정상 브랜드(코닥·코드그라피 vs 리·조던 등)가
+    스킵되는 회귀가 난다. 반드시 합집합으로 판정한다.
+
+    중복 제거는 정규화(brandNm 소문자+공백제거) 기준이며, 같은 brandNm 이
+    양쪽에 있으면 **먼저 넣은 정책 항목이 이긴다** (brandId 도 정책 값 사용).
+    """
+    from backend.domain.samba.proxy.ssg import SSGClient
+
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for raw in (policy_raw, account_raw):
+        for m in _coerce_brand_mappings(raw):
+            key = SSGClient._norm_brand(m.get("brandNm") or "")
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            merged.append(m)
+    return merged
+
+
 def _match_policy_brand(name: str, mappings: list[dict]) -> str:
     """정책 매핑(ssgBrandMappings)에서 브랜드 매칭 — 매칭된 brandNm 반환("" = 미매칭).
 
@@ -169,18 +197,24 @@ class SSGPlugin(MarketPlugin):
             return {"success": False, "message": "SSG 인증키가 비어있습니다."}
 
         # ── 정책 브랜드 화이트리스트 가드 (2026-09-01 사장님 지시) ─────────────
-        # 신세계몰은 계정 정책(ssgBrandMappings = 어브로드-1 정책의 신세계몰 계약
-        # 브랜드)에 등록된 브랜드만 전송한다. 미계약 브랜드는 기타(9999999999)로
-        # 올라가 버리므로(2026-09-01 비계약 331건 실사고) 전송 자체를 스킵한다.
-        # ★ssgBrandMappings 가 비어있거나 없는 계정이면 가드를 적용하지 않는다
+        # 신세계몰은 계약 브랜드만 전송한다. 판정 목록은 **정책(정책관리 화면,
+        # product['_policy_brand_mappings']) ∪ 계정(creds.ssgBrandMappings) 합집합**
+        # — 두 목록이 서로 다른 브랜드를 담고 있어(정책에만 코닥·코드그라피,
+        # 계정에만 리·조던 등) 한쪽만 보면 정상 브랜드가 스킵된다(실사고 회귀).
+        # 미계약 브랜드는 기타(9999999999)로 올라가 버리므로(2026-09-01 비계약
+        # 331건 실사고) 전송 자체를 스킵한다.
+        # ★합집합이 비어있으면 가드를 적용하지 않는다
         #   (다른 계정/초기 세팅에서 전 상품이 막히는 회귀 방지).
-        _policy_brands = _coerce_brand_mappings(creds.get("ssgBrandMappings"))
+        _policy_brands = _merge_brand_mappings(
+            product.get("_policy_brand_mappings"), creds.get("ssgBrandMappings")
+        )
         if not _policy_brands:
             global _EMPTY_MAPPINGS_WARNED
             if not _EMPTY_MAPPINGS_WARNED:
                 _EMPTY_MAPPINGS_WARNED = True
                 logger.warning(
-                    "[SSG] ssgBrandMappings 비어있음 — 브랜드 화이트리스트 가드 비활성"
+                    "[SSG] 정책·계정 ssgBrandMappings 모두 비어있음 — "
+                    "브랜드 화이트리스트 가드 비활성"
                 )
         else:
             # brand 가 비었으면 manufacturer 로도 시도 (기존 매칭 관례와 동일)
@@ -301,8 +335,11 @@ class SSGPlugin(MarketPlugin):
                 "message": f"SSG 배송 설정 누락: {', '.join(missing_infra)}. 설정 페이지에서 배송정보를 확인하세요.",
             }
 
-        # 정책 브랜드 매핑 추출
-        brand_mappings: list[dict] = creds.get("ssgBrandMappings") or []
+        # 브랜드 매핑 추출 — 화이트리스트 가드와 동일한 정책∪계정 합집합
+        # (같은 brandNm 이 양쪽에 있으면 정책 brandId 우선). 이러면 정책에만
+        # 있는 브랜드(코닥·코드그라피·미즈노·라코스테)도 brandId 가 제대로 잡히고,
+        # 계정에만 있는 브랜드(리·조던·키즈류)는 계정 값으로 계속 해석된다.
+        brand_mappings: list[dict] = list(_policy_brands)
 
         # 동적 브랜드 해석 — 라이브 계약목록(listBrand) 우선, 상세는 헬퍼 docstring 참조
         brand_mappings = await _resolve_brand_mappings(client, product, brand_mappings)
