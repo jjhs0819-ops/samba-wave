@@ -698,11 +698,54 @@ class MusinsaClient:
                 # 적립금 사용 제한 여부 (True=불가, False=가능)
                 "isPointRestricted": bool(d.get("isRestictedUsePoint")),
             }
-            # saleStatus=sold_out이면 모든 옵션 재고 강제 0 (API가 outOfStock=False로 내려와도)
-            if _result.get("saleStatus") == "sold_out" and _result.get("options"):
-                for _opt in _result["options"]:
-                    _opt["stock"] = 0
-                    _opt["isSoldOut"] = True
+            # ── 오삭제 방지: 부분품절인데 상품레벨 플래그(canBuy=False / isSoldOut /
+            # isOutOfStock 등)가 일시적으로 튕겨 전체품절로 오판되는 케이스 차단.
+            # '하드 종료'(진짜 판매중단/전체품절)일 때만 옵션 재고를 강제 0 으로 덮는다.
+            #   하드 종료 = goodsSaleType 이 판매중단/전체품절 계열이거나, 옵션이 없거나,
+            #   재고 살아있는 옵션이 하나도 없는 경우.
+            #   STAND_BY_SALE(재입고 알림 전체품절)도 하드 종료 목록에 포함하되,
+            #   옵션 실데이터에 재고가 살아 있으면 실데이터를 우선한다.
+            #   preorder(판매예정)는 기존 동작 유지 — 발매 전 구매차단은 정당.
+            if _result.get("saleStatus") == "sold_out":
+                _opts = _result.get("options") or []
+                _live_opts = [
+                    o
+                    for o in _opts
+                    if (o.get("stock") or 0) > 0 and not o.get("isSoldOut")
+                ]
+                _sale_type = str(d.get("goodsSaleType", "")).upper()
+                _hard_end = (
+                    _sale_type
+                    in (
+                        "STOP_SALE",
+                        "PROHIBITED",
+                        "CLOSE",
+                        "SOLD_OUT",
+                        "SOLDOUT",
+                        "STAND_BY_SALE",
+                    )
+                    or not _opts
+                    or not _live_opts
+                )
+                # STAND_BY_SALE 은 옵션 재고 실데이터가 우선 — 재고 살아있으면 오판으로 취급
+                if _sale_type == "STAND_BY_SALE" and _live_opts:
+                    _hard_end = False
+                if _hard_end or _is_preorder:
+                    # 진짜 전체품절/판매중단(또는 판매예정) — 모든 옵션 재고 강제 0
+                    # (API가 outOfStock=False로 내려와도)
+                    for _opt in _opts:
+                        _opt["stock"] = 0
+                        _opt["isSoldOut"] = True
+                else:
+                    # 재고 살아있는 옵션 존재 → 상품레벨 sold_out 은 일시 오판으로 보고
+                    # in_stock 으로 되돌림 (오토튠이 per-option 재고 전송 경로를 타도록)
+                    _result["saleStatus"] = "in_stock"
+                    _result["isOutOfStock"] = False
+                    logger.warning(
+                        f"[무신사][오삭제방지] {(_result.get('name') or '')[:30]} — "
+                        f"상품레벨 sold_out 이나 재고옵션 {len(_live_opts)}개 존재 "
+                        f"→ in_stock 유지"
+                    )
             return _result
         finally:
             if _own_client:

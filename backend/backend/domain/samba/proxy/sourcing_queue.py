@@ -98,6 +98,13 @@ def _resolve_job_owner(site: str, job_type: str) -> str | None:
     )
 
     site_u = (site or "").upper()
+    # [2026-09-01] 발주취소(cancel_order)는 **항상 확장앱 전용**.
+    # 데몬(tools/lotteon_daemon/site_handlers.py)에는 cancel_js 구현이 단 한 건도 없다.
+    # 그런데 종전 정책은 SSG/ABCmart/GrandStage 취소 잡을 데몬으로 보냈고, 데몬이 집어간 뒤
+    # 아무 처리도 못 하고 그대로 만료됐다(실측 14일: 취소 잡 63건 중 결과 회신 1건,
+    # 주문 메모에 남은 자동취소 기록 0건 = 사실상 한 번도 동작한 적이 없음).
+    if job_type == "cancel_order":
+        return pick_extension_owner(site)
     if site_u in {s.upper() for s in _daemon_only_for_job(job_type)}:
         return pick_daemon_owner(site)
     # SSG 상세는 확장앱 전용 강제 (2026-07-29) — DAEMON_ONLY_JOB_SITES["detail"] 에서
@@ -725,14 +732,23 @@ class SourcingQueue:
         if owner_device_id is None:
             owner_device_id = _resolve_job_owner(site, "cancel_order")
 
-        if owner_device_id is None and (site or "").upper() in {
-            s.upper() for s in _daemon_only_for_job("cancel_order")
-        }:
+        # [2026-09-01] owner 미해결이면 **무조건** 발행 skip (데몬전용 사이트뿐 아니라 전부).
+        # 종전엔 owner=None 일 때 ownerDeviceId="" 인 broadcast 잡으로 들어갔고,
+        # 그걸 데몬이 집어갔다. 데몬엔 cancel_order 핸들러가 없어 그대로 만료됐다
+        # (실측 14일 20건: MUSINSA/THEHYUNDAI/FashionPlus/LOTTEON 전량 expired).
+        # 취소는 "아무나 처리"가 성립하지 않는 잡이므로 담당 PC 가 없으면 발행하지 않고
+        # 운영자에게 수동 취소를 남긴다.
+        if owner_device_id is None:
+            # [2026-09-01] 취소는 확장앱 전담이므로 owner 미해결 = "취소를 처리할 확장앱 PC 없음".
+            # 종전엔 owner=None 일 때 ownerDeviceId="" broadcast 잡으로 들어갔고 데몬이 집어가
+            # 그대로 만료됐다(데몬엔 cancel 핸들러 없음). 이제 발행하지 않고 수동 취소로 남긴다.
             logger.warning(
-                f"[소싱큐] {site} 발주취소 데몬 미등록 — 잡 발행 skip: "
+                f"[소싱큐] {site} 발주취소 담당 확장앱 PC 없음 — 잡 발행 skip: "
                 f"ord={sourcing_order_number}"
             )
-            raise RuntimeError(f"{site} 데몬 미등록 — 발주취소 잡 발행 불가")
+            raise RuntimeError(
+                f"{site} 담당 확장앱 PC 없음(데몬 미등록 포함) — 발주취소 잡 발행 불가(수동 취소 필요)"
+            )
 
         job: dict[str, Any] = {
             "requestId": request_id,
@@ -1006,8 +1022,12 @@ class SourcingQueue:
                 # 브로드캐스트 잡을 데몬이 먼저 가로채면 확장앱으로 되돌린 의미가 없어져
                 # 실제로 배포 직후 일부 잡이 계속 데몬으로 새는 것을 로그로 확인 —
                 # tracking 과 동일하게 dequeue 단에서 원천 차단.
+                # [2026-09-01 발주취소 데몬 차단] 데몬엔 cancel_js 핸들러가 없다. 그런데
+                # 이 목록에 cancel_order 가 빠져 있어, owner 미지정(broadcast) 취소 잡을
+                # 데몬이 먼저 가로챈 뒤 그대로 만료시켰다(실측 14일 20건). 확장앱 전담으로 원천 차단.
                 conditions.append(
-                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward') "
+                    "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward', "
+                    "'cancel_order') "
                     "AND NOT (job_type = 'detail' AND UPPER(site) = 'SSG')"
                 )
 
@@ -1046,10 +1066,17 @@ class SourcingQueue:
             # 같은 사이트/계정 잡을 연속으로 dequeue 해서 자동 로그인 스왑 횟수 = 계정 수로 최소화.
             # 사용자가 모달 1번부터 본 순서 그대로 처리됨 (예측 가능).
             # NULL/빈 값은 가장 뒤로 (NULLS LAST). 같은 계정 안에서는 created_at ASC FIFO.
+            # [2026-09-01] 발주취소(cancel_order) 최우선 dequeue.
+            # 기존 정렬은 site 알파벳순이라, 송장(tracking) 잡이 수천 건 쌓이면
+            # 취소 잡이 TTL 안에 한 번도 dequeue 되지 못하고 expired 로 죽었다
+            # (실측 14일: cancel_order 63건 중 completed 1건. THEHYUNDAI 는 site
+            #  알파벳 맨 뒤라 사실상 영구 후순위). 취소는 시간 민감 + 건수 극소라
+            # 무조건 앞에 세워도 다른 잡 처리량에 영향이 없다.
             sql = text(
                 f"SELECT request_id, payload FROM samba_sourcing_job "
                 f"WHERE {where} "
                 f"ORDER BY "
+                f"  CASE WHEN job_type = 'cancel_order' THEN 0 ELSE 1 END ASC, "
                 f"  site ASC NULLS LAST, "
                 f"  NULLIF(payload->>'sourcingAccountId', '') ASC NULLS LAST, "
                 f"  created_at ASC "

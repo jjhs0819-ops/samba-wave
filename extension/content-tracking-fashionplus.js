@@ -70,10 +70,48 @@
     for (const el of clickers) {
       const oc = el.getAttribute('onclick') || ''
       if (!/goodsflow|trace|delivery|배송|invoice|wbl/i.test(oc)) continue
+      // [2026-09-01] goodsflow whereis URL(/whereis/fashionplus/141374020-1)의 마지막 조각은
+      // 송장이 아니라 uniqueCode — 숫자 폴백이 141374020 을 송장으로 오인하지 않게 제외.
+      // (whereis 링크는 goodsflowFromPage() 가 전담 처리)
+      if (/\/whereis\//i.test(oc)) continue
       const m = oc.match(/['"]?(\d{9,13})['"]?/)
       if (m) return m[1]
     }
     return ''
+  }
+
+  // [2026-09-01 실측] 패션플러스는 송장번호 텍스트가 없고 '배송조회' 버튼이 goodsflow 로 링크된다:
+  //   https://trace.goodsflow.com/VIEW/V1/whereis/fashionplus/141374020-1
+  // 마지막 조각(141374020-1)은 송장번호가 아니라 goodsflow uniqueCode → background 가
+  // goodsflow 공개 API(POST /VIEW/api/tracking)로 실제 송장을 얻는다.
+  // 3조각(더현대식 /whereis/{vendor}/{courier}/{invoice})이면 그 자리에서 courier+invoice 해석.
+  function goodsflowFromPage() {
+    const WHEREIS_RE = /\/whereis\/([^/?#\s'"]+)\/([^/?#\s'"]+)(?:\/([^/?#\s'"]+))?/
+    const urls = []
+    // ① a[href] 직접 링크
+    for (const a of document.querySelectorAll('a[href*="goodsflow.com"]')) {
+      const href = a.getAttribute('href') || ''
+      if (/\/whereis\//i.test(href)) urls.push(href)
+    }
+    // ② onclick / window.open 문자열 안의 URL
+    for (const el of document.querySelectorAll('[onclick]')) {
+      const oc = el.getAttribute('onclick') || ''
+      if (/goodsflow\.com/i.test(oc) && /\/whereis\//i.test(oc)) urls.push(oc)
+    }
+    for (const raw of urls) {
+      const m = raw.match(WHEREIS_RE)
+      if (!m) continue
+      try {
+        return {
+          memberCode: decodeURIComponent(m[1]),
+          uniqueCode: decodeURIComponent(m[2]),
+          third: m[3] ? decodeURIComponent(m[3]) : '',
+        }
+      } catch {
+        return { memberCode: m[1], uniqueCode: m[2], third: m[3] || '' }
+      }
+    }
+    return null
   }
 
   // [실측 모드 전용] 백엔드 tracking_sync/service.py 의 결과 분기는 error 문자열에
@@ -166,9 +204,30 @@
     }
 
     if (!trackingNumber) {
-      // [실측 모드] 배송영역 발췌를 error 에 실어 DB(last_error)로 보냄 → 실제 구조 확정용.
-      // 접두사/발췌 모두 백엔드 분기 키워드를 회피(마스킹)해 else→STATUS_FAILED 로 보존시킨다.
-      // (구조 확정 후 정상 'no_tracking' 접두사 + 마스킹 제거로 원복)
+      // ③ [2026-09-01 실측 반영] goodsflow 배송조회 링크에서 {memberCode, uniqueCode} 추출
+      //    → background(handleTrackingJob)가 goodsflow 공개 API 로 실제 송장으로 승격.
+      const gf = goodsflowFromPage()
+      if (gf) {
+        if (gf.third && /^\d{8,}$/.test(gf.third.replace(/-/g, ''))) {
+          // 3조각 = /whereis/{vendor}/{courier}/{invoice} (더현대식) — 즉석 해석.
+          // courier 코드(cjgls 등)는 백엔드 normalize_courier_name 이 보정한다.
+          return { success: true, courierName: gf.uniqueCode, trackingNumber: gf.third.replace(/-/g, '') }
+        }
+        return {
+          success: false,
+          needsGoodsflow: { memberCode: gf.memberCode, uniqueCode: gf.uniqueCode },
+        }
+      }
+
+      // ④ 배송조회 링크 자체가 없음 = 아직 미발송 — 주문상세가 정상 렌더링됐다면
+      //    FP_UNRESOLVED(FAILED 적재) 대신 no_tracking(미발송) 으로 정상 분류한다.
+      const looksLikeOrderDetail = /(주문번호|주문상품|결제금액|배송지|주문일)/.test(text)
+      if (looksLikeOrderDetail) {
+        return { success: false, error: 'no_tracking: 배송조회 없음 (미발송)' }
+      }
+
+      // ⑤ [실측 모드 잔존] 송장도 링크도 없고 주문상세로도 안 보이는 애매한 페이지만
+      //    배송영역 발췌를 error 에 실어 DB(last_error)로 보존 (구조 확인용).
       const snippet = maskBackendKeywords(deliveryDebugSnippet())
       return {
         success: false,

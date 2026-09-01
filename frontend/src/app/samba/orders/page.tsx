@@ -13,7 +13,7 @@ import {
   type SambaMarketAccount,
 } from '@/lib/samba/api/commerce'
 import { sourcingAccountApi, type SambaSourcingAccount } from '@/lib/samba/api/operations'
-import { fmtTime, formatDateInput, getKstTodayDate } from '@/lib/samba/utils'
+import { fmtTime, formatDateInput, getKstTodayDate, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { fmtNum } from '@/lib/samba/styles'
 import { fetchWithAuth, SAMBA_PREFIX } from '@/lib/samba/legacy'
 import OrdersTable from './components/OrdersTable'
@@ -58,12 +58,17 @@ export default function OrdersPage() {
   const cpId = searchParams.get('cpId')
   const cpName = searchParams.get('cpName')
   const isProductMode = !!cpId
+  // [A7] 딥링크(?search=) 진입은 useState 초기화 단계에서 바로 필터를 시드 —
+  // 첫 렌더의 loadOrders 부터 올바른 필터(올해 + 전체 주문상태)로 나가야
+  // 늦게 도착한 기본필터 응답이 검색 결과를 덮어쓰지 않는다 (returns/page.tsx 패턴)
+  const hasSearchSeed = Boolean(searchParams.get('search'))
   const [orders, setOrders] = useState<SambaOrder[]>([])
   const [channels, setChannels] = useState<SambaChannel[]>([])
   const [accounts, setAccounts] = useState<SambaMarketAccount[]>([])
   const [sourcingAccounts, setSourcingAccounts] = useState<SambaSourcingAccount[]>([])
   const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState('today')
+  // 기본 기간 = 1주일 (새로고침해도 고정). ?search= 딥링크 진입은 올해로 시드
+  const [period, setPeriod] = useState(hasSearchSeed ? 'thisyear' : '1week')
   const [marketFilter, setMarketFilter] = useState('')
   const [marketStatus, setMarketStatus] = useState('')
   const [siteFilter, setSiteFilter] = useState('')
@@ -71,7 +76,7 @@ export default function OrdersPage() {
   const [registrationFilter, setRegistrationFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [invoiceFilter, setInvoiceFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState('cancel_return_excluded')
+  const [statusFilter, setStatusFilter] = useState(hasSearchSeed ? '' : 'cancel_return_excluded')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
   const [searchText, setSearchText] = useState(initialSearch)
@@ -158,18 +163,26 @@ export default function OrdersPage() {
   const [sleepEnd, setSleepEnd] = useState('09:00')
 
 
-  const initialSearchType = searchParams.get('search_type') || 'customer'
+  const initialSearchType = searchParams.get('search_type') || 'order_number'
   const [searchCategory, setSearchCategory] = useState(initialSearchType)
 
   const [dateLocked, setDateLocked] = useState(false)
-  const [customStart, setCustomStart] = useState(() => formatDateInput(getKstTodayDate()))
+  // 기본 날짜 = 1주일 범위 (period 초기값과 동일 기준). ?search= 시드는 올해 범위
+  const [customStart, setCustomStart] = useState(() => {
+    const start = getPeriodStart(hasSearchSeed ? 'thisyear' : '1week')
+    return start ? formatDateInput(start) : ''
+  })
   const [startLocked, setStartLocked] = useState(false)
-  const [customEnd, setCustomEnd] = useState(() => formatDateInput(getKstTodayDate()))
+  const [customEnd, setCustomEnd] = useState(() => formatDateInput(getPeriodEnd(hasSearchSeed ? 'thisyear' : '1week')))
+  // 목록 요청 일련번호 — 필터 연속 변경/딥링크 진입처럼 요청이 겹칠 때,
+  // 먼저 보낸 요청이 늦게 도착해 최신 결과를 덮어쓰는 것을 막는다 (returns/page.tsx 패턴)
+  const loadSeqRef = useRef(0)
   const loadOrders = useCallback(async () => {
     // 날짜 입력 중 지우면 customStart/customEnd가 빈 문자열이 되는 순간이 있음 —
     // 그 상태로 API를 호출하면 백엔드가 '' 를 파싱 실패해 500(연결 끊김/Failed to fetch)까지 간다.
     // 유효한 날짜가 채워질 때까지 요청 자체를 보내지 않는다.
     if (!isProductMode && (!customStart || !customEnd)) return
+    const seq = ++loadSeqRef.current
     setLoading(true)
     try {
       const data = isProductMode
@@ -206,6 +219,8 @@ export default function OrdersPage() {
             search_category: searchCategory,
             sort_by: sortBy,
           })
+      // 내가 최신 요청이 아니면 반영하지 않는다 (늦게 온 옛 응답이 최신을 덮어쓰는 것 차단)
+      if (seq !== loadSeqRef.current) return
       setOrders(data.items)
       setTotalCount(data.total_count)
       setTotalSale(data.total_sale)
@@ -221,7 +236,7 @@ export default function OrdersPage() {
 
       if (data.items.length > 0) {
         proxyApi.fetchSentFlags(data.items.map(o => o.id)).then(flags => {
-          setSentFlags(flags)
+          if (seq === loadSeqRef.current) setSentFlags(flags)
         }).catch(() => {})
       } else {
         setSentFlags({})
@@ -230,7 +245,8 @@ export default function OrdersPage() {
       console.error('주문 조회 실패:', e)
       setLogMessages(prev => [...prev, `[${fmtTime()}] 주문 조회 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
     }
-    setLoading(false)
+    // 옛(stale) 요청이 뒤늦게 끝나며 새 요청의 로딩 표시를 끄지 않도록 가드
+    if (seq === loadSeqRef.current) setLoading(false)
   }, [isProductMode, cpId, currentPage, pageSize, marketFilter, siteFilter, accountFilter, marketStatus, statusFilter, inputFilter, invoiceFilter, registrationFilter, appliedSearchText, searchCategory, sortBy, customStart, customEnd, setSentFlags])
 
   const applySearch = useCallback(() => {
@@ -371,25 +387,29 @@ export default function OrdersPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  // CS 페이지 등 외부에서 ?search=...로 진입 시 — 상태필터 전체 + 최근 10일 기간으로 세팅
-  // (기본 'cancel_return_excluded'·오늘 필터에 걸려 옛 주문/취소·반품·교환 주문이 0건 나오던 버그 해결)
+  // CS/반품교환 등 외부에서 ?search=...로 진입 시 — 상태필터 전체 + 올해 기간으로 세팅.
+  // 기본 시드는 useState 초기화 단계(hasSearchSeed)에서 이미 처리 — 이 effect 는
+  // 첫 렌더에 검색 파라미터가 아직 안 붙는 렌더링 경로 대비 폴백 (returns/page.tsx 패턴)
+  const searchSeededRef = useRef(hasSearchSeed)
   useEffect(() => {
+    if (searchSeededRef.current) return
     if (searchParams.get('search')) {
+      searchSeededRef.current = true
       setStatusFilter('')
       setMarketStatus('')
       setRegistrationFilter('')
       setInputFilter('')
       setInvoiceFilter('')
-      const start = getKstTodayDate()
-      start.setDate(start.getDate() - 10)
-      setCustomStart(formatDateInput(start))
-      setCustomEnd(formatDateInput(getKstTodayDate()))
-      setPeriod('')
+      const start = getPeriodStart('thisyear')
+      setCustomStart(start ? formatDateInput(start) : '')
+      setCustomEnd(formatDateInput(getPeriodEnd('thisyear')))
+      setPeriod('thisyear')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams])
 
-  // 알람 모달 X 버튼 → 디폴트 오늘 주문 화면으로 복귀 (초기 진입 상태와 동일)
+  // 알람 모달 X 버튼 → 기본 주문 화면으로 복귀 (초기 진입 상태와 동일)
+  // [2026-09-01] 기본 기간이 '오늘'→'일주일'로 바뀌었으므로 복귀값도 동일하게 맞춘다.
   useEffect(() => {
     const handler = () => {
       setStatusFilter('cancel_return_excluded')
@@ -399,10 +419,10 @@ export default function OrdersPage() {
       setInvoiceFilter('')
       setAppliedSearchText('')
       setSearchText('')
-      setPeriod('today')
-      const today = formatDateInput(getKstTodayDate())
-      setCustomStart(today)
-      setCustomEnd(today)
+      setPeriod('1week')
+      const start = getPeriodStart('1week')
+      setCustomStart(start ? formatDateInput(start) : '')
+      setCustomEnd(formatDateInput(getPeriodEnd('1week')))
     }
     window.addEventListener('reset-orders-filter', handler)
     return () => window.removeEventListener('reset-orders-filter', handler)
@@ -874,6 +894,11 @@ export default function OrdersPage() {
         selectedIdsSize={selectedIds.size}
         filteredOrdersCount={totalCount}
         filteredOrdersTotalSale={totalSale}
+        // 소싱처 자동취소 관련 건수 — 현재 페이지 orders의 notes 문구 기준 (추가 API 호출 없음)
+        autoCancelCount={orders.filter(od => {
+          const n = od.notes || ''
+          return n.includes('소싱처 자동취소 성공') || n.includes('소싱처 자동취소 실패') || n.includes('소싱처 이미 발송 — 자동취소 불가')
+        }).length}
         searchCategory={searchCategory} setSearchCategory={setSearchCategory}
         searchText={searchText} setSearchText={setSearchText}
         loadOrders={applySearch}

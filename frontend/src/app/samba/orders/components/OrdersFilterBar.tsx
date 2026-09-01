@@ -36,6 +36,7 @@ interface Props {
   selectedIdsSize: number
   filteredOrdersCount: number
   filteredOrdersTotalSale: number
+  autoCancelCount?: number // 현재 페이지 주문 중 소싱처 자동취소 관련 건수 (0이면 미표시)
   searchCategory: string
   setSearchCategory: Dispatch<SetStateAction<string>>
   searchText: string
@@ -75,7 +76,7 @@ export default function OrdersFilterBar(props: Props) {
     startLocked, setStartLocked, dateLocked, setDateLocked,
     syncAccountId, setSyncAccountId, syncing, handleFetch,
     bulkStatus, setBulkStatus, bulkUpdating, handleBulkAction, selectedIdsSize,
-    filteredOrdersCount, filteredOrdersTotalSale,
+    filteredOrdersCount, filteredOrdersTotalSale, autoCancelCount = 0,
     searchCategory, setSearchCategory, searchText, setSearchText, loadOrders,
     marketFilter, setMarketFilter, siteFilter, setSiteFilter,
     accountFilter, setAccountFilter, marketStatus, setMarketStatus,
@@ -89,12 +90,30 @@ export default function OrdersFilterBar(props: Props) {
   const [excelDownloading, setExcelDownloading] = useState(false)
   const [excelMenuOpen, setExcelMenuOpen] = useState(false)
 
+  // [바로가기]/[다중] 공용 — 주문번호 검색 프리셋: 올해 + 전체 주문상태 + 나머지 필터 초기화.
+  // 날짜고정/시작고정이 걸려 있어도 해제 후 적용 (버튼을 누른 의도가 우선)
+  const applyOrderNumberSearchPreset = () => {
+    setDateLocked(false)
+    setStartLocked(false)
+    setPeriod('thisyear')
+    const start = getPeriodStart('thisyear')
+    setCustomStart(start ? formatDateInput(start) : '')
+    setCustomEnd(formatDateInput(getPeriodEnd('thisyear')))
+    setSearchCategory('order_number')
+    setStatusFilter('')
+    setMarketStatus('')
+    setRegistrationFilter('')
+    setInputFilter('')
+    setInvoiceFilter('')
+  }
+
   // 다중 주문번호 조회(#9) — [다중] 토글 ON 시 검색 input이 같은 자리에서 textarea로 전환
   const [multiSearchMode, setMultiSearchMode] = useState(false)
   const toggleMultiSearch = () => {
     const next = !multiSearchMode
     setMultiSearchMode(next)
-    if (next) setSearchCategory('order_number') // 다중 모드는 '주문번호' 카테고리 고정 (고객명 등 오분리 방지)
+    // ON 시 주문번호 검색 프리셋 자동 적용 (카테고리 고정 포함). OFF 시엔 되돌리지 않음
+    if (next) applyOrderNumberSearchPreset()
   }
   // 조회 실행 — 다중 모드에서 200건 초과 시 안내만 하고 조회는 막지 않음 (백엔드가 앞 200건만 사용)
   const handleSearch = () => {
@@ -223,6 +242,10 @@ export default function OrdersFilterBar(props: Props) {
         <span style={{ fontSize: '0.72rem', color: c.textSub }}>
           <span style={{ color: c.text, fontWeight: 600 }}>{fmtNum(filteredOrdersCount)}</span>건 /
           <span style={{ color: c.text, fontWeight: 600 }}> {fmtNum(filteredOrdersTotalSale)}원</span>
+          {/* 소싱처 자동취소 관련 건수 — 현재 조회된 목록 기준, 0건이면 미표시 */}
+          {autoCancelCount > 0 && (
+            <span style={{ color: c.warn, fontWeight: 600 }}> · 자동취소 {fmtNum(autoCancelCount)}</span>
+          )}
         </span>
         <select disabled={multiSearchMode} title={multiSearchMode ? '다중 모드는 주문번호 카테고리 고정' : undefined} style={{ ...makeInputStyle(c), width: '90px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', ...(multiSearchMode ? { opacity: 0.6, cursor: 'not-allowed' } : {}) }} value={searchCategory} onChange={e => setSearchCategory(e.target.value)}>
           <option value="product">상품명</option>
@@ -252,6 +275,13 @@ export default function OrdersFilterBar(props: Props) {
           style={{ ...btn(multiSearchMode ? 'accent' : 'secondary', c), padding: '0.22rem 0.5rem', fontSize: '0.72rem' }}
         >
           다중
+        </button>
+        <button
+          onClick={applyOrderNumberSearchPreset}
+          title="주문번호 검색용 필터로 한번에 설정 (올해 + 전체 주문상태)"
+          style={{ ...btn('secondary', c), padding: '0.22rem 0.5rem', fontSize: '0.72rem' }}
+        >
+          바로가기
         </button>
         <button onClick={handleSearch} style={{ ...btn('primary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
@@ -316,6 +346,9 @@ export default function OrdersFilterBar(props: Props) {
             <option value="no_stock">재고X</option>
             <option value="staff_a">직원A</option>
             <option value="staff_b">직원B</option>
+            <option value="auto_cancel_ok">자동취소됨</option>
+            <option value="auto_cancel_fail">자동취소실패</option>
+            <option value="auto_cancel_any">자동취소(전체)</option>
           </select>
           <select style={{ ...makeInputStyle(c), width: '108px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={invoiceFilter} onChange={e => setInvoiceFilter(e.target.value)}>
             <option value="">송장필터</option>

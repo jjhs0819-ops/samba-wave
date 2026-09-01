@@ -158,4 +158,37 @@ document.addEventListener('DOMContentLoaded', async () => {
     await chrome.storage.local.set({ rewardOnlyMode: rewardOnly.checked, purchaseOnlyMode: purchaseOnly.checked })
     _priStatus()
   })
+
+  // ============================================================
+  // 자동로그인 차단 즉시 해제 — 확장앱 로컬 실패 카운터(_accountLoginFail) 리셋.
+  // 사이트 계정이 잠긴 게 아니라 확장앱의 24h 차단/30분 쿨다운을 푸는 버튼.
+  // background(CLEAR_LOGIN_BLOCK)가 메모리 캐시 + storage 둘 다 비운다.
+  // ============================================================
+  const blockBtn = $('btnClearLoginBlock')
+  const blockStatus = $('loginBlockStatus')
+  async function _refreshLoginBlockCount() {
+    try {
+      const st = await chrome.storage.local.get('_accountLoginFail')
+      const n = Object.keys(st._accountLoginFail || {}).length
+      if (n > 0) setStatus(blockStatus, `현재 차단/쿨다운 기록 ${n}건`, 'err')
+      else setStatus(blockStatus, '차단 기록 없음', '')
+    } catch {
+      setStatus(blockStatus, '', '')
+    }
+  }
+  await _refreshLoginBlockCount()
+  blockBtn.addEventListener('click', () => {
+    blockBtn.disabled = true
+    chrome.runtime.sendMessage({ type: 'CLEAR_LOGIN_BLOCK' }, async (resp) => {
+      void chrome.runtime.lastError
+      blockBtn.disabled = false
+      if (resp && resp.ok) {
+        setStatus(blockStatus, `✅ 해제됨 — ${resp.cleared || 0}건 리셋`, 'ok')
+      } else {
+        // background 응답 실패 시 storage 라도 직접 제거 (메모리 캐시는 SW 재시작 시 재로드됨)
+        try { await chrome.storage.local.remove('_accountLoginFail') } catch {}
+        setStatus(blockStatus, '✅ 해제됨 (저장소 직접 삭제)', 'ok')
+      }
+    })
+  })
 })

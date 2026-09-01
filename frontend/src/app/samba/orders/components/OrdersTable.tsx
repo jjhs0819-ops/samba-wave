@@ -13,7 +13,20 @@ import { STATUS_MAP, SHIPPING_COMPANIES, OVERSEAS_SHIPPING_COMPANIES, ACTION_BUT
 import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
 import { useTheme } from '@/lib/samba/useTheme'
+import { useThemeStore } from '@/lib/samba/themeStore'
 import { btn } from '@/lib/samba/buttons'
+
+// STATUS_MAP 색은 다크 기준(#FFD93D 등)이라 라이트모드 흰 배경에서 흐리게 보임 —
+// 라이트모드일 때만 밝기를 낮춰 가독성 보정 (STATUS_MAP 자체는 손대지 않음)
+const darkenHex = (hex: string, factor = 0.68): string => {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex)
+  if (!m) return hex
+  const n = parseInt(m[1], 16)
+  const r = Math.round(((n >> 16) & 255) * factor)
+  const g = Math.round(((n >> 8) & 255) * factor)
+  const b = Math.round((n & 255) * factor)
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+}
 
 // 같은 주문 송장 동시 전송 차단 — 송장번호 input blur + 마켓전송 버튼 click 이
 // 동시에 발동해 중복 전송되면, 첫 전송 성공 후 두 번째가 INVALID_STATUS 실패로 잡힘.
@@ -99,6 +112,13 @@ interface OrdersTableProps {
 
 export default function OrdersTable(props: OrdersTableProps) {
   const c = useTheme()
+  const theme = useThemeStore((s) => s.theme)
+  // 주문상태 글자색 — STATUS_MAP 기준, 라이트모드에서만 어둡게 보정
+  const statusTextColor = (statusKey: string): string => {
+    const base = STATUS_MAP[statusKey]?.text
+    if (!base) return c.text
+    return theme === 'light' ? darkenHex(base) : base
+  }
   const {
     accounts, loading, filteredOrders, currentPage, pageSize,
     currentPageIds, selectedIds, setSelectedIds, toggleSelectAll,
@@ -326,7 +346,8 @@ export default function OrdersTable(props: OrdersTableProps) {
                   })()}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>결제</span><span>{fmtNum(o.total_payment_amount ?? o.sale_price)}</span></div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>정산</span><span>{fmtNum(Math.round(getRevenue(o)))}</span></div>
+                    {/* 정산 값 강조 — 상품옵션 표기(OrderInfoCell)와 동일 스타일 */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>정산</span><span style={{ color: c.warn, fontSize: '0.75rem', fontWeight: 700 }}>{fmtNum(Math.round(getRevenue(o)))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>실수익</span><span>{liveProfit >= 0 ? '+' : ''}{fmtNum(Math.round(liveProfit))}</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수수료율</span><span style={{ color: c.textMuted }}>{liveFeeRate}%</span></div>
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수익률</span><span style={{ color: c.textMuted }}>{liveProfitRate}%</span></div>
@@ -392,10 +413,10 @@ export default function OrdersTable(props: OrdersTableProps) {
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           cursor: 'pointer',
-                          color: o.status === 'ship_failed' ? c.danger : c.text, // c.text = makeInputStyle(c)의 글자색
+                          color: statusTextColor(o.status), // 상태별 색 (라이트모드 밝기 보정 포함)
                         }}
                       >
-                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={k === 'ship_failed' ? { color: c.danger } : {}}>{v.label}</option>)}
+                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={{ color: statusTextColor(k) }}>{v.label}</option>)}
                       </select>
                       <input
                         type="text"

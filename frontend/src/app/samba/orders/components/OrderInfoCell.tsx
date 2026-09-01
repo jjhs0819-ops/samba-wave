@@ -73,6 +73,18 @@ export default function OrderInfoCell(props: Props) {
   // 크림 상품번호 = product_id (숫자 형태만, http URL은 제외)
   const kreamProductNo = (o.product_id && !o.product_id.startsWith('http')) ? o.product_id : ''
 
+  // 옵션 클릭 복사 — 원문 그대로(괄호 포함) 복사.
+  // copyHelpers.handleCopyText 는 괄호를 지우므로(주소용) 재사용하지 않는다.
+  const handleCopyOption = async () => {
+    const text = (o.product_option || '').trim()
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      showAlert('복사에 실패했습니다', 'error')
+    }
+  }
+
   const handleCopyCustomerMemo = async () => {
     const text = (o.customer_note || '').trim()
     if (!text) {
@@ -152,6 +164,19 @@ export default function OrderInfoCell(props: Props) {
   const extraSourceBadgeLabel = aliasBadgeRaw
     ? (formatSourceSiteLabel(aliasBadgeRaw, siteAliasMap) || aliasBadgeRaw)
     : ''
+
+  // 소싱처 자동취소 결과 배지 — sourcing_cancel_result()가 notes에 append한 줄을 검사.
+  // 여러 줄이면 가장 마지막(최신) 매칭 1개만 표시. title에 원문 줄 전체(시각·사유) 노출.
+  const autoCancelBadge = (() => {
+    const lines = String(o.notes || '').split('\n')
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]
+      if (line.includes('소싱처 자동취소 성공')) return { label: '자동취소됨', color: c.success, line: line.trim() }
+      if (line.includes('소싱처 이미 발송 — 자동취소 불가')) return { label: '자동취소 불가(발송됨)', color: c.warn, line: line.trim() }
+      if (line.includes('소싱처 자동취소 실패')) return { label: '자동취소 실패', color: c.danger, line: line.trim() }
+    }
+    return null
+  })()
 
   const _placeOrderSites = ['MUSINSA', 'SSG', 'LOTTEON', 'ABCmart', 'GrandStage', 'GSShop', 'FashionPlus']
   const _giftSites = ['SSG', 'LOTTEON'] // 선물하기 지원 사이트
@@ -258,12 +283,33 @@ export default function OrderInfoCell(props: Props) {
               <span style={{ color: c.warn, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{productMemo}</span>
             </div>
           ) : null}
+          {/* 소싱처 자동취소 배지 — 표시 전용(클릭 동작 없음), 마우스 올리면 notes 원문 */}
+          {autoCancelBadge ? (
+            <div style={{ marginBottom: '0.25rem' }}>
+              <span
+                title={autoCancelBadge.line}
+                style={{ fontSize: '0.7rem', fontWeight: 700, padding: '0.125rem 0.5rem', background: 'transparent', border: `1px solid ${autoCancelBadge.color}`, borderRadius: '4px', color: autoCancelBadge.color, whiteSpace: 'nowrap', display: 'inline-block' }}
+              >{autoCancelBadge.label}</span>
+            </div>
+          ) : null}
           <div style={{ minWidth: 0 }}>
             <span style={{ color: c.text, fontSize: '0.8125rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{o.product_name || '-'}</span>
             {(o.product_option || showOrderBtns) && (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', marginTop: '0.125rem', flexWrap: 'wrap' }}>
                 {o.product_option && (
-                  <span style={{ color: /psa\s*9\b/i.test(o.product_option) ? '#fff' : c.warn, fontSize: '0.75rem', fontWeight: 700 }}>[옵션] {o.product_option}</span>
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    title="옵션 복사"
+                    onClick={handleCopyOption}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        handleCopyOption()
+                      }
+                    }}
+                    style={{ color: /psa\s*9\b/i.test(o.product_option) ? '#fff' : c.warn, fontSize: '0.75rem', fontWeight: 700, cursor: 'copy' }}
+                  >[옵션] {o.product_option}</span>
                 )}
                 {showOrderBtns && (
                   <>

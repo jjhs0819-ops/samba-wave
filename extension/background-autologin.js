@@ -74,6 +74,19 @@ const AUTO_LOGIN_SITES = {
     // JS 소스 분석 확인: input#login_id, input[type="password"], button.mm_btn.__btn_lg_primary__
     loginButtonSelector: 'button.mm_btn.__btn_lg_primary__, button[type="submit"], .btn_login',
   },
+  thehyundai: {
+    // [2026-09-01] hi.thehyundai.com 실측값 (브라우저 확인):
+    //   로그인 페이지 = /login (/front/member/login.thd 는 404 — 쓰지 말 것)
+    //   아이디 = input[name="loginId"] / 비밀번호 = input[name="password"]
+    //   로그인 버튼 = <button type="button">로그인</button> — class 는 CSS-module 해시라
+    //   빌드마다 바뀜 → class 셀렉터 금지, 텍스트 폴백('로그인')이 잡는다.
+    //   Next.js SPA 라 input 이 늦게 렌더링됨 → SPA_INPUT_WAIT_SITES 에도 등록.
+    name: '더현대',
+    loginUrl: 'https://hi.thehyundai.com/login',
+    checkUrl: 'https://hi.thehyundai.com/mypage',
+    isLoginPage: url => /hi\.thehyundai\.com\/login/.test(url),
+    loginButtonSelector: 'button[type="submit"], .btn_login', // 해시 class 금지 — 실제로는 텍스트 폴백('로그인')이 잡는다
+  },
   // ⚠️ [라이브 보정] 11번가 가구매용 자동로그인 — 로그인 URL·셀렉터 전부 추정값(SHOW PASS 소스 없음).
   // 실제 11번가 로그인 페이지에서 확인 후 보정 필요.
   '11st': {
@@ -149,6 +162,7 @@ const _AL_SITE_NAME_MAP = {
   kream: 'KREAM',
   gs: 'GSShop',
   '11st': '11ST',
+  thehyundai: 'TheHyundai',
   // [2026-08-13] ABC-CAMP 멤버십(member.a-rt.com)은 ABC마트와 같은 통합회원 계정을 쓴다.
   // 이 매핑이 없어 site_name 이 undefined → 자격증명 조회 null → 출석체크 자동로그인이
   // 시도조차 안 되고 비로그인 탭만 열렸다 닫혔다(계정ID 없이 오는 라디오 기본계정 모드).
@@ -303,12 +317,19 @@ async function _loadAccountLoginFail() {
   }
 }
 
-async function _recordAccountLoginFail(siteKey, accountId) {
+// [2026-09-01] reason(선택) — 마지막 실패 원인을 lastReason 에 보존해 차단 메시지에 노출.
+// "왜" 실패했는지(입력필드 못찾음/자격증명 오류/계정 잠금 등) 진단용. 기존 저장 데이터에
+// lastReason 이 없어도 옵셔널이라 깨지지 않는다.
+async function _recordAccountLoginFail(siteKey, accountId, reason) {
   if (!accountId) return
   await _loadAccountLoginFail()
   const k = `${siteKey}::${accountId}`
   const cur = _accountLoginFail[k] || { count: 0, at: 0 }
-  _accountLoginFail[k] = { count: cur.count + 1, at: Date.now() }
+  _accountLoginFail[k] = {
+    count: cur.count + 1,
+    at: Date.now(),
+    lastReason: reason ? String(reason).slice(0, 160) : (cur.lastReason || ''),
+  }
   try { await chrome.storage.local.set({ _accountLoginFail }) } catch {}
 }
 
@@ -338,18 +359,45 @@ async function _accountLoginBlocked(siteKey, accountId) {
       return null
     }
     const remainH = Math.ceil((_ACCOUNT_FAIL_PROBE_MS - sinceLast) / 3600000)
-    return `로그인 ${rec.count}회 누적 실패 — 차단 중(${remainH}시간 후 자동 재시도, 성공 1회로 해제)`
+    const _why = rec.lastReason ? ` (마지막 사유: ${rec.lastReason})` : '' // 옛 데이터엔 없을 수 있음 — 옵셔널
+    return `로그인 ${rec.count}회 누적 실패 — 차단 중(${remainH}시간 후 자동 재시도, 성공 1회로 해제)${_why}`
   }
   const elapsed = Date.now() - rec.at
   if (elapsed < _ACCOUNT_FAIL_COOLDOWN_MS) {
-    return `로그인 실패 쿨다운 ${Math.ceil((_ACCOUNT_FAIL_COOLDOWN_MS - elapsed) / 60000)}분 남음 (누적 ${rec.count}/${_ACCOUNT_FAIL_MAX}회)`
+    const _why = rec.lastReason ? ` (마지막 사유: ${rec.lastReason})` : ''
+    return `로그인 실패 쿨다운 ${Math.ceil((_ACCOUNT_FAIL_COOLDOWN_MS - elapsed) / 60000)}분 남음 (누적 ${rec.count}/${_ACCOUNT_FAIL_MAX}회)${_why}`
   }
   return null
 }
 
+// [2026-09-01] 팝업 '자동로그인 차단 해제' 버튼 — 확장앱 로컬 실패 카운터(_accountLoginFail)를
+// 즉시 리셋한다. (사이트 계정 잠금이 아니라 확장앱 자체 24h 차단/30분 쿨다운 해제용)
+// 메모리 캐시 + storage 둘 다 비워야 하므로 background 에서 처리.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === 'CLEAR_LOGIN_BLOCK') {
+    ;(async () => {
+      let cleared = 0
+      try {
+        await _loadAccountLoginFail()
+        cleared = Object.keys(_accountLoginFail || {}).length
+      } catch {}
+      _accountLoginFail = {} // 모듈 메모리 캐시 리셋
+      try { await chrome.storage.local.remove('_accountLoginFail') } catch {}
+      console.log(`[자동로그인] 차단 카운터 수동 해제 — ${cleared}건 리셋 (팝업 버튼)`)
+      sendResponse({ ok: true, cleared })
+    })()
+    return true // async sendResponse
+  }
+  return false
+})
+
 // 직전 _spaDirectLogin 의 치명적 실패 정보 — 자격증명 오류/계정 잠금은 재시도 무의미(잠금만 갱신).
 // _ensureLoggedInImpl 재시도 루프가 이 플래그를 보고 즉시 중단한다.
 let _spaLoginFatal = null // { reason: 'locked'|'credential', message }
+
+// [2026-09-01] 비치명(fatal 아님) 실패의 마지막 원인 — _recordAccountLoginFail 에 넘겨
+// 차단 메시지에 "왜 실패했는지"를 남긴다. _spaDirectLogin/_ensureLoggedInSingle 이 갱신.
+let _spaLoginLastReason = null
 
 // SPA 직접 로그인 — Chrome 자동완성 의존 없이 .value 직접 설정 + button.click()
 // LOTTEON / ABCmart / SSG처럼 vanilla input + form submit 구조의 사이트에서 작동
@@ -358,6 +406,7 @@ async function _spaDirectLogin(siteKey, username, password) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) return false
   _spaLoginFatal = null
+  _spaLoginLastReason = null
 
   // [계정 전환] 정식 로그아웃 URL 호출 → 서버가 세션 expire + Set-Cookie 로 클라 쿠키 정리.
   // 쿠키 직접 삭제는 서버 세션 잔존 + localStorage 잔여 + 무신사 보안 비정상 패턴 감지 위험.
@@ -381,6 +430,12 @@ async function _spaDirectLogin(siteKey, username, password) {
     const _cleared = await _clearCookiesByDomain('a-rt.com')
     await wait(800)
     console.log(`[자동로그인][SPA] ABC캠프 a-rt.com 쿠키 클리어 강제 로그아웃 (${_cleared}개)`)
+  } else if (siteKey === 'thehyundai') {
+    // [2026-09-01] 더현대는 확인된 로그아웃 URL 이 없다(추측 URL 금지 원칙) →
+    // thehyundai.com 쿠키 전체 클리어로 강제 로그아웃 후 새 계정으로 로그인한다.
+    const _cleared = await _clearCookiesByDomain('thehyundai.com')
+    await wait(800)
+    console.log(`[자동로그인][SPA] 더현대 thehyundai.com 쿠키 클리어 강제 로그아웃 (${_cleared}개)`)
   } else {
     const _logoutUrl = _LOGOUT_URLS[siteKey]
     if (_logoutUrl) {
@@ -417,7 +472,7 @@ async function _spaDirectLogin(siteKey, username, password) {
     // 무신사는 /auth/login → member.one.musinsa.com/login 리다이렉트 후 SPA 렌더링됨
     // 패션플러스는 로그인 페이지에 쿠폰/캠페인 팝업이 다수 떠 무겁고, 로그인 폼(#login_id 등)이
     // SPA 로 늦게 렌더링됨 → 2초 고정대기론 "fields not found" 로 자동로그인 실패. 폴링 대기 추가.
-    const SPA_INPUT_WAIT_SITES = ['musinsa', 'lotteon', 'fashionplus']
+    const SPA_INPUT_WAIT_SITES = ['musinsa', 'lotteon', 'fashionplus', 'thehyundai']
     if (SPA_INPUT_WAIT_SITES.includes(siteKey)) {
       const spaStart = Date.now()
       const SPA_WAIT_MAX = 10000
@@ -512,6 +567,15 @@ async function _spaDirectLogin(siteKey, username, password) {
               id: ['#login_id', 'input[name="login_id"]', 'input[name="userId"]', 'input[name="id"]', 'input[type="text"]:not([type="hidden"])'],
               pw: ['input[type="password"]', '#login_pw', 'input[name="password"]', 'input[name="passwd"]'],
               btnId: 'button.mm_btn.__btn_lg_primary__, button[type="submit"], .btn_login',
+              btnText: '로그인',
+            },
+            thehyundai: {
+              // [2026-09-01] hi.thehyundai.com/login 실측: input[name="loginId"](placeholder="아이디") /
+              // input[name="password"]. 버튼은 <button type="button">로그인</button> 인데 class 가
+              // CSS-module 해시(빌드마다 변경)라 class 셀렉터 금지 → btnText('로그인') 텍스트 폴백이 잡는다.
+              id: ['input[name="loginId"]', 'input[type="text"]:not([type="hidden"])'],
+              pw: ['input[name="password"]', 'input[type="password"]'],
+              btnId: 'button[type="submit"], .btn_login',
               btnText: '로그인',
             },
           }
@@ -620,6 +684,11 @@ async function _spaDirectLogin(siteKey, username, password) {
         || _frameResults[_frameResults.length - 1]
       if (!r?.success) {
         console.log(`[자동로그인][SPA] ${site.name} 스크립트 실행 실패:`, JSON.stringify(r))
+        // 실패 원인 보존 — 차단 메시지의 "(마지막 사유: …)" 에 노출
+        _spaLoginLastReason =
+          r?.error === 'fields not found' ? '입력필드 못찾음'
+          : r?.error === 'login button not found' ? '로그인버튼 못찾음'
+          : `폼 스크립트 실패(${String(r?.error || '결과 없음').slice(0, 60)})`
         chrome.debugger.onEvent.removeListener(dialogHandler)
         return false
       }
@@ -663,6 +732,7 @@ async function _spaDirectLogin(siteKey, username, password) {
         // (부수 alert가 떴어도 실제 로그인은 이미 완료됨)
         let tabInfo = null
         try { tabInfo = await chrome.tabs.get(tabId) } catch {
+          _spaLoginLastReason = '로그인 탭 소실'
           chrome.debugger.onEvent.removeListener(dialogHandler)
           return false
         }
@@ -774,10 +844,12 @@ async function _spaDirectLogin(siteKey, username, password) {
       }
 
       console.log(`[자동로그인][SPA] ${site.name} 타임아웃 (${TIMEOUT / 1000}초) — 로그인 페이지 잔존`)
+      _spaLoginLastReason = '로그인 후에도 로그인페이지(응답 타임아웃)'
       chrome.debugger.onEvent.removeListener(dialogHandler)
       return false
     } catch (err) {
       console.error(`[자동로그인][SPA] ${site.name} 예외:`, err.message)
+      _spaLoginLastReason = `예외: ${String(err?.message || err).slice(0, 80)}`
       return false
     } finally {
       if (dialogAttached) {
@@ -887,6 +959,7 @@ async function _ensureLoggedInImpl(siteKey, accountId, force) {
     console.warn(`[자동로그인] ${site.name}(${accountId}) 차단 — ${_blockReason}`)
     globalThis._lastEnsureLoginError = {
       fatal: true,
+      siteKey, // 어느 사이트의 에러인지 — 다른 사이트 잡이 전역 잔존값을 오독하지 않도록
       message: `로그인 실패(${site.name} ${_blockReason})`,
     }
     return false
@@ -930,6 +1003,7 @@ async function _ensureLoggedInImpl(siteKey, accountId, force) {
   try {
     let ok = false
     _spaLoginFatal = null // 이전 사이트/계정의 fatal 잔존값 제거
+    _spaLoginLastReason = null // 이전 사이트/계정의 사유 잔존값 제거
     for (let attempt = 1; attempt <= AUTO_LOGIN_MAX_RETRIES; attempt++) {
       console.log(`[자동로그인] ${site.name} 시도 (${attempt}/${AUTO_LOGIN_MAX_RETRIES})`)
       ok = await _ensureLoggedInSingle(siteKey, accountId)
@@ -982,9 +1056,16 @@ async function _ensureLoggedInImpl(siteKey, accountId, force) {
       autoLoginState.cooldownUntil[siteKey] = Date.now() + AUTO_LOGIN_COOLDOWN_MS
       // 계정별 실패 기록 + 호출자(송장 잡)가 백엔드에 보고할 표준 메시지("로그인 실패" 포함 —
       // 백엔드 서킷브레이커가 이 문구로 계정 단위 재큐잉을 차단한다)
-      await _recordAccountLoginFail(siteKey, accountId)
+      // fatal(자격증명 오류/계정 잠금)이면 그 메시지를, 아니면 _spaDirectLogin 등이 남긴
+      // 마지막 비치명 사유를 lastReason 으로 보존 — 차단 문구에 "(마지막 사유: …)" 로 노출.
+      await _recordAccountLoginFail(
+        siteKey,
+        accountId,
+        _spaLoginFatal?.message || _spaLoginLastReason || '원인 미상(자동로그인 실패)'
+      )
       globalThis._lastEnsureLoginError = {
         fatal: !!_spaLoginFatal,
+        siteKey, // 어느 사이트의 에러인지 — 다른 사이트 잡이 전역 잔존값을 오독하지 않도록
         message: _spaLoginFatal?.message || `로그인 실패(${site.name} 자동로그인 실패 — acc=${accountId || '기본'})`,
       }
       console.log(`[자동로그인] ❌ ${site.name} ${AUTO_LOGIN_MAX_RETRIES}회 실패 — ${AUTO_LOGIN_COOLDOWN_MS / 60000}분 쿨다운`)
@@ -1029,7 +1110,7 @@ async function _ensureLoggedInSingle(siteKey, accountId) {
   // [SPA 분기] LOTTEON / ABCmart / SSG는 백엔드 라디오 지정 계정으로만 자동로그인
   // 사용자 요구 — 소싱처계정의 username/password를 직접 .value 설정 (Chrome 자동완성 드롭다운 사용 X)
   // 백엔드 자격증명 없으면 즉시 실패. chrome.debugger triple-click 폴백 제거 (드롭다운 노출 방지).
-  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg', 'musinsa', 'member', 'fashionplus']
+  const SPA_DIRECT_LOGIN_SITES = ['lotteon', 'abcmart', 'ssg', 'musinsa', 'member', 'fashionplus', 'thehyundai']
   if (SPA_DIRECT_LOGIN_SITES.includes(siteKey)) {
     // [2026-06-10] SSG 세션 재사용 — fresh 로그인 횟수 자체를 줄여 "비정상 자동접근" 잠금 회피.
     // ① 현 세션이 이미 잡 계정이면 로그인 생략 ② 저장세션 복원으로 살아나면 로그인 생략.
@@ -1083,6 +1164,7 @@ async function _ensureLoggedInSingle(siteKey, accountId) {
       return await _spaDirectLogin(siteKey, credential.username, credential.password)
     }
     // 폴백 없이 즉시 중단 — 사용자가 설정 페이지에서 라디오 지정 필요
+    _spaLoginLastReason = '백엔드 자격증명 없음(계정 미지정/미존재)'
     console.log(`[자동로그인] ❌ ${site.name} 백엔드 자격증명 없음 — 자동로그인 중단. 설정 페이지에서 자동로그인 계정 라디오 지정 필요`)
     // 알림은 라디오 기본 계정 모드(!accountId)만 발송. accountId 명시 트리거(송장수집)는
     // 잡당 시도라 실패 알림 폭주 위험 → 호출자가 wrong_account 로 분류해서 모달로 보여줌.
@@ -1580,9 +1662,11 @@ async function _ensureLoggedInSingle(siteKey, accountId) {
     }
 
     console.log(`[자동로그인] ${site.name} 타임아웃 (${LOGIN_TIMEOUT / 1000}초)`)
+    _spaLoginLastReason = '로그인 후에도 로그인페이지(타임아웃)'
     return false
   } catch (err) {
     console.error(`[자동로그인] ${site.name} 예외:`, err.message)
+    _spaLoginLastReason = `예외: ${String(err?.message || err).slice(0, 80)}`
     return false
   } finally {
     if (tabCreated && tabId) {

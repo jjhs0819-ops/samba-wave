@@ -622,6 +622,9 @@ const _TRACKING_AUTO_LOGIN_MAP = {
   GRANDSTAGE: 'abcmart',
   MUSINSA: 'musinsa',
   FASHIONPLUS: 'fashionplus',
+  // [2026-09-01] 매핑 누락으로 계정 스왑/자동로그인이 아예 안 되던 사이트 2종 추가.
+  THEHYUNDAI: 'thehyundai', // AUTO_LOGIN_SITES.thehyundai — 2026-09-01 실측값으로 신설
+  GSSHOP: 'gs',             // AUTO_LOGIN_SITES.gs 는 기존 존재 — 매핑만 빠져 있었음
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1476,10 +1479,12 @@ async function handlePurchaseJob(job) {
     try {
       const ok = await globalThis.ensureLoggedIn(autoKey, { accountId: sourcingAccountId })
       if (!ok) {
+        // [2026-09-01] 전역 잔존 에러 오독 방지 — siteKey 가 자기 마켓의 autoKey 일 때만 사용
         const err = globalThis._lastEnsureLoginError
+        const _errMsg = (err && (!err.siteKey || err.siteKey === autoKey) && err.message) || ''
         await postResult('sourcing/purchase-result', {
           requestId, marketType: mt, productUrl, option, success: false,
-          error: `자동로그인 실패: ${(err && err.message) || '로그인 안 됨 (계정/비번 확인)'}`,
+          error: `자동로그인 실패: ${_errMsg || '로그인 안 됨 (계정/비번 확인)'}`,
         })
         return
       }
@@ -1602,7 +1607,10 @@ async function handleRewardJob(job) {
   // 예전엔 실패해도 '그대로 진행' 이라 비로그인 상태로 출첵/미션 탭만 열렸다 닫혀서
   // (ABC캠프 실측) 원인이 안 보인 채 실패만 쌓였다. 이제 로그인 실패 자체를 사유로 보고한다.
   if (autoLoginOk === false && !action.endsWith('_review')) {
-    const loginErr = globalThis._lastEnsureLoginError?.message
+    // [2026-09-01] _lastEnsureLoginError 는 전역 — 다른 사이트의 잔존 에러 오독 방지:
+    // siteKey 가 자기 잡의 autoKey 와 일치할 때만 사용 (없으면 표준 폴백 문구)
+    const _rle = globalThis._lastEnsureLoginError
+    const loginErr = ((!_rle?.siteKey || _rle.siteKey === autoKey) && _rle?.message)
       || `로그인 실패(${site} 자동로그인 실패 — acc=${sourcingAccountId || '기본'})`
     await postResult('/api/v1/samba/sourcing-accounts/extension/reward-result', {
       request_id: requestId,
@@ -1773,6 +1781,45 @@ chrome.runtime.onMessage.addListener((msg, sender, _sendResponse) => {
 })
 
 
+// [2026-09-01] goodsflow 공개 조회 API 로 송장 해석 — 패션플러스 송장 미검출 354건 수정.
+// 패션플러스 주문상세엔 송장번호 텍스트가 없고 '배송조회' 버튼이
+//   https://trace.goodsflow.com/VIEW/V1/whereis/fashionplus/{uniqueCode} 로만 링크된다.
+// 마지막 경로조각은 송장번호가 아니라 goodsflow uniqueCode → 아래 API 로 실제 송장을 얻는다.
+// 실측(2026-09-01, 인증 불필요):
+//   POST https://trace.goodsflow.com/VIEW/api/tracking  {"memberCode":"fashionplus","uniqueCode":"141374020-1"}
+//   → 200 {"isSuccess":true,"baseData":{"logisticsName":"CJ대한통운","invoiceNo":"506873224481",...}}
+// ⚠️ 키 이름은 반드시 uniqueCode — transportNo/key 로 보내면 200 이지만 baseData 가 null.
+// 택배사명은 백엔드 normalize_courier_name 이 보정하므로 logisticsName 그대로 전달.
+async function _resolveGoodsflowTracking(needsGoodsflow) {
+  const memberCode = needsGoodsflow?.memberCode || ''
+  const uniqueCode = needsGoodsflow?.uniqueCode || ''
+  if (!memberCode || !uniqueCode) {
+    return { success: false, error: 'no_tracking: goodsflow 링크 파라미터 불완전 (미발송)' }
+  }
+  try {
+    const res = await fetch('https://trace.goodsflow.com/VIEW/api/tracking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ memberCode, uniqueCode }),
+    })
+    if (!res.ok) {
+      // 네트워크/서버 오류 — 재시도 트리거 문구(timeout 등) 피하고 사유만 담아 반환
+      return { success: false, error: `goodsflow 조회 실패 HTTP ${res.status} (${memberCode}/${uniqueCode})` }
+    }
+    const data = await res.json().catch(() => null)
+    const base = data?.baseData
+    const invoiceNo = base?.invoiceNo ? String(base.invoiceNo).replace(/-/g, '').trim() : ''
+    if (!data?.isSuccess || !base || !invoiceNo) {
+      // isSuccess:false / baseData null / invoiceNo 빈값 = goodsflow 에 아직 등록 안 됨 → 미발송 분류
+      return { success: false, error: 'no_tracking: goodsflow 미등록 (미발송)' }
+    }
+    console.log(`[송장][goodsflow] 해석 성공 ${memberCode}/${uniqueCode} → ${base.logisticsName || '?'} ${invoiceNo}`)
+    return { success: true, courierName: base.logisticsName || '', trackingNumber: invoiceNo }
+  } catch (e) {
+    return { success: false, error: `goodsflow 네트워크 오류: ${String(e?.message || e).slice(0, 80)}` }
+  }
+}
+
 async function handleTrackingJob(job) {
   const { requestId, site, url, sourcingOrderNumber, sourcingAccountId } = job
   const isReturn = !!job.isReturn
@@ -1875,6 +1922,19 @@ async function handleTrackingJob(job) {
       }
     }
 
+    // [2026-09-01] 자기 잡 사이트의 로그인 에러만 신뢰 — _lastEnsureLoginError 는 사이트
+    // 구분 없는 전역이라, 직전에 실패한 다른 사이트(롯데온/패플 등)의 fatal 에러가 잔존한다.
+    // 더현대처럼 자동로그인 매핑이 없는 사이트(autoLoginKey 없음 = ensureLoggedIn 을 아예
+    // 안 부름)는 전역값을 참조하지 않고, 매핑 있는 사이트는 siteKey 일치할 때만 사용.
+    // (이 오염으로 더현대 송장이 주문페이지를 열어보지도 않고 "롯데ON 로그인 실패"로
+    //  즉시 실패 처리되던 버그의 근본 수정)
+    const _ownLoginError = () => {
+      const _le = globalThis._lastEnsureLoginError
+      if (!_le || !autoLoginKey) return null
+      if (_le.siteKey && _le.siteKey !== autoLoginKey) return null // 다른 사이트 에러 — 무시
+      return _le
+    }
+
     // 1단계 — 잡 계정과 "마지막 스왑 계정" 또는 "현재 로그인 계정" 이 다르면 선제 스왑
     //   • currentAccountId(DOM 스크랩)는 무신사 mypage username 못 잡으면 null → 신뢰 못함.
     //   • _lastEnsuredTrackingAccount(메모리 캐시)는 ensureLoggedIn 성공 이력 — ground truth.
@@ -1891,7 +1951,7 @@ async function handleTrackingJob(job) {
       _preemptiveSwapAttempted = true
       const swapOk = await _swapToJobAccount('preemptive')
       if (!swapOk) {
-        const _le = globalThis._lastEnsureLoginError
+        const _le = _ownLoginError()
         if (_le?.fatal) {
           // [2026-06-10] 계정 잠금/자격증명 오류/쿨다운 차단 = 빈 시도는 로그인 POST만 늘려
           // SSG 잠금을 갱신한다 → 스크랩 시도 없이 즉시 실패 보고 (브레이커가 재큐잉 차단)
@@ -1965,17 +2025,37 @@ async function handleTrackingJob(job) {
       }
       const loginOk = await _swapToJobAccount(`${reason}-retry${retryAttempt}`)
       if (!loginOk) {
-        const _le = globalThis._lastEnsureLoginError
+        const _le = _ownLoginError()
         if (_le?.message) _loginFailMsg = _le.message
         break  // 무한 retry 방지
       }
       result = await _runOnce()
     }
 
+    // [2026-09-01] goodsflow 승격 — content script 가 송장번호 대신 goodsflow 배송조회
+    // 링크의 {memberCode, uniqueCode} 만 찾은 경우(패션플러스), 서비스워커에서 goodsflow
+    // 공개 API 를 호출해 실제 택배사+송장으로 승격한다.
+    if (result && !result.success && result.needsGoodsflow) {
+      result = await _resolveGoodsflowTracking(result.needsGoodsflow)
+    }
+
     // 로그인 실패로 끝난 잡은 에러를 "로그인 실패" 표준 문구로 교체 — timeout/needsLogin 으로
     // 보고되면 백엔드 서킷브레이커(`%로그인 실패%`)가 못 잡아 같은 계정 재큐잉이 계속된다.
     if (!result.success && !result.cancelled && _loginFailMsg && !_isWrong(result)) {
       result = { ...result, error: _loginFailMsg }
+    }
+
+    // [2026-09-01] 자동로그인 미지원 사이트(더현대 등)는 브라우저의 기존 세션 그대로 송장
+    // 페이지를 연다. 세션이 없어 로그인 페이지로 튕기면 스크래퍼가 timeout/needsLogin 으로
+    // 끝나는데, 그대로 보고하면 어느 사이트가 문제인지 안 보인다 → 사이트가 드러나는 안내
+    // 문구로 교체. ("로그인 실패" 표준 문구가 아니므로 서킷브레이커 매칭과 무관 — 자동로그인
+    // 실패가 아니라 수동 로그인 안내이기 때문. 기존 매핑 사이트 문구는 건드리지 않는다)
+    if (!autoLoginKey && result && !result.success && !result.cancelled &&
+        (result.needsLogin || _isTimeout(result))) {
+      const _manualLoginGuide = {
+        THEHYUNDAI: '더현대 — 크롬에서 hi.thehyundai.com 수동 로그인 필요',
+      }[site] || `${site} — 크롬에서 해당 사이트 수동 로그인 필요`
+      result = { ...result, error: `로그인 필요(${_manualLoginGuide} / 원문: ${result.error || 'needsLogin'})` }
     }
 
     await postResult('sourcing/tracking-result', {
@@ -2006,14 +2086,18 @@ async function handleTrackingJob(job) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 발주취소 잡 핸들러 (소싱처 주문상세 페이지 → DOM 자동화 → cancel-result 전송)
 //
-// 사이트별 cancel_js 분석 전이라 현재는 스텁 — 미지원 회신만 보낸다.
-// 분석 완료 후 사이트별 content-cancel-{site}.js 작성 + 본 함수에서 라우팅 추가 예정.
+// [2026-09-01] 라우팅 정책 (전부 확장앱 담당 — 데몬은 cancel 핸들러 없음):
+//  - MUSINSA               → _cancelMusinsa (API 방식)
+//  - LOTTEON               → _cancelLotteon (취소 페이지 직행 + cancelJs, 검증완료)
+//  - ABCMART/GRANDSTAGE/SSG/GSSHOP/FASHIONPLUS/THEHYUNDAI
+//                          → _cancelViaGuardedDetailPage (주문상세 페이지 + 가드형 cancelJs, ⚠️미검증)
+//  - 그 외(KREAM/NIKE/OLIVEYOUNG/29CM 등) → 미지원 회신 (수동 취소 안내)
 //
-// 라우팅 정책:
-//  - SSG/ABCmart/GrandStage/LOTTEON  → 데몬 전용 (확장앱 라우팅 차단됨)
-//  - MUSINSA/GSShop/패션플러스/SNKRDUNK/KREAM/Nike/롯데홈쇼핑 → 확장앱(여기)
+// 사이트별 스위치: chrome.storage.local.cancelSiteDisabled = ['SSG', ...] 로 개별 비활성 가능.
+//   (콘솔에서: chrome.storage.local.set({cancelSiteDisabled: ['SSG']}))
 //
 // 결과 스키마: {success, cancelled, alreadyShipped?, reason?, error?}
+// ★ 어떤 경우에도 반드시 결과를 회신한다 — 조용히 끝내면 백엔드 잡이 expired 로 남는다.
 // ─────────────────────────────────────────────────────────────────────────────
 const _cancelPending = new Map() // requestId → {resolve, timeoutId, tabId}
 
@@ -2026,6 +2110,27 @@ async function handleCancelOrderJob(job) {
   console.log(`[발주취소] 잡 수신 req=${requestId} site=${site} ord=${ordNo} acc=${sourcingAccountId || '-'}`)
 
   let result = { success: false, cancelled: false, reason: '미지원 사이트' }
+
+  // [2026-09-01] 사이트별 enable 스위치 — cancelSiteDisabled 배열에 있으면 시도 자체를 안 함
+  let _cancelDisabledSites = []
+  try {
+    const st = await chrome.storage.local.get('cancelSiteDisabled')
+    if (Array.isArray(st.cancelSiteDisabled)) {
+      _cancelDisabledSites = st.cancelSiteDisabled.map(s => String(s).toUpperCase())
+    }
+  } catch {}
+  if (_cancelDisabledSites.includes(site)) {
+    console.log(`[발주취소] ${site} 자동취소 비활성(cancelSiteDisabled) — skip req=${requestId}`)
+    try {
+      await postResult('sourcing/cancel-result', {
+        requestId,
+        success: false,
+        cancelled: false,
+        reason: '해당 소싱처 자동취소 비활성(설정)',
+      })
+    } catch {}
+    return
+  }
 
   // 계정 스왑 — 잡의 sourcingAccountId 로 ensureLoggedIn (송장 잡과 동일 패턴)
   // 계정 불일치 상태로 cancel 호출하면 다른 계정 주문에 영향 갈 위험. 무조건 swap 강제.
@@ -2067,8 +2172,11 @@ async function handleCancelOrderJob(job) {
       result = await _cancelMusinsa(ordNo, sourcingAccountId)
     } else if (site === 'LOTTEON') {
       result = await _cancelLotteon(ordNo, sourcingAccountId)
+    } else if (_EXT_CANCEL_PAGE_SITES[site]) {
+      // [2026-09-01] ABCMART/GRANDSTAGE/SSG/GSSHOP/FASHIONPLUS/THEHYUNDAI — 가드형 페이지 자동취소
+      result = await _cancelViaGuardedDetailPage(site, ordNo)
     } else {
-      result.reason = `확장앱 cancel 미구현(site=${site})`
+      result.reason = `확장앱 자동취소 미지원(site=${site}) — 소싱처에서 수동 취소 필요`
     }
   } catch (err) {
     result = { success: false, cancelled: false, error: String(err && err.message || err) }
@@ -2515,15 +2623,23 @@ async function _cancelMusinsa(ordNo, expectedAccountId) {
 //
 // 사용자 시야: active:false 라 활성 탭 변경 X. 탭 리스트에 잠깐 표시되나 즉시 닫힘(~10초).
 // ─────────────────────────────────────────────────────────────────────────────
-async function _cancelLotteon(ordNo, expectedAccountId) {
-  if (!ordNo) return { success: false, cancelled: false, error: 'ordNo empty' }
-
-  const cancelUrl = `https://www.lotteon.com/p/order/claim/cancellation/orderCancellationAccept?odNo=${ordNo}&odSeq=1&procSeq=1`
+// ─────────────────────────────────────────────────────────────────────────────
+// _cancelViaPage — 발주취소 공용 실행기 (2026-09-01, 기존 _cancelLotteon 본문에서 추출).
+// [백그라운드 탭 생성 → 로드 대기(15초) + 2초 정착 → chrome.debugger.attach
+//  → Page.enable → Page.javascriptDialogOpening 자동 accept
+//  → Runtime.evaluate(cancelJs) → detach/탭 정리] 패턴.
+//
+// cancelJs: JSON 문자열(또는 객체)을 resolve 하는 async IIFE 표현식.
+// 반환: 파싱된 결과 객체. 예외는 그대로 throw — 호출부가 사이트별 에러 메시지를 붙인다.
+// ⚠️ 주의: cancelJs 실행 중 페이지 네비게이션이 일어나면 evaluate context 파괴로
+//          예외가 던져진다(성공 단정 금지 — 호출부에서 '수동 확인 필요'로 회신할 것).
+// ─────────────────────────────────────────────────────────────────────────────
+async function _cancelViaPage(url, cancelJs, { timeoutMs = 60000 } = {}) {
   let tab = null
   let attached = false
   try {
     // 1. 백그라운드 탭 생성
-    tab = await chrome.tabs.create({url: cancelUrl, active: false})
+    tab = await chrome.tabs.create({url, active: false})
     // 페이지 로드 대기
     await new Promise(resolve => {
       const start = Date.now()
@@ -2564,11 +2680,10 @@ async function _cancelLotteon(ordNo, expectedAccountId) {
 
     try {
       // 3. cancel_js evaluate
-      const cancelJs = _LOTTEON_CANCEL_JS_FOR_EXT
       const result = await new Promise((resolve, reject) => {
         chrome.debugger.sendCommand(
           {tabId: tab.id}, 'Runtime.evaluate',
-          {expression: cancelJs, returnByValue: true, awaitPromise: true, timeout: 60000},
+          {expression: cancelJs, returnByValue: true, awaitPromise: true, timeout: timeoutMs},
           (res) => {
             if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message))
             resolve(res)
@@ -2576,20 +2691,10 @@ async function _cancelLotteon(ordNo, expectedAccountId) {
         )
       })
       const val = result?.result?.value
-      const data = typeof val === 'string' ? JSON.parse(val) : (val || {})
-      chrome.debugger.onEvent.removeListener(dialogHandler)
-      return {
-        success: !!data.success,
-        cancelled: !!(data.cancelled || data.success),
-        alreadyShipped: !!data.alreadyShipped,
-        reason: data.reason || '',
-        details: data,
-      }
+      return typeof val === 'string' ? JSON.parse(val) : (val || {})
     } finally {
       chrome.debugger.onEvent.removeListener(dialogHandler)
     }
-  } catch (err) {
-    return { success: false, cancelled: false, error: `LOTTEON cancel 예외: ${err.message || err}` }
   } finally {
     if (attached && tab) {
       try { chrome.debugger.detach({tabId: tab.id}, () => void chrome.runtime.lastError) } catch (_) {}
@@ -2597,6 +2702,25 @@ async function _cancelLotteon(ordNo, expectedAccountId) {
     if (tab) {
       try { await chrome.tabs.remove(tab.id) } catch (_) {}
     }
+  }
+}
+
+async function _cancelLotteon(ordNo, expectedAccountId) {
+  if (!ordNo) return { success: false, cancelled: false, error: 'ordNo empty' }
+
+  const cancelUrl = `https://www.lotteon.com/p/order/claim/cancellation/orderCancellationAccept?odNo=${ordNo}&odSeq=1&procSeq=1`
+  try {
+    // 공용 실행기 사용 — URL·cancelJs·결과 스키마는 기존 그대로 (동작 불변)
+    const data = await _cancelViaPage(cancelUrl, _LOTTEON_CANCEL_JS_FOR_EXT, { timeoutMs: 60000 })
+    return {
+      success: !!data.success,
+      cancelled: !!(data.cancelled || data.success),
+      alreadyShipped: !!data.alreadyShipped,
+      reason: data.reason || '',
+      details: data,
+    }
+  } catch (err) {
+    return { success: false, cancelled: false, error: `LOTTEON cancel 예외: ${err.message || err}` }
   }
 }
 
@@ -2680,6 +2804,220 @@ const _LOTTEON_CANCEL_JS_FOR_EXT = `
 })()
 `
 
+// ─────────────────────────────────────────────────────────────────────────────
+// [2026-09-01] 소싱처 발주 자동취소 — 가드형 cancelJs 공통 템플릿.
+//
+// 대상: ABCMART/GRANDSTAGE/SSG/GSSHOP/FASHIONPLUS/THEHYUNDAI (주문상세 페이지 방식).
+// 이 사이트들의 취소 화면은 실계정 로그인 상태로 실측하지 못했다 → "확신 없으면
+// 아무 것도 안 한다" 원칙. 잘못 클릭하면 다른 고객 주문까지 취소되는 실사고가
+// 나므로 아래 가드를 전부 통과해야만 클릭한다:
+//  1) 본문에 발주번호(ORD_NO) 존재 확인 — 없으면 진행 금지
+//  2) 이미 취소/발송 문구 판정 먼저 (취소완료→성공 회신, 발송 단계→alreadyShipped)
+//  3) 다건 주문 가드 — 상품행 2개↑ / 취소버튼 후보 2개↑ / 판정 불가 → 진행 금지
+//  4) 취소 버튼은 텍스트 정확 일치(공백 제거)로만 탐색 — class/id 셀렉터 추측 금지
+//  5) 클릭 후 최대 15초 폴링으로 결과 검증 — 확인 못 하면 실패 회신 (성공 단정 금지)
+//  6) 2단계 확인 버튼은 "클릭 후 새로 나타난" 버튼만 1회 클릭.
+//     JS confirm/alert 은 _cancelViaPage 의 dialog auto-accept 가 처리.
+//
+// 사이트별 차이는 CFG(상품행 셀렉터 힌트/상세URL 마커)뿐 — 중복 복붙 금지.
+// ─────────────────────────────────────────────────────────────────────────────
+const _GUARDED_CANCEL_JS_TEMPLATE = `
+(async () => {
+  const OUT = (o) => JSON.stringify(o)
+  try {
+    const CFG = __SAMBA_CFG__
+    const ORD_NO = __SAMBA_ORD_NO__
+    const CANCELLED_RE = /(취소완료|취소처리완료|구매취소완료|주문이\\s*취소|취소된\\s*주문)/
+    const SHIPPED_RE = /(배송중|배송완료|출고완료|발송완료|집화|운송장|송장번호)/
+    const norm = (s) => (s || '').replace(/\\s+/g, '')
+
+    // 0) 본문 로드 대기 (최대 10초)
+    let body = ''
+    for (let i = 0; i < 34; i++) {
+      body = (document.body && document.body.innerText) || ''
+      if (norm(body).length > 30) break
+      await new Promise(r => setTimeout(r, 300))
+    }
+
+    // 1) 발주번호 일치 확인 — 본문에 없으면 어떤 것도 클릭하지 않는다
+    if (!ORD_NO || body.indexOf(ORD_NO) < 0) {
+      return OUT({success: false, cancelled: false, reason: '주문번호 불일치/페이지 미확인 — 수동 취소 필요'})
+    }
+
+    // 2) 이미 취소/발송 판정 먼저
+    if (CANCELLED_RE.test(body)) return OUT({success: true, cancelled: true, reason: '이미 취소됨'})
+    if (SHIPPED_RE.test(body)) return OUT({success: false, cancelled: false, alreadyShipped: true, reason: '이미 발송 단계'})
+
+    // 텍스트 정확 일치(공백 제거) + 화면에 실제로 보이는 버튼만 수집
+    const findButtons = (texts) => {
+      const out = []
+      const els = document.querySelectorAll('button, a, input[type=button], input[type=submit], [role=button]')
+      for (const el of els) {
+        const raw = el.tagName === 'INPUT' ? el.value : (el.innerText || el.textContent)
+        const t = norm(raw)
+        if (!t || texts.indexOf(t) < 0) continue
+        if (el.disabled) continue
+        if (!(el.offsetWidth || el.offsetHeight || el.getClientRects().length)) continue
+        out.push(el)
+      }
+      return out
+    }
+
+    // 3) 다건 주문 가드 (보수적) — 상품행 셀렉터 힌트 중 첫 매칭으로 행 수 판정
+    let rowCount = null
+    for (const sel of CFG.rowSelectors) {
+      let n = 0
+      try { n = document.querySelectorAll(sel).length } catch (_) { n = 0 }
+      if (n > 0) { rowCount = n; break }
+    }
+    const cancelBtns = findButtons(CFG.cancelTexts)
+    if (cancelBtns.length >= 2 || (rowCount !== null && rowCount >= 2)) {
+      return OUT({success: false, cancelled: false, reason: '다건 주문 — 수동 취소 필요'})
+    }
+    if (rowCount === null) {
+      // 상품행 구조 파악 실패 — 단건 확신 불가, 진행 금지 (실측 후 셀렉터 보정 필요)
+      return OUT({success: false, cancelled: false, reason: '다건 주문 — 수동 취소 필요', detail: '상품행 판정 불가(셀렉터 미매칭)'})
+    }
+
+    // 4) 취소 버튼 — 텍스트 정확 일치 1개일 때만 클릭
+    if (cancelBtns.length === 0) {
+      return OUT({success: false, cancelled: false, reason: '취소 버튼 없음 — 수동 취소 필요'})
+    }
+    const btn = cancelBtns[0]
+    const preConfirm = findButtons(CFG.confirmTexts)  // 클릭 전부터 있던 확인류 버튼(오클릭 방지)
+    btn.click()
+
+    // 5)+6) 클릭 후 검증 (최대 15초) — 도중 "새로 나타난" 확인 버튼만 1회 추가 클릭
+    let confirmClicked = false
+    const start = Date.now()
+    while (Date.now() - start < 15000) {
+      await new Promise(r => setTimeout(r, 500))
+      const b2 = (document.body && document.body.innerText) || ''
+      if (CANCELLED_RE.test(b2) || /취소[^\\n]{0,8}(요청|신청|접수)[^\\n]{0,10}(완료|되었|접수)/.test(b2)) {
+        return OUT({success: true, cancelled: true, reason: '취소 요청 완료(화면 문구 확인)', confirmClicked})
+      }
+      if (/(cancel|claim|refund)/i.test(location.href) && location.href.indexOf(CFG.detailUrlMark) < 0) {
+        return OUT({success: true, cancelled: true, reason: '취소 경로 전환 확인(URL) — 라이브 재확인 권장', confirmClicked})
+      }
+      if (!confirmClicked && Date.now() - start < 6000) {
+        for (const el of findButtons(CFG.confirmTexts)) {
+          if (el === btn || preConfirm.indexOf(el) >= 0) continue
+          el.click()
+          confirmClicked = true
+          break
+        }
+      }
+    }
+    return OUT({success: false, cancelled: false, reason: '취소 결과 미확인 — 수동 확인 필요', confirmClicked})
+  } catch (e) {
+    return OUT({success: false, cancelled: false, reason: '취소 스크립트 예외 — 수동 확인 필요', error: String(e && e.message || e)})
+  }
+})()
+`
+
+// 공통 취소/확인 버튼 텍스트 (공백 제거 후 정확 일치만 허용)
+const _CANCEL_BTN_TEXTS = ['주문취소', '취소신청', '전체취소', '구매취소', '취소하기']
+const _CANCEL_CONFIRM_TEXTS = ['확인', '예', '취소신청', '신청']
+
+// 템플릿에 사이트 CFG 를 주입해 cancelJs 문자열 생성 (ORD_NO 는 실행 시점 치환)
+function _buildGuardedCancelJs(cfg) {
+  return _GUARDED_CANCEL_JS_TEMPLATE.replace(
+    '__SAMBA_CFG__',
+    JSON.stringify({ cancelTexts: _CANCEL_BTN_TEXTS, confirmTexts: _CANCEL_CONFIRM_TEXTS, ...cfg })
+  )
+}
+
+// ⚠️ 미검증 — 실계정 로그인 상태에서 1건 실측 후 셀렉터 보정 필요 (2026-09-01)
+// ABC마트/그랜드스테이지 공용 (동일 a-rt.com 플랫폼)
+const _ABCMART_CANCEL_JS = _buildGuardedCancelJs({
+  rowSelectors: ['.order-detail-list .prod-item', '.order-prd-list > li', 'ul.order-list > li', '.order-item'],
+  detailUrlMark: 'read-order-detail',
+})
+
+// ⚠️ 미검증 — 실계정 로그인 상태에서 1건 실측 후 셀렉터 보정 필요 (2026-09-01)
+const _SSG_CANCEL_JS = _buildGuardedCancelJs({
+  rowSelectors: ['.cdtl_ordr_item', '.mnodr_list > li', '.ordr_prod_list > li', '.order_item'],
+  detailUrlMark: 'orderInfoDetail',
+})
+
+// ⚠️ 미검증 — 실계정 로그인 상태에서 1건 실측 후 셀렉터 보정 필요 (2026-09-01)
+const _GSSHOP_CANCEL_JS = _buildGuardedCancelJs({
+  rowSelectors: ['.order-prd-list > li', '.prd-list > li', 'ul.order-list > li', '.order-item'],
+  detailUrlMark: 'ordDtl',
+})
+
+// ⚠️ 미검증 — 실계정 로그인 상태에서 1건 실측 후 셀렉터 보정 필요 (2026-09-01)
+const _FASHIONPLUS_CANCEL_JS = _buildGuardedCancelJs({
+  rowSelectors: ['.order-goods-list > li', '.order-detail .prd-item', 'ul.prd-list > li', '.order-item'],
+  detailUrlMark: '/mypage/order/detail',
+})
+
+// ⚠️ 미검증 — 실계정 로그인 상태에서 1건 실측 후 셀렉터 보정 필요 (2026-09-01)
+const _THEHYUNDAI_CANCEL_JS = _buildGuardedCancelJs({
+  rowSelectors: ['.order-prd-list > li', '.ord-item', 'ul.order-list > li', '.order-item'],
+  detailUrlMark: '/mypage/order/detail',
+})
+
+// 사이트 → 주문상세 URL(backend build_tracking_url 과 동일) + 가드형 cancelJs
+const _EXT_CANCEL_PAGE_SITES = {
+  ABCMART: {
+    buildUrl: (o) => `https://abcmart.a-rt.com/mypage/order/read-order-detail?orderNo=${encodeURIComponent(o)}`,
+    js: () => _ABCMART_CANCEL_JS,
+  },
+  GRANDSTAGE: {
+    buildUrl: (o) => `https://grandstage.a-rt.com/mypage/order/read-order-detail?orderNo=${encodeURIComponent(o)}`,
+    js: () => _ABCMART_CANCEL_JS, // 동일 플랫폼(a-rt.com) — cancelJs 공용
+  },
+  SSG: {
+    buildUrl: (o) => `https://pay.ssg.com/myssg/orderInfoDetail.ssg?orordNo=${encodeURIComponent(o)}`,
+    js: () => _SSG_CANCEL_JS,
+  },
+  GSSHOP: {
+    buildUrl: (o) => `https://www.gsshop.com/ord/dlvcursta/popup/ordDtl.gs?ordNo=${encodeURIComponent(o)}&ecOrdTypCd=S`,
+    js: () => _GSSHOP_CANCEL_JS,
+  },
+  FASHIONPLUS: {
+    buildUrl: (o) => `https://www.fashionplus.co.kr/mypage/order/detail/${encodeURIComponent(o)}`,
+    js: () => _FASHIONPLUS_CANCEL_JS,
+  },
+  THEHYUNDAI: {
+    buildUrl: (o) => `https://hi.thehyundai.com/mypage/order/detail?ordNo=${encodeURIComponent(o)}`,
+    js: () => _THEHYUNDAI_CANCEL_JS,
+  },
+}
+
+// 가드형 주문상세 페이지 자동취소 실행 — _cancelViaPage 공용 실행기 사용
+async function _cancelViaGuardedDetailPage(site, ordNo) {
+  if (!ordNo) {
+    return { success: false, cancelled: false, reason: '소싱처 발주번호 없음 — 취소 시도 불가' }
+  }
+  const conf = _EXT_CANCEL_PAGE_SITES[site]
+  if (!conf) {
+    return { success: false, cancelled: false, reason: `확장앱 자동취소 미지원(site=${site}) — 소싱처에서 수동 취소 필요` }
+  }
+  const cancelJs = conf.js().replace('__SAMBA_ORD_NO__', JSON.stringify(String(ordNo)))
+  try {
+    const data = await _cancelViaPage(conf.buildUrl(ordNo), cancelJs, { timeoutMs: 60000 })
+    return {
+      success: !!data.success,
+      cancelled: !!data.cancelled,
+      alreadyShipped: !!data.alreadyShipped,
+      reason: data.reason || '',
+      error: data.error || undefined,
+      details: data,
+    }
+  } catch (err) {
+    // 취소버튼 클릭이 전체 페이지 이동을 일으키면 evaluate context 파괴로 여기 도달
+    // — 성공 단정 금지, 수동확인 회신 (보수 원칙)
+    return {
+      success: false,
+      cancelled: false,
+      reason: '취소 결과 미확인(페이지 전환/평가 실패) — 수동 확인 필요',
+      error: `${site} cancel 예외: ${err?.message || err}`,
+    }
+  }
+}
+
 // content script 가 페이지에서 추출 결과를 background로 보낼 때 매칭
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg && msg.type === 'TRACKING_RESULT' && msg.requestId) {
@@ -2694,6 +3032,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         error: msg.error || '',
         cancelled: !!msg.cancelled,
         needsLogin: !!msg.needsLogin,
+        // [2026-09-01] 패션플러스 goodsflow 링크 파라미터 — handleTrackingJob 이
+        // goodsflow 공개 API 로 실제 송장으로 승격한다. (누락 시 승격 경로가 죽는다)
+        needsGoodsflow: msg.needsGoodsflow || null,
       })
     }
     sendResponse({ ack: true })

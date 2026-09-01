@@ -603,6 +603,22 @@ async def _build_order_filters(
         action_filter = _build_action_tag_filter(input_filter)
         if action_filter is not None:
             filters.append(action_filter)
+    elif input_filter in {"auto_cancel_ok", "auto_cancel_fail", "auto_cancel_any"}:
+        # 소싱처 자동취소 결과 필터 — sourcing_cancel_result()가 notes에 append하는
+        # 고정 문구를 매칭 (proxy/sourcing.py 참조). 문구는 상수 리터럴이므로
+        # LIKE 패턴은 SQLAlchemy 바인딩 파라미터로 안전하게 전달된다.
+        _notes = func.coalesce(SambaOrder.notes, "")
+        _auto_cancel_ok = _notes.like("%소싱처 자동취소 성공%")
+        _auto_cancel_fail = or_(
+            _notes.like("%소싱처 자동취소 실패%"),
+            _notes.like("%소싱처 이미 발송 — 자동취소 불가%"),
+        )
+        if input_filter == "auto_cancel_ok":
+            filters.append(_auto_cancel_ok)
+        elif input_filter == "auto_cancel_fail":
+            filters.append(_auto_cancel_fail)
+        else:  # auto_cancel_any — 성공/실패/발송됨 전체
+            filters.append(or_(_auto_cancel_ok, _auto_cancel_fail))
 
     # 송장필터 — 입력필터와 독립적으로 동작 (이중 선택 가능)
     # 크림(KREAM) 주문은 tracking_number(허브넷 HBL)가 주문 생성 시부터 채워지므로
@@ -714,7 +730,9 @@ async def _build_order_filters(
             tokens: list[str] = []
             for raw_token in re.split(r"[\s,]+", normalized_search):
                 token = raw_token.strip()
-                if token and token not in tokens:  # 빈 토큰 제거 + 중복 제거 (입력 순서 유지)
+                if (
+                    token and token not in tokens
+                ):  # 빈 토큰 제거 + 중복 제거 (입력 순서 유지)
                     tokens.append(token)
             if len(tokens) > 200:
                 # 상한 200개 — 400 에러 대신 앞 200개만 조회 (붙여넣기 실패보다 부분 조회가 낫다)
@@ -724,7 +742,9 @@ async def _build_order_filters(
                 tokens = tokens[:200]
             token_conditions: list[Any] = []
             for token in tokens:
-                token_q = f"%{escape_like(token.lower())}%"  # 토큰마다 외부 입력 escape 필수
+                token_q = (
+                    f"%{escape_like(token.lower())}%"  # 토큰마다 외부 입력 escape 필수
+                )
                 token_conditions.extend(
                     [
                         SambaOrder.order_number.ilike(token_q, escape="\\"),
@@ -3849,9 +3869,7 @@ async def _sync_returns_with_order_status(
     if order.order_number:
         conds.append(SambaReturn.order_number == order.order_number)
     rows = list(
-        (await session.execute(select(SambaReturn).where(or_(*conds))))
-        .scalars()
-        .all()
+        (await session.execute(select(SambaReturn).where(or_(*conds)))).scalars().all()
     )
 
     if claim_type is None:
@@ -12568,7 +12586,9 @@ async def sync_orders_from_markets(
                 f"[주문동기화] 롯데ON/스마트스토어 미매칭 자동 백필 {_lo_linked}건 완료"
             )
     except Exception as _lo_bf_err:
-        logger.warning(f"[주문동기화] 롯데ON/스마트스토어 백필 실패(무시): {_lo_bf_err}")
+        logger.warning(
+            f"[주문동기화] 롯데ON/스마트스토어 백필 실패(무시): {_lo_bf_err}"
+        )
 
     if total_synced > 0:
         from backend.utils.kakao_notify import send_kakao_message

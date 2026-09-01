@@ -182,84 +182,120 @@ class SambaCSInquiryService:
         skipped = 0
         replied_marked = 0
 
-        # ── 쪽지 수집 ──
+        # ── 쪽지 수집 여부 설정 (cs_sync_ssg_notes) ──
+        # SSG 쪽지(inquiry_type='note')는 대부분 상담사→판매자 전달 메시지라 기본은
+        # 수집하지 않는다. 미설정/빈값 = false = 수집 안 함,
+        # "1"/"true"/"y"/"yes"/"on" (대소문자 무관) = true = 기존대로 수집.
+        include_notes = False
         try:
-            notes = await ssg_client.get_notes(start_date, end_date)
-            active_note_ids = {
-                str(n.get("boNtId", "")) for n in notes if n.get("boNtId")
-            }
+            # 순환 import 방지 위해 지연 import (tenant prefix 폴백 포함 조회)
+            from backend.api.v1.routers.samba.proxy._helpers import _get_setting
 
-            # 기존 pending 쪽지 중 API에 없는 것 → replied 마킹
-            existing_pending = await self.repo.find_pending_since(
-                "SSG", "note", start_dt, account_id=account_id
-            )
-            for ep in existing_pending:
-                if ep.external_id not in active_note_ids:
-                    await self.repo.update_async(ep.id, reply_status="replied")
-                    replied_marked += 1
-
-            for note in notes:
-                ext_id = str(note.get("boNtId", ""))
-                if not ext_id:
-                    continue
-                existing = await self.repo.find_by_external_id("SSG", ext_id)
-                if existing:
-                    skipped += 1
-                    continue
-
-                raw_date = note.get("lstRegDts") or note.get("regDts")
-                parsed_date = _parse_date(raw_date)
-
-                # 상세 조회로 대화 스레드 가져오기
-                content = note.get("ntCntt") or ""
-                try:
-                    detail = await ssg_client.get_note_detail_no_recv(ext_id)
-                    talk_list = detail.get("talkList") or []
-                    if isinstance(talk_list, dict):
-                        talk_list = [talk_list]
-                    if talk_list:
-                        lines: list[str] = []
-                        for talk in talk_list:
-                            sender = talk.get("userNm") or talk.get("regpeId") or ""
-                            is_me = talk.get("isMeYn") == "Y"
-                            talk_content = talk.get("ntCntt") or ""
-                            talk_date = (
-                                talk.get("regDts") or talk.get("lstRegDts") or ""
-                            )
-                            prefix = "[업체]" if is_me else "[고객]"
-                            date_str = f" ({talk_date})" if talk_date else ""
-                            lines.append(f"{prefix} {sender}{date_str}\n{talk_content}")
-                        content = "\n\n---\n\n".join(lines)
-                except Exception as e_detail:
-                    logger.debug(f"[SSG CS] 쪽지 상세 조회 실패 ({ext_id}): {e_detail}")
-
-                await self.repo.create_async(
-                    market="SSG",
-                    inquiry_type="note",
-                    external_id=ext_id,
-                    external_sent=False,
-                    account_id=account_id,
-                    account_name=account_label,
-                    # SSG 가 ordNo/regpeId 를 JSON number 로 내려주는 쪽지가 있어
-                    # str 캐스팅 없이는 varchar 바인딩 실패 → 문의 저장 누락 (2026-08-02)
-                    market_order_id=(
-                        str(note["ordNo"]) if note.get("ordNo") is not None else None
-                    ),
-                    questioner=(
-                        str(note["regpeId"])
-                        if note.get("regpeId") is not None
-                        else None
-                    ),
-                    product_name=(
-                        str(note["itemNm"]) if note.get("itemNm") is not None else None
-                    ),
-                    content=content,
-                    reply_status="pending",
-                    inquiry_date=parsed_date,
+            _raw = await _get_setting(self.repo.session, "cs_sync_ssg_notes")
+            if _raw is not None and str(_raw).strip() != "":
+                include_notes = str(_raw).strip().lower() in (
+                    "1",
+                    "true",
+                    "y",
+                    "yes",
+                    "on",
                 )
-                notes_collected += 1
         except Exception as e:
-            logger.warning(f"[SSG CS] 쪽지 수집 실패: {e}")
+            logger.warning(
+                f"[SSG CS] cs_sync_ssg_notes 설정 조회 실패 (기본 false 유지): {e}"
+            )
+
+        # ── 쪽지 수집 ──
+        if not include_notes:
+            logger.info(
+                "[SSG CS] 쪽지(상담사 메시지) 수집 스킵 — 설정 cs_sync_ssg_notes=false"
+            )
+        else:
+            try:
+                notes = await ssg_client.get_notes(start_date, end_date)
+                active_note_ids = {
+                    str(n.get("boNtId", "")) for n in notes if n.get("boNtId")
+                }
+
+                # 기존 pending 쪽지 중 API에 없는 것 → replied 마킹
+                existing_pending = await self.repo.find_pending_since(
+                    "SSG", "note", start_dt, account_id=account_id
+                )
+                for ep in existing_pending:
+                    if ep.external_id not in active_note_ids:
+                        await self.repo.update_async(ep.id, reply_status="replied")
+                        replied_marked += 1
+
+                for note in notes:
+                    ext_id = str(note.get("boNtId", ""))
+                    if not ext_id:
+                        continue
+                    existing = await self.repo.find_by_external_id("SSG", ext_id)
+                    if existing:
+                        skipped += 1
+                        continue
+
+                    raw_date = note.get("lstRegDts") or note.get("regDts")
+                    parsed_date = _parse_date(raw_date)
+
+                    # 상세 조회로 대화 스레드 가져오기
+                    content = note.get("ntCntt") or ""
+                    try:
+                        detail = await ssg_client.get_note_detail_no_recv(ext_id)
+                        talk_list = detail.get("talkList") or []
+                        if isinstance(talk_list, dict):
+                            talk_list = [talk_list]
+                        if talk_list:
+                            lines: list[str] = []
+                            for talk in talk_list:
+                                sender = talk.get("userNm") or talk.get("regpeId") or ""
+                                is_me = talk.get("isMeYn") == "Y"
+                                talk_content = talk.get("ntCntt") or ""
+                                talk_date = (
+                                    talk.get("regDts") or talk.get("lstRegDts") or ""
+                                )
+                                prefix = "[업체]" if is_me else "[고객]"
+                                date_str = f" ({talk_date})" if talk_date else ""
+                                lines.append(
+                                    f"{prefix} {sender}{date_str}\n{talk_content}"
+                                )
+                            content = "\n\n---\n\n".join(lines)
+                    except Exception as e_detail:
+                        logger.debug(
+                            f"[SSG CS] 쪽지 상세 조회 실패 ({ext_id}): {e_detail}"
+                        )
+
+                    await self.repo.create_async(
+                        market="SSG",
+                        inquiry_type="note",
+                        external_id=ext_id,
+                        external_sent=False,
+                        account_id=account_id,
+                        account_name=account_label,
+                        # SSG 가 ordNo/regpeId 를 JSON number 로 내려주는 쪽지가 있어
+                        # str 캐스팅 없이는 varchar 바인딩 실패 → 문의 저장 누락 (2026-08-02)
+                        market_order_id=(
+                            str(note["ordNo"])
+                            if note.get("ordNo") is not None
+                            else None
+                        ),
+                        questioner=(
+                            str(note["regpeId"])
+                            if note.get("regpeId") is not None
+                            else None
+                        ),
+                        product_name=(
+                            str(note["itemNm"])
+                            if note.get("itemNm") is not None
+                            else None
+                        ),
+                        content=content,
+                        reply_status="pending",
+                        inquiry_date=parsed_date,
+                    )
+                    notes_collected += 1
+            except Exception as e:
+                logger.warning(f"[SSG CS] 쪽지 수집 실패: {e}")
 
         # ── Q&A 수집 ──
         try:

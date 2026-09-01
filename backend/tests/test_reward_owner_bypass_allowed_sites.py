@@ -138,6 +138,14 @@ def test_daemon_device_excluded_from_reward(monkeypatch):
     cap = _run_get_next_job(monkeypatch, device_id="samba-daemon-x", allowed_sites=None)
     sql = _norm(cap["sql"])
 
-    assert (
-        "job_type NOT IN ('tracking', 'store_metrics', 'purchase', 'reward')" in sql
-    ), f"데몬 분기에서 reward 차단이 빠짐:\n{sql}"
+    # [2026-09-01] 데몬 차단 목록에 cancel_order 추가됨(데몬은 cancel_js 핸들러 없음) —
+    # 문자열 통째 비교 대신 잡타입별 포함 여부로 확인해 목록이 늘어도 깨지지 않게 한다.
+    assert "job_type NOT IN (" in sql, f"데몬 분기 차단 목록 자체가 없음:\n{sql}"
+    for _jt in (
+        "'tracking'",
+        "'store_metrics'",
+        "'purchase'",
+        "'reward'",
+        "'cancel_order'",
+    ):
+        assert _jt in sql, f"데몬 분기에서 {_jt} 차단이 빠짐:\n{sql}"

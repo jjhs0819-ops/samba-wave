@@ -39,6 +39,23 @@ const makeCompletionColors = (c: Palette): Record<string, { bg: string; fg: stri
   '거부': { bg: 'rgba(150,150,150,0.14)', fg: c.textSub },    // 회색(거부)
 })
 
+// ── 고객비용/회사비용 콤마 포맷 (B1) ──
+// 숫자로만 이루어진 입력(공백/콤마/앞의 -/소수점 허용)만 1,000 형태로 포맷.
+// 글자가 섞이면(예: "택배비 회사부담") 입력 그대로 반환 — 메모 기능 유지.
+const AMOUNT_NUMERIC_RE = /^-?\d[\d,]*(\.\d+)?$/
+const formatAmountInput = (raw: string): string => {
+  const s = raw.trim()
+  if (!AMOUNT_NUMERIC_RE.test(s)) return raw
+  const n = Number(s.replace(/,/g, ''))
+  if (!Number.isFinite(n)) return raw
+  return fmtNum(n)
+}
+// 콤마 포함 저장 문자열 → 숫자 (수익총액 계산용). 숫자 아니면(메모 등) 0.
+const parseAmount = (v: string | null | undefined): number => {
+  const n = Number(String(v ?? '').replace(/,/g, ''))
+  return Number.isFinite(n) ? n : 0
+}
+
 export default function ReturnsPage() {
   const c = useTheme()
   // 완료내역 뱃지 색 — 테마(c) 변경 시에만 재생성
@@ -172,6 +189,13 @@ export default function ReturnsPage() {
   // 먼저 보낸 요청이 늦게 도착해 최신 결과를 덮어쓰는 것을 막는다.
   const loadSeqRef = useRef(0)
 
+  // ?order_number= 시드 진입 첫 조회가 0건일 때 1.5초 후 1회만 자동 재조회 (B3).
+  // 백엔드가 주문→반품 레코드를 백필로 "생성"하는데, 첫 조회가 생성 전에 도착하면
+  // 0건이 나와 검색을 다시 눌러야 보이던 문제 대응. ref 가드로 무한루프 차단.
+  const seedRetryDoneRef = useRef(false)
+  // 재조회 예약 시점의 낡은 load 클로저 대신 항상 최신 load 를 부르기 위한 ref
+  const loadRef = useRef<() => void>(() => {})
+
   const load = useCallback(async () => {
     const seq = ++loadSeqRef.current
     setLoading(true)
@@ -199,8 +223,19 @@ export default function ReturnsPage() {
     if (data !== null) setReturns(data)
     if (st !== null) setStats(st)
     setLoading(false)
+    // 시드 진입(주문탭 딥링크) 한정 — 첫 조회 0건이면 1회만 자동 재조회 (B3).
+    // 사용자가 [다중]으로 직접 조회한 경우(multiAppliedRef)는 재시도하지 않는다.
+    if (
+      onf && seededRef.current && !multiAppliedRef.current &&
+      !seedRetryDoneRef.current && data !== null && data.length === 0
+    ) {
+      seedRetryDoneRef.current = true
+      setLogMessages(prev => [...prev, '[안내] 반품/교환 데이터 생성 대기 — 1.5초 후 1회 재조회'])
+      setTimeout(() => loadRef.current(), 1500)
+    }
   }, [filterStatus, filterType, customStart, customEnd, orderNumberFilter,pageSize])
 
+  useEffect(() => { loadRef.current = load }, [load])
   useEffect(() => { load() }, [load])
 
   // 가져오기 버튼 — 백그라운드 returns_sync 잡 생성 + 진행률 폴링 후 DB 로드.
@@ -410,6 +445,9 @@ export default function ReturnsPage() {
 
   // 화면 필터(완료내역/마켓/검색어) 적용 목록 — 렌더와 수익총액 계산에 공용
   const filteredReturns = dedupedReturns.filter(r => {
+    // 주문번호 검색 중(다중 조회 또는 주문탭 딥링크 시드)엔 화면 필터 전부 무시 —
+    // 입력한 주문번호에 해당하는 반품/교환은 무조건 전부 보여준다 (B2)
+    if (orderNumberFilter.trim()) return true
     if (siteFilter && (r.completion_detail || COMPLETION_DEFAULT) !== siteFilter) return false
     if (marketFilter) {
       if (marketFilter.startsWith('type:')) {
@@ -439,9 +477,10 @@ export default function ReturnsPage() {
   })
 
   // 수익총액 계산 (고객비용 - 회사비용) — 화면 필터 적용 목록 기준,
-  // 완료내역 상태(대기/반품완료/교환완료) 무관하게 전체 합산. 값은 문자열일 수 있어 Number()로 변환.
+  // 완료내역 상태(대기/반품완료/교환완료) 무관하게 전체 합산.
+  // 값은 콤마 포함 문자열("1,000")로 저장되므로 콤마 제거 후 숫자 변환 (B1).
   const totalProfit = filteredReturns
-    .reduce((sum, r) => sum + ((Number(r.customer_amount) || 0) - (Number(r.company_amount) || 0)), 0)
+    .reduce((sum, r) => sum + (parseAmount(r.customer_amount) - parseAmount(r.company_amount)), 0)
 
   // completion_detail 기준 통계 — 중복 제거된 목록 기준
   const completionCounts = {
@@ -486,8 +525,8 @@ export default function ReturnsPage() {
               // 다중 조회(요청 #9)면 번호 나열 대신 건수로 표시
               const n = orderNumberFilter.split(/[\s,]+/).filter(Boolean).length
               return n > 1
-                ? <>주문 <strong style={{ color: c.text }}>{fmtNum(n)}건</strong> 관련 반품/교환만 표시</>
-                : <>주문 <strong style={{ color: c.text }}>{orderNumberFilter}</strong> 관련 반품/교환만 표시</>
+                ? <>주문 <strong style={{ color: c.text }}>{fmtNum(n)}건</strong> 관련 반품/교환만 표시 · 화면 필터 무시</>
+                : <>주문 <strong style={{ color: c.text }}>{orderNumberFilter}</strong> 관련 반품/교환만 표시 · 화면 필터 무시</>
             })()}
           </span>
           <button
@@ -796,11 +835,12 @@ export default function ReturnsPage() {
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <input
                           type="text"
-                          value={r.customer_amount || ''}
+                          value={formatAmountInput(r.customer_amount || '')}
                           placeholder=""
                           onFocus={(e) => { cellEditRef.current[`customer_amount:${r.id}`] = e.target.value }}
                           onChange={(e) => {
-                            const val = e.target.value
+                            // 숫자만 입력 시 세자리 콤마 자동 포맷, 글자 섞이면 그대로(메모) (B1)
+                            const val = formatAmountInput(e.target.value)
                             setReturns(prev => prev.map(x => x.id === r.id ? { ...x, customer_amount: val } : x))
                           }}
                           onBlur={(e) => {
@@ -817,11 +857,12 @@ export default function ReturnsPage() {
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <input
                           type="text"
-                          value={r.company_amount || ''}
+                          value={formatAmountInput(r.company_amount || '')}
                           placeholder=""
                           onFocus={(e) => { cellEditRef.current[`company_amount:${r.id}`] = e.target.value }}
                           onChange={(e) => {
-                            const val = e.target.value
+                            // 숫자만 입력 시 세자리 콤마 자동 포맷, 글자 섞이면 그대로(메모) (B1)
+                            const val = formatAmountInput(e.target.value)
                             setReturns(prev => prev.map(x => x.id === r.id ? { ...x, company_amount: val } : x))
                           }}
                           onBlur={(e) => {

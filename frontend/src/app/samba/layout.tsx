@@ -9,6 +9,7 @@ import type { SambaUser } from "@/lib/samba/api/operations";
 import { STORAGE_KEYS } from "@/lib/samba/constants";
 import { attachDeviceIdListener } from "@/lib/samba/deviceId";
 import { orderApi } from "@/lib/samba/api/commerce";
+import { csInquiryApi } from "@/lib/samba/api/support";
 import { fmtNum } from "@/lib/samba/styles";
 import { useTheme } from "@/lib/samba/useTheme";
 import { useThemeStore } from "@/lib/samba/themeStore";
@@ -252,6 +253,64 @@ export default function SambaLayout({
     };
   }, [authChecked, currentUser, isLoginPage, isLicensePage, pathname]);
 
+  // 글로벌 미답변 CS 폴링 — CS 페이지 닫혀있어도 "CS" 탭 옆 빨간 뱃지 표시.
+  // 마운트 시 1회 즉시 + 5분(300초) 간격 갱신. CS 페이지 진입 시엔 즉시 1회 강제 갱신
+  // (isCsPage 가 deps 에 있어 CS 진입/이탈 순간 이펙트 재실행 → pollOnce 즉시 호출).
+  const [csPendingCount, setCsPendingCount] = useState(0);
+  const isCsPage = (pathname || "").startsWith("/samba/cs");
+
+  useEffect(() => {
+    if (!authChecked || !currentUser) return;
+    if (isLoginPage || isLicensePage) return;
+
+    let cancelled = false;
+
+    const pollOnce = async () => {
+      try {
+        const { pending } = await csInquiryApi.getStats();
+        if (cancelled) return;
+        setCsPendingCount(pending);
+      } catch {}
+    };
+
+    pollOnce();
+    const intervalId = window.setInterval(pollOnce, 300_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [authChecked, currentUser, isLoginPage, isLicensePage, isCsPage]);
+
+  // 탭 우상단 빨간 카운트 뱃지 (주문 취소알림 / CS 미답변 공용).
+  // 컴포넌트가 아닌 JSX 헬퍼 — 매 렌더 컴포넌트 재정의 시 리마운트로 pulse 애니메이션이
+  // 리셋되는 것을 막고, 기존 주문탭 뱃지와 픽셀 단위 동일 렌더를 보장한다.
+  const renderTabBadge = (count: number, title: string) => (
+    <span
+      title={title}
+      style={{
+        position: "absolute",
+        top: "4px",
+        right: "6px",
+        minWidth: "18px",
+        height: "18px",
+        padding: "0 5px",
+        background: c.danger,
+        color: "#fff",
+        fontSize: "0.6875rem",
+        fontWeight: 700,
+        borderRadius: "9px",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        boxShadow: `0 0 0 2px ${c.pageBg}`,
+        lineHeight: 1,
+        animation: "samba-cancel-pulse 1.6s ease-in-out infinite",
+      }}
+    >
+      {count > 99 ? "99+" : fmtNum(count)}
+    </span>
+  );
+
   // 로그인/라이선스 페이지는 레이아웃 헤더 없이 바로 렌더링
   if (isLoginPage || isLicensePage) {
     return <>{children}</>;
@@ -396,6 +455,7 @@ export default function SambaLayout({
                   ? pathname === "/samba/products"
                   : pathname.startsWith(item.href);
               const isOrdersTab = item.href === "/samba/orders";
+              const isCsTab = item.href === "/samba/cs";
               return (
                 <div key={item.href} className="relative">
                   <Link
@@ -427,32 +487,10 @@ export default function SambaLayout({
                         (개발예정)
                       </span>
                     )}
-                    {isOrdersTab && cancelCount > 0 && (
-                      <span
-                        title={`미처리 마켓 취소 ${fmtNum(cancelCount)}건`}
-                        style={{
-                          position: "absolute",
-                          top: "4px",
-                          right: "6px",
-                          minWidth: "18px",
-                          height: "18px",
-                          padding: "0 5px",
-                          background: c.danger,
-                          color: "#fff",
-                          fontSize: "0.6875rem",
-                          fontWeight: 700,
-                          borderRadius: "9px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          boxShadow: `0 0 0 2px ${c.pageBg}`,
-                          lineHeight: 1,
-                          animation: "samba-cancel-pulse 1.6s ease-in-out infinite",
-                        }}
-                      >
-                        {cancelCount > 99 ? "99+" : fmtNum(cancelCount)}
-                      </span>
-                    )}
+                    {isOrdersTab && cancelCount > 0 &&
+                      renderTabBadge(cancelCount, `미처리 마켓 취소 ${fmtNum(cancelCount)}건`)}
+                    {isCsTab && csPendingCount > 0 &&
+                      renderTabBadge(csPendingCount, `미답변 CS ${fmtNum(csPendingCount)}건`)}
                   </Link>
                 </div>
               );

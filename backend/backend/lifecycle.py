@@ -526,6 +526,7 @@ _sourcing_job_cleanup_task: asyncio.Task | None = None
 _tetris_sync_last_run: float = 0.0
 _order_auto_sync_task: asyncio.Task | None = None
 _order_auto_sync_last_run: float = 0.0
+_cs_auto_sync_last_run: float = 0.0
 _reward_auto_task: asyncio.Task | None = None
 _reward_auto_last_run: float = 0.0
 _pc_sync_task: asyncio.Task | None = None
@@ -1125,7 +1126,9 @@ async def _kream_log_tailer() -> None:
                 )
             ).first()
         if not _exists:
-            _log.info("[크림로그테일러] kream_refresh_log 없음 — 브리지 비활성(크림 미사용)")
+            _log.info(
+                "[크림로그테일러] kream_refresh_log 없음 — 브리지 비활성(크림 미사용)"
+            )
             return
     except Exception as exc:
         _log.warning("[크림로그테일러] 테이블 확인 실패 — 브리지 비활성: %s", exc)
@@ -1155,7 +1158,7 @@ async def _order_auto_sync_loop() -> None:
     2) 잡 완료 대기
     3) tracking_sync_bulk 호출 (미발송 송장 수집·전송)
     """
-    global _order_auto_sync_last_run
+    global _order_auto_sync_last_run, _cs_auto_sync_last_run
     import time
 
     _log = logging.getLogger("backend.lifecycle")
@@ -1173,10 +1176,54 @@ async def _order_auto_sync_loop() -> None:
                 except (TypeError, ValueError):
                     interval_min = 0
 
+                # CS 자동수집 인터벌 — 주문 인터벌과 독립 (미설정 시 기본 60분, 0 이하면 비활성)
+                cs_val = await _get_setting(rs, "cs_auto_sync_interval_minutes")
+                try:
+                    cs_interval_min = int(cs_val) if cs_val is not None else 60
+                except (TypeError, ValueError):
+                    cs_interval_min = 60
+
+            now = time.time()
+
+            # 1-b) CS 문의 동기화 — 주문 자동수집 인터벌에 얹지 않고 자체 인터벌(기본 60분)로
+            #      독립 실행. 주문 auto sync 가 꺼져 있거나(0) 주기가 달라도 CS 는 제 주기대로 돈다.
+            #      [테넌트 격리] tenant_id=None 단일 잡은 ContextVar가 비어 전 테넌트
+            #      마켓계정을 무차별 순회한다(데이터 누수 사고 원인). 활성 테넌트별로
+            #      잡을 나눠 생성해야 각 잡이 자기 테넌트 계정만 동기화한다.
+            if (
+                cs_interval_min > 0
+                and now - _cs_auto_sync_last_run >= cs_interval_min * 60
+            ):
+                try:
+                    from sqlmodel import select as _sel
+
+                    from backend.domain.samba.order.poller import _create_cs_sync_job
+                    from backend.domain.samba.tenant.model import SambaTenant
+
+                    _log.info(
+                        f"[CS auto sync] 인터벌 {cs_interval_min}분 도달 — cs_sync 잡 생성"
+                    )
+                    async with get_write_session() as cs_ws:
+                        _trows = await cs_ws.execute(
+                            _sel(SambaTenant.id).where(
+                                SambaTenant.is_active == True  # noqa: E712
+                            )
+                        )
+                        _tids = [r[0] for r in _trows.all()]
+                        if _tids:
+                            for _tid in _tids:
+                                await _create_cs_sync_job(cs_ws, tenant_id=_tid)
+                        else:
+                            # 싱글테넌트 모드: 활성 테넌트 없음 → tenant_id=None 잡으로 전체 계정 처리
+                            await _create_cs_sync_job(cs_ws, tenant_id=None)
+                    # 잡 생성에 성공했을 때만 last_run 갱신 (실패 시 다음 루프에서 재시도)
+                    _cs_auto_sync_last_run = now
+                except Exception as _cs_e:
+                    _log.warning(f"[CS auto sync] cs_sync 잡 생성 실패: {_cs_e}")
+
             if interval_min <= 0:
                 continue
 
-            now = time.time()
             if now - _order_auto_sync_last_run < interval_min * 60:
                 continue
 
@@ -1235,32 +1282,7 @@ async def _order_auto_sync_loop() -> None:
                     job_id = new_job.id
                     _log.info(f"[주문 auto sync] order_sync 잡 생성 {job_id}")
 
-            # 1-b) CS 문의 동기화도 주문 자동수집에 연동 — 별도 30분 폴러가 아닌
-            #      주문 자동수집 인터벌마다 cs_sync 잡을 함께 큐잉(중복 실행 방지 내장).
-            #      [테넌트 격리] tenant_id=None 단일 잡은 ContextVar가 비어 전 테넌트
-            #      마켓계정을 무차별 순회한다(데이터 누수 사고 원인). 활성 테넌트별로
-            #      잡을 나눠 생성해야 각 잡이 자기 테넌트 계정만 동기화한다.
-            try:
-                from sqlmodel import select as _sel
-
-                from backend.domain.samba.order.poller import _create_cs_sync_job
-                from backend.domain.samba.tenant.model import SambaTenant
-
-                async with get_write_session() as cs_ws:
-                    _trows = await cs_ws.execute(
-                        _sel(SambaTenant.id).where(
-                            SambaTenant.is_active == True  # noqa: E712
-                        )
-                    )
-                    _tids = [r[0] for r in _trows.all()]
-                    if _tids:
-                        for _tid in _tids:
-                            await _create_cs_sync_job(cs_ws, tenant_id=_tid)
-                    else:
-                        # 싱글테넌트 모드: 활성 테넌트 없음 → tenant_id=None 잡으로 전체 계정 처리
-                        await _create_cs_sync_job(cs_ws, tenant_id=None)
-            except Exception as _cs_e:
-                _log.warning(f"[주문 auto sync] cs_sync 잡 생성 실패: {_cs_e}")
+            # (1-b CS 문의 동기화는 주문 인터벌에서 분리 — 위 독립 인터벌 블록 참조)
 
             # 2) 잡 완료 대기 (최대 30분)
             deadline = time.time() + 30 * 60
