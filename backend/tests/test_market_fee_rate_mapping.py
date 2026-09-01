@@ -32,6 +32,8 @@ NOT_YET_SELLING = {
     "amazon",
     "buyma",
     "cafe24",
+    # 패션플러스: 수수료율 확정(패플 MD 회신) 후 이 목록에서 빼고 수수료 맵에 등록할 것.
+    "fashionplus",
     "ktalpha",
     "lazada",
     "qoo10",
