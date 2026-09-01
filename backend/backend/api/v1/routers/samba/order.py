@@ -11029,7 +11029,13 @@ async def sync_orders_from_markets(
                     # 구매자가 각각 주문하면 SKU+product_id가 같아 fallback이 서로 다른 두 주문을
                     # 한 행으로 합쳐버림 (2026-07-14 잉어킹 4개+1개 주문 뒤섞임 사고).
                     # 이베이는 order_number(legacyOrderId) 매칭만 신뢰.
-                    and order_data.get("source") not in ("lotteon", "ebay")
+                    # POIZON도 제외: shipment_id=seller_bidding_no인데, 서버가 같은 입찰번호를
+                    # 재발급 없이 재체결시키는 경우(리스팅 "부활")가 있어 동일 상품이 여러 번
+                    # 팔려도 shipment_id+product_id가 그대로 같다. fallback이 이후 주문들을
+                    # 전부 첫 주문 행으로 합쳐 주문 2건이 누락됐다(2026-08-31 DM0950-108,
+                    # order_no 21315194655623299/21315195889963299가 21315195034863299에
+                    # 합쳐짐 — 삼바에 1건만 노출). POIZON은 order_number 매칭만 신뢰.
+                    and order_data.get("source") not in ("lotteon", "ebay", "poison")
                 ):
                     # 같은 orderId + 상품번호로 이미 있는 주문 검색
                     _dup_candidates = await svc.repo.filter_by_async(
