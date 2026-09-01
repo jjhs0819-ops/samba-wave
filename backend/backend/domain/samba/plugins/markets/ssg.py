@@ -13,6 +13,72 @@ from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.utils.logger import logger
 
 
+async def _resolve_brand_mappings(
+    client, product: dict, brand_mappings: list[dict]
+) -> list[dict]:
+    """동적 브랜드 해석 (이슈 #358 + 2026-09-01 라이브 우선 개편).
+
+    정책 매핑(ssgBrandMappings)이 없으면 항상 계정 계약목록(listBrand)을 조회해
+    라이브 brandId 를 우선 주입한다 (api_key 10분 캐시라 호출 비용 낮음).
+    하드코딩 CONTRACTED_BRANDS 는 라이브 조회 실패({}) 시의 폴백일 뿐이며,
+    라이브 목록에 없는데 하드코딩만 매칭되는 브랜드(예: 노스페이스 2000006637)는
+    죽은 ID 라 SSG 가 거부하므로 기타(9999999999) 폴백을 강제 주입한다.
+
+    반환: (필요 시 항목이 추가된) brand_mappings. 원본 리스트는 변형하지 않는다.
+    """
+    from backend.domain.samba.proxy.ssg import SSGClient
+
+    _brand_raw = (product.get("brand") or "").strip()
+    _mfr_raw = (product.get("manufacturer") or "").strip()
+    _cand = _brand_raw or _mfr_raw
+    if not _cand:
+        return brand_mappings
+
+    _norm = SSGClient._norm_brand(_cand)
+    _already = {
+        SSGClient._norm_brand(m.get("brandNm", ""))
+        for m in brand_mappings
+        if isinstance(m, dict) and m.get("brandNm")
+    }
+    if _norm in _already:
+        return brand_mappings  # 정책 매핑 최우선 — 그대로 둔다
+
+    try:
+        _cmap = await client.get_contracted_brand_map()
+        # 라이브맵 비어있으면(API 실패 등) 판정 스킵 — 기존 하드코딩 동작 유지
+        if _cmap:
+            _bid = _cmap.get(SSGClient._norm_brand(_brand_raw)) or (
+                _cmap.get(SSGClient._norm_brand(_mfr_raw)) if _mfr_raw else None
+            )
+            if _bid:
+                brand_mappings = list(brand_mappings) + [
+                    {"brandNm": _cand, "brandId": _bid}
+                ]
+                logger.info(f"[SSG] 브랜드 동적해석: {_cand!r} → brandId={_bid}")
+            else:
+                # 라이브 계약목록에 없음 — 하드코딩 매칭돼도 죽은 ID.
+                _hc_id = SSGClient.match_brand(_brand_raw)[0]
+                if _hc_id == "9999999999" and _mfr_raw:
+                    _hc_id = SSGClient.match_brand(_mfr_raw)[0]
+                if _hc_id != "9999999999":
+                    # 기타 폴백 강제 주입 (brandNm=원본이라 상품명 브랜드 제거는
+                    # 기존 기타 폴백의 소싱처 brand 직접 제거와 동일 결과)
+                    brand_mappings = list(brand_mappings) + [
+                        {"brandNm": _cand, "brandId": "9999999999"}
+                    ]
+                    logger.warning(
+                        f"[SSG] 계약 없는 브랜드 — 하드코딩 brandId 무시하고 "
+                        f"기타 폴백: {_cand!r}(하드코딩={_hc_id})"
+                    )
+                else:
+                    logger.warning(
+                        f"[SSG] 브랜드 미해결(계약목록에 없음, 기타 폴백): {_cand!r}"
+                    )
+    except Exception as _be:  # noqa: BLE001
+        logger.warning(f"[SSG] 브랜드 동적해석 실패(무시): {_be}")
+    return brand_mappings
+
+
 class SSGPlugin(MarketPlugin):
     market_type = "ssg"
     policy_key = "신세계몰(전시)"
@@ -149,42 +215,8 @@ class SSGPlugin(MarketPlugin):
         # 정책 브랜드 매핑 추출
         brand_mappings: list[dict] = creds.get("ssgBrandMappings") or []
 
-        # 동적 브랜드 해석 (이슈 #358) — ssgBrandMappings/하드코딩 CONTRACTED_BRANDS로
-        # 미해결인 브랜드를 계정 계약목록(listBrand) exact-match로 보강 주입.
-        # listBrand 는 계정별 계약 브랜드만 반환하므로, 그 계정이 계약한 브랜드만 복구되고
-        # 미계약 브랜드(예: 써코니·조던)는 그대로 기타(9999999999) 폴백 유지된다.
-        _brand_raw = (product.get("brand") or "").strip()
-        _mfr_raw = (product.get("manufacturer") or "").strip()
-        _cand = _brand_raw or _mfr_raw
-        if _cand:
-            _norm = SSGClient._norm_brand(_cand)
-            _already = {
-                SSGClient._norm_brand(m.get("brandNm", ""))
-                for m in brand_mappings
-                if isinstance(m, dict) and m.get("brandNm")
-            }
-            _hardcoded_ok = SSGClient.match_brand(_brand_raw)[0] != "9999999999" or (
-                _mfr_raw and SSGClient.match_brand(_mfr_raw)[0] != "9999999999"
-            )
-            if _norm not in _already and not _hardcoded_ok:
-                try:
-                    _cmap = await client.get_contracted_brand_map()
-                    _bid = _cmap.get(SSGClient._norm_brand(_brand_raw)) or (
-                        _cmap.get(SSGClient._norm_brand(_mfr_raw)) if _mfr_raw else None
-                    )
-                    if _bid:
-                        brand_mappings = list(brand_mappings) + [
-                            {"brandNm": _cand, "brandId": _bid}
-                        ]
-                        logger.info(
-                            f"[SSG] 브랜드 동적해석: {_cand!r} → brandId={_bid}"
-                        )
-                    elif _cand:
-                        logger.warning(
-                            f"[SSG] 브랜드 미해결(계약목록에 없음, 기타 폴백): {_cand!r}"
-                        )
-                except Exception as _be:  # noqa: BLE001
-                    logger.warning(f"[SSG] 브랜드 동적해석 실패(무시): {_be}")
+        # 동적 브랜드 해석 — 라이브 계약목록(listBrand) 우선, 상세는 헬퍼 docstring 참조
+        brand_mappings = await _resolve_brand_mappings(client, product, brand_mappings)
 
         # 설정에서 마진율/배송소요일/구매수량 제한 추출 (정책값 우선, 설정값 폴백)
         margin_rate = int(creds.get("marginRate") or 0)
@@ -937,7 +969,9 @@ class SSGPlugin(MarketPlugin):
                         if _spl:
                             for _try in range(2):
                                 try:
-                                    _mine = await client.find_live_item_id_by_spl_ven(_spl)
+                                    _mine = await client.find_live_item_id_by_spl_ven(
+                                        _spl
+                                    )
                                 except Exception as _e:
                                     logger.warning(
                                         f"[SSG] 동일상품 응답 후 지문조회 실패({_try + 1}/2): {_e}"
