@@ -53,6 +53,9 @@ export default function SambaLayout({
   // 로그인/회원가입/라이선스 페이지는 인증 체크 없이 렌더링
   const isLoginPage = pathname === "/samba/login" || pathname === "/samba/sign-up";
   const isLicensePage = pathname === "/samba/license";
+  // 모바일 전용 화면(/samba/m/*)은 데스크톱 헤더·네비 없이 전체화면으로 렌더한다.
+  // 인증 체크는 그대로 통과시킨다(로그인 페이지와 다름).
+  const isMobilePage = pathname.startsWith("/samba/m/");
 
   useEffect(() => {
     if (isLoginPage || isLicensePage) {
@@ -248,6 +251,11 @@ export default function SambaLayout({
         <p style={{ color: c.textMuted, fontSize: "0.875rem" }}>로딩 중...</p>
       </div>
     );
+  }
+
+  // 모바일 화면 — 인증 통과 후 헤더 없이 children 만
+  if (isMobilePage) {
+    return <>{children}</>;
   }
 
   const handleLogout = () => {
