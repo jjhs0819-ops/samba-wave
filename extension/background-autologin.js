@@ -397,7 +397,9 @@ async function _spaDirectLogin(siteKey, username, password) {
 
     // SPA 사이트는 input이 동적 렌더링 — input 등장까지 폴링 (최대 10초)
     // 무신사는 /auth/login → member.one.musinsa.com/login 리다이렉트 후 SPA 렌더링됨
-    const SPA_INPUT_WAIT_SITES = ['musinsa', 'lotteon']
+    // 패션플러스는 로그인 페이지에 쿠폰/캠페인 팝업이 다수 떠 무겁고, 로그인 폼(#login_id 등)이
+    // SPA 로 늦게 렌더링됨 → 2초 고정대기론 "fields not found" 로 자동로그인 실패. 폴링 대기 추가.
+    const SPA_INPUT_WAIT_SITES = ['musinsa', 'lotteon', 'fashionplus']
     if (SPA_INPUT_WAIT_SITES.includes(siteKey)) {
       const spaStart = Date.now()
       const SPA_WAIT_MAX = 10000
