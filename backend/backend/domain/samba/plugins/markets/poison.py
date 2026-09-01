@@ -205,7 +205,11 @@ class PoisonPlugin(MarketPlugin):
         """
         import time as _time
 
-        from backend.domain.samba.proxy.poison import PoisonClient, option_real_cost
+        from backend.domain.samba.proxy.poison import (
+            PoisonClient,
+            bundle_multiplier,
+            option_real_cost,
+        )
 
         app_key = (
             creds.get("app_key") or creds.get("appKey") or creds.get("apiKey") or ""
@@ -429,6 +433,17 @@ class PoisonPlugin(MarketPlugin):
                     {"size": opt_name, "success": False, "message": "사이즈 매칭 실패"}
                 )
                 continue
+
+            # 묶음 SKU 보정 — 포이즌은 같은 품번에 단품과 묶음("2 Set 6 Pack")을 같이
+            # 두는데 매칭은 사이즈만 본다. 묶음이 걸리면 소싱처에서 N개를 사야 하므로
+            # 원가도 N배다. 안 하면 팔리는 순간 확정 역마진(FT8529 실사고).
+            _bundle = bundle_multiplier((sku or {}).get("color"))
+            if _bundle > 1:
+                cost = cost * _bundle
+                logger.info(
+                    f"[POIZON] 묶음 SKU {article_number}/{opt_name} "
+                    f"'{(sku or {}).get('color')}' → 원가 x{_bundle} = {cost:,}"
+                )
 
             # 재고 0 → 기존 입찰 취소 (등록 안 된 사이즈는 skip)
             if stock <= 0:
