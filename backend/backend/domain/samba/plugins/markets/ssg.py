@@ -79,6 +79,59 @@ async def _resolve_brand_mappings(
     return brand_mappings
 
 
+# ssgBrandMappings 비어있음 경고를 프로세스당 1회만 남기기 위한 플래그
+_EMPTY_MAPPINGS_WARNED = False
+
+
+def _coerce_brand_mappings(raw: Any) -> list[dict]:
+    """creds.ssgBrandMappings 를 list[dict] 로 정규화.
+
+    proxy/ssg.py transform_product 의 방어와 동일: 프론트 직렬화 오류로 문자열
+    저장된 경우 JSON 복원 시도, 복원 불가/비리스트/비dict 원소는 제외한다.
+    """
+    import json
+
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(raw, list):
+        return []
+    return [m for m in raw if isinstance(m, dict) and m.get("brandNm")]
+
+
+def _match_policy_brand(name: str, mappings: list[dict]) -> str:
+    """정책 매핑(ssgBrandMappings)에서 브랜드 매칭 — 매칭된 brandNm 반환("" = 미매칭).
+
+    ★가드 전용 매칭 함수. brandId 해석용 _match_from_mappings(proxy/ssg.py,
+    포함 매칭)와 목적이 다르다 — 그쪽은 절대 바꾸지 말 것.
+    정규화(소문자+공백제거, SSGClient._norm_brand)는 동일하게 쓰되, 판정은:
+      1) 완전일치: nb == pb
+      2) 접두일치(양방향): nb.startswith(pb) or pb.startswith(nb)
+         → "나이키키즈"/"나이키 스윔"/"아디다스(퍼포먼스)" 등 하위·변형 표기가
+           정책 브랜드("나이키"/"아디다스") 접두로 매칭되어 통과한다.
+    단순 포함(in) 매칭은 금지 — 1자 정책 브랜드("리"=LEE)가 "와키윌리" 같은
+    무관 브랜드를 과매칭해 화이트리스트를 뚫는다(실측 오탐).
+    """
+    from backend.domain.samba.proxy.ssg import SSGClient
+
+    if not name or not mappings:
+        return ""
+    nb = SSGClient._norm_brand(name)
+    if not nb:
+        return ""
+    for m in mappings:
+        pb = SSGClient._norm_brand(m.get("brandNm") or "")
+        if pb and pb == nb:
+            return m["brandNm"]
+    for m in mappings:
+        pb = SSGClient._norm_brand(m.get("brandNm") or "")
+        if pb and (nb.startswith(pb) or pb.startswith(nb)):
+            return m["brandNm"]
+    return ""
+
+
 class SSGPlugin(MarketPlugin):
     market_type = "ssg"
     policy_key = "신세계몰(전시)"
@@ -114,6 +167,42 @@ class SSGPlugin(MarketPlugin):
         api_key = creds.get("apiKey", "")
         if not api_key:
             return {"success": False, "message": "SSG 인증키가 비어있습니다."}
+
+        # ── 정책 브랜드 화이트리스트 가드 (2026-09-01 사장님 지시) ─────────────
+        # 신세계몰은 계정 정책(ssgBrandMappings = 어브로드-1 정책의 신세계몰 계약
+        # 브랜드)에 등록된 브랜드만 전송한다. 미계약 브랜드는 기타(9999999999)로
+        # 올라가 버리므로(2026-09-01 비계약 331건 실사고) 전송 자체를 스킵한다.
+        # ★ssgBrandMappings 가 비어있거나 없는 계정이면 가드를 적용하지 않는다
+        #   (다른 계정/초기 세팅에서 전 상품이 막히는 회귀 방지).
+        _policy_brands = _coerce_brand_mappings(creds.get("ssgBrandMappings"))
+        if not _policy_brands:
+            global _EMPTY_MAPPINGS_WARNED
+            if not _EMPTY_MAPPINGS_WARNED:
+                _EMPTY_MAPPINGS_WARNED = True
+                logger.warning(
+                    "[SSG] ssgBrandMappings 비어있음 — 브랜드 화이트리스트 가드 비활성"
+                )
+        else:
+            # brand 가 비었으면 manufacturer 로도 시도 (기존 매칭 관례와 동일)
+            _g_brand = (product.get("brand") or "").strip()
+            _g_mfr = (product.get("manufacturer") or "").strip()
+            _g_hit = _match_policy_brand(_g_brand, _policy_brands) or (
+                _match_policy_brand(_g_mfr, _policy_brands) if _g_mfr else ""
+            )
+            if not _g_hit:
+                _g_label = _g_brand or _g_mfr or "(브랜드 없음)"
+                logger.info(
+                    f"[SSG] 미계약 브랜드 전송 스킵: {_g_label} "
+                    f"(정책 등록 브랜드 {len(_policy_brands)}개)"
+                )
+                # _skip_retry: 전송 워커(shipment/service.py)가 status="skipped" 로
+                # 분류하고 failed_at 을 남기지 않는 기존 스킵 관례
+                # (옵션가 불균일 스킵과 동일 방식).
+                return {
+                    "success": False,
+                    "message": f"스킵 (신세계몰 미계약 브랜드: {_g_label})",
+                    "_skip_retry": True,
+                }
 
         # transmitting stuck으로 itemId가 "__exists__"/"__claiming__"로 저장된 상품:
         # SSG에는 이미 등록됐지만 실제 itemId를 모름. 아래 멱등가드의

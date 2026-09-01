@@ -15,6 +15,10 @@ import { fmtDate, fmtTime } from '@/lib/samba/utils'
 import { formatSourceSiteLabel } from '../utils/siteAlias'
 import { hasActionTag } from '../utils/actionTag'
 
+// [2026-09-01] 쿠팡노출 입력칸 숨김 — 안 쓰는 기능이라 화면에서만 제거 (사장님 요청).
+// 다시 쓰려면 true 로만 바꾸면 됨. 저장 로직/DB 필드(coupang_display_name)는 그대로 유지.
+const SHOW_COUPANG_DISPLAY_NAME: boolean = false
+
 interface Props {
   o: SambaOrder
   accounts?: { id: string; account_label?: string; market_type?: string }[]
@@ -329,7 +333,8 @@ export default function OrderInfoCell(props: Props) {
         </div>
       </div>
 
-      {/* 쿠팡노출 */}
+      {/* 쿠팡노출 — SHOW_COUPANG_DISPLAY_NAME=false 로 숨김 (미사용 기능) */}
+      {SHOW_COUPANG_DISPLAY_NAME && (
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', marginBottom: '0.375rem' }}>
         <span style={{ color: c.textSub, fontSize: '0.7rem', whiteSpace: 'nowrap' }}>쿠팡노출</span>
         <input
@@ -348,6 +353,7 @@ export default function OrderInfoCell(props: Props) {
           style={{ flex: 1, fontSize: '0.75rem', padding: '0.125rem 0.375rem', background: c.inputBg, border: `1px solid ${c.border}`, color: c.text, borderRadius: '4px', minWidth: 0 }}
         />
       </div>
+      )}
 
       {/* 업데이트 로그 */}
       {refreshLog[o.id] && (

@@ -19,6 +19,30 @@ export const STATUS_MAP: Record<string, { label: string; bg: string; text: strin
   undeliverable: { label: '발송불가', bg: 'rgba(217,119,6,0.15)', text: '#F59E0B' },
 }
 
+// [2026-09-01] 주문상태 드롭다운 전용 색 — 불투명 배경 + 확실히 대비되는 글자색.
+// STATUS_MAP 의 bg(rgba 0.15)는 너무 옅어 셀렉트 배경으로 못 쓰므로 별도 정의 (STATUS_MAP 은 손대지 않음).
+// 밝은 배경엔 #1a1a1a, 어두운 배경엔 #fff — 라이트/다크 테마 무관하게 읽히도록 고정값 사용.
+export const STATUS_SELECT_COLORS: Record<string, { bg: string; fg: string }> = {
+  pending: { bg: '#FCC419', fg: '#1a1a1a' },               // 주문접수 — 노랑
+  preparing: { bg: '#74C0FC', fg: '#1a1a1a' },             // 상품준비중 — 하늘
+  wait_ship: { bg: '#4263EB', fg: '#fff' },                // 배송대기중 — 인디고
+  arrived: { bg: '#15AABF', fg: '#fff' },                  // 상품도착 — 시안
+  ship_failed: { bg: '#E03131', fg: '#fff' },              // 송장전송실패 — 빨강 (기존 하드코딩 흡수)
+  shipping: { bg: '#1971C2', fg: '#fff' },                 // 국내배송중 — 파랑
+  delivered: { bg: '#2F9E44', fg: '#fff' },                // 배송완료 — 초록
+  cancelling: { bg: '#F76707', fg: '#fff' },               // 취소중 — 주황
+  returning: { bg: '#AE3EC9', fg: '#fff' },                // 반품중 — 자주
+  exchanging: { bg: '#F783AC', fg: '#1a1a1a' },            // 교환중 — 연분홍
+  cancel_requested: { bg: '#A61E4D', fg: '#fff' },         // 취소요청 — 진한 자홍
+  cancel_reject_pending: { bg: '#7048E8', fg: '#fff' },    // 취소거부(수동) — 보라
+  return_requested: { bg: '#862E9C', fg: '#fff' },         // 반품요청 — 진보라
+  cancelled: { bg: '#FFA8A8', fg: '#1a1a1a' },             // 취소완료 — 연한 빨강
+  returned: { bg: '#E599F7', fg: '#1a1a1a' },              // 반품완료 — 연한 자주
+  exchanged: { bg: '#8CE99A', fg: '#1a1a1a' },             // 교환완료 — 연초록
+  return_completed: { bg: '#087F5B', fg: '#fff' },         // 회수확정 — 진한 청록
+  undeliverable: { bg: '#795548', fg: '#fff' },            // 발송불가 — 갈색
+}
+
 export const SHIPPING_COMPANIES = ['CJ대한통운', '우진택배', '롯데택배', '로젠택배', '우체국택배', '경동택배', '한진택배', '일양로지스', '천일택배', '허브넷로지스틱스', '시리박스', '딜리박스', 'DHL', 'Rincos', 'Korea Post', '직접배송', '기타']
 
 // [2026-07-02] 크림 해외송장용 — 일본 택배사 (input+datalist라 직접입력도 가능)

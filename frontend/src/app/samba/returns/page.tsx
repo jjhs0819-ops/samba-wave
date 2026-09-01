@@ -143,8 +143,8 @@ export default function ReturnsPage() {
     }
     let limited = tokens
     if (tokens.length > 200) {
-      // 상한 초과는 막지 않고 앞 200건만 조회 (백엔드 상한 200과 동일)
-      showAlert(`주문번호는 한 번에 최대 200건까지 조회됩니다. 입력 ${fmtNum(tokens.length)}건 중 앞 200건만 조회합니다.`, 'info')
+      // 상한 초과는 막지 않고 앞 200건만 조회 (백엔드 상한 200과 동일 · 안내 문구는 주문탭과 통일)
+      showAlert(`주문번호 ${fmtNum(tokens.length)}건 입력 — 최대 200건까지만 조회됩니다 (앞 200건)`, 'info')
       limited = tokens.slice(0, 200)
     }
     multiAppliedRef.current = true
@@ -625,15 +625,16 @@ export default function ReturnsPage() {
             value={multiText}
             onChange={e => setMultiText(e.target.value)}
             onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') applyMultiSearch() }}
-            placeholder={'주문번호 여러 건 입력 (줄바꿈·쉼표로 구분, 최대 200건)\n조회: [검색] 또는 Ctrl+Enter'}
-            style={{ ...makeInputStyle(c), width: '240px', padding: '0.3rem 0.4rem', fontSize: '0.75rem', lineHeight: 1.5, resize: 'vertical' }}
+            placeholder={'주문번호 여러 건 붙여넣기\n(줄바꿈·쉼표로 구분, 최대 200건)'}
+            title={'Enter=줄바꿈 · Ctrl/Cmd+Enter=조회'}
+            style={{ ...makeInputStyle(c), width: '240px', padding: '0.22rem 0.4rem', fontSize: '0.75rem', lineHeight: 1.35, resize: 'vertical', verticalAlign: 'middle' }}
           />
         ) : (
           <input style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={searchText} onChange={e => setSearchText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }} placeholder="검색어 입력" />
         )}
         <button
           onClick={toggleMultiMode}
-          title="여러 주문번호를 한 번에 조회 (줄바꿈·쉼표로 구분, 최대 200건)"
+          title="여러 주문번호를 한 번에 조회 (줄바꿈·쉼표·공백 구분)"
           style={{ ...(multiMode ? btn('primary', c) : btn('ghost', c)), padding: '0.22rem 0.6rem', fontSize: '0.75rem' }}
         >다중</button>
         <button onClick={() => { if (multiMode) applyMultiSearch() /* 일반 모드 검색은 입력 즉시 목록에 반영됨 */ }} style={{ ...btn('secondary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>

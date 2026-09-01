@@ -11,7 +11,7 @@ import { useTheme } from '@/lib/samba/useTheme'
 import { btn, btnDisabled } from '@/lib/samba/buttons'
 import { formatDateInput, getPeriodStart, getPeriodEnd } from '@/lib/samba/utils'
 import { showAlert } from '@/components/samba/Modal'
-import { STATUS_MAP } from '../constants'
+import { STATUS_MAP, STATUS_SELECT_COLORS } from '../constants'
 
 interface Props {
   isProductMode: boolean
@@ -355,12 +355,29 @@ export default function OrdersFilterBar(props: Props) {
             <option value="has_invoice">송장입력</option>
             <option value="no_invoice">송장미입력</option>
           </select>
-          <select style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+          {/* 주문상태 필터 — 테이블 드롭다운과 같은 STATUS_SELECT_COLORS 로 통일.
+              특수 옵션(전체/제외)은 기본색 유지, 상태 선택 시엔 닫힌 상태에서도 상태색 표시 */}
+          <select
+            style={{
+              ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem',
+              ...(STATUS_SELECT_COLORS[statusFilter]
+                ? { background: STATUS_SELECT_COLORS[statusFilter].bg, color: STATUS_SELECT_COLORS[statusFilter].fg, border: '1px solid rgba(0,0,0,0.35)', fontWeight: 600 }
+                : {}),
+            }}
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+          >
             <option value="">전체 주문상태</option>
             <option value="cancel_return_excluded">취소/반품/교환/배송 제외</option>
             {Object.entries(STATUS_MAP)
               .filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k))
-              .map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+              .map(([k, v]) => (
+                <option
+                  key={k}
+                  value={k}
+                  style={{ backgroundColor: STATUS_SELECT_COLORS[k]?.bg, color: STATUS_SELECT_COLORS[k]?.fg, fontWeight: k === statusFilter ? 700 : 400 }}
+                >{v.label}</option>
+              ))}
           </select>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...makeInputStyle(c), width: '63px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }}>
             <option value="date_desc">최신순</option>

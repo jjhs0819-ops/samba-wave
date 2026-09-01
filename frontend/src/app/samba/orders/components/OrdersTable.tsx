@@ -9,24 +9,11 @@ import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { makeInputStyle, fmtNum } from '@/lib/samba/styles'
 import { fmtTime } from '@/lib/samba/utils'
-import { STATUS_MAP, SHIPPING_COMPANIES, OVERSEAS_SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
+import { STATUS_MAP, STATUS_SELECT_COLORS, SHIPPING_COMPANIES, OVERSEAS_SHIPPING_COMPANIES, ACTION_BUTTONS } from '../constants'
 import { parseActionTags } from '../utils/actionTag'
 import OrderInfoCell from './OrderInfoCell'
 import { useTheme } from '@/lib/samba/useTheme'
-import { useThemeStore } from '@/lib/samba/themeStore'
 import { btn } from '@/lib/samba/buttons'
-
-// STATUS_MAP 색은 다크 기준(#FFD93D 등)이라 라이트모드 흰 배경에서 흐리게 보임 —
-// 라이트모드일 때만 밝기를 낮춰 가독성 보정 (STATUS_MAP 자체는 손대지 않음)
-const darkenHex = (hex: string, factor = 0.68): string => {
-  const m = /^#([0-9a-fA-F]{6})$/.exec(hex)
-  if (!m) return hex
-  const n = parseInt(m[1], 16)
-  const r = Math.round(((n >> 16) & 255) * factor)
-  const g = Math.round(((n >> 8) & 255) * factor)
-  const b = Math.round((n & 255) * factor)
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
-}
 
 // 같은 주문 송장 동시 전송 차단 — 송장번호 input blur + 마켓전송 버튼 click 이
 // 동시에 발동해 중복 전송되면, 첫 전송 성공 후 두 번째가 INVALID_STATUS 실패로 잡힘.
@@ -112,13 +99,10 @@ interface OrdersTableProps {
 
 export default function OrdersTable(props: OrdersTableProps) {
   const c = useTheme()
-  const theme = useThemeStore((s) => s.theme)
-  // 주문상태 글자색 — STATUS_MAP 기준, 라이트모드에서만 어둡게 보정
-  const statusTextColor = (statusKey: string): string => {
-    const base = STATUS_MAP[statusKey]?.text
-    if (!base) return c.text
-    return theme === 'light' ? darkenHex(base) : base
-  }
+  // 주문상태 대비색 — STATUS_SELECT_COLORS(불투명 배경+대비 글자색) 기준.
+  // 매핑에 없는 상태는 기본 인풋색으로 폴백 (테마 무관하게 읽히도록 고정 색상값 사용)
+  const statusSelectColor = (statusKey: string): { bg: string; fg: string } =>
+    STATUS_SELECT_COLORS[statusKey] ?? { bg: c.inputBg, fg: c.text }
   const {
     accounts, loading, filteredOrders, currentPage, pageSize,
     currentPageIds, selectedIds, setSelectedIds, toggleSelectAll,
@@ -413,10 +397,14 @@ export default function OrdersTable(props: OrdersTableProps) {
                           fontSize: '0.75rem',
                           fontWeight: 600,
                           cursor: 'pointer',
-                          color: statusTextColor(o.status), // 상태별 색 (라이트모드 밝기 보정 포함)
+                          // 상태별 배경+글자색 — 닫혀 있을 때도 상태색이 보이게 (ship_failed 하드코딩 흡수)
+                          background: statusSelectColor(o.status).bg,
+                          color: statusSelectColor(o.status).fg,
+                          border: '1px solid rgba(0,0,0,0.35)', // 배경과 같은 계열의 어두운 테두리
                         }}
                       >
-                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={{ color: statusTextColor(k) }}>{v.label}</option>)}
+                        {/* 펼쳤을 때도 항목별 상태색 표시 — 윈도우 크롬에서 option 배경색 지원. 선택 항목은 굵게 */}
+                        {Object.entries(STATUS_MAP).filter(([k]) => !['preparing', 'cancel_reject_pending', 'return_completed', 'undeliverable'].includes(k)).map(([k, v]) => <option key={k} value={k} style={{ backgroundColor: statusSelectColor(k).bg, color: statusSelectColor(k).fg, fontWeight: k === o.status ? 700 : 400 }}>{v.label}</option>)}
                       </select>
                       <input
                         type="text"
