@@ -190,6 +190,7 @@ const defaultPricing: PricingForm = {
 const SOURCING_SITE_LABELS: Record<string, string> = {
   MUSINSA: '무신사', KREAM: '크림', FashionPlus: '패션플러스', Nike: '나이키',
   Adidas: '아디다스', ABCmart: 'ABC마트', LOTTEON: '롯데ON', GSShop: 'GS샵',
+  THEHYUNDAI: '더현대',
   SSG: 'SSG', REXMONDE: '렉스몬드', ElandMall: '이랜드몰', SSF: 'SSF',
   NAVERSTORE: '네이버스토어', DANAWA: '다나와', SNKRDUNK: '스니덩크',
 }
