@@ -54,9 +54,8 @@ def extract_option_ids(response: dict) -> dict[str, int]:
         opt_id = row.get("OptID")
         if opt_id is None:
             continue
-        name = row.get("OptName")
-        if name is None:
-            name = row.get("Name")
+        # OptName 이 빈 문자열이어도 Name 폴백을 타도록 or 판정
+        name = row.get("OptName") or row.get("Name")
         key = option_key(
             {
                 "color": row.get("Color"),

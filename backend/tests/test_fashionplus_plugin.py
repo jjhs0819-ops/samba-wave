@@ -89,8 +89,13 @@ def test_OptID_숫자해석_불가는_건너뛰고_예외를_안_던진다():
 
 
 @pytest.mark.asyncio
-async def test_1단2단_실패해도_3단은_호출되고_결과는_실패다():
-    """1·2단이 is_ok 실패여도 3단은 계속 진행하되 success 는 False."""
+async def test_옵션정보_없으면_1단_실패는_메모로_빠지고_2단_실패만_실패사유다():
+    """옵션 정보가 없는 경로의 의도된 동작을 정확히 단언한다.
+
+    1단(재고0)은 OptID 없는 fallback 행이라 거절돼도 실패로 합산하지 않고
+    "옵션 정보 없음" 메모로만 남는다. 2단(노출해제) 실패는 유령이므로
+    그대로 실패 사유가 되고, 3단은 계속 호출된다.
+    """
     called: list[str] = []
 
     class FakeClient:
@@ -105,8 +110,41 @@ async def test_1단2단_실패해도_3단은_호출되고_결과는_실패다():
     )
     assert called == ["scm_option_upt", "goods_dsp", "goods_delete"]
     assert result["success"] is False
-    assert "1단" in result["message"]
     assert "2단" in result["message"]
+    # 1단 거절은 실패 사유가 아니라 메모다
+    assert "1단(재고0) 실패" not in result["message"]
+    assert "옵션 정보 없음" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_옵션과_매핑이_정상인데_1단이_거절되면_실패로_집계된다():
+    """옵션 정보 없음 면제와 달리, 매핑까지 멀쩡한 재고0 거절은 진짜 실패다.
+
+    재고0 이 안 나간 옵션은 패플에서 계속 팔린다 — 성공으로 박제 금지.
+    3단(임시보관)은 그래도 계속 호출돼야 한다.
+    """
+    called: list[str] = []
+
+    class FakeClient:
+        async def call(self, op, payload):
+            called.append(op)
+            if op == "scm_option_upt":
+                return {"Status": "Err-Dat-999", "Message": "거절"}
+            return {"Status": "OK", "Message": ""}
+
+    options = [
+        {"color": "BLACK", "size": "270", "stock": 5},
+        {"color": "BLACK", "size": "280", "stock": 5},
+    ]
+    result = await FashionPlusPlugin().delete_with_client(
+        FakeClient(),
+        "777",
+        options=options,
+        option_ids={"BLACK|270": 111, "BLACK|280": 222},
+    )
+    assert called == ["scm_option_upt", "scm_option_upt", "goods_dsp", "goods_delete"]
+    assert result["success"] is False
+    assert "1단(재고0) 실패" in result["message"]
 
 
 @pytest.mark.asyncio
@@ -180,7 +218,7 @@ async def test_수정시_OptID_매핑_0건이면_실패로_보고한다():
     product = {
         "sale_price": 10000,
         "options": [{"color": "BLACK", "size": "270", "stock": 5}],
-        # _fp_option_ids 없음 → 전송 행 0건
+        # fp_option_ids 없음 → 전송 행 0건
     }
     result = await FashionPlusPlugin()._update(FakeClient(), product, "777")
     assert result["success"] is False

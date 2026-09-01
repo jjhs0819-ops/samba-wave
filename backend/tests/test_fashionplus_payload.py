@@ -315,3 +315,44 @@ def test_등록_페이로드_옵션가_불균일이면_거부():
     ]
     with pytest.raises(ValueError, match="옵션별 가격이 달라"):
         build_goods_add(product, "1010", "5477", "SND01")
+
+
+# --- 잔여 수정 R1: 실데이터 키 price 기준 판정 (SSG·포이즌 선례와 정렬) ---
+
+
+def test_옵션가불균일_price_키_불균일도_차단된다():
+    """수집 옵션의 실제 필드는 price 다 (무신사 등) — 이 키로 발화해야 실방어다."""
+    options = [
+        {"color": "BLACK", "size": "270", "price": 89000},
+        {"color": "BLACK", "size": "280", "price": 109000},
+    ]
+    assert has_uneven_option_price(options) is True
+
+
+def test_옵션가불균일_price_전부_같으면_False():
+    options = [{"price": 89000}, {"price": 89000}]
+    assert has_uneven_option_price(options) is False
+
+
+def test_옵션가불균일_price가_option_price보다_우선():
+    """price 가 균일하면 폴백 키가 달라도 균일로 본다 (선례 기준 키 우선)."""
+    options = [
+        {"price": 89000, "option_price": 0},
+        {"price": 89000, "option_price": 5000},
+    ]
+    assert has_uneven_option_price(options) is False
+
+
+def test_옵션가불균일_add_price_폴백도_판정한다():
+    options = [{"add_price": 0}, {"add_price": 3000}]
+    assert has_uneven_option_price(options) is True
+
+
+def test_등록_페이로드_price_불균일이면_거부():
+    product = _product()
+    product["options"] = [
+        {"color": "BLACK", "size": "270", "stock": 5, "price": 89000},
+        {"color": "BLACK", "size": "280", "stock": 5, "price": 109000},
+    ]
+    with pytest.raises(ValueError, match="옵션별 가격이 달라"):
+        build_goods_add(product, "1010", "5477", "SND01")

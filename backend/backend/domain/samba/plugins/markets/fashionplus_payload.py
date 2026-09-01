@@ -82,22 +82,30 @@ def option_key(option: dict) -> str:
 
 
 def has_uneven_option_price(options: list[dict]) -> bool:
-    """옵션별 가격(option_price)이 서로 다른 상품인지 판정한다.
+    """옵션별 가격이 서로 다른 상품인지 판정한다.
 
     옵션가 불균일 상품은 대표가 하나로 전송되면 비싼 옵션이 싸게 팔리는
     역마진이 난다 — 신세계몰·롯데홈·포이즌에서 반복된 사고 유형(설계서 §4.4-3).
+
+    값 추출 키는 수집 옵션의 실제 필드인 price 우선 — 같은 방어의 검증된
+    선례(markets/ssg.py·markets/poison.py 의 옵션가 불균일 판정)가 전부
+    o.get("price") 기준이다. option_price/add_price 는 폴백으로만 본다.
+    단 0 은 선례와 달리 값으로 취급한다 — 패플은 OptPrice 0(추가금 없음)이
+    적법한 옵션가라 0 vs 양수도 실제 불균일이다.
     값이 아예 없거나(키 없음·해석 불가) 전부 같으면 False.
     """
     values: set[int] = set()
     for option in options or []:
-        if "option_price" not in option:
-            continue
-        try:
-            values.add(int(float(option["option_price"])))
-        except (TypeError, ValueError):
-            # 해석 불가 값은 판정 대상에서 제외 — 전송 단계(build_scm_option_upt)가
-            # 별도로 스킵·경고 처리한다
-            continue
+        for key in ("price", "option_price", "add_price"):
+            if key not in option:
+                continue
+            try:
+                values.add(int(float(option[key])))
+            except (TypeError, ValueError):
+                # 해석 불가 값은 다음 후보 키로 — 전부 불가면 판정 대상에서 제외
+                # (전송 단계 build_scm_option_upt 가 별도로 스킵·경고 처리)
+                continue
+            break
     return len(values) > 1
 
 
