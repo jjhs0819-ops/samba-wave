@@ -3712,6 +3712,114 @@ async def _push_hubnet_tracking(
         return {"updated": 0, "error": str(e)[:80]}
 
 
+async def sync_hubnet_hbl(
+    session: AsyncSession, tenant_id: Optional[str] = None
+) -> dict:
+    """허브넷 HBL(add2) → 크림주문 overseas_tracking_number 채우기 [2026-09-01].
+
+    크림 공식 API 는 CN(식화) 주문에 tracking=null 을 줘서 주문수집만으론 송장이
+    안 붙는다. 허브넷 조회(search_kream)에는 주문번호(add1)마다 HBL(add2)이 있으므로
+    (단일 계정으로 A-SN/A-LI/A-AC 등 전 주문 조회됨), 송장 비어있는 크림주문에 HBL 을
+    채워 넣는다. JP 는 이미 tracking 이 있으니 비어있는 것(주로 CN)만 대상.
+    실패해도 예외 안 던짐."""
+    from datetime import date as _date, timedelta as _td
+
+    import httpx as _httpx
+    from sqlalchemy import or_ as _or, update as _update
+
+    creds = await _get_hubnet_credentials(session, tenant_id)
+    if not creds or not creds.get("email"):
+        return {"updated": 0, "error": "hubnet_credentials 없음"}
+
+    conds = [
+        SambaOrder.source_site == "KREAM",
+        _or(
+            SambaOrder.overseas_tracking_number.is_(None),
+            SambaOrder.overseas_tracking_number == "",
+        ),
+    ]
+    if tenant_id:
+        conds.append(SambaOrder.tenant_id == tenant_id)
+    rows = (
+        await session.execute(
+            select(SambaOrder.id, SambaOrder.order_number).where(*conds)
+        )
+    ).all()
+    want = {str(o[1]): o[0] for o in rows if o[1]}
+    if not want:
+        return {"updated": 0, "error": None}
+
+    start = (_date.today() - _td(days=45)).isoformat()
+    end = _date.today().isoformat()
+    ua = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    )
+    try:
+        async with _httpx.AsyncClient(
+            headers={
+                "User-Agent": ua,
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"{_HUBNET_BASE}/list",
+            },
+            timeout=40,
+            follow_redirects=True,
+        ) as client:
+            login = await client.post(
+                f"{_HUBNET_BASE}/auth",
+                data={
+                    "action": "login",
+                    "email": creds["email"],
+                    "password": creds.get("password", ""),
+                },
+            )
+            if '"success":true' not in login.text:
+                return {"updated": 0, "error": f"허브넷 로그인 실패: {login.text[:80]}"}
+            search = await client.post(
+                f"{_HUBNET_BASE}/list_ajax",
+                data={
+                    "mode": "search_kream",
+                    "start_date": start,
+                    "end_date": end,
+                    "date_type": "order",
+                    "search_type": "hbl",
+                    "numbers": "",
+                    "work_status": "",
+                    "origin": "",
+                },
+            )
+            data = search.json()
+            if not data.get("success"):
+                return {"updated": 0, "error": "허브넷 조회 실패"}
+            # add1=주문번호, add2=HBL
+            hbl_map = {}
+            for hrow in data.get("data", []):
+                onum = str(hrow.get("add1") or "").strip()
+                hbl = str(hrow.get("add2") or "").strip()
+                if onum and hbl and hbl.upper().startswith("H"):
+                    hbl_map[onum] = hbl
+            upd = 0
+            for onum, oid in want.items():
+                h = hbl_map.get(onum)
+                if not h:
+                    continue
+                await session.execute(
+                    _update(SambaOrder)
+                    .where(SambaOrder.id == oid)
+                    .values(
+                        overseas_tracking_number=h,
+                        overseas_shipping_company="허브넷로지스틱스",
+                    )
+                )
+                upd += 1
+            await session.commit()
+            logger.info(f"[허브넷] HBL 송장 채움 {upd}건 (대상 {len(want)})")
+            return {"updated": upd, "error": None}
+    except Exception as e:
+        logger.warning(f"[허브넷] HBL 조회 실패(무시): {e}")
+        return {"updated": 0, "error": str(e)[:80]}
+
+
 @router.put("/{order_id}/status", response_model=SambaOrder)
 async def update_order_status(
     order_id: str,
