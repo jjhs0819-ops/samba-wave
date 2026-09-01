@@ -40,7 +40,14 @@ def extract_option_ids(response: dict) -> dict[str, int]:
         if not opt_id:
             continue
         key = option_key({"color": row.get("Color"), "size": row.get("Size")})
-        ids[key] = int(opt_id)
+        try:
+            ids[key] = int(opt_id)
+        except (TypeError, ValueError):
+            # GoodsAdd 가 원격에서 이미 성공한 뒤다 — 여기서 예외를 내보내면
+            # 상위가 "등록 실패"로 오판해 재시도 → 중복등록 위험. 건너뛰고 기록만 한다.
+            logger.warning(
+                f"[패션플러스] OptID 정수 해석 불가 — 매핑 제외: {opt_id!r} (key={key})"
+            )
     return ids
 
 
@@ -141,10 +148,16 @@ class FashionPlusPlugin(MarketPlugin):
                 str(price_resp.get("Status", "")),
             )
 
+        options = product.get("options") or []
         option_ids = product.get("_fp_option_ids") or {}
-        rows = build_scm_option_upt(
-            item_id, option_ids, product.get("options") or [], update_price=False
-        )
+        rows = build_scm_option_upt(item_id, option_ids, options, update_price=False)
+        if options and not rows:
+            # 가격만 갱신되고 재고는 하나도 못 건드렸다 — 성공으로 보고하면
+            # 품절 반영이 안 된 채 "수정 완료"로 박제되는 유령이 생긴다.
+            return _fail(
+                f"패션플러스 가격은 갱신됨 / 재고 미갱신 — "
+                f"OptID 매핑 없음 (옵션 {len(options)}건)"
+            )
         for row in rows:
             stock_resp = await client.call("scm_option_upt", row)
             if not is_ok(stock_resp):
@@ -165,40 +178,64 @@ class FashionPlusPlugin(MarketPlugin):
 
         GoodsDelete 는 물리삭제가 아니라 '임시보관' 이라, 이것만 부르면
         패플에서 계속 팔릴 수 있다. 앞 두 단계가 실제로 판매를 멈춘다.
-        중간 단계가 실패해도 다음 단계를 계속 진행한다.
+        중간 단계가 실패해도 다음 단계는 계속 진행하되, 실패를 전부 모아
+        최종 success 에 반영한다 — 재고·노출이 남은 '유령'을 성공으로 박제하지 않는다.
         """
-        for option in options or []:
-            option["stock"] = 0
+        failures: list[str] = []
+
+        # 호출측 dict 를 오염시키지 않게 얕은 복사로 재고 0 을 만든다
+        zeroed = [{**o, "stock": 0} for o in (options or [])]
         rows = build_scm_option_upt(
             item_id,
-            {
-                option_key(o): o["opt_id"]
-                for o in (options or [])
-                if o.get("opt_id")
-            },
-            options or [],
+            {option_key(o): o["opt_id"] for o in zeroed if o.get("opt_id")},
+            zeroed,
             update_price=False,
         )
+        skipped = len(zeroed) - len(rows)
+        if skipped > 0:
+            # 매핑 없는 옵션은 재고0 요청이 못 나가 패플에서 계속 팔린다
+            failures.append(f"옵션 {skipped}건 재고0 미전송(OptID 매핑 없음)")
+
         # 옵션 정보가 없어도 3단 순서는 지킨다 (재고0 요청 1건으로 단계를 표시)
         fallback = [{"ItemId": str(item_id), "StockQty": 0, "IsOptionPriceUpdate": 0}]
+        stock_fail = 0
         for row in rows or fallback:
             try:
-                await client.call("scm_option_upt", row)
+                stock_resp = await client.call("scm_option_upt", row)
+                if not is_ok(stock_resp):
+                    stock_fail += 1
             except Exception as e:
                 logger.warning(f"[패션플러스] 삭제 1단(재고0) 실패(계속 진행): {e}")
+                stock_fail += 1
+        if stock_fail:
+            failures.append(f"1단(재고0) 실패 {stock_fail}건")
 
         try:
-            await client.call("goods_dsp", {"ItemID": item_id, "DisplayYN": "N"})
+            dsp_resp = await client.call(
+                "goods_dsp", {"ItemID": item_id, "DisplayYN": "N"}
+            )
+            if not is_ok(dsp_resp):
+                failures.append(
+                    f"2단(노출해제) 실패: "
+                    f"{dsp_resp.get('Message') or dsp_resp.get('Status')}"
+                )
         except Exception as e:
             logger.warning(f"[패션플러스] 삭제 2단(노출해제) 실패(계속 진행): {e}")
+            failures.append("2단(노출해제) 실패")
 
         resp = await client.call("goods_delete", {"ItemID": item_id})
-        if is_ok(resp):
-            return {"success": True, "message": "패션플러스 삭제 완료(임시보관)"}
-        return _fail(
-            f"패션플러스 삭제 실패: {resp.get('Message') or resp.get('Status')}",
-            str(resp.get("Status", "")),
-        )
+        if not is_ok(resp):
+            failures.append(
+                f"3단(임시보관) 실패: {resp.get('Message') or resp.get('Status')}"
+            )
+            return _fail(
+                "패션플러스 삭제 실패: " + " · ".join(failures),
+                str(resp.get("Status", "")),
+            )
+        if failures:
+            # 3단(임시보관)은 됐지만 앞 단계가 남아 패플에 살아있을 수 있다
+            return _fail("패션플러스 삭제 미완료: " + " · ".join(failures))
+        return {"success": True, "message": "패션플러스 삭제 완료(임시보관)"}
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
         client = self._build_client(account)
