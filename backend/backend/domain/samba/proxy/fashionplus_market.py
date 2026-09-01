@@ -86,7 +86,9 @@ def is_ok(payload: dict) -> bool:
 def classify_error(status: str) -> str:
     """에러코드를 재시도 판단용 유형으로 분류한다."""
     s = (status or "").upper()
-    if s.startswith("ERR-ADD-001") or "AUTH" in s:
+    # 인증 실패는 명시적 코드 프리픽스만 인정한다.
+    # ("AUTH" 부분일치는 무관한 코드까지 인증실패로 오분류해 불필요한 재시도를 유발)
+    if s.startswith("ERR-ADD-001") or s.startswith("ERR-AUTH-"):
         return "auth_failed"
     if s.startswith("ERR-DAT-") or s.startswith("ERR-UPT-"):
         return "validation"
@@ -126,15 +128,34 @@ class FashionPlusMarketClient:
         }
 
     async def call(self, op: str, payload: dict) -> dict:
-        """패플 API 1회 호출. 인증 실패는 시각 경계일 수 있어 1회만 재시도한다."""
+        """패플 API 1회 호출.
+
+        인증 실패는 인증키의 시각 경계 문제일 수 있어 키 재생성 후 1회만 재시도한다.
+        인증 실패 판정은 두 경로:
+        ① HTTP 401/403 — 2회째에도 401/403 이면 httpx.HTTPStatusError 를 그대로 올린다
+           (호출측이 계정/키 문제로 구분 처리할 수 있게 예외 전파를 택함).
+        ② 응답 본문 Status 가 auth_failed 로 분류 — 2회째에도 실패면 그 실패 응답 dict 를
+           그대로 반환한다(패플 규약상 Status/Message 가 실패 사유를 담고 있음).
+        401/403 이 아닌 HTTP 에러는 재시도 없이 즉시 전파한다.
+        """
         url = endpoint(op, self.use_test)
+        data: dict = {}
         for attempt in (1, 2):
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.post(
-                    url, json=self.build_body(payload), headers=self.build_headers()
+            try:
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                    resp = await client.post(
+                        url, json=self.build_body(payload), headers=self.build_headers()
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+            except httpx.HTTPStatusError as exc:
+                # 401/403 만 인증 실패로 간주해 1회 재시도. 그 외 HTTP 에러는 그대로 전파.
+                if exc.response.status_code not in (401, 403) or attempt == 2:
+                    raise
+                logger.warning(
+                    f"[패션플러스] {op} HTTP {exc.response.status_code} 인증 실패 — 키 재생성 후 1회 재시도"
                 )
-                resp.raise_for_status()
-                data = resp.json()
+                continue
             if is_ok(data) or classify_error(str(data.get("Status", ""))) != "auth_failed":
                 return data
             if attempt == 1:

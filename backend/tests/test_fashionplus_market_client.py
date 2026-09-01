@@ -101,3 +101,119 @@ def test_요청_봉투에_인증필드가_주입된다():
 def test_인증필드는_호출마다_갱신된다():
     client = FashionPlusMarketClient("012555", "sambauser")
     assert client.build_body({})["ApiKey"] != client.build_body({})["ApiKey"]
+
+
+# ── 수정 라운드 1: HTTP 인증 실패 재시도·에러 분류 정밀화 검증 ──
+
+import httpx
+
+from backend.domain.samba.proxy import fashionplus_market
+
+
+def test_에러_분류_AUTH_부분일치는_인증실패_아님():
+    """상태 문자열 아무 데나 AUTH 가 들어가도 명시 프리픽스가 아니면 auth_failed 로 안 본다."""
+    assert classify_error("Err-Zzz-AUTH01") == "unknown"
+    assert classify_error("UNAUTHORIZED") == "unknown"
+
+
+def test_에러_분류_명시적_AUTH_프리픽스는_인증실패():
+    assert classify_error("Err-Auth-001") == "auth_failed"
+
+
+def _resp(status_code, json_body=None):
+    """네트워크 없이 만든 httpx.Response (raise_for_status 판정용 request 포함)."""
+    return httpx.Response(
+        status_code,
+        json=json_body if json_body is not None else {},
+        request=httpx.Request(
+            "POST", "https://tst-api.fashionplus.co.kr/api/json/GoodsQry"
+        ),
+    )
+
+
+def _fake_async_client(responses, calls):
+    """httpx.AsyncClient 대체 — 준비된 응답을 순서대로 돌려주고 호출을 기록한다."""
+
+    class _Fake:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, json=None, headers=None):
+            calls.append({"url": url, "json": json, "headers": headers})
+            return responses.pop(0)
+
+    return _Fake
+
+
+async def test_HTTP_401은_키_재생성_후_1회_재시도(monkeypatch):
+    calls = []
+    responses = [_resp(401), _resp(200, {"Status": "OK", "Message": ""})]
+    monkeypatch.setattr(
+        fashionplus_market.httpx, "AsyncClient", _fake_async_client(responses, calls)
+    )
+    client = FashionPlusMarketClient("012555", "sambauser", use_test=True)
+    data = await client.call("goods_qry", {"ItemNo": "A1"})
+    assert data["Status"] == "OK"
+    assert len(calls) == 2
+    # 재시도 요청은 인증키를 새로 생성한다
+    assert calls[0]["json"]["ApiKey"] != calls[1]["json"]["ApiKey"]
+
+
+async def test_HTTP_401_두번이면_예외_전파(monkeypatch):
+    calls = []
+    responses = [_resp(401), _resp(403)]
+    monkeypatch.setattr(
+        fashionplus_market.httpx, "AsyncClient", _fake_async_client(responses, calls)
+    )
+    client = FashionPlusMarketClient("012555", "sambauser", use_test=True)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.call("goods_qry", {})
+    assert len(calls) == 2
+
+
+async def test_HTTP_500은_재시도_없이_전파(monkeypatch):
+    calls = []
+    responses = [_resp(500)]
+    monkeypatch.setattr(
+        fashionplus_market.httpx, "AsyncClient", _fake_async_client(responses, calls)
+    )
+    client = FashionPlusMarketClient("012555", "sambauser", use_test=True)
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.call("goods_qry", {})
+    assert len(calls) == 1
+
+
+async def test_Status_인증실패도_1회_재시도(monkeypatch):
+    calls = []
+    responses = [
+        _resp(200, {"Status": "Err-Auth-001", "Message": "인증 실패"}),
+        _resp(200, {"Status": "OK", "Message": ""}),
+    ]
+    monkeypatch.setattr(
+        fashionplus_market.httpx, "AsyncClient", _fake_async_client(responses, calls)
+    )
+    client = FashionPlusMarketClient("012555", "sambauser", use_test=True)
+    data = await client.call("goods_qry", {})
+    assert data["Status"] == "OK"
+    assert len(calls) == 2
+
+
+async def test_Status_인증실패_두번이면_실패응답_반환(monkeypatch):
+    calls = []
+    responses = [
+        _resp(200, {"Status": "Err-Auth-001", "Message": "인증 실패"}),
+        _resp(200, {"Status": "Err-Auth-001", "Message": "인증 실패"}),
+    ]
+    monkeypatch.setattr(
+        fashionplus_market.httpx, "AsyncClient", _fake_async_client(responses, calls)
+    )
+    client = FashionPlusMarketClient("012555", "sambauser", use_test=True)
+    data = await client.call("goods_qry", {})
+    assert data["Status"] == "Err-Auth-001"
+    assert len(calls) == 2
