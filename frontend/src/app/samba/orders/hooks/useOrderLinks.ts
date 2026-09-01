@@ -86,7 +86,13 @@ export function useOrderLinks(accounts: SambaMarketAccount[]) {
 
   const handleMarketLink = async (o: SambaOrder) => {
     const acc = accounts.find(a => a.id === o.channel_id)
-    const marketType = acc?.market_type || ''
+    // [2026-09-01] KREAM 주문(특히 신규 CN 계정)이 channel_id 로 계정을 못 찾아
+    // marketType='' → 판매링크가 네이버쇼핑 검색으로 새던 것. 소싱/채널이 KREAM 이면
+    // 계정 조회 실패와 무관하게 kream 으로 강제.
+    const _isKreamOrder = /KREAM/i.test(
+      `${o.source_site || ''} ${o.channel_name || ''} ${o.sales_channel_alias || ''}`
+    )
+    const marketType = _isKreamOrder ? 'kream' : (acc?.market_type || '')
     const sellerId = acc?.seller_id || ''
     const storeSlug = (acc?.additional_fields as Record<string, string> | undefined)?.storeSlug || ''
     let productNo = o.product_id || ''

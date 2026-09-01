@@ -140,7 +140,7 @@ async def sync_kream_orders_from_api(
             snkr_id = (await session.execute(snkr_stmt)).scalars().first()
 
         # 3) 계정별 상태별 페이지네이션 수집 (모든 크림 계정)
-        raw: list[tuple[dict, dict]] = []  # (order, order_product)
+        raw: list[tuple[dict, dict, Any]] = []  # (order, order_product, kream_acc)
         for kream_acc in kream_accs:
             ext = (
                 kream_acc.additional_fields
@@ -173,7 +173,7 @@ async def sync_kream_orders_from_api(
                         break
                     for od in items:
                         for op in od.get("order_products") or []:
-                            raw.append((od, op))
+                            raw.append((od, op, kream_acc))
                     if len(items) < 50:
                         break
                     page += 1
@@ -183,7 +183,7 @@ async def sync_kream_orders_from_api(
 
         # 4) 크림 상품번호 → SNKRDUNK 수집상품 역조회 (엑셀 경로 cp_map 과 동일)
         kream_pids = sorted(
-            {str(op.get("product_id")) for _od, op in raw if op.get("product_id")}
+            {str(op.get("product_id")) for _od, op, _ac in raw if op.get("product_id")}
         )
         cp_map: dict[str, str] = {}
         if kream_pids:
@@ -208,7 +208,11 @@ async def sync_kream_orders_from_api(
 
         # 5) 기존 주문번호 — 있는 건 절대 건드리지 않음
         onums = sorted(
-            {str(od.get("order_number")) for od, _op in raw if od.get("order_number")}
+            {
+                str(od.get("order_number"))
+                for od, _op, _ac in raw
+                if od.get("order_number")
+            }
         )
         existing: set[str] = set()
         if onums:
@@ -222,7 +226,7 @@ async def sync_kream_orders_from_api(
             }
 
         # 6) 생성
-        for od, op in raw:
+        for od, op, kream_acc in raw:
             onum = str(od.get("order_number") or "")
             if not onum or onum in existing:
                 summary["skipped_exists"] += 1
