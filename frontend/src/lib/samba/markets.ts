@@ -36,6 +36,7 @@ export const MARKETS: MarketDef[] = [
   // 국내 패션/리셀
   { id: 'musinsa', label: '무신사', group: 'domestic_fashion', hasCategory: false },
   { id: 'kream', label: 'KREAM', group: 'domestic_fashion', hasCategory: true },
+  { id: 'fashionplus', label: '패션플러스', group: 'domestic_fashion', hasCategory: true },
   // 종합솔루션
   { id: 'playauto', label: '플레이오토', group: 'solution', hasCategory: false },
   { id: 'cafe24', label: '카페24', group: 'solution', hasCategory: true },

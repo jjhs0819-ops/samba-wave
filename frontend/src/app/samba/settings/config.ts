@@ -399,6 +399,13 @@ export const STORE_MARKETS: MarketConfig[] = [
     { name: 'password', label: '판매자센터 비밀번호', type: 'password', placeholder: 'partner.kream.co.kr 로그인 비밀번호 — 자동 로그인용' },
     { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '사업자 연락처 — 상품 고시정보 필수' },
   ]},
+  { key: 'fashionplus', label: '패션플러스', authField: 'custCode', guideUrl: 'https://api.fashionplus.co.kr/api/help/api2/help/APIIntroduce.asp', fields: [
+    { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
+    { name: 'custCode', label: 'Cust Code', type: 'text', placeholder: '패션플러스 발급 고객코드' },
+    { name: 'partnerLoginID', label: 'SCM 로그인 ID', type: 'text', placeholder: '파트너 쇼핑몰 ID' },
+    { name: 'senderCode', label: '발송처 코드', type: 'text', placeholder: 'SenderAdd 로 등록한 출고지 코드' },
+    { name: 'asPhone', label: 'A/S 전화번호', type: 'text', placeholder: '사업자 연락처 — 상품 고시정보 필수' },
+  ]},
   { key: 'poison', label: '포이즌', authField: 'apiKey', guideUrl: 'https://open.poizon.com', fields: [
     { name: 'businessName', label: '사업자명', type: 'text', placeholder: '상호명 입력' },
     { name: 'storeId', label: '셀러 ID', type: 'text' },
