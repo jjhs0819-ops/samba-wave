@@ -30,7 +30,9 @@ def _dedup_fallback_excluded_sources() -> set[str]:
         r'and order_data\.get\("source"\) not in \(([^)]*)\)',
         src,
     )
-    assert m, "shipment_id 폴백의 제외 조건을 찾지 못함 — order.py 구조가 바뀌었을 수 있음"
+    assert m, (
+        "shipment_id 폴백의 제외 조건을 찾지 못함 — order.py 구조가 바뀌었을 수 있음"
+    )
     return {tok.strip().strip('"') for tok in m.group(1).split(",")}
 
 
