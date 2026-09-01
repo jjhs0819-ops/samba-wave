@@ -31,6 +31,48 @@ if _env_file.exists():
 
 SAMBA_API_URL = os.environ.get("SAMBA_API_URL", "https://api.samba-wave.co.kr")
 WORKER_TOKEN = os.environ.get("WORKER_TOKEN") or os.environ.get("BG_WORKER_TOKEN", "")
+
+# 저품질(흰배경 안 된=상품이 프레임 꽉 찬 클로즈업 등) 추가컷 자동 제거 설정
+# - 누끼 후 흰픽셀 비율 < _DROP_WHITE_RATIO 인 '추가이미지'를 images에서 제거
+# - 대표(첫 이미지)는 무조건 유지, 최소 _MIN_KEEP_IMAGES 장은 보장
+_DROP_WHITE_RATIO = float(os.environ.get("BG_DROP_WHITE_RATIO", "0.30"))
+_MIN_KEEP_IMAGES = int(os.environ.get("BG_MIN_KEEP_IMAGES", "3"))
+# 대표만 유지 모드: 켜면 추가이미지는 처리·유지하지 않고 images에서 전부 제거(대표 1장만 남김).
+# (추가컷 누끼가 워터마크/클로즈업으로 품질 확보 어려워, 깔끔한 대표컷만 등록하는 정책)
+_KEEP_MAIN_ONLY = os.environ.get("BG_KEEP_MAIN_ONLY", "0") in ("1", "true", "True")
+
+
+def _lower_priority() -> None:
+    """오토튠(Docker 백엔드)에 CPU 우선권을 주도록 워커를 BELOW_NORMAL 우선순위로 낮춤.
+    Windows 전용. env BG_LOW_PRIORITY=0 으로 끌 수 있음.
+    → 워커는 남는 CPU만 써서, 대량 배경제거 중에도 오토튠 속도 영향 최소화.
+    """
+    if os.environ.get("BG_LOW_PRIORITY", "1") not in ("1", "true", "True"):
+        return
+    try:
+        import ctypes
+
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = ctypes.c_void_p
+        k.SetPriorityClass.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        ok = k.SetPriorityClass(k.GetCurrentProcess(), 0x00004000)
+        print(f"[Worker] CPU 우선순위 BELOW_NORMAL 설정 (오토튠 우선) ok={ok}")
+    except Exception:
+        pass  # 비Windows(맥 로컬테스트 등)에선 무시
+
+_HEARTBEAT_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "worker_heartbeat.txt"
+)
+
+
+def _touch_heartbeat() -> None:
+    """살아있음 표식(로컬 파일 mtime 갱신) — 워치독이 hung(멈춤) 감지에 사용.
+    폴링 사이 + 상품 처리 중 갱신되므로, 오래되면(=멈춤) 워치독이 재시작."""
+    try:
+        with open(_HEARTBEAT_FILE, "w") as _f:
+            _f.write(str(int(time.time())))
+    except Exception:
+        pass
 POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL", "5"))
 # stuck/잘못 큐잉된 잡을 워커 단에서 즉시 skip하기 위한 화이트아웃 리스트(콤마 구분)
 SKIP_JOB_IDS: set[str] = {
@@ -230,7 +272,11 @@ def _sample_bg_color(src: Image.Image) -> tuple[int, int, int]:
 def _composite_with_alpha(
     full_src: Image.Image, small_alpha: Image.Image
 ) -> Image.Image:
-    """원본 해상도 RGB + 작은 alpha mask → 업스케일 후 원본 배경색으로 합성."""
+    """원본 해상도 RGB + 작은 alpha mask → 업스케일 후 순백(255,255,255) 배경에 합성.
+
+    (구버전은 _sample_bg_color 로 원본 회색배경에 합성했으나, 사장님 요청으로
+     '누끼 → 순백' 방식으로 변경. 회색/베이지 스튜디오컷도 흰배경으로 통일.)
+    """
     if small_alpha.size != full_src.size:
         big_alpha = small_alpha.resize(full_src.size, Image.LANCZOS)
     else:
@@ -238,8 +284,7 @@ def _composite_with_alpha(
     rgba = Image.new("RGBA", full_src.size)
     rgba.paste(full_src.convert("RGBA"))
     rgba.putalpha(big_alpha)
-    bg_color = _sample_bg_color(full_src)
-    bg = Image.new("RGBA", full_src.size, (*bg_color, 255))
+    bg = Image.new("RGBA", full_src.size, (255, 255, 255, 255))
     return Image.alpha_composite(bg, rgba).convert("RGB")
 
 
@@ -285,16 +330,16 @@ def _is_bg_removed(result_bytes: bytes) -> bool:
 
 
 def remove_watermark(image_bytes: bytes) -> bytes | None:
-    """우상단 패턴에 따라 분기 — 결과는 항상 원본 해상도 유지(마켓 업로드 화질 보존):
+    """[강제 누끼 모드] 모든 이미지를 rembg 누끼 후 순백(255,255,255) 배경에 합성.
 
-    - 흰배경(워터마크 없음)        → 원본 그대로 jpg 저장
-    - 흰배경 + 로고 패턴            → 원본에 흰박스 덮어 저장 (rembg 미사용)
-    - 사진 컨텐츠(모델/배경)        → 768px로 다운스케일해 rembg alpha mask 추출 →
-                                      mask를 원본 크기로 업스케일 → 원본 RGB와 흰배경 합성
-    rembg 1·2차 모두 실패하면 None 반환 (원본 유지 + AI 배지 부착 방지).
+    사장님 요청: 워터마크 박스덮기·회색배경 합성·'이미 흰배경이면 원본유지'(구 브랜치1·2)
+    전부 제거. 회색/베이지 스튜디오컷도 무조건 누끼 따서 흰배경에(누끼 거칠어도 강제 사용).
+    768px 다운스케일로 alpha mask 추출 → 원본 크기로 업스케일 → 원본 RGB와 순백 합성.
+    rembg matting=False (matting=True는 pymatting Cholesky 수치 불안정으로 hang).
+    rembg 예외 시에만 None 반환(원본 유지 + AI 배지 부착 방지).
     """
     src_orig = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    # 패턴 감지/rembg용 작은 사본 — 원본은 합성 시 보존
+    # rembg용 작은 사본 — 원본은 합성 시 보존
     if max(src_orig.size) > 768:
         ratio = 768 / max(src_orig.size)
         src_small = src_orig.resize(
@@ -303,45 +348,6 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
         )
     else:
         src_small = src_orig
-
-    w, h = src_small.size
-    box_w = int(w * _WM_BOX_W_RATIO)
-    box_h = int(h * _WM_BOX_H_RATIO)
-    box_small = (w - box_w, 0, w, box_h)
-    crop = src_small.crop(box_small)
-
-    # 1) 우상단이 거의 순백 → 워터마크 없음, 원본 그대로 저장
-    avg = ImageStat.Stat(crop).mean
-    if all(c >= _WM_NO_LOGO_THRESHOLD for c in avg[:3]):
-        buf = io.BytesIO()
-        src_orig.save(buf, format="JPEG", quality=90)
-        return buf.getvalue()
-
-    # 2) 흰배경 + 로고 패턴 → 원본 좌표로 box 환산해 배경색 박스 덮음 (rembg 미사용)
-    #    회색/검정 사진에 흰박스가 박히는 문제 방지 위해 원본 모서리 색을 샘플링
-    if _is_white_background_logo(crop):
-        W, H = src_orig.size
-        box_orig = (
-            W - int(W * _WM_BOX_W_RATIO),
-            0,
-            W,
-            int(H * _WM_BOX_H_RATIO),
-        )
-        out = src_orig.copy()
-        bg_color = _sample_bg_color(src_orig)
-        ImageDraw.Draw(out).rectangle(box_orig, fill=bg_color)
-        buf = io.BytesIO()
-        out.save(buf, format="JPEG", quality=90)
-        return buf.getvalue()
-
-    # 3) 사진 컨텐츠 → rembg matting=False 만 사용 (matting=True는 pymatting Cholesky
-    #    수치 불안정으로 무한 루프 hang 발생, Python 스레드는 C 확장 안에서 kill 불가).
-    #    임계값 정책:
-    #      - HIGH(0.85): 가장자리 깨끗 → 즉시 반환
-    #      - MID(0.60): 가장자리 약간 거칠지만 사용
-    #      - LOW(0.30): 거칠어도 원본보다 나은 케이스 (모델컷 컬러 배경)
-    #      - LOW 미만: 모델 윤곽 못 잡음 → 변환 실패 (원본 유지)
-    HIGH, MID, LOW = 0.85, 0.60, 0.30
 
     def _save_composite(alpha: Image.Image) -> bytes:
         composite = _composite_with_alpha(src_orig, alpha)
@@ -352,30 +358,27 @@ def remove_watermark(image_bytes: bytes) -> bytes | None:
     try:
         alpha1 = _rembg_alpha(src_small, use_alpha_matting=False)
         ratio1 = _alpha_edge_ratio(alpha1)
-
-        if ratio1 >= MID:
-            if ratio1 < HIGH:
-                print(f"[Worker]   [rembg] MID 통과 — 결과 사용 (ratio={ratio1:.2f})")
-            return _save_composite(alpha1)
-
-        if ratio1 >= LOW:
-            print(
-                f"[Worker]   [rembg] MID 미달이나 LOW({LOW}) 통과 — 거친 가장자리 감수 (ratio={ratio1:.2f})"
-            )
-            return _save_composite(alpha1)
-
-        print(
-            f"[Worker]   [rembg] 모델 윤곽 못 잡음 (ratio={ratio1:.2f}) — 변환 실패 처리"
-        )
-        return None
+        print(f"[Worker]   [rembg] 강제 누끼 → 순백 (edge_ratio={ratio1:.2f})")
+        return _save_composite(alpha1)
     except Exception as e:
         print(f"[Worker]   [rembg] 예외, 변환 실패 처리: {e}")
         return None
 
 
+def _white_ratio(image_bytes: bytes) -> float:
+    """처리 결과 이미지의 순백(채널별 ≥250) 픽셀 비율 — 저품질(흰배경 안 된) 컷 판정용."""
+    import numpy as np
+
+    a = np.array(Image.open(io.BytesIO(image_bytes)).convert("RGB"))
+    h, w = a.shape[:2]
+    return float(np.all(a >= 250, axis=2).sum() / (h * w))
+
+
 # ── Process one image URL ─────────────────────────────────
-async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
-    """이미지 다운로드 → 배경제거 → R2 업로드.
+async def process_image(
+    client: httpx.AsyncClient, url: str
+) -> tuple[str, float] | None:
+    """이미지 다운로드 → 배경제거 → R2 업로드. 반환: (R2 URL, 흰픽셀 비율) 또는 None.
 
     다운로드는 3회 재시도(1.5s/3s 백오프) — 일시적 네트워크/소싱처 장애 회복.
     """
@@ -403,7 +406,9 @@ async def process_image(client: httpx.AsyncClient, url: str) -> str | None:
         md5 = hashlib.md5(resp.content).hexdigest()[:8]
         filename = f"ai_{md5}_{uuid.uuid4().hex[:6]}.jpg"
         result_url = upload_to_r2(processed, filename)
-        return result_url
+        if result_url is None:
+            return None
+        return (result_url, _white_ratio(processed))
     except Exception as e:
         print(f"[Worker]   [process] 처리 실패 ({url[:60]}): {e}")
         return None
@@ -442,6 +447,7 @@ async def process_job(job: dict) -> None:
             return False
 
         for i, prod in enumerate(products, 1):
+            _touch_heartbeat()
             # 매 상품 시작 전 취소 신호 확인
             if await _is_cancelled():
                 print(f"[Worker]   ✋ 잡 취소 감지 — {i - 1}/{len(products)}에서 중단")
@@ -464,6 +470,7 @@ async def process_job(job: dict) -> None:
 
             new_images = list(images)
             new_detail = list(detail_images)
+            wr_by_idx: dict[int, float] = {}  # images 인덱스 → 누끼후 흰픽셀 비율
             transformed = 0
             img_done = 0
 
@@ -506,30 +513,63 @@ async def process_job(job: dict) -> None:
                 await _report_progress(bump_product=False)
 
             if scope.get("thumbnail") and images:
-                url = await process_image(client, images[0])
-                if url:
-                    new_images[0] = url
+                res = await process_image(client, images[0])
+                if res:
+                    new_images[0], wr_by_idx[0] = res
                     transformed += 1
                 img_done += 1
                 await _report_progress(bump_product=False)
 
-            if scope.get("additional") and len(images) > 1:
+            if scope.get("additional") and len(images) > 1 and not _KEEP_MAIN_ONLY:
                 for j, orig in enumerate(images[1:], 1):
-                    url = await process_image(client, orig)
-                    if url:
-                        new_images[j] = url
+                    res = await process_image(client, orig)
+                    if res:
+                        new_images[j], wr_by_idx[j] = res
                         transformed += 1
                     img_done += 1
                     await _report_progress(bump_product=False)
 
             if scope.get("detail") and detail_images:
                 for j, orig in enumerate(detail_images):
-                    url = await process_image(client, orig)
-                    if url:
-                        new_detail[j] = url
+                    res = await process_image(client, orig)
+                    if res:
+                        new_detail[j] = res[0]
                         transformed += 1
                     img_done += 1
                     await _report_progress(bump_product=False)
+
+            # 대표만 유지 모드: 추가이미지 전부 제거(대표 1장만 남김).
+            if _KEEP_MAIN_ONLY and len(new_images) > 1:
+                removed_main_only = len(new_images) - 1
+                new_images = [new_images[0]]
+                print(
+                    f"[Worker]   [{i}/{len(products)}] {pid} "
+                    f"대표만 유지 — 추가 {removed_main_only}장 제거"
+                )
+
+            # 저품질(흰배경 안 된=상품이 프레임 꽉 찬 클로즈업 등) 추가컷 자동 제거.
+            # 대표(0)는 무조건 유지, 최소 _MIN_KEEP_IMAGES 장 보장(부족하면 흰픽셀 높은순 복원).
+            elif scope.get("additional") and len(new_images) > 1:
+                keep_idx = [0]
+                low_idx: list[tuple[int, float]] = []
+                for idx in range(1, len(new_images)):
+                    wr = wr_by_idx.get(idx)
+                    if wr is None or wr >= _DROP_WHITE_RATIO:
+                        keep_idx.append(idx)  # 미처리(원본유지) 또는 흰배경 OK
+                    else:
+                        low_idx.append((idx, wr))
+                if len(keep_idx) < _MIN_KEEP_IMAGES and low_idx:
+                    for idx, _wr in sorted(low_idx, key=lambda x: -x[1]):
+                        if len(keep_idx) >= _MIN_KEEP_IMAGES:
+                            break
+                        keep_idx.append(idx)
+                removed = len(new_images) - len(set(keep_idx))
+                if removed > 0:
+                    new_images = [new_images[k] for k in sorted(set(keep_idx))]
+                    print(
+                        f"[Worker]   [{i}/{len(products)}] {pid} "
+                        f"저품질 컷 {removed}장 제거 (잔여 {len(new_images)}장)"
+                    )
 
             product_result = {
                 "product_id": pid,
@@ -606,6 +646,7 @@ async def main() -> None:
     print(f"Poll interval: {POLL_INTERVAL}s")
     print("Stop: Ctrl+C")
     print("=" * 50)
+    _lower_priority()
 
     print("\n[Worker] Connecting to backend...")
     if not await fetch_config():
@@ -630,6 +671,7 @@ async def main() -> None:
         print(f"[Worker] reset-running 실패(무시): {e}")
 
     while True:
+        _touch_heartbeat()
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 # 헬스체크 — 모달이 30초 임계로 워커 alive 판단
