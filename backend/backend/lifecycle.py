@@ -1306,6 +1306,7 @@ async def _order_auto_sync_loop() -> None:
             try:
                 from backend.api.v1.routers.samba.order import (
                     _push_hubnet_tracking,
+                    sync_hubnet_hbl,
                     sync_snkrdunk_overseas_tracking,
                 )
 
@@ -1326,6 +1327,13 @@ async def _order_auto_sync_loop() -> None:
                     _log.info(
                         f"[주문 auto sync] 허브넷 기입: {_hb.get('updated', 0)}건"
                         + (f" (오류: {_hb.get('error')})" if _hb.get("error") else "")
+                    )
+                    # [2026-09-01] 허브넷 HBL → 크림주문 해외송장 채우기.
+                    # 크림 API 가 CN 주문에 tracking=null 을 줘서 송장이 안 붙던 것 보강.
+                    _hbl = await sync_hubnet_hbl(_snkr_ws, None)
+                    _log.info(
+                        f"[주문 auto sync] 허브넷 HBL 송장: {_hbl.get('updated', 0)}건"
+                        + (f" (오류: {_hbl.get('error')})" if _hbl.get("error") else "")
                     )
             except Exception as _snkr_e:
                 _log.warning(f"[주문 auto sync] 스니덩크송장·허브넷 실패: {_snkr_e}")

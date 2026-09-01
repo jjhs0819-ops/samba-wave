@@ -178,28 +178,52 @@ async def main():
             continue
         consec_rl = 0
 
-        # 시세 폴백(30일 거래가 누락 시 시장 최저 호가·백분위 사용)은
-        # PoisonClient.parse_recommend_payload 가 처리한다.
-        min_price = avg_price = max_price = None
+        # 포이즌 recommend_price 실제 응답엔 minPrice/averagePrice/maxPrice 키가 없음.
+        # 시세는 data.priceRangeItems(백분위) + data.effectiveExposurePrice(실제 노출가)
+        # + data.globalMinPrice/asiaMinPrice(시장 최저, 중국 호가 섞여 실측보다 8~9% 높음)에
+        # 들어있음. 판정 기준은 effectiveExposurePrice — globalMinPrice는 참고용으로만 남긴다
+        # (2026-08-31 이슈#762: globalMinPrice 기준이면 마진 부호가 뒤집히는 실측 확인).
+        min_price = avg_price = max_price = exposure_price = global_min_price = None
+        liquidity = None
         if status == "ok":
-            min_price = res.get("minPrice")
-            avg_price = res.get("averagePrice")
-            max_price = res.get("maxPrice")
+            payload = res.get("data") or {}
+            prices = sorted(
+                int(it["price"])
+                for it in (payload.get("priceRangeItems") or [])
+                if it.get("price") is not None
+            )
+            exposure_price = payload.get("effectiveExposurePrice")
+            global_min_price = payload.get("globalMinPrice") or payload.get(
+                "asiaMinPrice"
+            )
+            # 구매자에게 노출되는 실제 최저가만 판정에 쓴다. 없으면(그 사이즈가
+            # 노출조차 안 됨) 시세 없음으로 보류 — globalMinPrice로 대신 채우지 않는다.
+            min_price = exposure_price
+            avg_price = prices[len(prices) // 2] if prices else None  # 중간값(≈50%)
+            max_price = prices[-1] if prices else None  # 상위(≈90%)
+            # 분위 가격의 고유값 수 — 1이면 매물이 사실상 1개라 시세로 신뢰하기 어려움.
+            liquidity = len(set(prices)) if prices else None
 
-        if min_price is not None or avg_price is not None:
+        if min_price is not None:
             recommend = {
                 "minPrice": min_price,
                 "averagePrice": avg_price,
                 "maxPrice": max_price,
+                "globalMinPrice": global_min_price,  # 참고용(판정에 미사용)
+                "liquidity": liquidity,
                 "global_sku_id": gid,
                 "size": size,
                 "collected_at": int(_time.time()),
             }
             ok += 1
         else:
-            # 시세값을 못 얻음(조회 실패 or 가격 비어있음) → no_price 마킹(다음 실행 재시도 대상)
+            # 시세값을 못 얻음(조회 실패 / 이 사이즈가 구매자에게 노출 안 됨) →
+            # no_price 마킹(다음 실행 재시도 대상). globalMinPrice/priceRangeItems가
+            # 있어도 effectiveExposurePrice가 없으면 판정 기준으로 삼지 않는다
+            # (이슈#762: 노출 안 되는 사이즈를 "팔 수 있다"로 오판하던 것).
             recommend = {
                 "no_price": True,
+                "globalMinPrice": global_min_price,  # 참고용 — 노출가 없어 판정엔 미사용
                 "global_sku_id": gid,
                 "size": size,
                 "collected_at": int(_time.time()),

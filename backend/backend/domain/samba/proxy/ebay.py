@@ -1302,6 +1302,10 @@ class EbayClient:
         if _live_offer is not None:
             _offer_status = _live_offer.get("status", "")
             _db_qty = int(offer_data.get("availableQuantity", 1) or 1)
+            _cur_qty = int(_live_offer.get("availableQuantity", 0) or 0)
+            _listing_status = (_live_offer.get("listing") or {}).get(
+                "listingStatus", ""
+            )
             if _offer_status != "PUBLISHED" and _db_qty > 0:
                 # 미게시/종료 offer → DB 수량으로 복원. 아래 재게시 로직이 살려줌.
                 offer_data["availableQuantity"] = _db_qty
@@ -1311,8 +1315,21 @@ class EbayClient:
                     sku,
                     _db_qty,
                 )
+            elif _cur_qty <= 0 and _db_qty > 0:
+                # [2026-09-01] 게시돼 있는데 offer 수량이 0 = 상품 페이지가 Out of Stock.
+                # eBay 재고 칸은 두 개(inventory_item / offer)인데 셀러센터에서 고치는 건
+                # inventory_item 쪽이라 offer 가 따라오지 않는다. 그래서 화면엔 재고 1로
+                # 보이는데 구매 페이지는 계속 품절로 남았다(잉어킹·야스오 실측).
+                # 수량이 이미 1 이상인 활성 offer 는 그대로 둔다 — 오버셀 방지 원칙 유지.
+                offer_data["availableQuantity"] = _db_qty
+                logger.info(
+                    "[eBay] offer 품절(%s, qty=0) → 재고 복원: sku=%s qty=%s",
+                    _listing_status or "OUT_OF_STOCK",
+                    sku,
+                    _db_qty,
+                )
             else:
-                # 활성 offer → 셀러센터 직접 관리, 수량 건드리지 않음.
+                # 활성 offer(재고 있음) → 셀러센터 직접 관리, 수량 건드리지 않음.
                 offer_data.pop("availableQuantity", None)
                 logger.info("[eBay] 기존 리스팅 재고 유지(건드리지 않음): sku=%s", sku)
 
