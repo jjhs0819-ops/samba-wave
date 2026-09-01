@@ -22,7 +22,12 @@ _MAX_IMAGES = 4
 def normalize_prices(
     sale_price: Any, consumer_price: Any = None
 ) -> tuple[int, int] | None:
-    """(판매가, 소비자가) 를 패플 제약에 맞춘다. 전송 불가면 None."""
+    """(판매가, 소비자가) 를 패플 제약에 맞춘다. 전송 불가면 None.
+
+    소비자가(정가) 하한은 ceil(판매가 / 0.9) — 정가가 항상 판매가 이상이면서
+    패플 제약(ConsumerPrice >= SalePrice x 0.9)도 자동으로 만족한다.
+    (곱하기 0.9 로 내리면 정가가 판매가보다 싼 말이 안 되는 값이 나간다)
+    """
     try:
         sale = int(float(sale_price))
     except (TypeError, ValueError):
@@ -33,8 +38,17 @@ def normalize_prices(
         consumer = int(float(consumer_price)) if consumer_price else 0
     except (TypeError, ValueError):
         consumer = 0
-    floor = math.ceil(sale * _CONSUMER_RATIO)
+    floor = math.ceil(sale / _CONSUMER_RATIO)
     return sale, max(consumer, floor)
+
+
+def extract_consumer_price(product: dict) -> Any:
+    """상품 dict 에서 정가 입력을 꺼낸다.
+
+    수집 모델의 정가 필드는 original_price 다 (collector/model.py).
+    consumer_price 는 모델에 없지만 외부 유입 dict 대비 폴백으로 남긴다.
+    """
+    return product.get("original_price") or product.get("consumer_price")
 
 
 def clamp_stock(qty: Any) -> int:
@@ -51,13 +65,40 @@ def option_key(option: dict) -> str:
 
     색상·사이즈가 모두 비면(원사이즈 등) 서로 다른 옵션이 같은 키("|")로
     수렴해 OptID 매핑이 뒤섞인다 — 이때는 보조값(name → id)을 키로 쓴다.
+    id 는 정수 0 도 유효한 식별자라 falsy 판정이 아니라 is not None 로 본다.
     보조값도 없으면 빈 문자열을 돌려 "매핑 불가"로 취급되게 한다.
     """
     color = str(option.get("color") or "").strip().upper()
     size = str(option.get("size") or "").strip().upper()
-    if not color and not size:
-        return str(option.get("name") or option.get("id") or "").strip().upper()
-    return f"{color}|{size}"
+    if color or size:
+        return f"{color}|{size}"
+    name = str(option.get("name") or "").strip().upper()
+    if name:
+        return name
+    ident = option.get("id")
+    if ident is not None:
+        return str(ident).strip().upper()
+    return ""
+
+
+def has_uneven_option_price(options: list[dict]) -> bool:
+    """옵션별 가격(option_price)이 서로 다른 상품인지 판정한다.
+
+    옵션가 불균일 상품은 대표가 하나로 전송되면 비싼 옵션이 싸게 팔리는
+    역마진이 난다 — 신세계몰·롯데홈·포이즌에서 반복된 사고 유형(설계서 §4.4-3).
+    값이 아예 없거나(키 없음·해석 불가) 전부 같으면 False.
+    """
+    values: set[int] = set()
+    for option in options or []:
+        if "option_price" not in option:
+            continue
+        try:
+            values.add(int(float(option["option_price"])))
+        except (TypeError, ValueError):
+            # 해석 불가 값은 판정 대상에서 제외 — 전송 단계(build_scm_option_upt)가
+            # 별도로 스킵·경고 처리한다
+            continue
+    return len(values) > 1
 
 
 def build_goods_add(
@@ -73,7 +114,10 @@ def build_goods_add(
     if not category_id:
         raise ValueError("패션플러스 카테고리 매핑 없음")
 
-    prices = normalize_prices(product.get("sale_price"), product.get("consumer_price"))
+    if has_uneven_option_price(product.get("options") or []):
+        raise ValueError("패션플러스 옵션별 가격이 달라 전송 제외")
+
+    prices = normalize_prices(product.get("sale_price"), extract_consumer_price(product))
     if prices is None:
         raise ValueError(f"패션플러스 전송 불가 판매가: {product.get('sale_price')!r}")
     sale, consumer = prices

@@ -7,21 +7,24 @@ from backend.domain.samba.plugins.markets.fashionplus_payload import (
     build_goods_add,
     build_scm_option_upt,
     clamp_stock,
+    extract_consumer_price,
+    has_uneven_option_price,
     normalize_prices,
     option_key,
 )
 
 
-def test_소비자가_없으면_판매가의_90퍼_역산():
-    """Err-Upt-110: 소비자가는 판매가의 90% 이상이어야 한다."""
+def test_소비자가_없으면_판매가를_0_9로_나눠_역산():
+    """하한은 ceil(판매가 / 0.9) — 정가(소비자가)는 판매가보다 싸면 안 된다."""
     sale, consumer = normalize_prices(10000)
     assert sale == 10000
-    assert consumer >= 9000
+    assert consumer == 11112  # ceil(10000 / 0.9)
 
 
-def test_소비자가가_90퍼_미달이면_끌어올린다():
+def test_소비자가가_하한_미달이면_끌어올린다():
     sale, consumer = normalize_prices(10000, 5000)
-    assert consumer >= sale * 0.9
+    assert consumer >= sale
+    assert consumer >= sale * 0.9  # 패플 제약 Err-Upt-110 도 자동 만족
 
 
 def test_소비자가가_충분하면_그대로():
@@ -40,6 +43,34 @@ def test_0원과_음수도_전송제외():
 def test_소수점_판매가는_정수로():
     sale, _ = normalize_prices(10000.7)
     assert isinstance(sale, int)
+
+
+@pytest.mark.parametrize("sale", [100, 8999, 10000, 89000, 1234567])
+def test_정가는_항상_판매가_이상(sale):
+    """정가 < 판매가는 말이 안 되는 값 — 어떤 판매가에도 성립해야 한다."""
+    _, consumer = normalize_prices(sale)
+    assert consumer >= sale
+
+
+def test_정가입력은_original_price_우선():
+    """수집 모델의 정가 필드는 original_price 다 (collector/model.py)."""
+    assert extract_consumer_price({"original_price": 120000}) == 120000
+    assert (
+        extract_consumer_price({"original_price": 120000, "consumer_price": 90000})
+        == 120000
+    )
+
+
+def test_정가입력_original_price_없으면_consumer_price_폴백():
+    assert extract_consumer_price({"consumer_price": 90000}) == 90000
+    assert extract_consumer_price({}) is None
+
+
+def test_등록_페이로드가_original_price를_정가로_쓴다():
+    product = _product()
+    product["original_price"] = 150000
+    body = build_goods_add(product, "1010", "5477", "SND01")
+    assert body["ConsumerPrice"] == 150000
 
 
 @pytest.mark.parametrize(
@@ -225,3 +256,62 @@ def test_옵션갱신_OptID_0은_유효한_매핑():
     )
     assert len(rows) == 1
     assert rows[0]["OptID"] == 0
+
+
+# --- 최종 리뷰 F3: 옵션키 보조값 id 0 처리 ---
+
+
+def test_옵션키_보조값_id_0은_유효():
+    """정수 0 은 falsy 지만 유효한 식별자 — 빈 키로 버려지면 안 된다."""
+    assert option_key({"id": 0}) == "0"
+
+
+def test_옵션키_name이_있으면_id보다_우선():
+    assert option_key({"name": "FREE", "id": 0}) == "FREE"
+
+
+# --- 최종 리뷰 F7: 옵션가 불균일 상품 전송 제외 (설계서 §4.4-3) ---
+
+
+def test_옵션가불균일_옵션_0개는_False():
+    assert has_uneven_option_price([]) is False
+
+
+def test_옵션가불균일_옵션_1개는_False():
+    assert has_uneven_option_price([{"option_price": 1000}]) is False
+
+
+def test_옵션가불균일_전부_같으면_False():
+    options = [{"option_price": 500}, {"option_price": 500}, {"option_price": 500}]
+    assert has_uneven_option_price(options) is False
+
+
+def test_옵션가불균일_전부_0이면_False():
+    options = [{"option_price": 0}, {"option_price": 0}]
+    assert has_uneven_option_price(options) is False
+
+
+def test_옵션가불균일_일부만_키_있고_나머지_같으면_False():
+    options = [{"option_price": 0}, {}, {"option_price": 0}]
+    assert has_uneven_option_price(options) is False
+
+
+def test_옵션가불균일_서로_다르면_True():
+    options = [{"option_price": 0}, {"option_price": 3000}]
+    assert has_uneven_option_price(options) is True
+
+
+def test_옵션가불균일_해석불가_값은_판정에서_제외():
+    options = [{"option_price": "abc"}, {"option_price": 1000}]
+    assert has_uneven_option_price(options) is False
+
+
+def test_등록_페이로드_옵션가_불균일이면_거부():
+    """옵션별 가격이 다른 상품은 역마진 위험 — 전송 자체를 막는다."""
+    product = _product()
+    product["options"] = [
+        {"color": "BLACK", "size": "270", "stock": 5, "option_price": 0},
+        {"color": "BLACK", "size": "280", "stock": 5, "option_price": 5000},
+    ]
+    with pytest.raises(ValueError, match="옵션별 가격이 달라"):
+        build_goods_add(product, "1010", "5477", "SND01")
