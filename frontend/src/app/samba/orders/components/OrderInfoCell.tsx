@@ -17,6 +17,7 @@ import { hasActionTag } from '../utils/actionTag'
 
 interface Props {
   o: SambaOrder
+  accounts?: { id: string; account_label?: string; market_type?: string }[]
   refreshLog: Record<string, string>
   setRefreshLog: Dispatch<SetStateAction<Record<string, string>>>
   sentFlags: Record<string, { sms: boolean; kakao: boolean }>
@@ -51,7 +52,7 @@ interface Props {
 export default function OrderInfoCell(props: Props) {
   const c = useTheme()
   const {
-    o, refreshLog, setRefreshLog, sentFlags, siteAliasMap, actualSourceSite, activeActions,
+    o, accounts, refreshLog, setRefreshLog, sentFlags, siteAliasMap, actualSourceSite, activeActions,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
     customerAddress, renderCopyableText,
     handleDelete, handleImageClick, handleCopyOrderNumber, openMsgModal,
@@ -62,6 +63,13 @@ export default function OrderInfoCell(props: Props) {
   // 크림 주문 판별 — 상품주문번호 옆에 크림/스니덩크 상품번호 표시용
   const isKreamOrder = String(o.source_site || '').toUpperCase().includes('KREAM')
     || String(o.sales_channel_alias || '').toUpperCase().includes('KREAM')
+
+  // [2026-09-01] 크림 배지에 계정(일본/중국) 표시 — 배대지·계정 혼선 방지.
+  // channel_id 로 연결계정을 찾아 KREAM(계정라벨) 로 보여준다(예 KREAM(마놀(중국)-sbk0674@...)).
+  const _kacc = accounts?.find(a => a.id === o.channel_id)
+  const channelBadgeLabel = isKreamOrder && _kacc?.account_label
+    ? `KREAM(${_kacc.account_label})`
+    : (o.channel_name || '마켓')
   // 크림 상품번호 = product_id (숫자 형태만, http URL은 제외)
   const kreamProductNo = (o.product_id && !o.product_id.startsWith('http')) ? o.product_id : ''
 
@@ -233,7 +241,7 @@ export default function OrderInfoCell(props: Props) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
             {sourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', border: `1px solid ${c.border}`, flexShrink: 0, whiteSpace: 'nowrap' }}>{sourceBadgeLabel}</span>}
             {extraSourceBadgeLabel && <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', border: `1px solid ${c.border}`, flexShrink: 0, whiteSpace: 'nowrap' }}>{extraSourceBadgeLabel}</span>}
-            <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', minWidth: 0, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1 }}>{o.channel_name || '마켓'}</span>
+            <span style={{ fontSize: '0.75rem', color: c.textSub, background: c.surfaceAlt, padding: '0.125rem 0.5rem', borderRadius: '4px', minWidth: 0, maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 1 }}>{channelBadgeLabel}</span>
             <button onClick={() => openMsgModal('sms', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.sms ? c.surfaceAlt : 'transparent', border: `1px solid ${sentFlags[o.id]?.sms ? c.success : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.sms ? c.success : c.textSub, cursor: 'pointer' }}>SMS</button>
             <button onClick={() => openMsgModal('kakao', o)} style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', background: sentFlags[o.id]?.kakao ? c.accentBg : 'transparent', border: `1px solid ${sentFlags[o.id]?.kakao ? c.warn : c.border}`, borderRadius: '4px', color: sentFlags[o.id]?.kakao ? c.warn : c.textSub, cursor: 'pointer' }}>KAKAO</button>
           </div>

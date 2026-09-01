@@ -23,6 +23,7 @@ const _shippingInFlight = new Set<string>()
 // Props 타입 정의
 interface OrdersTableProps {
   // 데이터
+  accounts?: { id: string; account_label?: string; market_type?: string }[]
   loading: boolean
   filteredOrders: SambaOrder[]
   currentPage: number
@@ -99,7 +100,7 @@ interface OrdersTableProps {
 export default function OrdersTable(props: OrdersTableProps) {
   const c = useTheme()
   const {
-    loading, filteredOrders, currentPage, pageSize,
+    accounts, loading, filteredOrders, currentPage, pageSize,
     currentPageIds, selectedIds, setSelectedIds, toggleSelectAll,
     editingCosts, setEditingCosts,
     editingShipFees, setEditingShipFees,
@@ -192,6 +193,7 @@ export default function OrdersTable(props: OrdersTableProps) {
                 {/* 주문정보 */}
                 <OrderInfoCell
                   o={o}
+                  accounts={accounts}
                   refreshLog={refreshLog}
                   setRefreshLog={setRefreshLog}
                   sentFlags={sentFlags}
