@@ -39,7 +39,6 @@ FP_OPS: dict[str, str] = {
     "sender_upt": "SenderUpt",
     # 주문·배송
     "delivery_list": "DeliveryList",
-    "delivery_proc": "DeliveryProc",
     "invoice_proc": "InvoiceProc",
     "out_of_stock_proc": "OutOfStockProc",
     "order_cancel_list": "OrderCancelList",

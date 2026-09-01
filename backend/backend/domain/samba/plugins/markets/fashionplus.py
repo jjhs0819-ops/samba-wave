@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
 from backend.domain.samba.plugins.markets.fashionplus_payload import (
     build_goods_add,
     build_scm_option_upt,
+    extract_consumer_price,
     normalize_prices,
     option_key,
 )
@@ -28,18 +30,41 @@ _SELF_SOURCE = "FASHIONPLUS"
 
 
 def is_self_sourced(product: dict) -> bool:
-    """패플에서 수집한 상품을 패플에 되파는 자기순환인지 판정."""
-    return str(product.get("source") or "").strip().upper() == _SELF_SOURCE
+    """패플에서 수집한 상품을 패플에 되파는 자기순환인지 판정.
+
+    수집 모델의 실제 필드는 source_site 다 (collector/model.py — poison/ssg/kream
+    플러그인 전부 동일). source 는 외부 유입 dict 대비 폴백으로만 본다.
+    """
+    raw = product.get("source_site") or product.get("source")
+    return str(raw or "").strip().upper() == _SELF_SOURCE
 
 
 def extract_option_ids(response: dict) -> dict[str, int]:
-    """GoodsAdd 응답에서 색상|사이즈 → OptID 맵을 만든다."""
+    """GoodsAdd 응답에서 옵션키 → OptID 맵을 만든다.
+
+    색상·사이즈가 둘 다 빈 원사이즈 옵션은 option_key 가 보조값(name → id)으로
+    키를 만든다 — 응답 row 의 이름 후보(OptName/Name)와 OptID 를 같이 넘겨
+    상품측 옵션과 같은 규칙으로 키가 나오게 한다. (안 넘기면 응답측 키만 ""
+    가 되어 매핑이 영영 어긋난다)
+    OptID 0 은 유효한 식별자다 — falsy 가 아니라 is None 로만 버린다
+    (payload 쪽 build_scm_option_upt 와 같은 기준).
+    """
     ids: dict[str, int] = {}
     for row in response.get("Options") or []:
         opt_id = row.get("OptID")
-        if not opt_id:
+        if opt_id is None:
             continue
-        key = option_key({"color": row.get("Color"), "size": row.get("Size")})
+        name = row.get("OptName")
+        if name is None:
+            name = row.get("Name")
+        key = option_key(
+            {
+                "color": row.get("Color"),
+                "size": row.get("Size"),
+                "name": name,
+                "id": opt_id,
+            }
+        )
         try:
             ids[key] = int(opt_id)
         except (TypeError, ValueError):
@@ -63,7 +88,6 @@ class FashionPlusPlugin(MarketPlugin):
 
     market_type = "fashionplus"
     policy_key = "패션플러스"
-    required_fields = ["name", "sale_price"]
 
     def transform(self, product: dict, category_id: str, **kwargs) -> dict:
         return build_goods_add(
@@ -86,6 +110,15 @@ class FashionPlusPlugin(MarketPlugin):
     ) -> dict[str, Any]:
         if is_self_sourced(product):
             return _fail("패션플러스 소싱 상품은 자기순환이라 전송하지 않습니다")
+
+        # 수수료율 미확정 가드 — 수수료 맵(MARKET_TYPE_TO_POLICY_KEY)에 없는 채로
+        # 전송되면 정책 feeRate 가 통째 무시돼 저가등록된다 (eBay 07-21 · 토스 08-15
+        # 와 동일 사고 유형). ENABLE_THEHYUNDAI 와 같은 env 게이트 관례를 따른다.
+        if os.getenv("ENABLE_FASHIONPLUS") != "1":
+            return _fail(
+                "패션플러스 수수료율 미확정 — 전송 차단. "
+                "수수료 확정 후 ENABLE_FASHIONPLUS=1 로 명시 활성화 필요"
+            )
 
         client = self._build_client(account)
         if client is None:
@@ -126,12 +159,13 @@ class FashionPlusPlugin(MarketPlugin):
             "success": True,
             "message": "패션플러스 등록 완료",
             "product_no": item_id,
-            "option_ids": option_ids,
+            # 설계서 정본 키 — 상위가 last_sent_data[계정]["fp_option_ids"] 에 그대로 보관
+            "fp_option_ids": option_ids,
         }
 
     async def _update(self, client, product: dict, item_id: str) -> dict[str, Any]:
         prices = normalize_prices(
-            product.get("sale_price"), product.get("consumer_price")
+            product.get("sale_price"), extract_consumer_price(product)
         )
         if prices is None:
             return _fail(f"패션플러스 전송 불가 판매가: {product.get('sale_price')!r}")
@@ -149,7 +183,9 @@ class FashionPlusPlugin(MarketPlugin):
             )
 
         options = product.get("options") or []
-        option_ids = product.get("_fp_option_ids") or {}
+        # 옵션 ID 맵 키는 설계서 정본 fp_option_ids 하나로 통일
+        # (last_sent_data[계정]["fp_option_ids"] 와 동일한 이름)
+        option_ids = product.get("fp_option_ids") or {}
         rows = build_scm_option_upt(item_id, option_ids, options, update_price=False)
         if options and not rows:
             # 가격만 갱신되고 재고는 하나도 못 건드렸다 — 성공으로 보고하면
@@ -172,7 +208,11 @@ class FashionPlusPlugin(MarketPlugin):
         }
 
     async def delete_with_client(
-        self, client, item_id: str, options: list[dict]
+        self,
+        client,
+        item_id: str,
+        options: list[dict],
+        option_ids: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         """재고0 → 노출해제 → 임시보관 3단 삭제.
 
@@ -180,20 +220,32 @@ class FashionPlusPlugin(MarketPlugin):
         패플에서 계속 팔릴 수 있다. 앞 두 단계가 실제로 판매를 멈춘다.
         중간 단계가 실패해도 다음 단계는 계속 진행하되, 실패를 전부 모아
         최종 success 에 반영한다 — 재고·노출이 남은 '유령'을 성공으로 박제하지 않는다.
+
+        단 옵션 정보를 아예 모르는 경로(표준 delete() 등)는 예외 —
+        OptID 없는 fallback 행은 실서버가 거절할 수 있고, 그 실패를 합산하면
+        2·3단이 다 성공해도 영원히 실패로 보고돼 무한 재시도가 된다.
+        이때는 1단을 시도만 하고 실패는 message 메모로만 남긴다.
+
+        option_ids: 옵션키 → OptID 맵 (설계서 정본 키 fp_option_ids 에 저장된 값).
+        안 넘기면 옵션 row 안의 opt_id 값으로 맵을 만든다.
         """
         failures: list[str] = []
+        notes: list[str] = []
 
         # 호출측 dict 를 오염시키지 않게 얕은 복사로 재고 0 을 만든다
         zeroed = [{**o, "stock": 0} for o in (options or [])]
-        rows = build_scm_option_upt(
-            item_id,
-            {option_key(o): o["opt_id"] for o in zeroed if o.get("opt_id")},
-            zeroed,
-            update_price=False,
-        )
+        if option_ids is None:
+            # OptID 0 도 유효한 매핑 — falsy 가 아니라 is not None 기준
+            option_ids = {
+                option_key(o): o["opt_id"]
+                for o in zeroed
+                if o.get("opt_id") is not None
+            }
+        rows = build_scm_option_upt(item_id, option_ids, zeroed, update_price=False)
         skipped = len(zeroed) - len(rows)
         if skipped > 0:
-            # 매핑 없는 옵션은 재고0 요청이 못 나가 패플에서 계속 팔린다
+            # 옵션을 알면서 일부만 매핑된 경우 — 매핑 없는 옵션은 재고0 요청이
+            # 못 나가 패플에서 계속 팔린다. 이건 실패로 내리는 게 맞다.
             failures.append(f"옵션 {skipped}건 재고0 미전송(OptID 매핑 없음)")
 
         # 옵션 정보가 없어도 3단 순서는 지킨다 (재고0 요청 1건으로 단계를 표시)
@@ -207,7 +259,10 @@ class FashionPlusPlugin(MarketPlugin):
             except Exception as e:
                 logger.warning(f"[패션플러스] 삭제 1단(재고0) 실패(계속 진행): {e}")
                 stock_fail += 1
-        if stock_fail:
+        if not zeroed:
+            # 옵션 정보 없음 — fallback 1단은 결과와 무관하게 실패 합산 금지
+            notes.append("옵션 정보 없음 — 1단(재고0) 생략(결과 미반영)")
+        elif stock_fail:
             failures.append(f"1단(재고0) 실패 {stock_fail}건")
 
         try:
@@ -229,13 +284,16 @@ class FashionPlusPlugin(MarketPlugin):
                 f"3단(임시보관) 실패: {resp.get('Message') or resp.get('Status')}"
             )
             return _fail(
-                "패션플러스 삭제 실패: " + " · ".join(failures),
+                "패션플러스 삭제 실패: " + " · ".join(failures + notes),
                 str(resp.get("Status", "")),
             )
         if failures:
             # 3단(임시보관)은 됐지만 앞 단계가 남아 패플에 살아있을 수 있다
-            return _fail("패션플러스 삭제 미완료: " + " · ".join(failures))
-        return {"success": True, "message": "패션플러스 삭제 완료(임시보관)"}
+            return _fail("패션플러스 삭제 미완료: " + " · ".join(failures + notes))
+        message = "패션플러스 삭제 완료(임시보관)"
+        if notes:
+            message += " — " + " · ".join(notes)
+        return {"success": True, "message": message}
 
     async def delete(self, session, product_no: str, account) -> dict[str, Any]:
         client = self._build_client(account)

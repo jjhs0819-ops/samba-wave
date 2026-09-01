@@ -198,3 +198,280 @@ async def test_수정시_옵션없는_상품은_가격만으로_성공한다():
         FakeClient(), {"sale_price": 10000}, "777"
     )
     assert result["success"] is True
+
+
+# ── 최종 리뷰 F1: 자기순환 판정은 실제 모델 필드 source_site 기준 ──
+
+
+def test_자기순환_판정은_source_site_필드를_본다():
+    """수집 모델의 실제 필드는 source_site 다 (collector/model.py)."""
+    assert is_self_sourced({"source_site": "FASHIONPLUS"}) is True
+    assert is_self_sourced({"source_site": "fashionplus"}) is True
+    assert is_self_sourced({"source_site": "MUSINSA"}) is False
+
+
+def test_자기순환_판정_source_site가_source보다_우선():
+    assert is_self_sourced({"source_site": "MUSINSA", "source": "FASHIONPLUS"}) is False
+    # source_site 가 비어 있으면 source 폴백
+    assert is_self_sourced({"source_site": "", "source": "FASHIONPLUS"}) is True
+
+
+# ── 최종 리뷰 F3: 원사이즈(색상·사이즈 없음) 옵션도 OptID 매핑 ──
+
+
+def test_등록응답_색상사이즈_없는_옵션은_이름으로_키를_만든다():
+    resp = {
+        "Status": "OK",
+        "ItemID": 777,
+        "Options": [{"OptID": 111, "OptName": "FREE"}],
+    }
+    assert extract_option_ids(resp) == {"FREE": 111}
+
+
+def test_등록응답_Name_필드도_이름_후보로_쓴다():
+    resp = {
+        "Status": "OK",
+        "ItemID": 777,
+        "Options": [{"OptID": 111, "Name": "FREE"}],
+    }
+    assert extract_option_ids(resp) == {"FREE": 111}
+
+
+def test_등록응답_OptID_0은_유효한_매핑():
+    """payload 쪽(build_scm_option_upt)과 같은 is None 기준 — 0 을 버리면 안 된다."""
+    resp = {
+        "Status": "OK",
+        "ItemID": 777,
+        "Options": [{"OptID": 0, "Color": "BLACK", "Size": "270"}],
+    }
+    assert extract_option_ids(resp) == {"BLACK|270": 0}
+
+
+@pytest.mark.asyncio
+async def test_원사이즈_옵션_왕복_매칭():
+    """등록 응답(이름만 있는 옵션) → 재고 갱신에서 같은 키로 매칭돼야 한다.
+
+    어긋나면 재고 갱신·삭제 1단이 영구 실패해 품절인데 계속 팔리는 유령이 된다.
+    """
+    resp = {
+        "Status": "OK",
+        "ItemID": 777,
+        "Options": [{"OptID": 111, "OptName": "FREE"}],
+    }
+    option_ids = extract_option_ids(resp)
+
+    payloads: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        async def call(self, op, payload):
+            payloads.append((op, payload))
+            return {"Status": "OK", "Message": ""}
+
+    product = {
+        "sale_price": 10000,
+        "options": [{"name": "FREE", "stock": 3}],  # 색상·사이즈 없음
+        "fp_option_ids": option_ids,
+    }
+    result = await FashionPlusPlugin()._update(FakeClient(), product, "777")
+    assert result["success"] is True
+    stock_rows = [p for op, p in payloads if op == "scm_option_upt"]
+    assert len(stock_rows) == 1
+    assert stock_rows[0]["OptID"] == 111
+    assert stock_rows[0]["StockQty"] == 3
+
+
+# ── 최종 리뷰 F4: 표준 delete() 경로 + 옵션 ID 키 통일(fp_option_ids) ──
+
+
+@pytest.mark.asyncio
+async def test_옵션정보_없는_삭제는_1단_실패를_합산하지_않는다():
+    """옵션을 아예 모르면 fallback 재고0 거절이 3단 성공을 가리면 안 된다.
+
+    합산하면 항상 success=False → 삼바가 삭제완료로 못 박고 무한 재시도.
+    """
+
+    class FakeClient:
+        async def call(self, op, payload):
+            if op == "scm_option_upt":
+                return {"Status": "Err-Dat-999", "Message": "OptID 없음"}
+            return {"Status": "OK", "Message": ""}
+
+    result = await FashionPlusPlugin().delete_with_client(
+        FakeClient(), "777", options=[]
+    )
+    assert result["success"] is True
+    assert "옵션 정보 없음" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_옵션정보_없는_삭제_성공시에도_생략_메모를_남긴다():
+    class FakeClient:
+        async def call(self, op, payload):
+            return {"Status": "OK", "Message": ""}
+
+    result = await FashionPlusPlugin().delete_with_client(
+        FakeClient(), "777", options=[]
+    )
+    assert result["success"] is True
+    assert "옵션 정보 없음" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_옵션정보_없어도_2단_실패는_그대로_실패다():
+    """1단 면제는 옵션 정보 없음에 한정 — 노출해제 실패는 유령이므로 실패 유지."""
+
+    class FakeClient:
+        async def call(self, op, payload):
+            if op == "goods_dsp":
+                return {"Status": "ERROR", "Message": "boom"}
+            return {"Status": "OK", "Message": ""}
+
+    result = await FashionPlusPlugin().delete_with_client(
+        FakeClient(), "777", options=[]
+    )
+    assert result["success"] is False
+    assert "2단" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_표준_delete_진입점은_3단_성공이면_성공으로_보고한다():
+    called: list[str] = []
+
+    class FakeClient:
+        async def call(self, op, payload):
+            called.append(op)
+            return {"Status": "OK", "Message": ""}
+
+    plugin = FashionPlusPlugin()
+    plugin._build_client = lambda account: FakeClient()  # 네트워크 차단
+    result = await plugin.delete(session=None, product_no="777", account=object())
+    assert called == ["scm_option_upt", "goods_dsp", "goods_delete"]
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_삭제시_fp_option_ids_맵을_직접_받으면_재고0이_옵션별로_나간다():
+    """정본 키 fp_option_ids 에 보관된 맵을 그대로 넘기는 경로."""
+    payloads: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        async def call(self, op, payload):
+            payloads.append((op, payload))
+            return {"Status": "OK", "Message": ""}
+
+    result = await FashionPlusPlugin().delete_with_client(
+        FakeClient(),
+        "777",
+        options=[{"color": "BLACK", "size": "270", "stock": 5}],
+        option_ids={"BLACK|270": 111},
+    )
+    assert result["success"] is True
+    stock_rows = [p for op, p in payloads if op == "scm_option_upt"]
+    assert len(stock_rows) == 1
+    assert stock_rows[0]["OptID"] == 111
+    assert stock_rows[0]["StockQty"] == 0
+
+
+@pytest.mark.asyncio
+async def test_삭제시_옵션row의_opt_id_0도_유효한_매핑():
+    payloads: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        async def call(self, op, payload):
+            payloads.append((op, payload))
+            return {"Status": "OK", "Message": ""}
+
+    options = [{"color": "BLACK", "size": "270", "stock": 5, "opt_id": 0}]
+    result = await FashionPlusPlugin().delete_with_client(
+        FakeClient(), "777", options=options
+    )
+    assert result["success"] is True
+    stock_rows = [p for op, p in payloads if op == "scm_option_upt"]
+    assert stock_rows[0]["OptID"] == 0
+
+
+@pytest.mark.asyncio
+async def test_수정시_옵션ID_맵은_정본_키_fp_option_ids로_받는다():
+    payloads: list[tuple[str, dict]] = []
+
+    class FakeClient:
+        async def call(self, op, payload):
+            payloads.append((op, payload))
+            return {"Status": "OK", "Message": ""}
+
+    product = {
+        "sale_price": 10000,
+        "options": [{"color": "BLACK", "size": "270", "stock": 7}],
+        "fp_option_ids": {"BLACK|270": 111},
+    }
+    result = await FashionPlusPlugin()._update(FakeClient(), product, "777")
+    assert result["success"] is True
+    stock_rows = [p for op, p in payloads if op == "scm_option_upt"]
+    assert stock_rows[0]["OptID"] == 111
+    assert stock_rows[0]["StockQty"] == 7
+
+
+@pytest.mark.asyncio
+async def test_등록_결과의_옵션ID_맵_키도_fp_option_ids다():
+    """상위가 last_sent_data[계정]["fp_option_ids"] 에 그대로 보관하는 정본 키."""
+
+    class FakeClient:
+        async def call(self, op, payload):
+            return {
+                "Status": "OK",
+                "ItemID": 777,
+                "Options": [{"OptID": 111, "Color": "BLACK", "Size": "270"}],
+            }
+
+    result = await FashionPlusPlugin()._create(
+        FakeClient(), _create_product(), "1010", "5477", ""
+    )
+    assert result["success"] is True
+    assert result["fp_option_ids"] == {"BLACK|270": 111}
+
+
+def _create_product() -> dict:
+    return {
+        "id": "p1",
+        "site_product_id": "MU123",
+        "name": "나이키 에어포스1",
+        "sale_price": 89000,
+        "images": ["https://mirror.example/1.jpg"],
+        "options": [{"color": "BLACK", "size": "270", "stock": 5}],
+    }
+
+
+# ── 최종 리뷰 F5: 수수료율 미확정 게이트 (ENABLE_FASHIONPLUS) ──
+
+
+@pytest.mark.asyncio
+async def test_게이트_미설정이면_전송을_차단한다(monkeypatch):
+    """수수료 맵 미등록 상태의 전송은 저가등록 사고(eBay·토스 전례)로 직결된다."""
+    monkeypatch.delenv("ENABLE_FASHIONPLUS", raising=False)
+    result = await FashionPlusPlugin().execute(
+        session=None,
+        product={"source_site": "MUSINSA", "name": "x", "sale_price": 10000},
+        creds={},
+        category_id="1010",
+        account=None,
+        existing_no="",
+    )
+    assert result["success"] is False
+    assert "수수료율 미확정" in result["message"]
+    assert "ENABLE_FASHIONPLUS=1" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_게이트_1이면_통과해_다음_단계로_진행한다(monkeypatch):
+    monkeypatch.setenv("ENABLE_FASHIONPLUS", "1")
+    result = await FashionPlusPlugin().execute(
+        session=None,
+        product={"source_site": "MUSINSA", "name": "x", "sale_price": 10000},
+        creds={},
+        category_id="1010",
+        account=None,  # 게이트 통과 후 인증 검사에서 걸리는 것으로 통과를 증명
+        existing_no="",
+    )
+    assert result["success"] is False
+    assert "custCode" in result["message"]
+    assert "수수료율" not in result["message"]
