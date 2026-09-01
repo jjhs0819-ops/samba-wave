@@ -948,6 +948,7 @@ export default function OrdersPage() {
       </div>
 
       <OrdersTable
+        accounts={accounts}
         loading={loading}
         filteredOrders={orders}
         currentPage={currentPage}
