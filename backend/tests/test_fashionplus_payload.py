@@ -139,3 +139,89 @@ def test_옵션갱신_OptID_없는_옵션은_건너뛴다():
         "777", {"BLACK|270": 111}, _product()["options"], update_price=False
     )
     assert len(rows) == 1
+
+
+# --- 수정 라운드 1: 리뷰 지적 대응 테스트 ---
+
+
+def test_옵션갱신_가격변경시_옵션가_0도_그대로_전송():
+    """패플 공식 샘플상 OptPrice 0 은 적법한 값 — 있는 그대로 보낸다."""
+    options = [{"color": "BLACK", "size": "270", "stock": 5, "option_price": 0}]
+    rows = build_scm_option_upt("777", {"BLACK|270": 111}, options, update_price=True)
+    assert rows[0]["OptPrice"] == 0
+    assert rows[0]["IsOptionPriceUpdate"] == 1
+
+
+def test_옵션갱신_가격변경인데_옵션가_키_없으면_제외():
+    """값 없음을 0 으로 날조 금지 — 역마진 사고 방지."""
+    rows = build_scm_option_upt(
+        "777",
+        {"BLACK|270": 111, "BLACK|280": 222},
+        _product()["options"],
+        update_price=True,
+    )
+    assert rows == []
+
+
+def test_옵션갱신_가격변경인데_옵션가_해석불가면_제외():
+    options = [{"color": "BLACK", "size": "270", "stock": 5, "option_price": "abc"}]
+    rows = build_scm_option_upt("777", {"BLACK|270": 111}, options, update_price=True)
+    assert rows == []
+
+
+def test_옵션갱신_가격미변경이면_OptPrice_키_자체가_없음():
+    rows = build_scm_option_upt(
+        "777", {"BLACK|270": 111}, _product()["options"], update_price=False
+    )
+    assert "OptPrice" not in rows[0]
+
+
+def test_옵션키_색상사이즈_모두_없으면_보조값으로_구분():
+    """원사이즈 상품 — 서로 다른 옵션이 같은 키로 수렴하면 안 된다."""
+    k1 = option_key({"name": "FREE-A"})
+    k2 = option_key({"name": "FREE-B"})
+    assert k1 and k2 and k1 != k2
+
+
+def test_옵션키_보조값도_없으면_빈문자열():
+    assert option_key({}) == ""
+
+
+def test_옵션키_빈문자열은_매핑불가로_스킵():
+    rows = build_scm_option_upt("777", {"": 111}, [{"stock": 5}], update_price=False)
+    assert rows == []
+
+
+def test_등록_페이로드_ItemNo_없으면_거부():
+    product = _product()
+    product["site_product_id"] = ""
+    product["id"] = None
+    with pytest.raises(ValueError):
+        build_goods_add(product, "1010", "5477", "SND01")
+
+
+def test_옵션갱신_스킵옵션_경고로그(caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        build_scm_option_upt(
+            "777", {"BLACK|270": 111}, _product()["options"], update_price=False
+        )
+    assert "BLACK|280" in caplog.text
+
+
+def test_옵션갱신_옵션가_제외도_경고로그(caplog):
+    import logging
+
+    options = [{"color": "BLACK", "size": "270", "stock": 5}]
+    with caplog.at_level(logging.WARNING):
+        build_scm_option_upt("777", {"BLACK|270": 111}, options, update_price=True)
+    assert "BLACK|270" in caplog.text
+
+
+def test_옵션갱신_OptID_0은_유효한_매핑():
+    rows = build_scm_option_upt(
+        "777", {"BLACK|270": 0}, _product()["options"], update_price=False
+    )
+    assert len(rows) == 1
+    assert rows[0]["OptID"] == 0

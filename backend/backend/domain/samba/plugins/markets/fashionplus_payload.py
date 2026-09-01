@@ -11,6 +11,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from backend.utils.logger import logger
+
 MAX_STOCK = 200
 MIN_SALE_PRICE = 100
 _CONSUMER_RATIO = 0.9
@@ -45,9 +47,16 @@ def clamp_stock(qty: Any) -> int:
 
 
 def option_key(option: dict) -> str:
-    """색상|사이즈 정규화 키. OptID 매핑의 키로 쓴다."""
+    """색상|사이즈 정규화 키. OptID 매핑의 키로 쓴다.
+
+    색상·사이즈가 모두 비면(원사이즈 등) 서로 다른 옵션이 같은 키("|")로
+    수렴해 OptID 매핑이 뒤섞인다 — 이때는 보조값(name → id)을 키로 쓴다.
+    보조값도 없으면 빈 문자열을 돌려 "매핑 불가"로 취급되게 한다.
+    """
     color = str(option.get("color") or "").strip().upper()
     size = str(option.get("size") or "").strip().upper()
+    if not color and not size:
+        return str(option.get("name") or option.get("id") or "").strip().upper()
     return f"{color}|{size}"
 
 
@@ -77,8 +86,12 @@ def build_goods_add(
     if not name:
         raise ValueError("패션플러스 상품명 없음")
 
+    item_no = str(product.get("site_product_id") or product.get("id") or "").strip()
+    if not item_no:
+        raise ValueError("패션플러스 ItemNo(상품 식별자) 없음")
+
     body: dict[str, Any] = {
-        "ItemNo": str(product.get("site_product_id") or product.get("id") or ""),
+        "ItemNo": item_no,
         "ItemName": name,
         "DisplayItemName": name,
         "SalePrice": sale,
@@ -99,11 +112,22 @@ def build_scm_option_upt(
     options: list[dict],
     update_price: bool = False,
 ) -> list[dict]:
-    """ScmOptionUpt 요청 행 목록. OptID 를 모르는 옵션은 건너뛴다."""
+    """ScmOptionUpt 요청 행 목록.
+
+    - OptID 매핑이 없는 옵션은 건너뛰되, 무음으로 사라지지 않게
+      스킵된 키 목록·개수를 경고 로그로 남긴다. (OptID 0 은 유효한 매핑)
+    - update_price=True 인데 option_price 키가 없거나 숫자 해석 불가면
+      0 으로 날조하지 않고 그 옵션을 제외한다 — 역마진 사고 방지.
+      (패플 샘플상 OptPrice 0 자체는 적법 — 값이 있으면 0 도 그대로 전송)
+    """
     rows: list[dict] = []
+    skipped_unmapped: list[str] = []
+    skipped_price: list[str] = []
     for option in options or []:
-        opt_id = option_ids.get(option_key(option))
-        if not opt_id:
+        key = option_key(option)
+        opt_id = option_ids.get(key) if key else None
+        if opt_id is None:
+            skipped_unmapped.append(key or "(키 산출 불가)")
             continue
         row: dict[str, Any] = {
             "ItemId": str(item_id),
@@ -112,6 +136,23 @@ def build_scm_option_upt(
             "IsOptionPriceUpdate": 1 if update_price else 0,
         }
         if update_price:
-            row["OptPrice"] = int(float(option.get("option_price") or 0))
+            if "option_price" not in option:
+                skipped_price.append(key)
+                continue
+            try:
+                row["OptPrice"] = int(float(option["option_price"]))
+            except (TypeError, ValueError):
+                skipped_price.append(key)
+                continue
         rows.append(row)
+    if skipped_unmapped:
+        logger.warning(
+            "[패션플러스] OptID 매핑 없는 옵션 %d건 스킵 (ItemId=%s): %s",
+            len(skipped_unmapped), item_id, skipped_unmapped,
+        )
+    if skipped_price:
+        logger.warning(
+            "[패션플러스] 옵션가 없음/해석불가 옵션 %d건 제외 (ItemId=%s): %s",
+            len(skipped_price), item_id, skipped_price,
+        )
     return rows
