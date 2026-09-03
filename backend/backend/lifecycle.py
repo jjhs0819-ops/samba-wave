@@ -1949,6 +1949,49 @@ _ssg_ghost_reconciler_task: asyncio.Task | None = None
 _soldout_cleanup_task: asyncio.Task | None = None
 
 
+def _soldout_market_where(allowed_acc_ids: set[str] | None) -> list:
+    """품절 잔존 삭제 SELECT 의 판매처 필터 WHERE 절.
+
+    allowed_acc_ids: None = 필터 미설정(전체 허용), set = 허용 계정 화이트리스트.
+
+    per-account 스킵만으로는 삭제 실패한 상품이 대기열(limit 100)을 계속 점유하므로
+    SELECT 단계에서 함께 제외해야 한다. 2026-09-03: 쿠팡 계정 정지(401 Hmac key is
+    expired) 후 대기열 230건 중 123건이 '쿠팡 단독' 품절 상품으로 굳어, 10분마다
+    삭제 API를 헛호출하면서 다른 마켓 품절정리 슬롯까지 잠식하고 있었다.
+
+    `@>` + cast(str, JSONB) 는 SQLAlchemy 이중 인코딩으로 영원히 0건이 되는 함정이
+    있어(2026-07-13 오토튠 전면정지 사고) `?|`(배열 원소 중 하나라도 일치)를 쓴다.
+    """
+    if allowed_acc_ids is None:
+        return []
+
+    from sqlalchemy import String as _String, cast as _cast, false as _false
+    from sqlalchemy.dialects.postgresql import ARRAY as _PGARRAY
+
+    from backend.domain.samba.collector.model import SambaCollectedProduct as _CP
+
+    if not allowed_acc_ids:
+        # 필터는 켜졌는데 허용 마켓 계정이 0개 → 삭제 대상 없음.
+        # 조건을 비우면 필터가 통째로 무시돼 제외 마켓까지 삭제된다.
+        return [_false()]
+
+    return [
+        _CP.registered_accounts.op("?|")(
+            _cast(sorted(allowed_acc_ids), _PGARRAY(_String))
+        )
+    ]
+
+
+def _soldout_skip_account(acc_id: str, allowed_acc_ids: set[str] | None) -> bool:
+    """판매처 필터에서 제외된 계정이면 True — 마켓 삭제 시도 자체를 건너뛴다.
+
+    allowed_acc_ids 가 None 이면 필터 미설정(전체 허용) → 스킵하지 않는다.
+    """
+    if allowed_acc_ids is None:
+        return False
+    return acc_id not in allowed_acc_ids
+
+
 async def _soldout_cleanup_loop() -> None:
     """품절 잔존 상품 마켓삭제 재시도 루프 — 10분마다.
 
@@ -1972,6 +2015,24 @@ async def _soldout_cleanup_loop() -> None:
 
             # market_cond 조건과 동일
             async with get_write_session() as session:
+                # ── 판매처 필터 ── 오토튠 판매처 체크(autotune_enabled_markets) 존중.
+                # 워룸에서 해제한 마켓은 이 루프도 건드리지 않는다. 안 그러면 정지·
+                # 인증만료 마켓에 10분마다 삭제 API를 무한 재시도한다 (2026-09-03 쿠팡).
+                # None/[] = 전체 허용 (오토튠 필터와 동일 의미 유지).
+                from backend.api.v1.routers.samba.proxy import _get_setting
+
+                _enabled_markets = await _get_setting(
+                    session, "autotune_enabled_markets"
+                )
+                _allowed_acc_ids: set[str] | None = None
+                if _enabled_markets and isinstance(_enabled_markets, list):
+                    _acc_res = await session.execute(
+                        select(SambaMarketAccount.id).where(
+                            SambaMarketAccount.market_type.in_(list(_enabled_markets))
+                        )
+                    )
+                    _allowed_acc_ids = {r[0] for r in _acc_res.all()}
+
                 stmt = (
                     select(_CP)
                     .where(
@@ -1983,6 +2044,7 @@ async def _soldout_cleanup_loop() -> None:
                         _CP.market_product_nos.isnot(None),
                         cast(_CP.market_product_nos, String) != "null",
                         cast(_CP.market_product_nos, String) != "{}",
+                        *_soldout_market_where(_allowed_acc_ids),
                     )
                     .limit(100)
                 )
@@ -2022,6 +2084,8 @@ async def _soldout_cleanup_loop() -> None:
                     acc = acc_cache.get(acc_id)
                     if not acc:
                         continue
+                    if _soldout_skip_account(acc_id, _allowed_acc_ids):
+                        continue  # 판매처 필터 제외 마켓 — 삭제 시도 안 함
                     m_type = acc.market_type
                     if m_type in ("smartstore",):
                         pno = sp_mnos.get(f"{acc_id}_origin", "") or sp_mnos.get(
