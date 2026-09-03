@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react'
+import type { ClipboardEvent as ReactClipboardEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { accountApi, orderApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
+import { request, SAMBA_PREFIX } from '@/lib/samba/api/shared'
 import { jobApi } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
 import { makeCard, makeInputStyle, fmtNum, fmtTextNumbers } from '@/lib/samba/styles'
@@ -16,6 +18,8 @@ import { btn } from '@/lib/samba/buttons'
 import {
   STATUS_MAP, TYPE_LABELS, RETURN_REASONS,
   fmtMD, getAccountOptionLabel, tdCenter,
+  classifyReturnSection, makeReturnSections, isOrderPlacedWarnMemo,
+  type ReturnSectionKey,
 } from './constants'
 import { ReturnDetailModal } from './components/ReturnDetailModal'
 
@@ -56,12 +60,17 @@ const parseAmount = (v: string | null | undefined): number => {
   return Number.isFinite(n) ? n : 0
 }
 
+// ── 마감(종결) 로컬 확장 타입 (T7) ──
+// samba_return 신규 컬럼 closed_at/closed_by 가 lib 타입(SambaReturn)에 아직 없다.
+// lib 파일은 수정 금지이므로 이 페이지 안에서만 구조적으로 확장해 쓴다.
+type ReturnRow = SambaReturn & { closed_at?: string | null; closed_by?: string | null }
+
 export default function ReturnsPage() {
   const c = useTheme()
   // 완료내역 뱃지 색 — 테마(c) 변경 시에만 재생성
   const COMPLETION_COLORS = useMemo(() => makeCompletionColors(c), [c])
   useEffect(() => { document.title = 'SAMBA-반품관리' }, [])
-  const [returns, setReturns] = useState<SambaReturn[]>([])
+  const [returns, setReturns] = useState<ReturnRow[]>([])
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [, setStats] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
@@ -185,6 +194,177 @@ export default function ReturnsPage() {
   const [searchText, setSearchText] = useState('')
   const [marketFilter, setMarketFilter] = useState('')
 
+  // ── '주문번호만 선택' 토글 (T5) ──
+  // ON(기본): 표 전체 user-select:none + 주문번호 셀만 text → 세로 드래그로 주문번호만 복사.
+  // localStorage 에 저장해 새로고침 후에도 유지 (읽기/쓰기 실패 시 기본값 true 로 동작).
+  const ORDER_ONLY_SELECT_KEY = 'samba_returns_order_only_select'
+  // 서버 렌더에는 localStorage 가 없으므로 초기값은 항상 true 로 두고,
+  // 마운트 후 useEffect 에서 저장값을 읽어 반영한다 (하이드레이션 불일치 방지).
+  const [orderOnlySelect, setOrderOnlySelect] = useState<boolean>(true)
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(ORDER_ONLY_SELECT_KEY)
+      if (v !== null) setOrderOnlySelect(v === '1')
+    } catch { /* 읽기 실패 시 기본값 true 유지 */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const toggleOrderOnlySelect = () => {
+    setOrderOnlySelect(prev => {
+      const next = !prev
+      try { localStorage.setItem(ORDER_ONLY_SELECT_KEY, next ? '1' : '0') } catch { /* 저장 실패해도 화면 동작엔 영향 없음 */ }
+      return next
+    })
+  }
+
+  // ── 구획 접기/펴기 (T6) — '기타'만 기본 접힘, localStorage 에 접힘 상태 유지 ──
+  const SECTION_COLLAPSE_KEY = 'samba_returns_section_collapsed'
+  // 기타 구획은 취소완료·거부 등 종결건이 대부분(운영DB 90일 실측 914건)이라 기본 접힘.
+  const SECTION_COLLAPSE_DEFAULT: Partial<Record<ReturnSectionKey, boolean>> = { etc: true }
+  const [collapsedSections, setCollapsedSections] = useState<Partial<Record<ReturnSectionKey, boolean>>>(SECTION_COLLAPSE_DEFAULT)
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SECTION_COLLAPSE_KEY)
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          setCollapsedSections(parsed as Partial<Record<ReturnSectionKey, boolean>>)
+        }
+      }
+    } catch { /* 읽기 실패 시 기본(기타만 접힘) 유지 */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const toggleSection = (key: ReturnSectionKey) => {
+    setCollapsedSections(prev => {
+      const next = { ...prev, [key]: !prev[key] }
+      try { localStorage.setItem(SECTION_COLLAPSE_KEY, JSON.stringify(next)) } catch { /* 저장 실패해도 화면 동작엔 영향 없음 */ }
+      return next
+    })
+  }
+
+  // 구획 정의(색 포함) — 테마 팔레트(c) 변경 시에만 재생성
+  const RETURN_SECTIONS = useMemo(() => makeReturnSections(c), [c])
+
+  // ── 주문번호 세로 드래그 복사 — 엔터(줄바꿈) 구분 보강 (T6) ──
+  // '주문번호만 선택' 모드에서 복사 시, 선택 영역에 걸린 주문번호 셀들만 뽑아
+  // 줄바꿈(\n)으로 이어 클립보드를 덮어쓴다 — 브라우저에 따라 구분자가 탭이 되던
+  // 문제 방지. 주문번호를 하나도 못 뽑으면 기본 복사 동작을 막지 않는다.
+  const tableWrapRef = useRef<HTMLDivElement>(null)
+  const handleOrderOnlyCopy = (e: ReactClipboardEvent<HTMLDivElement>) => {
+    if (!orderOnlySelect) return // 모드 OFF — 아무것도 하지 않음(기본 복사)
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+    const cells = tableWrapRef.current?.querySelectorAll('.samba-order-no-cell')
+    if (!cells || cells.length === 0) return
+    const nums: string[] = []
+    cells.forEach(cell => {
+      // containsNode(cell, true): 셀이 선택 영역에 일부라도 걸리면 포함으로 판정
+      if (sel.containsNode(cell, true)) {
+        const t = (cell.textContent || '').trim()
+        if (t && t !== '-') nums.push(t)
+      }
+    })
+    if (nums.length === 0) return
+    e.clipboardData.setData('text/plain', nums.join('\n'))
+    e.preventDefault()
+  }
+
+  // ── 회수상태 자동조회 (T4 프론트) ──
+  // POST /returns/collect-status/refresh — 백엔드가 원주문/회수 송장을 택배사에 조회해
+  // 미수거/수거중/수거완료 상태를 자동 갱신한다. 결과는 로그창에만 남긴다
+  // (백엔드 미배포로 404/500 이어도 모달 없이 로그 한 줄로 조용히 종료).
+  const [collectStatusBusy, setCollectStatusBusy] = useState(false)
+  const refreshCollectStatus = async () => {
+    if (collectStatusBusy) return // 연타 방지
+    setCollectStatusBusy(true)
+    setLogMessages(prev => [...prev, `[${fmtTime()}] 회수상태 자동조회 시작...`])
+    try {
+      const res = await request<{ ok: boolean; checked: number; updated: number; skipped: number; errors: unknown[] }>(
+        `${SAMBA_PREFIX}/returns/collect-status/refresh`,
+        { method: 'POST', body: JSON.stringify({}) },
+      )
+      const errCount = Array.isArray(res.errors) ? res.errors.length : 0
+      setLogMessages(prev => [...prev,
+        `[${fmtTime()}] 회수상태 조회 완료 — 확인 ${fmtNum(res.checked ?? 0)}건 · 갱신 ${fmtNum(res.updated ?? 0)}건 · 건너뜀 ${fmtNum(res.skipped ?? 0)}건${errCount ? ` · 오류 ${fmtNum(errCount)}건` : ''}`,
+      ])
+      await load()
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] 회수상태 조회 실패 — ${e instanceof Error ? e.message : String(e)}`])
+    } finally {
+      setCollectStatusBusy(false)
+    }
+  }
+
+  // ── 마감(종결) (T7) ──
+  // '완료 처리까지 다 끝낸 건'을 목록에서 숨긴다 — 완료내역(어떻게 끝났나)과 직교 축.
+  // '마감 포함 보기' 토글(localStorage 유지, 기본 꺼짐)을 켜면 include_closed=true 로 조회해
+  // 마감 행을 흐리게 + [마감 해제] 버튼과 함께 보여준다.
+  const INCLUDE_CLOSED_KEY = 'samba_returns_include_closed'
+  const [includeClosed, setIncludeClosed] = useState(false)
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(INCLUDE_CLOSED_KEY) === '1') setIncludeClosed(true)
+    } catch { /* 읽기 실패 시 기본값 false 유지 */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const toggleIncludeClosed = () => {
+    setIncludeClosed(prev => {
+      const next = !prev
+      try { localStorage.setItem(INCLUDE_CLOSED_KEY, next ? '1' : '0') } catch { /* 저장 실패해도 화면 동작엔 영향 없음 */ }
+      return next
+    })
+  }
+
+  // 마감/해제 공통 호출 — 백엔드 미배포로 404/500 이 날 수 있으므로
+  // 실패는 모달 없이 로그창 한국어 한 줄로만 남기고 조용히 끝낸다.
+  const closeReturns = async (ids: string[]) => {
+    if (ids.length === 0) return
+    try {
+      const res = await request<{ ok: boolean; closed: number }>(
+        `${SAMBA_PREFIX}/returns/close`,
+        { method: 'POST', body: JSON.stringify({ ids }) },
+      )
+      // 낙관적 업데이트 — 마감 포함 보기 OFF면 즉시 목록에서 제거, ON이면 마감 표시로 전환
+      const now = new Date().toISOString()
+      setReturns(prev => includeClosed
+        ? prev.map(x => ids.includes(x.id) ? { ...x, closed_at: now, closed_by: 'manual' } : x)
+        : prev.filter(x => !ids.includes(x.id)))
+      setSelectedIds(new Set())
+      setLogMessages(prev => [...prev, `[${fmtTime()}] 마감 완료 — ${fmtNum(res.closed ?? ids.length)}건`])
+      await load()
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] 마감 실패 — ${e instanceof Error ? e.message : String(e)}`])
+    }
+  }
+  const reopenReturns = async (ids: string[]) => {
+    if (ids.length === 0) return
+    try {
+      const res = await request<{ ok: boolean; reopened: number }>(
+        `${SAMBA_PREFIX}/returns/reopen`,
+        { method: 'POST', body: JSON.stringify({ ids }) },
+      )
+      setReturns(prev => prev.map(x => ids.includes(x.id) ? { ...x, closed_at: null, closed_by: null } : x))
+      setLogMessages(prev => [...prev, `[${fmtTime()}] 마감 해제 — ${fmtNum(res.reopened ?? ids.length)}건`])
+      await load()
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] 마감 해제 실패 — ${e instanceof Error ? e.message : String(e)}`])
+    }
+  }
+  // 행 단위 마감 — 한 번 확인 후 실행
+  const closeOne = async (r: ReturnRow) => {
+    const label = r.order_number || r.order_id || r.id
+    if (!await showConfirm(`주문 ${label} 건을 마감하시겠습니까?\n마감된 건은 목록에서 숨겨집니다 ('마감 포함 보기'로 재확인 가능).`)) return
+    await closeReturns([r.id])
+  }
+  // 체크박스로 고른 행 일괄 마감 — 개수 확인 후 실행
+  const closeSelected = async () => {
+    if (selectedIds.size === 0) {
+      showAlert('마감할 항목을 선택해주세요', 'info')
+      return
+    }
+    if (!await showConfirm(`선택한 ${fmtNum(selectedIds.size)}건을 일괄 마감하시겠습니까?\n마감된 건은 목록에서 숨겨집니다.`)) return
+    await closeReturns([...selectedIds])
+  }
+
   // 목록 요청 일련번호 — 필터를 연달아 바꾸거나 새 탭 진입처럼 요청이 겹칠 때,
   // 먼저 보낸 요청이 늦게 도착해 최신 결과를 덮어쓰는 것을 막는다.
   const loadSeqRef = useRef(0)
@@ -203,20 +383,24 @@ export default function ReturnsPage() {
     const onf = orderNumberFilter.trim()
     // 다중 주문번호(요청 #9)면 pageSize(기본 50)로는 잘릴 수 있어 라우트 상한(1000)까지 확장
     const onfCount = onf ? onf.split(/[\s,]+/).filter(Boolean).length : 0
-    const data = await returnApi.list(
-      undefined,
-      filterStatus || undefined,
-      filterType || undefined,
-      onfCount > 1 ? 1000 : pageSize,
-      onf ? undefined : (customStart || undefined),
-      onf ? undefined : (customEnd || undefined),
-      onf || undefined,
-      // 주문번호 시드 진입(주문탭 [반품/교환] 새 탭)일 때만 강제 백필 — 방금 취소요청한
-      // 주문이 재검색 없이 첫 로드에 바로 뜨도록 (요청 #10). 일반 진입은 기존 스로틀 유지.
-      onf ? { forceBackfill: true } : undefined,
-      // 실패를 빈 배열로 바꾸지 않는다 — 일시적 오류에 목록이 통째로 비어
-      // '데이터 없음'처럼 보이던 문제 방지. null 이면 기존 목록을 그대로 둔다.
-    ).catch(() => null)
+    // include_closed(T7)는 returnApi.list 에 없고 lib 은 수정 금지 —
+    // returnApi.list 와 동일한 파라미터를 페이지에서 직접 구성해 호출한다.
+    const p = new URLSearchParams()
+    // 주문번호 필터 진입 시 날짜 범위는 보내지 않음 — 해당 주문 전체 반품/교환을 잡기 위함
+    if (onf) p.set('order_number', onf)
+    if (filterStatus) p.set('status', filterStatus)
+    if (filterType) p.set('type', filterType)
+    if (!onf && customStart) p.set('start_date', customStart)
+    if (!onf && customEnd) p.set('end_date', customEnd)
+    // 주문번호 시드 진입(주문탭 [반품/교환] 새 탭)일 때만 강제 백필 — 방금 취소요청한
+    // 주문이 재검색 없이 첫 로드에 바로 뜨도록 (요청 #10). 일반 진입은 기존 스로틀 유지.
+    if (onf) p.set('force_backfill', 'true')
+    // '마감 포함 보기' ON — 마감(closed_at)된 건까지 포함 조회 (기본은 백엔드가 제외)
+    if (includeClosed) p.set('include_closed', 'true')
+    p.set('limit', String(onfCount > 1 ? 1000 : pageSize))
+    // 실패를 빈 배열로 바꾸지 않는다 — 일시적 오류에 목록이 통째로 비어
+    // '데이터 없음'처럼 보이던 문제 방지. null 이면 기존 목록을 그대로 둔다.
+    const data = await request<ReturnRow[]>(`${SAMBA_PREFIX}/returns?${p}`).catch(() => null)
     const st = await returnApi.getStats().catch(() => null)
     // 내가 최신 요청이 아니면 반영하지 않는다(늦게 온 옛 응답이 최신을 덮어쓰는 것 차단).
     if (seq !== loadSeqRef.current) return
@@ -233,7 +417,7 @@ export default function ReturnsPage() {
       setLogMessages(prev => [...prev, '[안내] 반품/교환 데이터 생성 대기 — 1.5초 후 1회 재조회'])
       setTimeout(() => loadRef.current(), 1500)
     }
-  }, [filterStatus, filterType, customStart, customEnd, orderNumberFilter,pageSize])
+  }, [filterStatus, filterType, customStart, customEnd, orderNumberFilter, pageSize, includeClosed])
 
   useEffect(() => { loadRef.current = load }, [load])
   useEffect(() => { load() }, [load])
@@ -405,7 +589,8 @@ export default function ReturnsPage() {
     // 메모를 지우거나 고쳐 저장한 행이 자동 기입 행에 다시 밀리는 문제가 재발한다.
     const editScore = (r: SambaReturn) => {
       const has = (v: string | undefined | null) => !!(v && String(v).trim())
-      const memoTouched = has(r.memo) && r.memo!.trim() !== '취소요청'
+      // '⚠️발주완료\n취소승인 금지' 도 백엔드 자동 기입 메모 — 손댄 것으로 치지 않는다
+      const memoTouched = has(r.memo) && r.memo!.trim() !== '취소요청' && !isOrderPlacedWarnMemo(r.memo)
       return (memoTouched ? 1 : 0)
         + (has(r.customer_amount) ? 1 : 0)
         + (has(r.company_amount) ? 1 : 0)
@@ -428,7 +613,7 @@ export default function ReturnsPage() {
       return cand.id < cur.id
     }
     const seen = new Map<string, number>() // order_number -> result 내 인덱스
-    const result: SambaReturn[] = []
+    const result: ReturnRow[] = []
     for (const r of returns) {
       const key = (r.order_number || '').trim()
       if (!key) { result.push(r); continue } // 주문번호 없음 → 별개 유지
@@ -476,6 +661,41 @@ export default function ReturnsPage() {
     return true
   })
 
+  // 표시된 주문번호 전부 복사 (T5) — 실제 렌더에 쓰는 filteredReturns 기준,
+  // order_number 를 줄바꿈으로 이어 클립보드에 복사
+  const copyVisibleOrderNumbers = async () => {
+    const nums = filteredReturns.map(r => (r.order_number || '').trim()).filter(Boolean)
+    if (nums.length === 0) {
+      showAlert('복사할 주문번호가 없습니다', 'info')
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(nums.join('\n'))
+      showAlert(`${fmtNum(nums.length)}건 복사됨`, 'success')
+    } catch {
+      showAlert('클립보드 복사에 실패했습니다', 'error')
+    }
+  }
+
+  // ── 구획 분리 (T6·T9) — filteredReturns 를 급한 순서 6구획으로 분할 ──
+  // classifyReturnSection 은 early-return 으로 어떤 행이든 정확히 한 구획 키를 반환하므로
+  // 구획별 건수 합계 = filteredReturns.length 가 항상 성립(빠지거나 중복되는 행 없음).
+  // 구획 내부 순서는 filteredReturns 순서(기존 정렬·최신순) 그대로 유지된다.
+  // startIdx = 화면 행 번호(연속 번호) 시작값 — 접힘 여부와 무관하게 번호 고정.
+  const sectionRows = (() => {
+    const buckets: Record<ReturnSectionKey, ReturnRow[]> = {
+      cancel_request: [], not_collected: [], collecting: [], return_done: [], exchange: [], etc: [],
+    }
+    for (const r of filteredReturns) buckets[classifyReturnSection(r)].push(r)
+    let start = 0
+    return RETURN_SECTIONS.map(def => {
+      const rows = buckets[def.key]
+      const item = { def, rows, startIdx: start }
+      start += rows.length
+      return item
+    })
+  })()
+
   // 수익총액 계산 (고객비용 - 회사비용) — 화면 필터 적용 목록 기준,
   // 완료내역 상태(대기/반품완료/교환완료) 무관하게 전체 합산.
   // 값은 콤마 포함 문자열("1,000")로 저장되므로 콤마 제거 후 숫자 변환 (B1).
@@ -502,6 +722,22 @@ export default function ReturnsPage() {
         input[type=number] {
           -moz-appearance: textfield;
           appearance: textfield;
+        }
+        /* '주문번호만 선택' 모드 (T5) — 표를 세로로 드래그해도 주문번호 셀만 선택·복사됨 */
+        .samba-select-order-only {
+          -webkit-user-select: none;
+          user-select: none;
+        }
+        .samba-select-order-only .samba-order-no-cell {
+          -webkit-user-select: text;
+          user-select: text;
+        }
+        /* 폼 요소는 선택 제약과 무관하게 편집·선택 가능하도록 명시 */
+        .samba-select-order-only input,
+        .samba-select-order-only select,
+        .samba-select-order-only textarea {
+          -webkit-user-select: auto;
+          user-select: auto;
         }
       `}</style>
       {/* 관련 페이지 연결 */}
@@ -607,6 +843,8 @@ export default function ReturnsPage() {
             })()}
           </select>
           <button onClick={loadReturns} disabled={syncBusy} style={{ ...btn('primary', c), padding: '0.22rem 0.65rem', fontSize: '0.75rem', ...(syncBusy ? { opacity: 0.6, cursor: 'not-allowed' } : null) }}>{syncBusy ? '수집 중...' : '가져오기'}</button>
+          {/* 회수상태 자동조회 (T4) — 반품/교환 건의 회수 송장을 택배사에 조회해 미수거/수거중/수거완료 자동 갱신 */}
+          <button onClick={refreshCollectStatus} disabled={collectStatusBusy} title="회수 송장을 택배사에 조회해 미수거·수거중·수거완료 상태를 자동 갱신" style={{ ...btn('secondary', c), padding: '0.22rem 0.65rem', fontSize: '0.75rem', whiteSpace: 'nowrap', ...(collectStatusBusy ? { opacity: 0.6, cursor: 'not-allowed' } : null) }}>{collectStatusBusy ? '조회 중...' : '회수상태 자동조회'}</button>
         </div>
       </div>
 
@@ -644,6 +882,30 @@ export default function ReturnsPage() {
         >
           선택삭제
         </button>
+        {/* 선택 일괄 마감 (T7) — 체크박스로 고른 행들을 한 번에 마감 */}
+        <button
+          onClick={closeSelected}
+          title="체크한 건들을 일괄 마감 — 마감된 건은 목록에서 숨겨집니다"
+          style={{ ...btn('secondary', c), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+        >선택 일괄 마감</button>
+        {/* 마감 포함 보기 토글 (T7) — ON이면 include_closed=true 로 조회해 마감건도 흐리게 표시 */}
+        <button
+          onClick={toggleIncludeClosed}
+          title="ON: 마감된 건도 흐리게 표시 (마감 해제 가능) · OFF: 마감건 숨김(기본)"
+          style={{ ...(includeClosed ? btn('primary', c) : btn('ghost', c)), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+        >마감 포함 보기</button>
+        {/* '주문번호만 선택' 토글 (T5) — ON이면 표 드래그 시 주문번호만 선택·복사됨 */}
+        <button
+          onClick={toggleOrderOnlySelect}
+          title="ON: 표를 위→아래로 드래그하면 주문번호만 선택·복사됩니다 · OFF: 일반 선택"
+          style={{ ...(orderOnlySelect ? btn('primary', c) : btn('ghost', c)), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+        >주문번호만 선택</button>
+        {/* 표시된 주문번호 전부 복사 (T5) */}
+        <button
+          onClick={copyVisibleOrderNumbers}
+          title="현재 화면에 표시된 목록의 주문번호를 줄바꿈으로 이어 복사"
+          style={{ ...btn('secondary', c), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+        >표시된 주문번호 전부 복사</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
           <select style={{ ...makeInputStyle(c), width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
@@ -724,11 +986,12 @@ export default function ReturnsPage() {
 
       {/* 테이블 */}
       <div style={makeCard(c)}>
-        <div style={{ overflowX: 'auto' }}>
+        {/* onCopy: '주문번호만 선택' 모드에서 복사 구분자를 줄바꿈으로 강제 (T6) */}
+        <div ref={tableWrapRef} onCopy={handleOrderOnlyCopy} style={{ overflowX: 'auto' }}>
           {loading ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+            <table className={orderOnlySelect ? 'samba-select-order-only' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
                 <tr style={{ background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
                   <th rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.3rem 0.5rem', verticalAlign: 'middle' }}>
@@ -743,14 +1006,25 @@ export default function ReturnsPage() {
                     />
                   </th>
                   <th rowSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>사진</th>
-                  {['고객', '마켓', '소싱주문번호', '사업자', '주문/CS접수일', '고객비용', '회사비용', '완료내역', '메모'].map((h, i) => (
+                  {/* 마켓 → 마켓/사업자 — 주문번호 열에서 뺀 사업자를 마켓 칸에 함께 표시 (T6) */}
+                  {['고객', '마켓/사업자', '소싱주문번호'].map((h, i) => (
+                    <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                  {/* 주문번호 — 사업자(1줄)+주문번호(2줄) 자리를 합쳐 2줄 통합 열로 승격 (T5) */}
+                  <th rowSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>주문번호</th>
+                  {['주문/CS접수일', '고객비용', '회사비용', '완료내역', '메모'].map((h, i) => (
                     <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                   <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>고객주문</th>
                 </tr>
                 <tr style={{ background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
-                  {['지역', '상품명', '고객전화번호', '주문번호', '상품위치', '반품신청한곳', '상태', '체크날짜'].map((h, i) => (
-                    <th key={i} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{h}</th>
+                  {/* 체크날짜(T8)만 의미 설명 툴팁 — 마우스 올리면 이 칸의 용도가 보인다 */}
+                  {['지역', '상품명', '고객전화번호', '상품위치', '반품신청한곳', '상태', '체크날짜'].map((h, i) => (
+                    <th
+                      key={i}
+                      title={h === '체크날짜' ? '자동조회가 상태를 바꾸면 오늘 날짜가 찍힙니다. 오늘 날짜면 확인 안 하셔도 됩니다.' : undefined}
+                      style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                    >{h}</th>
                   ))}
                   <th style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>반품링크</th>
                   <th colSpan={2} style={{ textAlign: 'center', padding: '0.5rem 0.625rem', color: c.textSub, fontWeight: 500, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>원주문</th>
@@ -759,9 +1033,35 @@ export default function ReturnsPage() {
               {/* 한 반품건 = tr 2줄 세트. Fragment 대신 건별 <tbody>로 묶고 tbody에 hover 클래스를
                   붙여 마우스가 어느 줄에 있든 두 줄이 함께 강조되게 한다.
                   (table의 다중 tbody는 HTML상 유효, 렌더 결과·레이아웃 동일) */}
-              {filteredReturns.map((r, idx) => {
+              {/* 구획 루프 (T6) — 각 구획: 중제목 행(별도 tbody, 표 2줄 구조 불침범) + 반품건들.
+                  건수 0 구획은 중제목 행도 렌더하지 않는다. 접힌 구획은 중제목만 남긴다. */}
+              {sectionRows.map(({ def, rows, startIdx }) => rows.length === 0 ? null : (
+                <Fragment key={def.key}>
+                  <tbody>
+                    <tr
+                      onClick={() => toggleSection(def.key)}
+                      title={collapsedSections[def.key] ? '클릭하여 펼치기' : '클릭하여 접기'}
+                      style={{ cursor: 'pointer', background: def.bg, borderTop: `1px solid ${c.border}`, borderBottom: `1px solid ${c.border}` }}
+                    >
+                      <td colSpan={13} style={{ padding: '0.4rem 0.75rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          {/* 왼쪽 4px 색 막대 */}
+                          <span style={{ width: '4px', height: '16px', background: def.fg, borderRadius: '2px', flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: def.fg, whiteSpace: 'nowrap' }}>{def.label}</span>
+                          {/* 건수 뱃지 */}
+                          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: def.fg, background: c.surface, border: `1px solid ${c.border}`, borderRadius: '999px', padding: '0 0.45rem', whiteSpace: 'nowrap' }}>{fmtNum(rows.length)}건</span>
+                          {/* 오른쪽 흐린 안내문구 + 접힘 표시 */}
+                          <span style={{ fontSize: '0.7rem', color: c.textMuted, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{def.hint}</span>
+                          <span style={{ fontSize: '0.7rem', color: c.textMuted, whiteSpace: 'nowrap' }}>{collapsedSections[def.key] ? '▸ 펼치기' : '▾'}</span>
+                        </div>
+                      </td>
+                    </tr>
+                  </tbody>
+                  {!collapsedSections[def.key] && rows.map((r, i) => {
+                  const idx = startIdx + i
                   return (
-                    <tbody key={r.id} className="samba-row-hover">
+                    // 마감된 행(T7)은 흐리게 — '마감 포함 보기' ON일 때만 목록에 존재
+                    <tbody key={r.id} className="samba-row-hover" style={r.closed_at ? { opacity: 0.55 } : undefined}>
                       <tr>
                         <td rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.5rem', verticalAlign: 'middle' }}>
                           <div style={{ fontSize: '0.675rem', color: c.textMuted, marginBottom: '2px' }}>{idx + 1}</div>
@@ -801,8 +1101,12 @@ export default function ReturnsPage() {
                         })()}
                       </td>
                       <td style={{ ...tdCenter, maxWidth: '64px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.customer_name || ''}>{r.customer_name || '-'}</td>
-                      <td style={{ ...tdCenter, maxWidth: '70px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.market || ''}>
-                        <span>{r.market || '-'}</span>
+                      {/* 마켓/사업자 — 마켓명 아래 사업자를 흐린 작은 글씨로 (T6) */}
+                      <td style={{ ...tdCenter, maxWidth: '70px', overflow: 'hidden' }} title={`${r.market || '-'}${r.business_name ? ` / ${r.business_name}` : ''}`}>
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.market || '-'}</div>
+                        {r.business_name ? (
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '0.68rem', color: c.textMuted }}>{r.business_name}</div>
+                        ) : null}
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem' }}>
@@ -827,7 +1131,13 @@ export default function ReturnsPage() {
                           />
                         </div>
                       </td>
-                      <td style={tdCenter}>{r.business_name || '-'}</td>
+                      {/* 주문번호 — 2줄 통합 셀. '주문번호만 선택' 모드에서 유일하게 드래그 선택 가능 (T5) */}
+                      <td
+                        rowSpan={2}
+                        className="samba-order-no-cell"
+                        style={{ ...tdCenter, maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                        title={r.order_number || ''}
+                      >{r.order_number || '-'}</td>
                       <td style={{ ...tdCenter, color: c.textMuted }}>
                         <div style={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
                           주문 {fmtMD(r.order_date)} · 접수 {fmtMD(r.return_request_date || r.created_at)}
@@ -914,23 +1224,50 @@ export default function ReturnsPage() {
                         </select>
                           )
                         })()}
+                        {/* 마감 (T7) — 열을 새로 만들지 않고 완료내역 셀 안에 작은 버튼으로.
+                            마감된 행(마감 포함 보기 ON)은 [마감] 뱃지 + [마감 해제] 버튼으로 전환 */}
+                        {r.closed_at ? (
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.25rem', marginTop: '0.25rem' }}>
+                            <span style={{ fontSize: '0.65rem', fontWeight: 700, color: c.textSub, border: `1px solid ${c.border}`, borderRadius: '4px', padding: '0 0.3rem', whiteSpace: 'nowrap' }}>마감</span>
+                            <button
+                              onClick={() => reopenReturns([r.id])}
+                              title="마감을 해제해 목록에 다시 표시"
+                              style={{ ...btn('ghost', c), fontSize: '0.65rem', padding: '0 0.35rem', whiteSpace: 'nowrap' }}
+                            >마감 해제</button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => closeOne(r)}
+                            title="이 건을 마감(종결) — 목록에서 숨깁니다 ('마감 포함 보기'로 재확인 가능)"
+                            style={{ ...btn('ghost', c), fontSize: '0.65rem', padding: '0 0.35rem', whiteSpace: 'nowrap', display: 'block', margin: '0.25rem auto 0' }}
+                          >마감</button>
+                        )}
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
-                        <input
-                          type="text"
-                          value={r.memo || ''}
-                          placeholder=""
-                          onChange={(e) => {
-                            const val = e.target.value
-                            setReturns(prev => prev.map(x => x.id === r.id ? { ...x, memo: val } : x))
-                          }}
-                          onBlur={async (e) => {
-                            try {
-                              await returnApi.patch(r.id, { memo: e.target.value })
-                            } catch (_e) { /* 무시 */ }
-                          }}
-                          style={{ width: '100px', padding: '0.3rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, fontSize: '0.8rem', textAlign: 'center' }}
-                        />
+                        {(() => {
+                          // 메모 두 줄 표시 (T6) — 백엔드가 "⚠️발주완료\n취소승인 금지" 처럼
+                          // 줄바꿈 포함 메모를 저장하므로 input → textarea 로 교체(편집 동작은 동일).
+                          // 경고 메모면 셀 배경을 옅은 빨강으로 강조.
+                          const warn = isOrderPlacedWarnMemo(r.memo)
+                          const lineCount = (r.memo || '').split('\n').length
+                          return (
+                            <textarea
+                              value={r.memo || ''}
+                              placeholder=""
+                              rows={Math.min(Math.max(lineCount, 1), 3)}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                setReturns(prev => prev.map(x => x.id === r.id ? { ...x, memo: val } : x))
+                              }}
+                              onBlur={async (e) => {
+                                try {
+                                  await returnApi.patch(r.id, { memo: e.target.value })
+                                } catch (_e) { /* 무시 */ }
+                              }}
+                              style={{ width: '100px', padding: '0.3rem 0.5rem', background: warn ? 'rgba(255,107,107,0.15)' : c.inputBg, border: `1px solid ${warn ? c.danger : c.border}`, borderRadius: '4px', color: warn ? c.danger : c.text, fontSize: '0.8rem', fontWeight: warn ? 600 : 400, textAlign: 'center', resize: 'none', overflow: 'hidden', lineHeight: 1.3, verticalAlign: 'middle', fontFamily: 'inherit', display: 'block', margin: '0 auto' }}
+                            />
+                          )
+                        })()}
                       </td>
                       <td colSpan={2} style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select
@@ -981,7 +1318,6 @@ export default function ReturnsPage() {
                           style={{ width: '110px', padding: '0.3rem 0.5rem', background: c.inputBg, border: `1px solid ${c.border}`, borderRadius: '4px', color: c.text, fontSize: '0.8rem', textAlign: 'center' }}
                         />
                       </td>
-                      <td style={{ ...tdCenter, maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.order_number || ''}>{r.order_number || '-'}</td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
                         <select
                           value={r.product_location || '고객'}
@@ -1030,20 +1366,58 @@ export default function ReturnsPage() {
                         </select>
                       </td>
                       <td style={{ ...tdCenter, padding: '0.375rem' }}>
-                        <div
-                          onClick={() => {
-                            const inp = document.getElementById(`ck-${r.id}`) as HTMLInputElement
-                            if (!inp) return
-                            // 피커가 항상 "오늘" 기준으로 열리도록 showPicker 직전에 DOM 값을 비운다 (요청 #1).
-                            // - React value tracker는 직전 prop 값을 기억 → 날짜 선택 시 ''→'YYYY-MM-DD' 변화로 onChange 정상 발화
-                            // - ESC 취소 시 DOM 값만 ''로 남지만, 화면 표시는 옆 div의 fmtMD(state 기반)라 깨지지 않음
-                            inp.value = ''
-                            inp.showPicker?.()
-                          }}
-                          style={{ cursor: 'pointer', fontSize: '0.8rem', color: r.check_date ? c.text : c.textMuted, minWidth: '40px' }}
-                        >
-                          {fmtMD(r.check_date)}
-                        </div>
+                        {/* 체크날짜 (T8) — "안 봐도 되는 건" 표시기.
+                            자동조회가 상태를 바꾸면 오늘 날짜가 찍힌다 → 오늘 날짜(초록) = 확인 불필요,
+                            과거 날짜(흐림 + N일 전) = 다시 봐야 하는 건.
+                            셀 클릭 = 즉시 오늘 날짜 저장(피커 없음), 다른 날짜는 옆 📅 아이콘으로 기존 피커. */}
+                        {(() => {
+                          // 오늘/저장값 모두 로컬(KST) 기준 YYYY-MM-DD 로 비교 ('sv-SE' 로케일 트릭)
+                          const todayStr = new Date().toLocaleDateString('sv-SE')
+                          const ckStr = (() => {
+                            if (!r.check_date) return ''
+                            const d = new Date(r.check_date)
+                            return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('sv-SE')
+                          })()
+                          const isToday = ckStr !== '' && ckStr === todayStr
+                          // 과거면 며칠 지났는지 — 로컬 자정 기준 일수 차이
+                          const daysAgo = ckStr ? Math.max(0, Math.round((new Date(todayStr).getTime() - new Date(ckStr).getTime()) / 86400000)) : 0
+                          const saveToday = () => {
+                            // 셀 클릭 = 즉시 오늘로 체크 — 기존 저장 경로(returnApi.patch check_date) 그대로
+                            const prevVal = r.check_date
+                            setReturns(prev => prev.map(x => x.id === r.id ? { ...x, check_date: todayStr } : x))
+                            saveCell(r.id, { check_date: todayStr }, () => {
+                              setReturns(prev => prev.map(x => x.id === r.id ? { ...x, check_date: prevVal } : x))
+                            }, '체크날짜')
+                          }
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
+                              <div
+                                onClick={saveToday}
+                                title="클릭 = 오늘 날짜로 체크 (확인 완료 표시)"
+                                style={{ cursor: 'pointer', fontSize: '0.8rem', minWidth: '40px', color: isToday ? c.success : (ckStr ? c.textMuted : c.textMuted), fontWeight: isToday ? 700 : 400, opacity: ckStr && !isToday ? 0.75 : 1, whiteSpace: 'nowrap' }}
+                              >
+                                {fmtMD(r.check_date)}
+                                {ckStr && !isToday && (
+                                  <span style={{ fontSize: '0.62rem', color: c.textMuted, marginLeft: '2px' }}>{fmtNum(daysAgo)}일 전</span>
+                                )}
+                              </div>
+                              {/* 다른 날짜가 필요할 때 — 기존 date picker 열기 */}
+                              <span
+                                onClick={() => {
+                                  const inp = document.getElementById(`ck-${r.id}`) as HTMLInputElement
+                                  if (!inp) return
+                                  // 피커가 항상 "오늘" 기준으로 열리도록 showPicker 직전에 DOM 값을 비운다 (요청 #1).
+                                  // - React value tracker는 직전 prop 값을 기억 → 날짜 선택 시 ''→'YYYY-MM-DD' 변화로 onChange 정상 발화
+                                  // - ESC 취소 시 DOM 값만 ''로 남지만, 화면 표시는 옆 div의 fmtMD(state 기반)라 깨지지 않음
+                                  inp.value = ''
+                                  inp.showPicker?.()
+                                }}
+                                title="다른 날짜 선택"
+                                style={{ cursor: 'pointer', fontSize: '0.72rem', lineHeight: 1 }}
+                              >📅</span>
+                            </div>
+                          )
+                        })()}
                         <input
                           id={`ck-${r.id}`}
                           type="date"
@@ -1093,8 +1467,12 @@ export default function ReturnsPage() {
                       </tr>
                     </tbody>
                   )
-                })}
+                  })}
+                </Fragment>
+              ))}
               {dedupedReturns.length === 0 && (
+                // 전체 열 수 = 13 (체크박스+사진+주문번호 rowSpan 3 + 윗줄 8 + 고객주문 colSpan 2)
+                // — 사업자 열 제거·주문번호 통합(T5)은 같은 열 자리를 합친 것이라 열 수 불변
                 <tbody><tr><td colSpan={13} style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>반품/교환 내역이 없습니다</td></tr></tbody>
               )}
             </table>

@@ -46,6 +46,16 @@ export async function fetchWithAuth(url: string, init?: RequestInit): Promise<Re
   return res
 }
 
+/** HTTP 에러 — 상태코드 보존. 호출부가 status 로 분기할 수 있다 (예: 취소승인 발주 가드 409) */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 export async function request<T>(
   url: string,
   init?: RequestInit,
@@ -126,7 +136,8 @@ export async function request<T>(
       const data = await res.json().catch(() => null);
       const detail = data?.detail
       const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map((d: Record<string, unknown>) => d.msg || JSON.stringify(d)).join(', ') : `HTTP ${res.status}`
-      throw new Error(msg);
+      // 상태코드를 실어 던짐 — 문자열 매칭 없이 status 로 분기 가능 (기존 catch 는 Error 로 그대로 동작)
+      throw new ApiError(msg, res.status);
     }
     const text = await res.text();
     if (!text) return {} as T;
@@ -404,8 +415,9 @@ export const orderApi = {
   syncFromMarkets: (days = 7, accountId?: string, startDate?: string, endDate?: string) =>
     request<{ total_synced: number; results: { account: string; status: string; message?: string; fetched?: number; synced?: number }[] }>(
       `${SAMBA_PREFIX}/orders/sync-from-markets`, { method: "POST", body: JSON.stringify({ days, account_id: accountId || undefined, start_date: startDate || undefined, end_date: endDate || undefined }) }),
-  approveCancel: (id: string) =>
-    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel`, { method: "POST" }),
+  // [2026-09-03] force — 발주 가드(409) 우회. 기본값 false 라 기존 호출부는 그대로 동작
+  approveCancel: (id: string, force = false) =>
+    request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel${force ? '?force=true' : ''}`, { method: "POST" }),
   // 쿠팡 이미출고(release_status='A') 케이스 — 운영자가 택배사·송장번호 입력 (#246)
   approveCancelWithShipment: (id: string, deliveryCompanyCode: string, invoiceNumber: string) =>
     request<{ ok: boolean; message: string }>(`${SAMBA_PREFIX}/orders/${id}/approve-cancel-with-shipment`, {
@@ -624,6 +636,61 @@ export const orderApi = {
     request<{ success: boolean }>(`${SAMBA_PREFIX}/orders/snkrdunk/session-cookie`, {
       method: "POST", body: JSON.stringify({ cookie }),
     }),
+};
+
+// [2026-09-03] 취소승인 발주 가드(409) 공통 경고 문구 — 3개 호출부(주문탭·CS탭·일괄실행)에서 재사용
+export const CANCEL_APPROVE_FORCE_WARNING =
+  '이 주문은 이미 소싱처에 발주(또는 송장 등록)가 되어 있습니다.\n마켓에서 취소승인하면 손실이 발생할 수 있습니다.\n그래도 취소승인 하시겠습니까?'
+
+// ── 소싱처 최저가 탐색 (price-scout) ──
+
+/** 사이트별 최저가 결과 1건 (스캔 results 배열 항목) */
+export interface PriceScanSiteResult {
+  site: string
+  price: number
+  name?: string | null
+  url?: string | null
+  product_id?: string | null
+}
+
+/** 주문 1건의 소싱처 최저가 스캔 행 (samba_order_price_scan) */
+export interface SambaOrderPriceScan {
+  id: string
+  order_id: string
+  model_code?: string | null
+  base_cost?: number | null
+  best_site?: string | null
+  best_price?: number | null
+  best_url?: string | null
+  results?: PriceScanSiteResult[] | null
+  suspect: boolean
+  error?: string | null
+  scanned_at?: string | null
+}
+
+/** 단건/배치 스캔 응답 항목 — {cached, scan} | {skipped} | {error} 를 하나로 수용 */
+export interface PriceScoutScanResult {
+  cached?: boolean
+  scan?: SambaOrderPriceScan
+  skipped?: string
+  error?: string
+}
+
+export const priceScoutApi = {
+  /** 캐시된 스캔 결과만 조회 (스캔 수행 안 함 — 목록 뱃지용). {order_id: 스캔행} 맵 */
+  get: (orderIds: string[]) =>
+    request<Record<string, SambaOrderPriceScan>>(
+      `${SAMBA_PREFIX}/price-scout?order_ids=${encodeURIComponent(orderIds.join(','))}`),
+  /** 단건 즉시 스캔 — force=true 면 24시간 캐시 무시 */
+  scan: (orderId: string, force = false) =>
+    request<PriceScoutScanResult>(
+      `${SAMBA_PREFIX}/price-scout/${orderId}?force=${force}`, { method: 'POST' }),
+  /** 일괄 스캔 — 최대 50건(백엔드 제한), 반환은 {order_id: 결과} 맵 */
+  batch: (orderIds: string[]) =>
+    request<Record<string, PriceScoutScanResult>>(
+      `${SAMBA_PREFIX}/price-scout/batch`, {
+        method: 'POST', body: JSON.stringify({ order_ids: orderIds }),
+      }),
 };
 
 interface TrackingEvent {

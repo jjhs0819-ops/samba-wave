@@ -4,11 +4,13 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import {
   orderApi,
+  priceScoutApi,
   channelApi,
   accountApi,
   proxyApi,
   collectorApi,
   type SambaOrder,
+  type SambaOrderPriceScan,
   type SambaChannel,
   type SambaMarketAccount,
 } from '@/lib/samba/api/commerce'
@@ -29,6 +31,7 @@ import OrdersFilterBar from './components/OrdersFilterBar'
 import OrdersTopBar from './components/OrdersTopBar'
 import OrdersPagination from './components/OrdersPagination'
 import PriceHistoryModal from './components/PriceHistoryModal'
+import PriceScoutModal from './components/PriceScoutModal'
 import MessageModal from './components/MessageModal'
 import OrderEditModal from './components/OrderEditModal'
 import UrlInputModal from './components/UrlInputModal'
@@ -76,7 +79,8 @@ export default function OrdersPage() {
   const [registrationFilter, setRegistrationFilter] = useState('')
   const [inputFilter, setInputFilter] = useState('')
   const [invoiceFilter, setInvoiceFilter] = useState('')
-  const [statusFilter, setStatusFilter] = useState(hasSearchSeed ? '' : 'cancel_return_excluded')
+  // [2026-09-03] 기본 필터 = 주문접수
+  const [statusFilter, setStatusFilter] = useState(hasSearchSeed ? '' : 'pending')
   // CS 페이지 등 외부에서 ?search=...&search_type=... 로 진입 시 자동 검색
   const initialSearch = searchParams.get('search') || ''
   const [searchText, setSearchText] = useState(initialSearch)
@@ -115,6 +119,12 @@ export default function OrdersPage() {
   // 상품 이미지 — 플레이오토 등 주문 product_image 누락 시 매칭 수집상품 이미지로 폴백
   const [collectedProductImages, setCollectedProductImages] = useState<Record<string, string>>({})
   const [productMemos, setProductMemos] = useState<Record<string, string>>({}) // 상품메모(#535)
+
+  // [최저가탐색] 주문별 소싱처 최저가 스캔 캐시 — {order_id: 스캔행}. 목록 로드 후 캐시만 조회 (자동 스캔 안 함)
+  const [priceScans, setPriceScans] = useState<Record<string, SambaOrderPriceScan>>({})
+  const [priceScanning, setPriceScanning] = useState(false) // [최저가 스캔] 배치 진행 중
+  const [priceScoutOrder, setPriceScoutOrder] = useState<SambaOrder | null>(null) // 뱃지 클릭 → 모달 대상 주문
+  const [priceScoutRescanning, setPriceScoutRescanning] = useState(false) // 모달 [다시 스캔] 진행 중
 
   const [notifications, setNotifications] = useState<{id: number, message: string, type: string}[]>([])
 
@@ -353,6 +363,101 @@ export default function OrdersPage() {
     return () => { cancelled = true }
   }, [collectedProductIdsKey])
 
+  // [최저가탐색] 주문 목록 로드 후 캐시된 스캔 결과만 조회 — 스캔은 버튼으로만 (소싱처 부하 방지).
+  // collectedProductCosts 로딩 패턴과 동일: id 집합이 바뀔 때만 재조회
+  const orderIdsKey = useMemo(() => {
+    const ids = orders.map(o => o.id)
+    ids.sort()
+    return ids.join(',')
+  }, [orders])
+  useEffect(() => {
+    const ids = orderIdsKey ? orderIdsKey.split(',') : []
+    if (ids.length === 0) {
+      setPriceScans({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        // 페이지 500건까지 가능 — URL 길이 제한 대비 100건씩 나눠 조회
+        const chunks: string[][] = []
+        for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100))
+        const maps = await Promise.all(chunks.map(chunk => priceScoutApi.get(chunk)))
+        if (cancelled) return
+        const merged: Record<string, SambaOrderPriceScan> = {}
+        for (const m of maps) Object.assign(merged, m)
+        setPriceScans(merged)
+      } catch {
+        if (!cancelled) setPriceScans({})
+      }
+    })()
+    return () => { cancelled = true }
+  }, [orderIdsKey])
+
+  // [최저가탐색] 필터바 [최저가 스캔] 버튼 — 현재 화면 중 주문접수(pending)+소싱주문번호 없음만 배치 스캔
+  const handlePriceScoutBatch = async () => {
+    if (priceScanning) return
+    const targets = orders.filter(o => o.status === 'pending' && !(o.sourcing_order_number || '').trim())
+    if (targets.length === 0) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] 스캔 대상 없음 — 주문접수 상태이면서 소싱주문번호가 없는 주문이 화면에 없습니다`])
+      return
+    }
+    let ids = targets.map(o => o.id)
+    if (ids.length > 50) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] 대상 ${fmtNum(ids.length)}건 — 한 번에 50건까지만 스캔합니다 (앞 50건)`])
+      ids = ids.slice(0, 50)
+    }
+    setPriceScanning(true)
+    setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] ${fmtNum(ids.length)}건 스캔 시작 — 소싱처 5곳(무신사·ABC·롯데온·SSG·더현대) 검색 중...`])
+    try {
+      const res = await priceScoutApi.batch(ids)
+      let found = 0
+      let cheaper = 0
+      let noCode = 0
+      let failed = 0
+      const nextScans: Record<string, SambaOrderPriceScan> = {}
+      for (const [oid, entry] of Object.entries(res)) {
+        if (entry.scan) {
+          nextScans[oid] = entry.scan
+          if (entry.scan.best_price != null) {
+            found++
+            const ord = orders.find(o => o.id === oid)
+            const cost = Number(ord?.cost ?? 0)
+            if (cost > 0 && entry.scan.best_price < cost) cheaper++
+          }
+        } else if (entry.skipped) noCode++
+        else if (entry.error) failed++
+      }
+      setPriceScans(prev => ({ ...prev, ...nextScans }))
+      setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] 스캔 완료 — 최저가 확인 ${fmtNum(found)}건 (내 원가보다 저렴 ${fmtNum(cheaper)}건) · 모델코드 없음 ${fmtNum(noCode)}건 · 실패 ${fmtNum(failed)}건`])
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] 스캔 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
+    } finally {
+      setPriceScanning(false)
+    }
+  }
+
+  // [최저가탐색] 모달 [다시 스캔] — 캐시 무시(force) 단건 재스캔
+  const handlePriceScoutRescan = async () => {
+    if (!priceScoutOrder || priceScoutRescanning) return
+    setPriceScoutRescanning(true)
+    try {
+      const res = await priceScoutApi.scan(priceScoutOrder.id, true)
+      const scan = res.scan
+      if (scan) {
+        const oid = priceScoutOrder.id
+        setPriceScans(prev => ({ ...prev, [oid]: scan }))
+        setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] ${priceScoutOrder.order_number} 재스캔 완료${scan.best_price != null ? ` — 최저 ${scan.best_site} ${fmtNum(scan.best_price)}원` : ' — 매칭 결과 없음'}`])
+      } else if (res.skipped) {
+        setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] ${priceScoutOrder.order_number} 스캔 스킵: ${res.skipped}`])
+      }
+    } catch (e) {
+      setLogMessages(prev => [...prev, `[${fmtTime()}] [최저가] 재스캔 실패: ${e instanceof Error ? e.message : '알 수 없는 오류'}`])
+    } finally {
+      setPriceScoutRescanning(false)
+    }
+  }
+
   useEffect(() => {
     orderApi.getAlarmSettings().then(d => {
       setAlarmHour(String(d.hour))
@@ -412,7 +517,8 @@ export default function OrdersPage() {
   // [2026-09-01] 기본 기간이 '오늘'→'일주일'로 바뀌었으므로 복귀값도 동일하게 맞춘다.
   useEffect(() => {
     const handler = () => {
-      setStatusFilter('cancel_return_excluded')
+      // [2026-09-03] 기본 필터 = 주문접수
+      setStatusFilter('pending')
       setMarketStatus('')
       setRegistrationFilter('')
       setInputFilter('')
@@ -915,6 +1021,8 @@ export default function OrdersPage() {
         accounts={accounts} sourcingAccounts={sourcingAccounts}
         siteOptions={siteOptions}
         selectedOrderIds={Array.from(selectedIds)}
+        priceScanning={priceScanning}
+        onPriceScoutBatch={handlePriceScoutBatch}
       />
 
       {/* 송장 자동전송 미니바 — 일괄 트리거 + 안내 */}
@@ -997,6 +1105,8 @@ export default function OrdersPage() {
         collectedProductSnkrNos={collectedProductSnkrNos}
         collectedProductImages={collectedProductImages}
         productMemos={productMemos}
+        priceScans={priceScans}
+        openPriceScout={(o) => setPriceScoutOrder(o)}
         refreshLog={refreshLog}
         setRefreshLog={setRefreshLog}
         sentFlags={sentFlags}
@@ -1066,6 +1176,16 @@ export default function OrdersPage() {
         product={priceHistoryProduct}
         history={priceHistoryData}
         onClose={() => setPriceHistoryModal(false)}
+      />
+
+      {/* [최저가탐색] 소싱처 최저가 상세 모달 — 뱃지 클릭 시 */}
+      <PriceScoutModal
+        open={!!priceScoutOrder}
+        order={priceScoutOrder}
+        scan={priceScoutOrder ? (priceScans[priceScoutOrder.id] ?? null) : null}
+        rescanning={priceScoutRescanning}
+        onRescan={handlePriceScoutRescan}
+        onClose={() => setPriceScoutOrder(null)}
       />
 
 

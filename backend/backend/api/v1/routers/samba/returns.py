@@ -15,6 +15,7 @@ from backend.dtos.samba.returns import (
     ExchangeActionBody as ExchangeActionBodyDTO,
     ExchangeTrackingPatchBody as ExchangeTrackingPatchBodyDTO,
     ReturnCreate,
+    ReturnIdsBody,
     ReturnNoteBody,
     ReturnRejectBody,
 )
@@ -105,6 +106,26 @@ def _is_cancel_requested(status: str | None, shipping_status: str | None) -> boo
     return status_text == "cancel_requested" or "취소요청" in ship_text
 
 
+# [2026-09-03] 취소요청 오인승인 방지용 메모.
+# 배경(사고 경위): 마켓 주문동기화(order.py 의 SSG ordItemDiv=021 감지 등)가 고객
+# 취소요청을 감지해 status='cancel_requested' 로 바꾸면, 사장님이 직접 '주문이행 불가'
+# 로 바꾼 건과 상태·메모("취소요청")가 완전히 똑같아진다 → 반품탭에서 둘을 구분 못 해
+# 이미 소싱처 발주가 나간 고객 취소요청 건을 그대로 취소승인해버리는 오승인 사고 발생.
+# 출처(사장님 수동 vs 마켓 동기화)는 상태값만으로는 구분할 수 없으므로,
+# "이미 발주/송장이 나갔는가"라는 주문 데이터로 판정해 메모를 다르게 단다.
+# [2026-09-03] 두 줄 표기 — 반품탭 메모 셀이 줄바꿈을 살려 보여준다(프론트 white-space 처리)
+_CANCEL_BLOCK_MEMO = "⚠️발주완료\n취소승인 금지"
+
+
+def _is_already_ordered(order: Any) -> bool:  # 소싱처 발주 또는 송장이 이미 나간 주문
+    # sourcing_order_number(소싱처 발주번호) 또는 tracking_number(송장번호)가
+    # 하나라도 채워져 있으면 이미 실물 흐름이 시작된 주문 → 취소승인 시 손실 위험.
+    return bool(
+        (order.sourcing_order_number or "").strip()
+        or (order.tracking_number or "").strip()
+    )
+
+
 def _completion_detail(claim_type: str, claim_status: str) -> str:
     if claim_status == "rejected":
         return "\uac70\ubd80"
@@ -175,6 +196,10 @@ async def _backfill_returns_from_claim_orders(
     # 파라미터 order_ids(대상 좁히기)와 섀도잉되지 않게 로컬은 found_ 접두
     found_order_ids = [o.id for o in orders]
     order_numbers = [o.order_number for o in orders if o.order_number]
+    # [T7] 기존행 판정에는 마감행(closed_at IS NOT NULL)도 반드시 포함한다 —
+    # 마감된 주문이 여전히 클레임 상태여도(마켓 잔여 상태 등) 새 행을 또 만들어
+    # 마감건을 되살리면 안 된다. 이 백필은 INSERT 전용이라 마감행 갱신도 없다.
+    # ⚠️ 여기에 closed_at 필터를 추가하지 말 것.
     existing_stmt = select(SambaReturn.order_id, SambaReturn.order_number).where(
         or_(
             col(SambaReturn.order_id).in_(found_order_ids),
@@ -232,13 +257,22 @@ async def _backfill_returns_from_claim_orders(
             completion_date=now if claim_status in {"completed", "rejected"} else None,
             notes=[],
             timeline=timeline,
-            # 취소요청 건은 반품탭 메모에 '취소요청' 자동 기입 (요청 #5, 사장님 결정:
+            # 취소요청 건은 반품탭 메모에 자동 기입 (요청 #5, 사장님 결정:
             # 취소요청만 — 취소진행중/취소완료·교환·반품 생성 행에는 기입 안 함).
+            # [2026-09-03] 3분기로 확장 (취소요청 오인승인 사고 방지 — _CANCEL_BLOCK_MEMO
+            # 주석 참조): 마켓 동기화가 만든 취소요청과 사장님이 직접 바꾼 '주문이행 불가'
+            # 건은 상태로 구분이 불가능하므로, '이미 발주/송장이 나갔는가'(주문 데이터)로
+            # 판정해 발주된 건은 경고 메모를 달아 반품탭에서 오승인을 막는다.
+            #   ① 취소요청 아님                → None (기존과 동일)
+            #   ② 취소요청 + 발주/송장 있음    → "⚠️발주완료 — 취소승인 금지"
+            #   ③ 취소요청 + 발주 안 됨        → "취소요청" (기존과 동일)
             # 신규 INSERT 경로에만 적용 — 기존 행은 위 existing_* 가드로 건너뛰므로
             # 사장님이 손으로 쓴 메모를 덮어쓸 일 없음. memo 컬럼은 nullable(기본 None).
-            memo="취소요청"
-            if _is_cancel_requested(order.status, order.shipping_status)
-            else None,
+            memo=(
+                (_CANCEL_BLOCK_MEMO if _is_already_ordered(order) else "취소요청")
+                if _is_cancel_requested(order.status, order.shipping_status)
+                else None
+            ),
         )
         created += 1
 
@@ -288,6 +322,9 @@ async def list_returns(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     force_backfill: bool = False,
+    # 마감행 포함 여부 (T7) — 기본 False: closed_at IS NULL(미마감)만 반환.
+    # 프론트 '마감 포함 보기' 토글이 True 로 요청해 마감건을 재확인한다.
+    include_closed: bool = Query(False),
     session: AsyncSession = Depends(get_read_session_dependency),
     tenant_id: Optional[str] = Depends(get_optional_tenant_id),
 ):
@@ -333,6 +370,7 @@ async def list_returns(
         start_date=start_date,
         end_date=end_date,
         tenant_id=tenant_id,
+        include_closed=include_closed,
     )
 
     # 주문의 ext_order_number(타마켓주문링크) 또는 소싱처 주문상세 URL을 return_link로 매칭
@@ -3049,3 +3087,71 @@ async def patch_exchange_tracking(
         return ret
 
     return await svc.repo.update_async(return_id, **update_fields)
+
+
+# ══════════════════════════════════════════════
+# 반품행 마감(종결) / 마감 해제 (T7 — 2026-09-03)
+# ══════════════════════════════════════════════
+# 마감 = '내가 처리를 끝냈다' 표시. 마감행은 목록 기본 조회에서 숨겨지고
+# (include_closed=true 로 재확인 가능) 자동 동기화가 되살리지 않는다.
+# 로직은 domain/samba/returns/closing.py 한 곳에 몰아 자동 마감 확장에 대비.
+
+
+@router.post("/close")
+async def close_returns_endpoint(
+    body: ReturnIdsBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """반품행 일괄 마감 — 이미 마감된 행은 건너뜀(멱등)."""
+    from backend.domain.samba.returns.closing import close_returns
+
+    closed = await close_returns(
+        session, body.ids, by="manual", tenant_id=tenant_id
+    )
+    return {"ok": True, "closed": closed}
+
+
+@router.post("/reopen")
+async def reopen_returns_endpoint(
+    body: ReturnIdsBody,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """반품행 마감 해제 — 미마감 행은 건너뜀(멱등)."""
+    from backend.domain.samba.returns.closing import reopen_returns
+
+    reopened = await reopen_returns(session, body.ids, tenant_id=tenant_id)
+    return {"ok": True, "reopened": reopened}
+
+
+# ══════════════════════════════════════════════
+# 반품 회수상태 자동판정 (T4 — 2026-09-03)
+# ══════════════════════════════════════════════
+
+
+class CollectStatusRefreshBody(BaseModel):
+    """회수상태 자동판정 요청 바디 — return_ids 미지정 시 진행중 반품/교환 전체."""
+
+    return_ids: Optional[list[str]] = None
+
+
+@router.post("/collect-status/refresh")
+async def refresh_collect_status_endpoint(
+    body: Optional[CollectStatusRefreshBody] = None,
+    session: AsyncSession = Depends(get_write_session_dependency),
+    tenant_id: Optional[str] = Depends(get_optional_tenant_id),
+):
+    """반품/교환 행의 회수상태(미수거/수거중/수거완료)를 일괄 자동판정.
+
+    반송장 확보(저장값 → 마켓 클레임 → 원송장 폴백) 후 deliverytracker 로
+    집하 여부를 판정해 samba_return.status 를 진행 방향으로만 갱신한다.
+    상세 규칙: backend/domain/samba/returns/collect_status.py 모듈 docstring.
+    """
+    from backend.domain.samba.returns.collect_status import refresh_collect_status
+
+    return await refresh_collect_status(
+        session,
+        tenant_id=tenant_id,
+        return_ids=(body.return_ids if body else None),
+    )

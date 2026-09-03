@@ -65,10 +65,14 @@ class SambaReturnService:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         tenant_id: Optional[str] = None,
+        include_closed: bool = False,
     ) -> List[SambaReturn]:
         # 날짜 필터·tenant_id·order_number 중 하나라도 있으면 list_filtered 사용
         # (order_number 필터는 날짜 범위 밖 주문도 잡아야 하므로 list_filtered 경로 강제)
-        if (start_date and end_date) or tenant_id or order_number:
+        # 마감행 숨김(T7, include_closed=False 기본)도 list_filtered 에서만 걸 수
+        # 있으므로 같은 경로를 강제한다 — 레거시 분기(list_by_* / list_async)는
+        # include_closed=True 로 마감 포함 전체를 원할 때만 탄다.
+        if (start_date and end_date) or tenant_id or order_number or not include_closed:
             from backend.utils import kst_date_range_to_utc
 
             start_dt, end_dt = None, None
@@ -84,6 +88,7 @@ class SambaReturnService:
                 start_dt=start_dt,
                 end_dt=end_dt,
                 tenant_id=tenant_id,
+                include_closed=include_closed,
             )
         if order_id:
             return await self.repo.list_by_order(order_id)

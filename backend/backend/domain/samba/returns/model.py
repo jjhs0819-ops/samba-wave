@@ -239,6 +239,24 @@ class SambaReturn(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
 
+    # ── 마감(종결) / 자동조회 쿨다운 (T7·T8 — 2026-09-03) ──────────────
+    # 마감 시각 — NULL 이면 미마감. 마감된 행은 목록 기본 조회에서 숨겨지고
+    # 자동 동기화(백필/주문상태 동기화)가 되살리거나 갱신하지 않는다.
+    closed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+    # 마감 주체 — 'manual'(사장님 버튼) | 'auto'(향후 자동 마감)
+    closed_by: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+
+    # 회수 자동조회가 마지막으로 이 행을 본 시각 (택배사 호출 쿨다운용 —
+    # 상태 변경 여부와 무관하게 조회 시마다 기록)
+    auto_checked_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
     # Timestamps
     created_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False),

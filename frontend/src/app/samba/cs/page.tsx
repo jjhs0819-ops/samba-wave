@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { orderApi, accountApi } from '@/lib/samba/api/commerce'
+import { orderApi, accountApi, ApiError, CANCEL_APPROVE_FORCE_WARNING } from '@/lib/samba/api/commerce'
 import { returnApi, csInquiryApi, type SambaCSInquiry, type CSReplyTemplate, type CSSyncResultItem, type CSStats } from '@/lib/samba/api/support'
 import type { SambaMarketAccount } from '@/lib/samba/api/commerce'
 
@@ -188,8 +188,20 @@ export default function CSPage() {
     try {
       const order = await orderApi.findByOrderNumber(item.market_order_id)
       if (!order) { showAlert('해당 주문을 찾을 수 없습니다', 'error'); return }
-      const res = await orderApi.approveCancel(order.id)
-      showAlert(res.message || '취소승인 완료', 'success')
+      try {
+        const res = await orderApi.approveCancel(order.id)
+        showAlert(res.message || '취소승인 완료', 'success')
+      } catch (e) {
+        // [2026-09-03] 발주 가드(409) — 소싱처 발주/송장 있는 주문은 사장님 확인 후 force 재시도
+        if (e instanceof ApiError && e.status === 409) {
+          const forceYes = await showConfirm(CANCEL_APPROVE_FORCE_WARNING)
+          if (!forceYes) return
+          const res = await orderApi.approveCancel(order.id, true)
+          showAlert(res.message || '취소승인 완료', 'success')
+          return
+        }
+        throw e
+      }
     } catch (e) { showAlert(e instanceof Error ? e.message : '취소승인 실패', 'error') }
   }
 

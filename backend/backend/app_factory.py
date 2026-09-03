@@ -60,6 +60,9 @@ from backend.api.v1.routers.samba.proxy import (
     sourcing_queue_router as samba_sourcing_queue_router,
 )
 from backend.api.v1.routers.samba.returns import router as samba_returns_router
+from backend.api.v1.routers.samba.price_scout import (
+    router as samba_price_scout_router,
+)
 from backend.api.v1.routers.samba.shipment import router as samba_shipment_router
 from backend.api.v1.routers.samba.sourcing_account import (
     extension_router as samba_sourcing_account_extension_router,
@@ -222,6 +225,9 @@ def create_application() -> FastAPI:
     )
     app.include_router(
         samba_returns_router, prefix="/api/v1/samba", dependencies=samba_auth
+    )
+    app.include_router(
+        samba_price_scout_router, prefix="/api/v1/samba", dependencies=samba_auth
     )
     app.include_router(
         samba_analytics_router, prefix="/api/v1/samba", dependencies=samba_auth

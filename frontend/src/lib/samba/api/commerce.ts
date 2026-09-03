@@ -1,5 +1,8 @@
 export {
   orderApi,
+  priceScoutApi,
+  ApiError,
+  CANCEL_APPROVE_FORCE_WARNING,
   channelApi,
   policyApi,
   collectorApi,
@@ -14,6 +17,9 @@ export {
 export type {
   OrderDashboardStats,
   SambaOrder,
+  SambaOrderPriceScan,
+  PriceScanSiteResult,
+  PriceScoutScanResult,
   AnalyticsAggregateRow,
   SambaChannel,
   SambaPolicy,

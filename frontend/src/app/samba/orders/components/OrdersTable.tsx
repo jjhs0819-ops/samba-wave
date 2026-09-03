@@ -3,7 +3,10 @@
 import React, { Dispatch, SetStateAction, useState } from 'react'
 import {
   orderApi,
+  ApiError,
+  CANCEL_APPROVE_FORCE_WARNING,
   type SambaOrder,
+  type SambaOrderPriceScan,
 } from '@/lib/samba/api/commerce'
 import { type SambaSourcingAccount } from '@/lib/samba/api/operations'
 import { showAlert, showConfirm } from '@/components/samba/Modal'
@@ -49,6 +52,8 @@ interface OrdersTableProps {
   collectedProductSnkrNos: Record<string, string> // 스니덩크 상품번호(크림 주문 소싱처번호 표시)
   collectedProductImages: Record<string, string> // 주문 product_image 누락 시 매칭 수집상품 이미지 폴백
   productMemos: Record<string, string> // 상품메모(#535)
+  priceScans: Record<string, SambaOrderPriceScan> // [최저가탐색] 주문별 소싱처 최저가 스캔 캐시
+  openPriceScout: (o: SambaOrder) => void // [최저가탐색] 뱃지 클릭 → 상세 모달
 
   // 부가 상태
   refreshLog: Record<string, string>
@@ -117,6 +122,7 @@ export default function OrdersTable(props: OrdersTableProps) {
     collectedProductSnkrNos,
     collectedProductImages,
     productMemos,
+    priceScans, openPriceScout,
     refreshLog, setRefreshLog,
     sentFlags, siteAliasMap, sourcingAccounts,
     setPriceHistoryProduct, setPriceHistoryData, setPriceHistoryModal,
@@ -288,6 +294,19 @@ export default function OrdersTable(props: OrdersTableProps) {
                                   showAlert(res.message || '취소승인 완료', 'success')
                                   loadOrders()
                                 } catch (err) {
+                                  // [2026-09-03] 발주 가드(409) — 소싱처 발주/송장 있는 주문은 사장님 확인 후 force 재시도
+                                  if (err instanceof ApiError && err.status === 409) {
+                                    const forceYes = await showConfirm(CANCEL_APPROVE_FORCE_WARNING)
+                                    if (!forceYes) return
+                                    try {
+                                      const res = await orderApi.approveCancel(o.id, true)
+                                      showAlert(res.message || '취소승인 완료', 'success')
+                                      loadOrders()
+                                    } catch (err2) {
+                                      showAlert(err2 instanceof Error ? err2.message : '취소승인 실패', 'error')
+                                    }
+                                    return
+                                  }
                                   showAlert(err instanceof Error ? err.message : '취소승인 실패', 'error')
                                 }
                               }
@@ -337,6 +356,36 @@ export default function OrdersTable(props: OrdersTableProps) {
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>수익률</span><span style={{ color: c.textMuted }}>{liveProfitRate}%</span></div>
                     {/* 스니덩크 소싱 상품의 cp 원가는 엔화 — ¥ 표기로 원화 오해 방지 */}
                     <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ color: c.textMuted }}>원가</span><span style={{ color: c.textMuted }}>{(o.collected_product_id && collectedProductSourceSites[o.collected_product_id] === 'SNKRDUNK' && collectedProductCosts[o.collected_product_id] !== undefined) ? `¥${fmtNum(displayCost)}` : fmtNum(displayCost)}</span></div>
+                    {/* [최저가탐색] 소싱처 최저가 뱃지 — best_price 가 해당 주문 원가보다 낮을 때만 표시 */}
+                    {(() => {
+                      const scan = priceScans[o.id]
+                      if (!scan || scan.best_price == null) return null
+                      const orderCost = Number(o.cost ?? 0) || Number(displayCost) || 0
+                      if (!(orderCost > 0) || scan.best_price >= orderCost) return null
+                      const diff = orderCost - scan.best_price
+                      const suspect = scan.suspect === true
+                      return (
+                        <button
+                          onClick={() => openPriceScout(o)}
+                          title={suspect
+                            ? '오매칭 의심 (원가 절반 미만) — 클릭해서 사이트별 결과·링크 확인'
+                            : '소싱처에 더 싼 곳 발견 — 클릭해서 사이트별 결과·링크 확인'}
+                          style={{
+                            marginTop: '0.25rem', width: '100%',
+                            fontSize: '0.68rem', fontWeight: 700, padding: '0.15rem 0.25rem',
+                            background: suspect ? 'rgba(245,158,11,0.12)' : 'rgba(220,38,38,0.1)',
+                            border: suspect ? `1px solid ${c.warn}` : `1px solid ${c.danger}`,
+                            color: suspect ? c.warn : c.danger,
+                            borderRadius: '4px', cursor: 'pointer', textAlign: 'center',
+                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                          }}
+                        >
+                          {suspect
+                            ? <>⚠️확인필요 {scan.best_site} {fmtNum(scan.best_price)} <span style={{ color: c.textMuted, fontWeight: 400 }}>(-{fmtNum(diff)})</span></>
+                            : <>🔻{scan.best_site} {fmtNum(scan.best_price)} (-{fmtNum(diff)})</>}
+                        </button>
+                      )
+                    })()}
                   </div>
                   {/* 주문취소 + 가격X/재고X/직배/까대기/선물 */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '4px', marginTop: '0.375rem', borderTop: `1px solid ${c.borderStrong}`, paddingTop: '0.375rem' }}>

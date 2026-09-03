@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     Header,
     HTTPException,
@@ -3872,10 +3873,16 @@ async def _sync_returns_with_order_status(
         (await session.execute(select(SambaReturn).where(or_(*conds)))).scalars().all()
     )
 
+    # [T7 마감행 보호 — 2026-09-03] 마감(closed_at 있음)된 반품행은 자동 동기화의
+    # 갱신·삭제 대상에서 제외한다. 단 '이미 반품행이 있다' 판정(아래 `if not rows`)
+    # 에는 마감행도 포함시켜, 마감된 주문이 다시 클레임 상태가 돼도 새 행을 또
+    # 만들어 마감건을 되살리지 않는다. (아래 두 루프는 open_rows 만 순회)
+    open_rows = [r for r in rows if getattr(r, "closed_at", None) is None]
+
     if claim_type is None:
         # 요청 #7 — claim 철회: 손 안 댄 자동생성 행만 삭제, 수기 흔적 있으면 보존
         deleted = 0
-        for ret in rows:
+        for ret in open_rows:
             reasons = _return_row_touch_reasons(ret, order)
             if reasons:
                 logger.info(
@@ -3915,7 +3922,7 @@ async def _sync_returns_with_order_status(
     claim_status = _claim_status_from_order(order.status, order.shipping_status)
     new_detail = _completion_detail(claim_type, claim_status)
     changed = 0
-    for ret in rows:
+    for ret in open_rows:  # 마감행 제외 (T7 — 위 open_rows 주석 참조)
         updates: dict[str, Any] = {}
         if ret.type != claim_type:
             updates["type"] = claim_type
@@ -4172,6 +4179,11 @@ async def _lh_imps_with_dtl_sn_heal(
 @router.post("/{order_id}/approve-cancel")
 async def approve_cancel(
     order_id: str,
+    # [2026-09-03] force — 발주 가드 우회 플래그. 쿼리(?force=true) 또는
+    # JSON body({"force": true}) 어느 쪽으로 보내도 인식한다. 기존 호출부(프론트)는
+    # body 없이 POST 만 보내므로 기본값 False 로 시그니처 호환 유지.
+    force: bool = Query(False),
+    payload: Optional[dict[str, Any]] = Body(None),
     session: AsyncSession = Depends(get_write_session_dependency),
 ):
     """취소요청 주문에 대해 마켓 취소승인 실행."""
@@ -4182,6 +4194,29 @@ async def approve_cancel(
     order = await svc.get_order(order_id)
     if not order:
         raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다")
+
+    # [2026-09-03] 발주 가드 (취소요청 오인승인 사고 방지).
+    # 사고 경위: 마켓 주문동기화(아래 SSG ordItemDiv=021 감지 등)가 고객 취소요청을
+    # 감지해 status='cancel_requested' 로 바꾸면, 사장님이 직접 '주문이행 불가'로 바꾼
+    # 건과 상태·메모가 똑같아져 반품탭에서 구분이 안 됨 → 이미 소싱처 발주(또는 송장)가
+    # 나간 고객 취소요청 건을 그대로 취소승인해 손실이 발생했다.
+    # 대책: 소싱처 발주번호/송장번호가 있는 주문은 취소승인을 409 로 차단한다.
+    # 우회: 사장님이 손실을 감수하고 승인하려면 ?force=true (또는 body {"force": true})
+    # 로 다시 요청하면 기존 로직 그대로 실행된다.
+    if payload and payload.get("force") is True:
+        force = True
+    if not force and (
+        (order.sourcing_order_number or "").strip()
+        or (order.tracking_number or "").strip()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "소싱처 발주(또는 송장)가 있는 주문입니다. "
+                "취소승인 시 손실이 발생할 수 있습니다. "
+                "확인 후 force=true 로 다시 요청하세요."
+            ),
+        )
 
     if not order.order_number:
         raise HTTPException(status_code=400, detail="상품주문번호가 없습니다")

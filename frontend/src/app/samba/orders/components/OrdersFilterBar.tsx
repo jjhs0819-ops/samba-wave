@@ -66,6 +66,9 @@ interface Props {
   sourcingAccounts: SambaSourcingAccount[]
   siteOptions: Array<{ value: string; label: string }>
   selectedOrderIds: string[]
+  // [최저가탐색] 현재 화면 주문접수+소싱주문번호 없음 대상 배치 스캔 (자동 실행 없음 — 버튼 클릭만)
+  priceScanning: boolean
+  onPriceScoutBatch: () => void | Promise<void>
 }
 
 export default function OrdersFilterBar(props: Props) {
@@ -85,6 +88,7 @@ export default function OrdersFilterBar(props: Props) {
     sortBy, setSortBy, pageSize, setPageSize,
     accounts, sourcingAccounts, siteOptions,
     selectedOrderIds,
+    priceScanning, onPriceScoutBatch,
   } = props
 
   const [excelDownloading, setExcelDownloading] = useState(false)
@@ -284,6 +288,13 @@ export default function OrdersFilterBar(props: Props) {
           바로가기
         </button>
         <button onClick={handleSearch} style={{ ...btn('primary', c), padding: '0.22rem 0.75rem', fontSize: '0.75rem' }}>검색</button>
+        {/* [최저가탐색] 버튼을 눌러야만 스캔 (자동 실행 금지 — 소싱처 부하) */}
+        <button
+          onClick={onPriceScoutBatch}
+          disabled={priceScanning}
+          title="현재 화면의 주문접수 + 소싱주문번호 없는 주문만 소싱처 5곳 최저가 스캔 (최대 50건)"
+          style={{ ...btn('accent', c), ...(priceScanning ? btnDisabled : null), padding: '0.22rem 0.65rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+        >{priceScanning ? '최저가 스캔 중...' : '최저가 스캔'}</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexWrap: 'wrap' }}>
           <select style={{ ...makeInputStyle(c), width: '140px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체 마켓</option>

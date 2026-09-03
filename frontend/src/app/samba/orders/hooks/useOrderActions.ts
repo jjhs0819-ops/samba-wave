@@ -3,6 +3,8 @@
 import { Dispatch, SetStateAction } from 'react'
 import {
   orderApi,
+  ApiError,
+  CANCEL_APPROVE_FORCE_WARNING,
   type SambaOrder,
   type SambaChannel,
 } from '@/lib/samba/api/commerce'
@@ -219,7 +221,18 @@ export function useOrderActions(args: Args) {
         } else if (bulkStatus === 'confirm') {
           await orderApi.confirmOrder(id)
         } else if (bulkStatus === 'approve_cancel') {
-          await orderApi.approveCancel(id)
+          try {
+            await orderApi.approveCancel(id)
+          } catch (e) {
+            // [2026-09-03] 발주 가드(409) — 소싱처 발주/송장 있는 주문은 건별로 사장님 확인 후 force 재시도
+            if (e instanceof ApiError && e.status === 409) {
+              const forceYes = await showConfirm(CANCEL_APPROVE_FORCE_WARNING)
+              if (!forceYes) throw e // 거부 시 해당 건은 실패로 집계
+              await orderApi.approveCancel(id, true)
+            } else {
+              throw e
+            }
+          }
         } else {
           await orderApi.updateStatus(id, bulkStatus)
         }

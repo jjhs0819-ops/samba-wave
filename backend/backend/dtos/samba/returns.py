@@ -1,8 +1,14 @@
 """SambaWave Return DTOs."""
 
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
+
+
+class ReturnIdsBody(BaseModel):
+    """반품행 id 목록 요청 DTO — 마감/마감해제(POST /returns/close·/reopen) 공용."""
+
+    ids: List[str]
 
 
 class ReturnCreate(BaseModel):

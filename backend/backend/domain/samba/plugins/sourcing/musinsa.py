@@ -1,7 +1,7 @@
 """무신사 소싱처 플러그인."""
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from backend.domain.samba.plugins.sourcing_base import SourcingPlugin
 
@@ -22,8 +22,16 @@ class MusinsaPlugin(SourcingPlugin):
     concurrency = 1
     request_interval = 0.2
 
-    async def search(self, keyword: str, **filters) -> list[dict]:
-        """무신사 키워드 검색."""
+    async def search(self, keyword: str, **filters) -> dict[str, Any]:
+        """무신사 키워드 검색.
+
+        ⚠️ 베이스 클래스(SourcingPlugin.search)의 선언은 list[dict] 이지만 무신사만
+        MusinsaClient.search_products 의 반환을 그대로 넘겨 dict 를 준다
+        ({"success", "count", "totalCount", "totalPages", "page", "data": [상품...]}).
+        상품 배열은 "data" 키 안에 있다. 반환형을 list 로 바꾸면 이 dict 를 기대하는
+        기존 경로가 깨질 수 있어 형만 사실대로 고쳐 둔다 — 호출부는 list/dict 둘 다
+        받아들이도록 정규화할 것 (예: price_scout/service.py::_as_item_list).
+        """
         from backend.domain.samba.proxy.musinsa import MusinsaClient
 
         client = MusinsaClient()

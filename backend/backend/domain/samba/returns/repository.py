@@ -44,11 +44,20 @@ class SambaReturnRepository(BaseRepository[SambaReturn]):
         start_dt: Optional[datetime] = None,
         end_dt: Optional[datetime] = None,
         tenant_id: Optional[str] = None,
+        include_closed: bool = True,
     ) -> List[SambaReturn]:
-        """필터 + 날짜 범위 목록 조회."""
+        """필터 + 날짜 범위 목록 조회.
+
+        include_closed=False 면 마감행(closed_at IS NOT NULL)을 제외한다 (T7).
+        기본 True — 기존 호출부(get_return_stats 등) 동작 불변. 반품탭 목록은
+        서비스가 명시적으로 False 를 내려 마감행을 숨긴다.
+        """
         from sqlalchemy import or_
 
         stmt = select(SambaReturn)
+        # 마감행 제외 (T7) — 기본 목록에서는 마감(종결)된 행을 숨긴다
+        if not include_closed:
+            stmt = stmt.where(SambaReturn.closed_at.is_(None))
         # 테넌트 격리 — NULL은 레거시 데이터로 허용 (backfill 완료 후 제거)
         if tenant_id:
             stmt = stmt.where(
