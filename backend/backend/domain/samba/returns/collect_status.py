@@ -30,7 +30,7 @@
   - 판정 근거는 samba_return.timeline 에 {date, status, message} 로 append.
     송장번호는 뒤 4자리만 남기고 마스킹.
   - 외부 API 예외는 해당 건만 error 집계하고 배치 전체는 계속 진행.
-    동시성 Semaphore(5), 건당 타임아웃 10초.
+    동시성 Semaphore(2), 건당 타임아웃 10초(403/429 는 백오프 재시도).
 """
 
 import asyncio
@@ -112,7 +112,9 @@ _COURIER_ALIASES: dict[str, str] = {
 }
 
 # 배치 실행 파라미터
-_CONCURRENCY = 5  # 동시 배송조회 수
+# [2026-09-04] 5 → 2. 운영 첫 실행에서 배송조회가 403(호출제한)으로 3건 실패했다.
+# 대상이 수십 건 규모라 동시성을 낮춰도 전체 소요는 거의 그대로다.
+_CONCURRENCY = 2  # 동시 배송조회 수
 _PER_ITEM_TIMEOUT = 10.0  # 건당 타임아웃(초)
 
 # ── 반송장 자동획득 (원송장 → 반송장, 2026-09-03 실측 확정) ──────────
@@ -415,13 +417,23 @@ async def _fetch_track(carrier_id: str, invoice: str) -> Optional[dict]:
         return None
 
     url = f"https://apis.tracker.delivery/carriers/{carrier_id}/tracks/{invoice_clean}"
+    # [2026-09-04] 429/403 재시도 — 운영 첫 실행에서 반송장 7건 중 3건이 403 으로 튕겼다.
+    # deliverytracker v1 은 짧은 시간에 몰아치면 호출을 막는다(반송장 자체는 이미 확보한
+    # 상태였으므로 조회만 실패). 지수 백오프로 2회까지 다시 시도한다.
+    delays = (1.5, 4.0)
+    last_status = 0
     async with httpx.AsyncClient(timeout=_PER_ITEM_TIMEOUT) as hc:
-        resp = await hc.get(url)
-    if resp.status_code == 404:
-        return None
-    if resp.status_code >= 400:
-        raise RuntimeError(f"배송조회 비정상 응답 status={resp.status_code}")
-    return resp.json()
+        for attempt in range(len(delays) + 1):
+            resp = await hc.get(url)
+            if resp.status_code == 404:
+                return None
+            if resp.status_code < 400:
+                return resp.json()
+            last_status = resp.status_code
+            if resp.status_code not in (403, 429, 503) or attempt == len(delays):
+                break
+            await asyncio.sleep(delays[attempt])
+    raise RuntimeError(f"배송조회 비정상 응답 status={last_status}")
 
 
 async def _load_market_claim_items(
