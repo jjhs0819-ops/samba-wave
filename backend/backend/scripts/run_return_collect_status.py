@@ -26,6 +26,14 @@ import asyncio
 import json
 import sys
 
+# ⚠️ 부트스트랩 import — 이 줄을 지우지 말 것.
+# 이 레포에는 backend.dtos.user ↔ backend.domain.user 순환 import 가 있다.
+# 웹앱은 app_factory 가 먼저 domain 을 끌어올려 문제가 안 되지만, 스크립트로 단독
+# 실행하면 회수판정 도중 지연 import 가 걸리는 순간 터진다(운영 첫 실행에서 실측:
+# "cannot import name 'UserCreateRequest' from partially initialized module").
+# 앱과 같은 순서로 domain.user 를 먼저 올려 순환을 끊는다.
+import backend.domain.user  # noqa: F401
+
 from backend.db.orm import get_write_session
 
 
