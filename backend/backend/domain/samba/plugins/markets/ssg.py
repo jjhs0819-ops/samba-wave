@@ -901,9 +901,12 @@ class SSGPlugin(MarketPlugin):
             # SSG updateItem 은 itemDesc 생략을 부분 업데이트로 처리해 기존 상세를
             # 보존한다 — 라이브 검증(2026-07-26): 가격 166,600→170,900 반영되고
             # 상세 443자/3장 완전 동일 유지. 소싱처 4곳 표본에서도 상세 무변경 확인.
+            # ★생략한 itemDesc 는 버리지 말고 보관한다 — 아래 재등록(insertItem)
+            # 폴백에서 되돌려 넣어야 한다(insertItem 은 itemDesc 가 필수값).
+            _saved_item_desc = None
             if skip_image:
-                _dropped = data.pop("itemDesc", None) is not None
-                if _dropped:
+                _saved_item_desc = data.pop("itemDesc", None)
+                if _saved_item_desc is not None:
                     logger.info(
                         "[SSG] 경량 가격/재고 수정 → itemDesc 생략(기존 상세 보존): "
                         f"itemId={existing_no}"
@@ -922,6 +925,17 @@ class SSGPlugin(MarketPlugin):
                 except Exception as _de:
                     logger.warning(f"[SSG] 재등록 전 판매중지 실패(무시): {_de}")
                 data.pop("itemId", None)
+                # ★재등록은 insertItem(신규등록)이라 itemDesc 가 **필수값**이다.
+                # 경량 수정에서 위로 빼둔 상세를 되돌리지 않으면 SSG 가
+                # "Parameter error : [itemDesc] 은 필수값 입니다" 로 거부하는데,
+                # 그 시점엔 기존 상품을 이미 판매중지시킨 뒤라 상품이 신세계몰에서
+                # 통째로 내려간 채 복구되지 않는다(2026-09-03 실측: 2시간 174건 전량
+                # 실패 = 옵션 늘어난 상품마다 판매중단). 새 itemId 는 상세가 비어
+                # 있으므로 여기서는 원문을 실어도 기존 상세를 덮을 위험이 없다.
+                if not data.get("itemDesc"):
+                    data["itemDesc"] = _saved_item_desc or (
+                        f"<p>{str(data.get('itemNm') or '')[:200]}</p>"
+                    )
                 # SSG는 판매중지된 상품이라도 '동일 상품명'이면 재등록을 거부한다
                 # ("동일한 상품이 이미 존재"). 상품명에 고유 접미사를 붙여 회피한다.
                 import datetime as _dt
@@ -947,6 +961,17 @@ class SSGPlugin(MarketPlugin):
                             f"[SSG] 영구판매중지 상품 감지 → 상품번호 초기화 후 신규등록: itemId={existing_no}"
                         )
                         data.pop("itemId", None)
+                        # ★재등록은 insertItem(신규등록)이라 itemDesc 가 **필수값**이다.
+                        # 경량 수정에서 위로 빼둔 상세를 되돌리지 않으면 SSG 가
+                        # "Parameter error : [itemDesc] 은 필수값 입니다" 로 거부하는데,
+                        # 그 시점엔 기존 상품을 이미 판매중지시킨 뒤라 상품이 신세계몰에서
+                        # 통째로 내려간 채 복구되지 않는다(2026-09-03 실측: 2시간 174건 전량
+                        # 실패 = 옵션 늘어난 상품마다 판매중단). 새 itemId 는 상세가 비어
+                        # 있으므로 여기서는 원문을 실어도 기존 상세를 덮을 위험이 없다.
+                        if not data.get("itemDesc"):
+                            data["itemDesc"] = _saved_item_desc or (
+                                f"<p>{str(data.get('itemNm') or '')[:200]}</p>"
+                            )
                         result = await client.register_product(data)
                         result["_clear_product_no"] = (
                             True  # 호출자에서 DB 상품번호 초기화
