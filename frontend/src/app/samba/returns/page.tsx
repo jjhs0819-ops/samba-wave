@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef, useMemo, Fragment } from 'react'
-import type { ClipboardEvent as ReactClipboardEvent } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { accountApi, orderApi, type SambaMarketAccount } from '@/lib/samba/api/commerce'
 import { returnApi, type SambaReturn } from '@/lib/samba/api/support'
@@ -194,28 +193,6 @@ export default function ReturnsPage() {
   const [searchText, setSearchText] = useState('')
   const [marketFilter, setMarketFilter] = useState('')
 
-  // ── '주문번호만 선택' 토글 (T5) ──
-  // ON(기본): 표 전체 user-select:none + 주문번호 셀만 text → 세로 드래그로 주문번호만 복사.
-  // localStorage 에 저장해 새로고침 후에도 유지 (읽기/쓰기 실패 시 기본값 true 로 동작).
-  const ORDER_ONLY_SELECT_KEY = 'samba_returns_order_only_select'
-  // 서버 렌더에는 localStorage 가 없으므로 초기값은 항상 true 로 두고,
-  // 마운트 후 useEffect 에서 저장값을 읽어 반영한다 (하이드레이션 불일치 방지).
-  const [orderOnlySelect, setOrderOnlySelect] = useState<boolean>(true)
-  useEffect(() => {
-    try {
-      const v = localStorage.getItem(ORDER_ONLY_SELECT_KEY)
-      if (v !== null) setOrderOnlySelect(v === '1')
-    } catch { /* 읽기 실패 시 기본값 true 유지 */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  const toggleOrderOnlySelect = () => {
-    setOrderOnlySelect(prev => {
-      const next = !prev
-      try { localStorage.setItem(ORDER_ONLY_SELECT_KEY, next ? '1' : '0') } catch { /* 저장 실패해도 화면 동작엔 영향 없음 */ }
-      return next
-    })
-  }
-
   // ── 구획 접기/펴기 (T6) — '기타'만 기본 접힘, localStorage 에 접힘 상태 유지 ──
   const SECTION_COLLAPSE_KEY = 'samba_returns_section_collapsed'
   // 기타 구획은 취소완료·거부 등 종결건이 대부분(운영DB 90일 실측 914건)이라 기본 접힘.
@@ -243,30 +220,6 @@ export default function ReturnsPage() {
 
   // 구획 정의(색 포함) — 테마 팔레트(c) 변경 시에만 재생성
   const RETURN_SECTIONS = useMemo(() => makeReturnSections(c), [c])
-
-  // ── 주문번호 세로 드래그 복사 — 엔터(줄바꿈) 구분 보강 (T6) ──
-  // '주문번호만 선택' 모드에서 복사 시, 선택 영역에 걸린 주문번호 셀들만 뽑아
-  // 줄바꿈(\n)으로 이어 클립보드를 덮어쓴다 — 브라우저에 따라 구분자가 탭이 되던
-  // 문제 방지. 주문번호를 하나도 못 뽑으면 기본 복사 동작을 막지 않는다.
-  const tableWrapRef = useRef<HTMLDivElement>(null)
-  const handleOrderOnlyCopy = (e: ReactClipboardEvent<HTMLDivElement>) => {
-    if (!orderOnlySelect) return // 모드 OFF — 아무것도 하지 않음(기본 복사)
-    const sel = window.getSelection()
-    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
-    const cells = tableWrapRef.current?.querySelectorAll('.samba-order-no-cell')
-    if (!cells || cells.length === 0) return
-    const nums: string[] = []
-    cells.forEach(cell => {
-      // containsNode(cell, true): 셀이 선택 영역에 일부라도 걸리면 포함으로 판정
-      if (sel.containsNode(cell, true)) {
-        const t = (cell.textContent || '').trim()
-        if (t && t !== '-') nums.push(t)
-      }
-    })
-    if (nums.length === 0) return
-    e.clipboardData.setData('text/plain', nums.join('\n'))
-    e.preventDefault()
-  }
 
   // ── 회수상태 자동조회 (T4 프론트) ──
   // POST /returns/collect-status/refresh — 백엔드가 원주문/회수 송장을 택배사에 조회해
@@ -661,12 +614,22 @@ export default function ReturnsPage() {
     return true
   })
 
-  // 표시된 주문번호 전부 복사 (T5) — 실제 렌더에 쓰는 filteredReturns 기준,
-  // order_number 를 줄바꿈으로 이어 클립보드에 복사
-  const copyVisibleOrderNumbers = async () => {
-    const nums = filteredReturns.map(r => (r.order_number || '').trim()).filter(Boolean)
+  // 체크된 주문번호 복사 — 왼쪽 체크박스로 고른 행의 주문번호만 줄바꿈으로 이어 복사.
+  // [2026-09-04] 기존 '표시된 주문번호 전부 복사' + 세로 드래그 복사를 대체.
+  // 드래그 방식은 표 구조(레코드당 2줄)와 브라우저 선택 동작이 맞지 않아 실사용에서
+  // 동작하지 않았고, 표 전체 텍스트 선택까지 막는 부작용이 있어 걷어냈다.
+  // 순서는 selectedIds(Set) 가 아니라 화면에 보이는 순서(filteredReturns)를 따른다.
+  const copyCheckedOrderNumbers = async () => {
+    if (selectedIds.size === 0) {
+      showAlert('먼저 왼쪽 체크박스로 주문을 선택해주세요', 'info')
+      return
+    }
+    const nums = filteredReturns
+      .filter(r => selectedIds.has(r.id))
+      .map(r => (r.order_number || '').trim())
+      .filter(Boolean)
     if (nums.length === 0) {
-      showAlert('복사할 주문번호가 없습니다', 'info')
+      showAlert('선택한 건에 주문번호가 없습니다', 'info')
       return
     }
     try {
@@ -722,22 +685,6 @@ export default function ReturnsPage() {
         input[type=number] {
           -moz-appearance: textfield;
           appearance: textfield;
-        }
-        /* '주문번호만 선택' 모드 (T5) — 표를 세로로 드래그해도 주문번호 셀만 선택·복사됨 */
-        .samba-select-order-only {
-          -webkit-user-select: none;
-          user-select: none;
-        }
-        .samba-select-order-only .samba-order-no-cell {
-          -webkit-user-select: text;
-          user-select: text;
-        }
-        /* 폼 요소는 선택 제약과 무관하게 편집·선택 가능하도록 명시 */
-        .samba-select-order-only input,
-        .samba-select-order-only select,
-        .samba-select-order-only textarea {
-          -webkit-user-select: auto;
-          user-select: auto;
         }
       `}</style>
       {/* 관련 페이지 연결 */}
@@ -894,18 +841,12 @@ export default function ReturnsPage() {
           title="ON: 마감된 건도 흐리게 표시 (마감 해제 가능) · OFF: 마감건 숨김(기본)"
           style={{ ...(includeClosed ? btn('primary', c) : btn('ghost', c)), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
         >마감 포함 보기</button>
-        {/* '주문번호만 선택' 토글 (T5) — ON이면 표 드래그 시 주문번호만 선택·복사됨 */}
+        {/* 체크된 주문번호 복사 — 왼쪽 체크박스로 고른 행만 */}
         <button
-          onClick={toggleOrderOnlySelect}
-          title="ON: 표를 위→아래로 드래그하면 주문번호만 선택·복사됩니다 · OFF: 일반 선택"
-          style={{ ...(orderOnlySelect ? btn('primary', c) : btn('ghost', c)), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
-        >주문번호만 선택</button>
-        {/* 표시된 주문번호 전부 복사 (T5) */}
-        <button
-          onClick={copyVisibleOrderNumbers}
-          title="현재 화면에 표시된 목록의 주문번호를 줄바꿈으로 이어 복사"
+          onClick={copyCheckedOrderNumbers}
+          title="왼쪽 체크박스로 선택한 주문의 주문번호를 줄바꿈으로 이어 복사"
           style={{ ...btn('secondary', c), padding: '0.22rem 0.6rem', fontSize: '0.75rem', whiteSpace: 'nowrap' }}
-        >표시된 주문번호 전부 복사</button>
+        >체크된 주문번호 복사</button>
         <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto', flexShrink: 0, alignItems: 'center' }}>
           <select style={{ ...makeInputStyle(c), width: '130px', padding: '0.22rem 0.4rem', fontSize: '0.75rem' }} value={marketFilter} onChange={e => setMarketFilter(e.target.value)}>
             <option value="">전체마켓보기</option>
@@ -986,12 +927,11 @@ export default function ReturnsPage() {
 
       {/* 테이블 */}
       <div style={makeCard(c)}>
-        {/* onCopy: '주문번호만 선택' 모드에서 복사 구분자를 줄바꿈으로 강제 (T6) */}
-        <div ref={tableWrapRef} onCopy={handleOrderOnlyCopy} style={{ overflowX: 'auto' }}>
+        <div style={{ overflowX: 'auto' }}>
           {loading ? (
             <div style={{ padding: '3rem', textAlign: 'center', color: c.textMuted }}>로딩 중...</div>
           ) : (
-            <table className={orderOnlySelect ? 'samba-select-order-only' : undefined} style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
               <thead>
                 <tr style={{ background: c.surfaceAlt, borderBottom: `1px solid ${c.border}` }}>
                   <th rowSpan={2} style={{ width: '36px', textAlign: 'center', padding: '0.3rem 0.5rem', verticalAlign: 'middle' }}>
@@ -1131,10 +1071,9 @@ export default function ReturnsPage() {
                           />
                         </div>
                       </td>
-                      {/* 주문번호 — 2줄 통합 셀. '주문번호만 선택' 모드에서 유일하게 드래그 선택 가능 (T5) */}
+                      {/* 주문번호 — 사업자(1줄)+주문번호(2줄) 자리를 합친 2줄 통합 셀 (T5) */}
                       <td
                         rowSpan={2}
-                        className="samba-order-no-cell"
                         style={{ ...tdCenter, maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                         title={r.order_number || ''}
                       >{r.order_number || '-'}</td>
