@@ -83,7 +83,13 @@ class MusinsaClient:
     BASE_COUPON = (
         "https://api.musinsa.com/api2/coupon/coupons/getUsableCouponsByGoodsNo"
     )
-    BASE_MEMBER = "https://api.musinsa.com/api2/member/v1/me"
+    # [2026-09-03] 회원 API(api2/member/v1/me)는 무신사가 없앴다 — 쿠키 유무와 무관하게
+    # 항상 404(다른 member/user 변형 경로도 전부 404). 그래서 로그인 판정은 상품 상세의
+    # 회원 전용 필드로 한다. 실측:
+    #   쿠키O → memberGrade={"level":9,"levelName":"블랙다이아몬드"}, point.memberPoint=702429
+    #   쿠키X → memberGrade=null, point.memberPoint=0
+    # 프로브 상품은 단종될 수 있으므로 실패 시 검색 API 로 살아있는 상품을 하나 집어 재시도한다.
+    MEMBER_PROBE_GOODS_NO = "5876933"  # 아디다스 삼바 OG — 스테디셀러
 
     HEADERS: dict[str, str] = {
         "User-Agent": (
@@ -959,30 +965,84 @@ class MusinsaClient:
 
             return {"success": True, "count": 0, "goodsNos": [], "source": "none"}
 
-    async def check_login_status(self, cookie: Optional[str] = None) -> dict[str, Any]:
-        """로그인 상태 확인 - proxy-server.mjs /api/musinsa/check-login 포팅."""
-        cookie_to_check = cookie or self.cookie
-        if not cookie_to_check:
-            return {"isLoggedIn": False}
-
+    async def _pick_probe_goods_no(self) -> str:
+        """프로브용으로 쓸 살아있는 상품번호 1건 (비로그인 검색 API)."""
         try:
             async with _musinsa_session(
                 settings.http_timeout_short, connect=5.0
             ) as client:
+                # caller=SEARCH + keyword 없이 부르면 400(DISPLAY_000_0001) — 실측 2026-09-03
                 resp = await client.get(
-                    self.BASE_MEMBER,
-                    headers={**self.HEADERS, "Cookie": cookie_to_check},
+                    self.BASE_SEARCH,
+                    params={
+                        "caller": "SEARCH",
+                        "keyword": "나이키",
+                        "gf": "A",
+                        "page": "1",
+                        "size": "1",
+                    },
+                    headers=self.HEADERS,
                 )
-                me_json = resp.json()
-                data = me_json.get("data") or {}
-                is_logged_in = bool(data.get("memberId"))
-                return {
-                    "isLoggedIn": is_logged_in,
-                    "memberId": data.get("memberId", ""),
-                    "gradeName": data.get("gradeName", ""),
-                }
+                if resp.status_code != 200:
+                    return ""
+                items = (resp.json().get("data") or {}).get("list") or []
+                return str(items[0].get("goodsNo") or "") if items else ""
         except Exception:
-            return {"isLoggedIn": False}
+            return ""
+
+    async def fetch_member_state(self, cookie: Optional[str] = None) -> dict[str, Any]:
+        """쿠키의 회원 상태(로그인 여부·등급·보유적립금) 조회.
+
+        무신사가 회원 API 를 없애 상품 상세의 회원 전용 필드로 판정한다(MEMBER_PROBE_GOODS_NO 주석 참조).
+        판정 불가(네트워크/차단 등)면 빈 dict 를 돌려준다 — 호출부가 '로그인 아님'과 구분할 수 있게.
+        """
+        cookie_to_check = cookie or self.cookie
+        if not cookie_to_check:
+            return {"isLoggedIn": False, "gradeName": "", "memberPoint": 0}
+
+        async def _probe(goods_no: str) -> Optional[dict[str, Any]]:
+            if not goods_no:
+                return None
+            try:
+                async with _musinsa_session(
+                    settings.http_timeout_short, connect=5.0
+                ) as client:
+                    resp = await client.get(
+                        f"{self.BASE_DETAIL}/{goods_no}",
+                        headers={**self.HEADERS, "Cookie": cookie_to_check},
+                    )
+                    if resp.status_code != 200:
+                        return None
+                    return resp.json().get("data") or {}
+            except Exception:
+                return None
+
+        data = await _probe(self.MEMBER_PROBE_GOODS_NO)
+        if data is None:
+            # 프로브 상품이 내려갔을 수 있다 — 살아있는 상품으로 한 번 더
+            data = await _probe(await self._pick_probe_goods_no())
+        if data is None:
+            return {}
+
+        grade = data.get("memberGrade") or {}
+        member_point = (data.get("point") or {}).get("memberPoint") or 0
+        grade_name = str(grade.get("levelName") or "")
+        return {
+            "isLoggedIn": bool(grade_name) or member_point > 0,
+            "gradeName": grade_name,
+            "memberPoint": member_point,
+        }
+
+    async def check_login_status(self, cookie: Optional[str] = None) -> dict[str, Any]:
+        """로그인 상태 확인 - proxy-server.mjs /api/musinsa/check-login 포팅."""
+        state = await self.fetch_member_state(cookie)
+        if not state:
+            return {"isLoggedIn": False, "gradeName": "", "unknown": True}
+        return {
+            "isLoggedIn": state["isLoggedIn"],
+            "gradeName": state["gradeName"],
+            "memberPoint": state["memberPoint"],
+        }
 
     async def set_cookie_and_verify(self, cookie: str) -> dict[str, Any]:
         """쿠키 설정 및 검증 - proxy-server.mjs /api/musinsa/set-cookie 포팅."""
@@ -992,28 +1052,27 @@ class MusinsaClient:
         self.cookie = cookie
 
         try:
-            async with _musinsa_session(
-                settings.http_timeout_short, connect=5.0
-            ) as client:
-                resp = await client.get(
-                    self.BASE_MEMBER,
-                    headers={**self.HEADERS, "Cookie": cookie},
-                )
-                me_json = resp.json()
-                data = me_json.get("data") or {}
-                if data.get("memberId"):
-                    return {
-                        "success": True,
-                        "isLoggedIn": True,
-                        "memberId": data["memberId"],
-                        "gradeName": data.get("gradeName", ""),
-                        "message": (
-                            f"{data['memberId']} 로그인 성공 "
-                            f"({data.get('gradeName') or '등급미확인'})"
-                        ),
-                    }
+            state = await self.fetch_member_state(cookie)
+            if state.get("isLoggedIn"):
+                return {
+                    "success": True,
+                    "isLoggedIn": True,
+                    "gradeName": state["gradeName"],
+                    "memberPoint": state["memberPoint"],
+                    "message": (
+                        f"로그인 확인 ({state['gradeName'] or '등급미확인'}, "
+                        f"적립금 {state['memberPoint']:,}원)"
+                    ),
+                }
+            if state:  # 판정은 됐는데 비로그인 = 만료된 쿠키
+                logger.warning("[무신사] 쿠키 검증: 비로그인 응답 — 만료된 쿠키로 보인다")
+                return {
+                    "success": True,
+                    "isLoggedIn": False,
+                    "message": "쿠키가 저장됐지만 무신사가 비로그인으로 응답합니다 (만료 의심)",
+                }
         except Exception as exc:
-            logger.warning(f"[무신사] 쿠키 검증 API 실패 (쿠키는 저장됨): {exc}")
+            logger.warning(f"[무신사] 쿠키 검증 실패 (쿠키는 저장됨): {exc}")
 
         return {
             "success": True,
