@@ -1,7 +1,14 @@
-"""무신사 API 클라이언트 - httpx 기반.
+"""무신사 API 클라이언트 - curl_cffi 기반.
 
 proxy-server.mjs의 무신사 관련 로직을 Python으로 포팅.
 상품 상세, 옵션/재고, 고시정보, 쿠폰, 혜택가, 검색 API를 지원한다.
+
+[2026-09-03] Cloudflare가 TLS 지문으로 httpx 요청을 전량 403 차단하기 시작해
+curl_cffi(impersonate="chrome")로 전환 — naverstore_sourcing.py/twentyninecm.py와
+동일 패턴(#774). curl_cffi의 AsyncSession은 httpx.AsyncClient와 .get/.post/
+.json()/.text/.status_code/.headers.get()/.raise_for_status() 호환이지만
+allow_redirects 기본값이 반대(httpx=False, curl_cffi=True)라 _musinsa_session()
+에서 명시적으로 맞춘다.
 """
 
 from __future__ import annotations
@@ -12,10 +19,33 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 from urllib.parse import urlencode
 
-import httpx
+from curl_cffi.requests import AsyncSession
 
 from backend.core.config import settings
 from backend.utils.logger import logger
+
+
+def _musinsa_session(
+    read: float,
+    *,
+    connect: float = 10.0,
+    follow_redirects: bool = False,
+    proxy_url: str | None = None,
+) -> AsyncSession:
+    """무신사 전용 curl_cffi 세션 — TLS 지문을 크롬으로 위장한다.
+
+    httpx.Timeout(read, connect=connect) -> curl_cffi (connect, read) 튜플,
+    follow_redirects -> allow_redirects 로 변환(기본값이 서로 반대이므로
+    호출부에서 원래 httpx 동작과 동일하도록 명시한다).
+    """
+    kwargs: dict[str, Any] = {
+        "timeout": (connect, read),
+        "impersonate": "chrome",
+        "allow_redirects": follow_redirects,
+    }
+    if proxy_url:
+        kwargs["proxies"] = {"http": proxy_url, "https": proxy_url}
+    return AsyncSession(**kwargs)
 
 
 def _is_future_sell_start(d: dict) -> bool:
@@ -84,7 +114,7 @@ class MusinsaClient:
         return h
 
     async def _check_product_pre_point(
-        self, client: httpx.AsyncClient, goods_no: str
+        self, client: Any, goods_no: str
     ) -> Optional[bool]:
         """비인증 호출로 상품 본연의 isPrePoint 확인 (계정 설정 영향 배제)."""
         try:
@@ -171,7 +201,7 @@ class MusinsaClient:
         *,
         member_grade_rate: Optional[float] = None,
         refresh_only: bool = False,
-        _shared_client: Optional[httpx.AsyncClient] = None,
+        _shared_client: Optional[Any] = None,
     ) -> dict[str, Any]:
         """상품 상세 조회 - 상세 + 옵션 + 재고 + 고시정보 + 쿠폰 + 혜택가.
 
@@ -184,16 +214,14 @@ class MusinsaClient:
                 "무신사 수집은 로그인(쿠키)이 필요합니다. "
                 "확장앱에서 무신사 로그인 후 다시 시도하세요."
             )
-        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
         # 공유 클라이언트 재사용 (TCP 연결 풀링) 또는 새로 생성
         _own_client = None
         if _shared_client:
             client = _shared_client
         else:
-            _client_kwargs: dict[str, Any] = {"timeout": timeout}
-            if self.proxy_url:
-                _client_kwargs["proxy"] = self.proxy_url
-            _own_client = httpx.AsyncClient(**_client_kwargs)
+            _own_client = _musinsa_session(
+                settings.http_timeout_default, proxy_url=self.proxy_url
+            )
             client = _own_client
         try:
             # 방어적 초기화 — 모든 코드 경로에서 UnboundLocalError 방지
@@ -749,7 +777,7 @@ class MusinsaClient:
             return _result
         finally:
             if _own_client:
-                await _own_client.aclose()
+                await _own_client.close()
 
     async def search_products(
         self,
@@ -782,8 +810,9 @@ class MusinsaClient:
         if max_price is not None:
             params["maxPrice"] = str(max_price)
 
-        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with _musinsa_session(
+            settings.http_timeout_default, connect=10.0
+        ) as client:
             resp = await client.get(
                 self.BASE_SEARCH,
                 params=params,
@@ -863,8 +892,9 @@ class MusinsaClient:
 
     async def search_by_url(self, url: str) -> dict[str, Any]:
         """URL 기반 검색/리다이렉트 처리 - proxy-server.mjs /api/musinsa/search 포팅."""
-        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with _musinsa_session(
+            settings.http_timeout_default, connect=10.0, follow_redirects=True
+        ) as client:
             # onelink.me 단축 URL
             if "musinsa.onelink.me" in url:
                 resp = await client.get(
@@ -935,9 +965,10 @@ class MusinsaClient:
         if not cookie_to_check:
             return {"isLoggedIn": False}
 
-        timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with _musinsa_session(
+                settings.http_timeout_short, connect=5.0
+            ) as client:
                 resp = await client.get(
                     self.BASE_MEMBER,
                     headers={**self.HEADERS, "Cookie": cookie_to_check},
@@ -960,9 +991,10 @@ class MusinsaClient:
 
         self.cookie = cookie
 
-        timeout = httpx.Timeout(settings.http_timeout_short, connect=5.0)
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with _musinsa_session(
+                settings.http_timeout_short, connect=5.0
+            ) as client:
                 resp = await client.get(
                     self.BASE_MEMBER,
                     headers={**self.HEADERS, "Cookie": cookie},
@@ -992,8 +1024,9 @@ class MusinsaClient:
     async def check_stock(self, goods_nos: list[str]) -> dict[str, Any]:
         """재고 소진 감지 - proxy-server.mjs /api/agents/stock-check 포팅."""
         results = []
-        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with _musinsa_session(
+            settings.http_timeout_default, connect=10.0
+        ) as client:
             for goods_no in goods_nos:
                 try:
                     resp = await client.get(
@@ -1060,8 +1093,9 @@ class MusinsaClient:
     async def monitor_prices(self, products: list[dict[str, Any]]) -> dict[str, Any]:
         """가격 변동 감지 - proxy-server.mjs /api/agents/price-monitor 포팅."""
         results = []
-        timeout = httpx.Timeout(settings.http_timeout_default, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with _musinsa_session(
+            settings.http_timeout_default, connect=10.0
+        ) as client:
             for p in products:
                 goods_no = p.get("goodsNo", "")
                 try:
@@ -1146,9 +1180,7 @@ class MusinsaClient:
     # Private helpers
     # ------------------------------------------------------------------
 
-    async def _fetch_goods_base_price(
-        self, client: httpx.AsyncClient, goods_no: str
-    ) -> int:
+    async def _fetch_goods_base_price(self, client: Any, goods_no: str) -> int:
         """상품 할인가(base_price) 조회 — 혼합배송 brandDelivery 옵션 원가용 (#332).
 
         _fetch_options 의 base_price 와 동일 공식:
@@ -1173,7 +1205,7 @@ class MusinsaClient:
 
     async def _fetch_options(
         self,
-        client: httpx.AsyncClient,
+        client: Any,
         goods_no: str,
         gp: dict[str, Any],
     ) -> tuple[
@@ -1572,9 +1604,7 @@ class MusinsaClient:
 
         return options, option_value_no_map, addon_options, option_group_names
 
-    async def _fetch_essential(
-        self, client: httpx.AsyncClient, goods_no: str
-    ) -> dict[str, str]:
+    async def _fetch_essential(self, client: Any, goods_no: str) -> dict[str, str]:
         """상품고시정보 API 호출."""
         essential: dict[str, str] = {}
         try:
@@ -1646,7 +1676,7 @@ class MusinsaClient:
         return essential
 
     async def _fetch_actual_size(
-        self, client: httpx.AsyncClient, goods_no: str
+        self, client: Any, goods_no: str
     ) -> Optional[dict[str, Any]]:
         """실측 사이즈표 API 호출.
 
@@ -1688,7 +1718,7 @@ class MusinsaClient:
 
     async def _fetch_coupons(
         self,
-        client: httpx.AsyncClient,
+        client: Any,
         goods_no: str,
         d: dict[str, Any],
         s_price: int,
@@ -1887,10 +1917,11 @@ class MusinsaClient:
         """주문의 orderOptionNo 목록 추출 (API → HTML 순서)."""
         import json as _json
 
-        timeout = httpx.Timeout(15.0, connect=10.0)
         headers = self._headers()
 
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with _musinsa_session(
+            15.0, connect=10.0, follow_redirects=True
+        ) as client:
             # 1) order 도메인 API로 주문 상세 조회
             _DETAIL_APIS = [
                 f"https://order.musinsa.com/api2/order/v1/orders/{order_no}",
@@ -2034,8 +2065,7 @@ class MusinsaClient:
             f"https://api.musinsa.com/api2/claim/store/mypage/order/cancel/refund/complete/{order_no}?orderOptionNoList={option_list}",
         ]
 
-        timeout = httpx.Timeout(15.0, connect=10.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with _musinsa_session(15.0, connect=10.0) as client:
             for url in _CANCEL_URLS:
                 try:
                     resp = await client.get(url, headers=self._headers())
@@ -2103,10 +2133,9 @@ class MusinsaClient:
             "ord_opt_no": ord_opt_no,
             "is_return": is_return,
         }
-        timeout = httpx.Timeout(15.0, connect=10.0)
         try:
-            async with httpx.AsyncClient(
-                timeout=timeout, follow_redirects=True
+            async with _musinsa_session(
+                15.0, connect=10.0, follow_redirects=True
             ) as client:
                 resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code != 200:
@@ -2163,7 +2192,6 @@ class MusinsaClient:
         무신사 필터 API로 대>중분류를 가져온 뒤,
         각 중분류에 대해 소분류를 재귀 탐색하여 최하위 카테고리별 상품 수를 집계한다.
         """
-        timeout = httpx.Timeout(30.0, connect=10.0)
         base_params: dict[str, str] = {
             "caller": "SEARCH",
             "keyword": keyword or brand,
@@ -2173,7 +2201,7 @@ class MusinsaClient:
         if include_sold_out:
             base_params["includeSoldOut"] = "1"
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with _musinsa_session(30.0, connect=10.0) as client:
             # 1) 필터 API로 대>중분류 가져오기
             resp = await client.get(
                 "https://api.musinsa.com/api2/dp/v1/plp/filter",
@@ -2324,13 +2352,12 @@ class MusinsaClient:
 
         필터 API를 호출하여 매칭되는 브랜드 목록을 반환한다.
         """
-        timeout = httpx.Timeout(15.0, connect=10.0)
         params = {
             "caller": "SEARCH",
             "keyword": keyword,
             "gf": gf,
         }
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with _musinsa_session(15.0, connect=10.0) as client:
             resp = await client.get(
                 "https://api.musinsa.com/api2/dp/v1/plp/filter",
                 params=params,

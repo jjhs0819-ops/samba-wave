@@ -3049,12 +3049,13 @@ class JobWorker:
 
             # 상세 수집 (병렬 — SITE_CONCURRENCY + 공유 HTTP 클라이언트)
             from backend.domain.samba.collector.refresher import SITE_CONCURRENCY
-            import httpx as _httpx
+            from curl_cffi.requests import AsyncSession as _AsyncSession
 
             _collect_sem = asyncio.Semaphore(SITE_CONCURRENCY.get("MUSINSA", 5))
             _collect_results: list[dict | None] = []
             _rate_limited = False
-            _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
+            # [2026-09-03] Cloudflare TLS 지문 차단(#774) — httpx→curl_cffi
+            _shared_http = _AsyncSession(timeout=(5.0, 30), impersonate="chrome")
 
             async def _fetch_detail(goods_no: str) -> dict | None:
                 nonlocal total_skipped, _rate_limited, _collected_sold_out
@@ -3105,7 +3106,7 @@ class JobWorker:
             _collect_results = await asyncio.gather(
                 *[_fetch_detail(gn) for gn in targets]
             )
-            await _shared_http.aclose()
+            await _shared_http.close()
 
             if _rate_limited:
                 await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
@@ -3282,7 +3283,7 @@ class JobWorker:
             _site_consecutive_errors,
             get_interval_key,
         )
-        import httpx as _httpx
+        from curl_cffi.requests import AsyncSession as _AsyncSession
         from sqlalchemy import update as _sa_upd
 
         _ik = get_interval_key("MUSINSA", "collect")
@@ -3378,7 +3379,8 @@ class JobWorker:
         # 검색+상세수집 인터리빙 — 페이지마다 상세수집 후 다음 검색
         # 병렬도 5 고정 (오토튠 검증선과 동일 — 안전 우선)
         _collect_sem = asyncio.Semaphore(5)
-        _shared_http = _httpx.AsyncClient(timeout=_httpx.Timeout(30, connect=5.0))
+        # [2026-09-03] Cloudflare TLS 지문 차단(#774) — httpx→curl_cffi
+        _shared_http = _AsyncSession(timeout=(5.0, 30), impersonate="chrome")
 
         async def _fetch_detail_brand(goods_no: str) -> dict | None:
             nonlocal total_skipped, _rate_limited, _collected_sold_out
@@ -3443,7 +3445,7 @@ class JobWorker:
                 except Exception:
                     pass
                 clear_collect_cancel()
-                await _shared_http.aclose()
+                await _shared_http.close()
                 return
 
             # 검색 요청 — 최대 3회 재시도
@@ -3665,7 +3667,7 @@ class JobWorker:
                     await repo.update_progress(job.id, total_saved, _total_count or 1)
 
             if _rate_limited:
-                await _shared_http.aclose()
+                await _shared_http.close()
                 await repo.fail_job(job.id, "소싱처 차단 (연속 rate limit)")
                 return
 
@@ -3673,7 +3675,7 @@ class JobWorker:
             await asyncio.sleep(_random.uniform(0.3, 0.8))
             search_page += 1
 
-        await _shared_http.aclose()
+        await _shared_http.close()
 
         # 각 SearchFilter의 requested_count를 실제 수집수로 갱신
         for f in filters:

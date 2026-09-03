@@ -211,18 +211,24 @@ _musinsa_shared_clients: dict[str | None, Any] = {}
 
 
 def _get_musinsa_shared_client(proxy_url: str | None) -> Any:
-    """오토튠 전용 공유 httpx.AsyncClient 반환 (프록시별 풀링)."""
-    import httpx as _httpx
+    """오토튠 전용 공유 curl_cffi AsyncSession 반환 (프록시별 풀링).
+
+    [2026-09-03] Cloudflare TLS 지문 차단(#774)으로 httpx→curl_cffi 전환.
+    curl_cffi AsyncSession엔 is_closed 속성이 없어 풀에 있으면 그대로 재사용한다
+    (폐기는 reset_musinsa_shared_clients()가 명시적으로 담당).
+    """
+    from curl_cffi.requests import AsyncSession as _AsyncSession
 
     existing = _musinsa_shared_clients.get(proxy_url)
-    if existing is not None and not existing.is_closed:
+    if existing is not None:
         return existing
     _kwargs: dict[str, Any] = {
-        "timeout": _httpx.Timeout(45, connect=10.0),
+        "timeout": (10.0, 45),
+        "impersonate": "chrome",
     }
     if proxy_url:
-        _kwargs["proxy"] = proxy_url
-    new_client = _httpx.AsyncClient(**_kwargs)
+        _kwargs["proxies"] = {"http": proxy_url, "https": proxy_url}
+    new_client = _AsyncSession(**_kwargs)
     _musinsa_shared_clients[proxy_url] = new_client
     return new_client
 
@@ -231,7 +237,7 @@ async def reset_musinsa_shared_clients() -> None:
     """공유 클라이언트 전체 폐기 (차단 누적 시 connection 재시작용)."""
     for c in list(_musinsa_shared_clients.values()):
         try:
-            await c.aclose()
+            await c.close()
         except Exception:
             pass
     _musinsa_shared_clients.clear()

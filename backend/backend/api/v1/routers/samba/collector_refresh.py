@@ -901,11 +901,10 @@ async def refresh_products(
 @router.post("/test/rate-limit")
 async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
     """무신사 차단 임계값 테스트."""
-    import httpx
     import time
 
     from backend.api.v1.routers.samba.collector_common import get_musinsa_cookie
-    from backend.domain.samba.proxy.musinsa import MusinsaClient
+    from backend.domain.samba.proxy.musinsa import MusinsaClient, _musinsa_session
 
     cookie = await get_musinsa_cookie()
     if not cookie:
@@ -917,7 +916,9 @@ async def test_rate_limit(body: RateLimitTestRequest = RateLimitTestRequest()):
 
     results = []
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as http:
+    # 무신사는 Cloudflare TLS 지문 차단(#774) — 실제 갱신 경로와 같은 세션으로 재야
+    # 의미가 있다. httpx 로 재면 임계값이 아니라 지문 차단 403 만 나온다.
+    async with _musinsa_session(10.0, connect=5.0) as http:
         for i in range(body.count):
             start = time.monotonic()
             try:
