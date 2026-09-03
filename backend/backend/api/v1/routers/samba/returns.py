@@ -3150,8 +3150,13 @@ async def refresh_collect_status_endpoint(
     """
     from backend.domain.samba.returns.collect_status import refresh_collect_status
 
+    # [2026-09-04] return_ids 를 콕 집어 요청하면 쿨다운을 무시한다 —
+    # 사장님이 특정 건을 다시 보라고 지시한 것이므로 "1시간 안에 봤다"고 건너뛰면 안 된다.
+    # 전체 조회(return_ids 없음)는 기본 쿨다운(60분)을 그대로 적용해 택배사 호출을 아낀다.
+    _ids = body.return_ids if body else None
     return await refresh_collect_status(
         session,
         tenant_id=tenant_id,
-        return_ids=(body.return_ids if body else None),
+        return_ids=_ids,
+        cooldown_minutes=0 if _ids else 60,
     )
