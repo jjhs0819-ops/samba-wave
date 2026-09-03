@@ -715,6 +715,19 @@ async function _spaDirectLogin(siteKey, username, password) {
         || _frames[_frames.length - 1]
       const r = _pick?.result
       if (!r?.success) {
+        // [2026-09-04] 로그인 페이지를 열었는데 **로그인 페이지가 아닌 곳**에 와 있으면,
+        // 그건 폼이 없는 게 아니라 **이미 로그인돼 있어서 홈으로 리다이렉트된 것**이다.
+        // ABC마트(/login)·패션플러스(/auth/login) 가 정확히 이렇게 동작한다 — 실측 09-04:
+        // 실패 사유가 '입력필드 못찾음 @abcmart.a-rt.com/', '@www.fashionplus.co.kr/'.
+        // 이걸 실패로 세면 멀쩡히 로그인된 PC 에서 5회 누적 차단이 걸리고, 그 차단이
+        // 송장수집까지 통째로 막는다(실측: ABC 송장 실패 101건).
+        const _curUrlAfter = String(r?.currentUrl || '')
+        if (r?.error === 'fields not found' && _curUrlAfter && !site.isLoginPage(_curUrlAfter)) {
+          console.log(`[자동로그인][SPA] ${site.name} 로그인 페이지가 아닌 곳으로 리다이렉트됨(${_curUrlAfter}) — 이미 로그인 상태로 판단`)
+          _spaLoginLastReason = ''
+          chrome.debugger.onEvent.removeListener(dialogHandler)
+          return true
+        }
         console.log(`[자동로그인][SPA] ${site.name} 스크립트 실행 실패(frame=${_pick?.frameId ?? '?'}):`, JSON.stringify(r))
         // 실패 원인 보존 — 차단 메시지의 "(마지막 사유: …)" 에 노출.
         // URL 을 같이 남긴다 — '로그인 페이지가 아닌 곳에서 폼을 찾고 있었다' 를 구분하기 위해.
