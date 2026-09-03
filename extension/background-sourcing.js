@@ -2041,7 +2041,11 @@ async function handleTrackingJob(job) {
 
     // 로그인 실패로 끝난 잡은 에러를 "로그인 실패" 표준 문구로 교체 — timeout/needsLogin 으로
     // 보고되면 백엔드 서킷브레이커(`%로그인 실패%`)가 못 잡아 같은 계정 재큐잉이 계속된다.
-    if (!result.success && !result.cancelled && _loginFailMsg && !_isWrong(result)) {
+    // [2026-09-03] no_tracking 은 페이지를 정상적으로 열어보고 내린 확정 판정(=소싱처 미발송)이다.
+    // 이걸 로그인 실패 문구로 덮으면 '멀쩡한 미발송'이 '로그인 장애'로 둔갑해 서킷브레이커까지
+    // 오작동한다 → 제외.
+    const _isNoTracking = (r) => r && typeof r.error === 'string' && /no_tracking|미발송/i.test(r.error)
+    if (!result.success && !result.cancelled && _loginFailMsg && !_isWrong(result) && !_isNoTracking(result)) {
       result = { ...result, error: _loginFailMsg }
     }
 

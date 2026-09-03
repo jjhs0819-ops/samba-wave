@@ -472,19 +472,32 @@ async function _spaDirectLogin(siteKey, username, password) {
     // 무신사는 /auth/login → member.one.musinsa.com/login 리다이렉트 후 SPA 렌더링됨
     // 패션플러스는 로그인 페이지에 쿠폰/캠페인 팝업이 다수 떠 무겁고, 로그인 폼(#login_id 등)이
     // SPA 로 늦게 렌더링됨 → 2초 고정대기론 "fields not found" 로 자동로그인 실패. 폴링 대기 추가.
-    const SPA_INPUT_WAIT_SITES = ['musinsa', 'lotteon', 'fashionplus', 'thehyundai']
+    // [2026-09-03] 대기 조건을 '아무 text/password input' → '그 사이트의 진짜 로그인칸'으로 교체.
+    // 더현대는 백그라운드 탭(active:false)에서 Next.js 렌더가 느려 10초 안에 로그인칸이 안 떠
+    // 'fields not found'(=입력필드 못찾음)로 실패했다 — 실측 09-01~09-02 더현대 송장 전량 실패.
+    // 또한 헤더 검색창 같은 다른 text input 이 먼저 뜨면 옛 조건은 '준비됨'으로 조기 통과했다.
+    // 최대 대기 10초 → 25초 (칸이 먼저 뜨면 즉시 빠져나오므로 정상 사이트엔 비용 0).
+    const SPA_INPUT_WAIT_SITES = ['musinsa', 'lotteon', 'fashionplus', 'thehyundai', 'abcmart', 'member']
     if (SPA_INPUT_WAIT_SITES.includes(siteKey)) {
       const spaStart = Date.now()
-      const SPA_WAIT_MAX = 10000
+      const SPA_WAIT_MAX = 25000
+      const probe = SPA_INPUT_PROBE[siteKey] || null
       while (Date.now() - spaStart < SPA_WAIT_MAX) {
         try {
           const [r] = await chrome.scripting.executeScript({
             target: { tabId },
-            func: () => {
+            func: (probeArg) => {
+              // offsetParent 는 position:fixed 요소에서 null 이라 가시성 판정에 쓰면 오판한다.
+              // 실제 렌더 여부는 getClientRects() 로 본다.
+              const shown = el => !!(el && el.getClientRects().length > 0)
+              if (probeArg) {
+                return shown(document.querySelector(probeArg[0])) && shown(document.querySelector(probeArg[1]))
+              }
               const id = document.querySelector('input[type="email"], input[type="text"]:not([type="hidden"])')
               const pw = document.querySelector('input[type="password"]')
-              return !!(id && id.offsetParent !== null && pw && pw.offsetParent !== null)
+              return shown(id) && shown(pw)
             },
+            args: [probe],
           })
           if (r?.result) {
             console.log(`[자동로그인][SPA] ${site.name} input 렌더링 감지 (${Date.now() - spaStart}ms)`)
@@ -492,6 +505,9 @@ async function _spaDirectLogin(siteKey, username, password) {
           }
         } catch {}
         await wait(300)
+      }
+      if (Date.now() - spaStart >= SPA_WAIT_MAX) {
+        console.warn(`[자동로그인][SPA] ${site.name} ${SPA_WAIT_MAX / 1000}초 대기에도 로그인칸 미등장 — 그대로 진행`)
       }
     }
 
@@ -525,17 +541,24 @@ async function _spaDirectLogin(siteKey, username, password) {
               btnId: '[data-cmpnt-name="login_btn_select"]',
             },
             abcmart: {
-              // [2026-06-29] abcmart.a-rt.com/login?track=W0005 실측: id=loginId / pw=loginPwd / 버튼=btnLogin.
-              // 이전 #username/#password/#login 은 추측값이라 전부 빗나감(fields not found 원인).
-              id: ['#loginId', 'input[name="loginId"]'],
-              pw: ['#loginPwd', 'input[name="loginPwd"]', 'input[type="password"]'],
-              btnId: '#btnLogin, button#btnLogin',
+              // [2026-09-03 실측] abcmart.a-rt.com/login?track=W0005 폼이 다시 바뀌었다.
+              //   현재: id=#username(name=username) / pw=#password(name=password) / 버튼=#login(type=button)
+              //   06-29 에 넣은 #loginId/#loginPwd/#btnLogin 은 이제 **존재하지 않는다**
+              //   → '입력필드 못찾음' 으로 ABC 송장이 계속 실패했다(09-02~03 실측 40건+).
+              // ⚠️ 이 페이지엔 **비회원 주문조회** 칸(#orderNo/#orderPw)이 같이 있다.
+              //    generic 'input[type=password]' 을 폴백에 두면 orderPw 를 잡아 엉뚱한 로그인
+              //    시도가 누적된다(계정 잠금 위험) → generic 폴백을 두지 않는다.
+              id: ['#username', 'input[name="username"]', '#loginId', 'input[name="loginId"]'],
+              pw: ['#password', 'input[name="password"]', '#loginPwd', 'input[name="loginPwd"]'],
+              btnId: '#login, button#login, #btnLogin, button#btnLogin',
             },
             member: {
-              // [2026-06-29] member.a-rt.com/p/login — abcmart 와 동일 폼 추정. 다르면 폼-폴백(pw폼 안 id)+버튼 전역탐색이 커버.
-              id: ['#loginId', 'input[name="loginId"]'],
-              pw: ['#loginPwd', 'input[name="loginPwd"]', 'input[type="password"]'],
-              btnId: '#btnLogin, button#btnLogin',
+              // [2026-09-03 실측] member.a-rt.com/p/login — abcmart 와 폼이 **다르다**.
+              //   id=#id / pw=#pw / 버튼=#loginBtn (name 속성 없음, id 만 있음)
+              //   기존 #loginId/#loginPwd 추정값은 전부 빗나갔다.
+              id: ['#id', '#username', '#loginId'],
+              pw: ['#pw', '#password', '#loginPwd'],
+              btnId: '#loginBtn, button#loginBtn, #login, #btnLogin',
             },
             ssg: {
               // member.ssg.com 실측(2026-06-08, CDP 9222): id="mem_id" name="mbrLoginId" /
@@ -678,16 +701,27 @@ async function _spaDirectLogin(siteKey, username, password) {
 
       // allFrames 결과 중 성공 프레임 채택 (로그인 폼이 iframe 안이면 그 프레임이 success).
       // 성공 없으면 디버그용으로 부분매칭/마지막 프레임 결과를 남긴다.
-      const _frameResults = (scriptResults || []).map(s => s?.result).filter(Boolean)
-      const r = _frameResults.find(x => x?.success)
-        || _frameResults.find(x => x?.idFound && x?.pwFound)
-        || _frameResults[_frameResults.length - 1]
+      // [2026-09-03] 프레임 결과 채택 순서 수정.
+      //   기존: 성공 → (idFound&&pwFound: 죽은 조건) → **배열 마지막** 프레임.
+      //   로그인 폼은 메인 프레임에 있는데, 광고·리캡차 iframe 이 뒤에 붙으면 마지막 결과는
+      //   그 iframe 의 'fields not found' 였다 → 진짜 실패 사유가 광고창 사유로 덮여 보고됐다.
+      //   (더현대 '입력필드 못찾음' 이 이 오염일 가능성 — 라이브 확인 결과 메인 프레임엔
+      //    loginId/password/'로그인' 버튼이 모두 존재한다)
+      //   수정: 성공 → 메인 프레임(frameId 0) → 폼을 찾은 프레임 → 마지막.
+      const _frames = (scriptResults || []).filter(x => x?.result)
+      const _pick = _frames.find(x => x.result.success)
+        || _frames.find(x => x.frameId === 0)
+        || _frames.find(x => x.result.error === 'login button not found')
+        || _frames[_frames.length - 1]
+      const r = _pick?.result
       if (!r?.success) {
-        console.log(`[자동로그인][SPA] ${site.name} 스크립트 실행 실패:`, JSON.stringify(r))
-        // 실패 원인 보존 — 차단 메시지의 "(마지막 사유: …)" 에 노출
+        console.log(`[자동로그인][SPA] ${site.name} 스크립트 실행 실패(frame=${_pick?.frameId ?? '?'}):`, JSON.stringify(r))
+        // 실패 원인 보존 — 차단 메시지의 "(마지막 사유: …)" 에 노출.
+        // URL 을 같이 남긴다 — '로그인 페이지가 아닌 곳에서 폼을 찾고 있었다' 를 구분하기 위해.
+        const _where = r?.currentUrl ? ` @${String(r.currentUrl).replace(/^https?:\/\//, '').slice(0, 40)}` : ''
         _spaLoginLastReason =
-          r?.error === 'fields not found' ? '입력필드 못찾음'
-          : r?.error === 'login button not found' ? '로그인버튼 못찾음'
+          r?.error === 'fields not found' ? `입력필드 못찾음${_where}`
+          : r?.error === 'login button not found' ? `로그인버튼 못찾음${_where}`
           : `폼 스크립트 실패(${String(r?.error || '결과 없음').slice(0, 60)})`
         chrome.debugger.onEvent.removeListener(dialogHandler)
         return false
@@ -908,10 +942,41 @@ function _cookieJarOf(siteKey) {
   return _COOKIE_JAR_BY_SITE[siteKey] || siteKey
 }
 
+// [2026-09-03] 자동로그인 금지 사이트 — 로그인 폼에 캡차/보안문자가 걸린 사이트.
+// 여기 등록된 사이트는 ensureLoggedIn 이 즉시 false 를 돌려주고 현재 세션을 그대로 쓴다.
+const _CAPTCHA_LOGIN_SITES = ['gs']
+
+// [2026-09-03] SPA 로그인칸 등장 판정용 프로브 — [아이디칸, 비번칸].
+// 아래 주입 스크립트의 SELECTORS 첫 항목과 같은 값을 쓴다(바꿀 때 같이 고칠 것).
+const SPA_INPUT_PROBE = {
+  thehyundai: ['input[name="loginId"]', 'input[name="password"]'],
+  fashionplus: ['#login_id', 'input[type="password"]'],
+  // [2026-09-03] ABC 는 백그라운드 탭에서 폼이 늦게 뜨면 비회원 주문조회 칸만 보고
+  // 조기 통과하던 경로가 있어, 진짜 로그인칸 등장까지 기다린다.
+  abcmart: ['#username', '#password'],
+  member: ['#id', '#pw'],
+}
+
 async function _ensureLoggedInImpl(siteKey, accountId, force) {
   const site = AUTO_LOGIN_SITES[siteKey]
   if (!site) {
     console.log(`[자동로그인] 미지원 사이트: ${siteKey}`)
+    return false
+  }
+
+  // [2026-09-03] 캡차 로그인 사이트 — 자동로그인 시도 자체를 금지한다.
+  // GS샵 로그인 폼에는 invisible reCAPTCHA 가 상시 걸려 있고, 실패가 누적되면 보안문자
+  // 입력칸(#confirmNum '상단문자 6자리')까지 뜬다. 자동 시도는 100% 실패하면서 보안문자만
+  // 굳히고(수동 로그인까지 어려워짐) 계정 잠금 위험만 키운다 — 실측: GS샵 송장 성공 0건,
+  // 6회 누적 차단 반복. 시도하지 않고 현재 세션 그대로 진행시킨다(수동 로그인 세션이
+  // 살아있으면 그대로 성공). 전역 에러는 남기지 않는다 — 남기면 no_tracking 같은 정상
+  // 판정까지 '로그인 실패' 로 덮어써서 오보가 된다.
+  if (_CAPTCHA_LOGIN_SITES.includes(siteKey)) {
+    console.log(`[자동로그인] ${site.name} 캡차 사이트 — 자동로그인 스킵(현 세션 유지). 세션 만료 시 크롬에서 수동 로그인 필요`)
+    try {
+      const _le = globalThis._lastEnsureLoginError
+      if (_le && _le.siteKey === siteKey) globalThis._lastEnsureLoginError = null
+    } catch {}
     return false
   }
 
