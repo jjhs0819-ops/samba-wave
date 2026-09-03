@@ -955,9 +955,22 @@ function _cookieJarOf(siteKey) {
   return _COOKIE_JAR_BY_SITE[siteKey] || siteKey
 }
 
-// [2026-09-03] 자동로그인 금지 사이트 — 로그인 폼에 캡차/보안문자가 걸린 사이트.
-// 여기 등록된 사이트는 ensureLoggedIn 이 즉시 false 를 돌려주고 현재 세션을 그대로 쓴다.
-const _CAPTCHA_LOGIN_SITES = ['gs']
+// 자동로그인 금지 사이트 — 자동 시도가 구조적으로 100% 실패하는 곳.
+// 여기 등록된 사이트는 ensureLoggedIn 이 즉시 false 를 돌려주고 **현재 크롬 세션을 그대로
+// 쓴다**. 수동 로그인 세션이 살아있으면 송장수집 등은 정상 동작한다.
+// 값 = 스킵 사유(로그에 그대로 노출).
+const _AUTOLOGIN_DISABLED_SITES = {
+  // [2026-09-03] GS샵: 로그인 폼에 invisible reCAPTCHA 상시. 실패가 누적되면 보안문자
+  // 입력칸(#confirmNum '상단문자 6자리')까지 떠서 수동 로그인마저 어려워진다.
+  gs: '캡차 사이트',
+  // [2026-09-04] 롯데ON: 저장된 아이디/비번으로는 롯데온이 계속 거부한다
+  //   ("일치하는 회원정보가 없습니다. 아이디 또는 비밀번호를 확인해 주세요.")
+  //   — 로그인 폼/셀렉터는 라이브 확인 결과 정상이고 저장값도 형태상 정상이라
+  //   자동로그인으로는 넘을 수 없는 계정 문제(소셜로그인 계정 등)로 판단.
+  //   그런데 **크롬에 살아있는 세션으로는 송장이 정상 수집된다**(실측 11건).
+  //   시도할수록 누적 실패 차단만 걸려 그 멀쩡한 세션까지 막았다(16회 누적 차단).
+  lotteon: '자동로그인 불가 계정 — 현 세션 사용',
+}
 
 // [2026-09-03] SPA 로그인칸 등장 판정용 프로브 — [아이디칸, 비번칸].
 // 아래 주입 스크립트의 SELECTORS 첫 항목과 같은 값을 쓴다(바꿀 때 같이 고칠 것).
@@ -977,18 +990,21 @@ async function _ensureLoggedInImpl(siteKey, accountId, force) {
     return false
   }
 
-  // [2026-09-03] 캡차 로그인 사이트 — 자동로그인 시도 자체를 금지한다.
-  // GS샵 로그인 폼에는 invisible reCAPTCHA 가 상시 걸려 있고, 실패가 누적되면 보안문자
-  // 입력칸(#confirmNum '상단문자 6자리')까지 뜬다. 자동 시도는 100% 실패하면서 보안문자만
-  // 굳히고(수동 로그인까지 어려워짐) 계정 잠금 위험만 키운다 — 실측: GS샵 송장 성공 0건,
-  // 6회 누적 차단 반복. 시도하지 않고 현재 세션 그대로 진행시킨다(수동 로그인 세션이
-  // 살아있으면 그대로 성공). 전역 에러는 남기지 않는다 — 남기면 no_tracking 같은 정상
-  // 판정까지 '로그인 실패' 로 덮어써서 오보가 된다.
-  if (_CAPTCHA_LOGIN_SITES.includes(siteKey)) {
-    console.log(`[자동로그인] ${site.name} 캡차 사이트 — 자동로그인 스킵(현 세션 유지). 세션 만료 시 크롬에서 수동 로그인 필요`)
+  // 자동로그인 금지 사이트 — 시도 자체를 하지 않고 현재 세션 그대로 진행시킨다.
+  // 시도하면 100% 실패하면서 누적 차단만 쌓이고, 그 차단이 멀쩡한 수동 로그인 세션까지
+  // 막아 송장수집을 통째로 죽인다. 전역 에러도 남기지 않는다 — 남기면 no_tracking 같은
+  // 정상 판정까지 '로그인 실패' 로 덮어써서 오보가 된다.
+  const _disabledReason = _AUTOLOGIN_DISABLED_SITES[siteKey]
+  if (_disabledReason) {
+    console.log(`[자동로그인] ${site.name} ${_disabledReason} — 자동로그인 스킵(현 세션 유지). 세션 만료 시 크롬에서 수동 로그인 필요`)
     try {
       const _le = globalThis._lastEnsureLoginError
       if (_le && _le.siteKey === siteKey) globalThis._lastEnsureLoginError = null
+    } catch {}
+    // 이미 쌓인 누적 실패 카운터를 지운다 — 안 지우면 금지 사이트인데도 옛 차단이
+    // 남아 다른 경로에서 '차단 중' 문구로 계속 실패 보고된다(패플·롯데온 실측).
+    try {
+      if (typeof _clearAccountLoginFail === 'function') await _clearAccountLoginFail(siteKey, accountId)
     } catch {}
     return false
   }
