@@ -156,6 +156,35 @@ def interpret_ship_response(
     return True, "POIZON 송장 전송 완료", False
 
 
+# 포이즌 SKU 속성(level1)의 "N Set" 표기 — 같은 품번 안에 단품 SKU 와 묶음 SKU 가
+# 같이 있어서, 사이즈만 보고 고르면 묶음 SKU 가 걸린다.
+_BUNDLE_SET_RE = re.compile(r"(\d+)\s*(?:세트|sets?)\b", re.I)
+
+
+def bundle_multiplier(sku_prop: str | None) -> int:
+    """포이즌 SKU 묶음 배수 — 소싱처 상품 몇 개를 사야 이 SKU 하나가 되는가.
+
+    포이즌 카탈로그는 같은 품번에 단품과 묶음 SKU 를 같이 둔다. 매칭이 사이즈만
+    보기 때문에 "2 Set 6 Pack"(3켤레 세트 x2) SKU 에 3켤레 원가가 붙어, 팔리는
+    순간 확정 역마진이 난다(2026-09-01 FT8529 실사고: 51,000 판매 → 정산 36,000,
+    실매입 46,000 = -5,080원 · 사이즈 S/L 두 건 노출 중이었다).
+
+    "N Set" 의 N 을 배수로 읽는다. "3 Pack"/"3-pack set" 처럼 세트 수 없이 구성만
+    적힌 표기는 그게 곧 SPU 기본단위(= 소싱처 상품 1개)라 1배다.
+    """
+    if not sku_prop:
+        return 1
+    m = _BUNDLE_SET_RE.search(str(sku_prop))
+    if not m:
+        return 1
+    try:
+        n = int(m.group(1))
+    except (TypeError, ValueError):
+        return 1
+    # 20 을 넘는 값은 색상코드 등 오탐일 가능성이 커 무시한다
+    return n if 2 <= n <= 20 else 1
+
+
 def option_real_cost(fallback_cost: int, opt_price: int, min_opt_price: int) -> int:
     """옵션(사이즈)별 실매입가 — 대표원가 x (해당옵션가 / 최저옵션가).
 

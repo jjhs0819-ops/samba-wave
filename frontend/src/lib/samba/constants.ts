@@ -10,6 +10,7 @@ export const SITE_COLORS: Record<string, string> = {
   SSG: '#FF5A2E',
   LOTTEON: '#E10044',
   GSShop: '#6B5CE7',
+  THEHYUNDAI: '#2B8A3E',
   ElandMall: '#4ECDC4',
   SSF: '#845EF7',
   NAVERSTORE: '#03C75A',
