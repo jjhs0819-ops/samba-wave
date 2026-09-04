@@ -263,9 +263,7 @@ def _get_forbidden_matcher(words: list[str]) -> tuple:
         for w in latin:
             latin_map.setdefault(w.lower(), w)
         # 긴 단어 우선 매칭 — 짧은 대안이 먼저 걸려 원본 복원이 어긋나지 않게.
-        alt = "|".join(
-            re.escape(w) for w in sorted(latin_map, key=len, reverse=True)
-        )
+        alt = "|".join(re.escape(w) for w in sorted(latin_map, key=len, reverse=True))
         latin_re = re.compile(rf"(?<![0-9a-z])({alt})(?![0-9a-z])")
 
     result = (latin_re, latin_map, short_ko, long_ko)
@@ -318,6 +316,49 @@ def _forbidden_hit(words: list[str], product: dict[str, Any]) -> str | None:
         if wl in _hay:
             return w
     return None
+
+
+# 상세 이미지 최소 가로를 요구하는 마켓.
+# 토스: 600 미만이면 검수에서 "상세 이미지 가로 크기가 최소 600 이상이어야
+# 합니다" 로 전량 반려된다(2026-09-04 파일럿 17건 실측). 무신사 원본이 500 이라
+# 그대로 나가면 통과하지 못한다. 대표 썸네일 정사각 보정(dispatcher)과는 별개로,
+# 상세에 들어가는 이미지 전체를 확대 미러링해야 한다.
+_MIN_DETAIL_IMAGE_WIDTH: dict[str, int] = {"toss": 600}
+
+
+def detail_image_min_width(market_type: str) -> int:
+    """마켓이 요구하는 상세 이미지 최소 가로(px). 요구가 없으면 0."""
+    return _MIN_DETAIL_IMAGE_WIDTH.get((market_type or "").lower(), 0)
+
+
+async def ensure_detail_image_min_width(
+    image_service: Any, market_type: str, product: dict[str, Any]
+) -> dict[str, Any]:
+    """상세 HTML 생성 전에 상품 이미지를 마켓 최소 가로로 확대 미러링한다.
+
+    상세 이미지는 잘라내지 않는다(crop_square=False) — 정사각으로 만들면
+    상세페이지에 흰 여백이 낀다.
+    """
+    min_dim = detail_image_min_width(market_type)
+    images = product.get("images") or []
+    if not min_dim or not images:
+        return product
+
+    try:
+        mirrored, _, _ = await image_service.mirror_oversized_to_r2(
+            images,
+            max_dim=5000,
+            min_dim=min_dim,
+            crop_square=False,
+        )
+    except Exception as e:  # 보정 실패로 전송 자체가 죽으면 안 된다
+        logger.warning(f"[전송] {market_type} 상세 이미지 확대 실패 — 원본 유지: {e}")
+        return product
+
+    if mirrored:
+        product = dict(product)
+        product["images"] = mirrored
+    return product
 
 
 def filter_accounts_by_policy(
@@ -1569,15 +1610,21 @@ class SambaShipmentService:
                     snapshot: dict[str, Any] = {
                         "date": datetime.now(UTC).isoformat(),
                         "source": "transmit_refresh",
-                        "sale_price": refresh_result.new_sale_price
-                        if refresh_result.new_sale_price is not None
-                        else product_row.sale_price,
-                        "original_price": refresh_result.new_original_price
-                        if refresh_result.new_original_price is not None
-                        else product_row.original_price,
-                        "cost": refresh_result.new_cost
-                        if refresh_result.new_cost is not None
-                        else product_row.cost,
+                        "sale_price": (
+                            refresh_result.new_sale_price
+                            if refresh_result.new_sale_price is not None
+                            else product_row.sale_price
+                        ),
+                        "original_price": (
+                            refresh_result.new_original_price
+                            if refresh_result.new_original_price is not None
+                            else product_row.original_price
+                        ),
+                        "cost": (
+                            refresh_result.new_cost
+                            if refresh_result.new_cost is not None
+                            else product_row.cost
+                        ),
                         "sale_status": refresh_result.new_sale_status or "in_stock",
                         "changed": refresh_result.changed,
                     }
@@ -1684,9 +1731,9 @@ class SambaShipmentService:
                     shipment = SambaShipment(
                         product_id=product_id,
                         status="skipped",
-                        update_result={"refresh": refresh_status}
-                        if refresh_status
-                        else None,
+                        update_result=(
+                            {"refresh": refresh_status} if refresh_status else None
+                        ),
                         transmit_result={},
                         transmit_error={"_all": "소싱처 변동 없음 — 전송 생략"},
                     )
@@ -2202,15 +2249,21 @@ class SambaShipmentService:
                     _snap = {
                         "date": datetime.now(UTC).isoformat(),
                         "source": "transmit_soldout_refresh",
-                        "sale_price": _sold_refresh.new_sale_price
-                        if _sold_refresh.new_sale_price is not None
-                        else product_row.sale_price,
-                        "original_price": _sold_refresh.new_original_price
-                        if _sold_refresh.new_original_price is not None
-                        else product_row.original_price,
-                        "cost": _sold_refresh.new_cost
-                        if _sold_refresh.new_cost is not None
-                        else product_row.cost,
+                        "sale_price": (
+                            _sold_refresh.new_sale_price
+                            if _sold_refresh.new_sale_price is not None
+                            else product_row.sale_price
+                        ),
+                        "original_price": (
+                            _sold_refresh.new_original_price
+                            if _sold_refresh.new_original_price is not None
+                            else product_row.original_price
+                        ),
+                        "cost": (
+                            _sold_refresh.new_cost
+                            if _sold_refresh.new_cost is not None
+                            else product_row.cost
+                        ),
                         "sale_status": _sold_refresh.new_sale_status or "in_stock",
                         "changed": _sold_refresh.changed,
                         "options": _sold_refresh.new_options,
@@ -2672,6 +2725,17 @@ class SambaShipmentService:
                         # status/return 미변경 — 전송 흐름 계속 진행
 
                 if not is_price_stock_only:
+                    # 상세 이미지 최소 가로 보정(토스 600) — 상세 HTML 생성 전에 교체
+                    if detail_image_min_width(market_type):
+                        from backend.domain.samba.image.service import (
+                            ImageTransformService,
+                        )
+
+                        acct_product = await ensure_detail_image_min_width(
+                            ImageTransformService(self.session),
+                            market_type,
+                            acct_product,
+                        )
                     _detail_tpl_id = ""
                     if policy and policy.extras:
                         _detail_tpl_id = (
@@ -2890,7 +2954,9 @@ class SambaShipmentService:
                 _lane_priority = "low" if res.get("is_update") else "high"
                 try:
                     account_lane = await _acquire_account_lane(
-                        account_id, _lane_priority, timeout=300,
+                        account_id,
+                        _lane_priority,
+                        timeout=300,
                         market_type=market_type,
                     )
                 except asyncio.TimeoutError:
@@ -4259,6 +4325,7 @@ class SambaShipmentService:
         name = (name or "").strip()
         if not name:
             return ""
+
         def _real(alias: str = "") -> str:
             """해당 계정에 '실제 itemId'가 기록된 상품인지 (마커/빈값 제외)."""
             col = f"{alias}.market_product_nos" if alias else "market_product_nos"
@@ -4267,6 +4334,7 @@ class SambaShipmentService:
                 f"AND {col} ->> cast(:acc as text) "
                 "NOT IN ('__exists__', '__claiming__', '')"
             )
+
         try:
             row = (
                 await self.session.execute(
@@ -4581,6 +4649,7 @@ class SambaShipmentService:
             def _del_log(msg: str) -> None:
                 kst = (_dt_del.now(_tz_del.utc) + _td_del(hours=9)).strftime("%H:%M:%S")
                 _add_shipment_log(f"[{kst}] {msg}")
+
         else:
 
             def _del_log(msg: str) -> None:  # type: ignore[misc]
