@@ -34,10 +34,17 @@ from backend.utils.logger import logger
 POISON_CANCEL_WINDOW_MIN = int(os.environ.get("POISON_CANCEL_WINDOW_MIN", "70"))
 
 # 포이즌 한국 판매수수료 (신발·의류 기준: 요율 10%, 건당 최저 15,000 / 최대 45,000)
-# 가방·시계·주얼리는 14%·최저 18,000 이므로 해당 품목을 올릴 땐 정책에서 덮어써야 한다.
 POISON_FEE_RATE = float(os.environ.get("POISON_FEE_RATE", "0.10"))
 POISON_FEE_MIN = int(os.environ.get("POISON_FEE_MIN", "15000"))
 POISON_FEE_MAX = int(os.environ.get("POISON_FEE_MAX", "45000"))
+# 등록가 하한(=역마진 방어선) 계산에 쓰는 **최악 수수료**.
+# 요율/최저액은 품목마다 다른데(실측 주문응답 poundage_detail.current_percent:
+# 양말 FT8529 = 10%/15,000 · 모자 JV7391 = 14%/18,000) 등록 전에는 알 방법이 없다
+# — 카탈로그·추천가 응답 어디에도 수수료가 없다. 표준값(10%/15,000)으로 하한을 잡으면
+# 14% 품목에서 3,000원이 그대로 손실로 남는다(2026-09-04 실사고: 모자 48,000 판매,
+# 예상이익 +3,313 → 실제 +313). 하한은 항상 최악값으로 잡는다.
+POISON_FEE_RATE_WORST = float(os.environ.get("POISON_FEE_RATE_WORST", "0.14"))
+POISON_FEE_MIN_WORST = int(os.environ.get("POISON_FEE_MIN_WORST", "18000"))
 # 건당 순이익 하한(원) — 이 금액을 못 넘기면 등록하지 않는다
 POISON_MIN_PROFIT = int(os.environ.get("POISON_MIN_PROFIT", "10000"))
 

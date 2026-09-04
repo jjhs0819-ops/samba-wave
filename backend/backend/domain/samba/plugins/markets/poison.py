@@ -13,7 +13,12 @@ import re
 from typing import Any
 
 from backend.domain.samba.plugins.market_base import MarketPlugin
-from backend.domain.samba.proxy.poison import POISON_MIN_PROFIT, decide_bid_price
+from backend.domain.samba.proxy.poison import (
+    POISON_FEE_MIN_WORST,
+    POISON_FEE_RATE_WORST,
+    POISON_MIN_PROFIT,
+    decide_bid_price,
+)
 from backend.utils.logger import logger
 
 # POIZON 신규 셀러 제약 — SKU당 재고 1개 초과 등록 시 거부됨(첫 거래 완료 전까지 유지).
@@ -472,6 +477,9 @@ class PoisonPlugin(MarketPlugin):
                 # 이미 등록된 가격 — 시세가 이 값과 같으면 내 입찰이 되돌아온 것이다
                 own_price=self._safe_int(prev_entry.get("price")) or None,
                 min_profit=min_profit,
+                # 하한은 최악 수수료로 — 품목별 요율을 등록 전에 알 수 없다
+                rate=POISON_FEE_RATE_WORST,
+                fee_min=POISON_FEE_MIN_WORST,
                 unit=1000,
             )
             if decision.skipped:
