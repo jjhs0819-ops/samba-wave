@@ -305,6 +305,33 @@ def _pick_preset_from_group(group: str) -> str:
     return random.choice(presets) if presets else "female_v1"
 
 
+# 흰 여백 트림 — 토스 검수가 "이미지에 여백이 없도록" 을 요구한다(2026-09-04 실측).
+# 소싱처 사진 자체에 좌우 여백이 있는 경우(룰루레몬 500x500 중 내용 417x500)
+# 정사각 크롭만으로는 못 없앤다.
+_TRIM_WHITE_THRESHOLD = 12  # 순백(255)에서 이만큼 차이나면 내용으로 본다
+_TRIM_MIN_MARGIN = 4  # 이보다 얇은 여백은 무시(재인코딩만 하고 이득 없음)
+
+
+def trim_white_border(img):
+    """이미지 가장자리의 흰 여백을 잘라낸다. 여백이 없거나 얇으면 원본 유지."""
+    from PIL import Image, ImageChops
+
+    rgb = img.convert("RGB")
+    bg = Image.new("RGB", rgb.size, (255, 255, 255))
+    mask = ImageChops.difference(rgb, bg).convert("L")
+    mask = mask.point(lambda p: 255 if p > _TRIM_WHITE_THRESHOLD else 0)
+    bbox = mask.getbbox()
+    if not bbox:
+        return img  # 전부 흰색 — 다 잘라내면 이미지가 사라진다
+
+    w, h = rgb.size
+    left, top, right, bottom = bbox
+    margins = (left, top, w - right, h - bottom)
+    if max(margins) < _TRIM_MIN_MARGIN:
+        return img
+    return img.crop(bbox)
+
+
 class ImageTransformService:
     """이미지 변환 서비스 — rembg(배경제거) + FLUX(착용컷/연출컷) + R2/로컬 저장."""
 
@@ -1424,6 +1451,7 @@ class ImageTransformService:
         pad_square: bool = False,
         crop_square: bool = False,
         crop_max_cut: float = 0.20,
+        trim_white: bool = False,
     ) -> tuple[list[str], dict[str, str], set[str]]:
         """용량/픽셀 초과·미달 이미지를 다운로드/리사이즈하여 R2로 업로드.
 
@@ -1466,6 +1494,7 @@ class ImageTransformService:
         # #543 정책키 — 같은 URL도 검증 파라미터가 다르면 다른 결과라 키에 포함.
         _policy = (
             f"{min_dim}:{max_dim}:{max_bytes}:{int(enforce_max_dim)}:{int(pad_square)}:"
+            f"{int(trim_white)}:"
             f"{int(crop_square)}:{crop_max_cut}:"
         )
 
@@ -1489,7 +1518,11 @@ class ImageTransformService:
                     # min_dim/enforce_max_dim 모드: HEAD 우회하고 무조건 다운로드
                     # — HEAD 로는 픽셀 크기를 알 수 없으므로 PIL 로 직접 확인 필요.
                     strict_pixel = bool(
-                        min_dim > 0 or enforce_max_dim or pad_square or crop_square
+                        min_dim > 0
+                        or enforce_max_dim
+                        or pad_square
+                        or crop_square
+                        or trim_white
                     )
                     # R2 본인 호스트면 그대로 — 단, strict_pixel(min_dim/enforce_max_dim)
                     # 모드에선 이미 R2 인 이미지도 픽셀 규격을 재검증해야 하므로 통과 금지.
@@ -1534,6 +1567,12 @@ class ImageTransformService:
 
                     img = Image.open(io.BytesIO(image_bytes))
                     img = img.convert("RGB")
+                    # 흰 여백 트림 — 이후 정사각/업스케일 판정은 잘라낸 크기 기준
+                    _trimmed = False
+                    if trim_white:
+                        _before = img.size
+                        img = trim_white_border(img)
+                        _trimmed = img.size != _before
                     w, h = img.size
 
                     # 변경 필요 여부 판단
@@ -1561,7 +1600,8 @@ class ImageTransformService:
                     # (단, pad_square 요청 시 이미 정사각인 경우만 통과)
                     already_square = (not pad_square and not crop_square) or (w == h)
                     if (
-                        not need_upscale
+                        not _trimmed
+                        and not need_upscale
                         and not need_downscale
                         and not over_bytes
                         and not is_hotlink
@@ -1783,9 +1823,7 @@ class ImageTransformService:
 
         def _keep(m: "_re.Match[str]") -> str:
             tag = m.group(0)
-            src = _re.search(
-                r'(?:data-)?src=["\']([^"\']+)["\']', tag, _re.IGNORECASE
-            )
+            src = _re.search(r'(?:data-)?src=["\']([^"\']+)["\']', tag, _re.IGNORECASE)
             if not src:
                 return tag
             url = src.group(1).lower()
@@ -1838,9 +1876,11 @@ class ImageTransformService:
             if _src:
                 # src 가 플레이스홀더이고 data-src 에 실주소가 있으면 교체
                 if _data_src and _PLACEHOLDER.search(_src.group(1)):
-                    return tag[: _src.start(1)] + _data_src.group(1) + tag[_src.end(1) :]
+                    return (
+                        tag[: _src.start(1)] + _data_src.group(1) + tag[_src.end(1) :]
+                    )
                 return tag
-            return _re.sub(r'(?<![\w-])data-src(\s*=)', r"src\1", tag, flags=_re.I)
+            return _re.sub(r"(?<![\w-])data-src(\s*=)", r"src\1", tag, flags=_re.I)
 
         return _re.sub(r"<img\b[^>]*>", _fix, html, flags=_re.IGNORECASE)
 

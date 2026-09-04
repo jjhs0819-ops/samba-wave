@@ -147,6 +147,17 @@ _SQUARE_THUMBNAIL_DIM = 1000
 _SQUARE_THUMBNAIL_MAX_CUT = 0.20
 
 
+# 썸네일 흰 여백 트림이 필요한 마켓 — 토스는 "이미지에 여백이 없도록" 을
+# 검수 기준으로 요구한다(2026-09-04 룰루레몬 2건 반려 실측). 소싱처 사진 자체에
+# 여백이 있는 경우라 정사각 크롭만으로는 해소되지 않는다.
+_TRIM_WHITE_MARKETS = frozenset({"toss"})
+
+
+def thumbnail_trim_white(market_type: str) -> bool:
+    """이 마켓 썸네일에 흰 여백 트림을 적용할지."""
+    return (market_type or "").lower() in _TRIM_WHITE_MARKETS
+
+
 async def _ensure_square_thumbnail(
     session: AsyncSession, market_type: str, product: dict[str, Any]
 ) -> dict[str, Any]:
@@ -174,6 +185,7 @@ async def _ensure_square_thumbnail(
         min_dim=_SQUARE_THUMBNAIL_DIM,
         crop_square=True,
         crop_max_cut=_SQUARE_THUMBNAIL_MAX_CUT,
+        trim_white=thumbnail_trim_white(market_type),
     )
     product = dict(product)  # 호출자 dict 변형 방지
     try:
