@@ -67,9 +67,25 @@ def extract_item_ids(response: dict[str, Any] | None) -> list[str]:
 
 
 def sales_option_keys(template: dict[str, Any] | None) -> list[str]:
-    """카테고리가 요구하는 판매옵션 key 목록."""
+    """카테고리가 요구하는 판매옵션 key 목록.
+
+    ★라이브 실측★ isOneOfRequiredGroup=True 인 항목들은 "택1" 그룹이라
+    그중 하나만 쓸 수 있다. 둘 다 실으면 등록이 거부된다
+    ("택1 옵션은 한 가지만 쓸 수 있어요.").
+    """
     options = (template or {}).get("categorySalesOptions") or []
-    return [str(o.get("key") or "") for o in options if o.get("key")]
+    keys: list[str] = []
+    one_of_taken = False
+    for o in options:
+        key = str(o.get("key") or "")
+        if not key:
+            continue
+        if o.get("isOneOfRequiredGroup"):
+            if one_of_taken:
+                continue
+            one_of_taken = True
+        keys.append(key)
+    return keys
 
 
 def build_sale_options(

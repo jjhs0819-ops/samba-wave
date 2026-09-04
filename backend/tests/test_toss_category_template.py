@@ -81,3 +81,35 @@ def test_변환은_템플릿_판매옵션을_모두_싣는다():
         {"groupName": "패션의류/잡화 사이즈", "valueName": "M"},
         {"groupName": "수량", "valueName": "1개"},
     ]
+
+
+# ── 택1(one-of) 그룹 ────────────────────────────────────────────
+# 라이브 실측(34859 남성 반소매): '(택1) 색상' 과 '(택1) 색상/디자인' 이
+# isOneOfRequiredGroup=True 로 함께 온다. 둘 다 실으면 토스가
+# "택1 옵션은 한 가지만 쓸 수 있어요." 로 등록을 거부한다.
+
+ONE_OF_TEMPLATE = {
+    "categorySalesOptions": [
+        {"key": "(택1) 색상", "isOneOfRequiredGroup": True},
+        {"key": "(택1) 색상/디자인", "isOneOfRequiredGroup": True},
+        {"key": "패션의류/잡화 사이즈", "isOneOfRequiredGroup": False},
+        {"key": "수량", "isOneOfRequiredGroup": False},
+    ],
+    "productNoticeInfoTemplateTypes": ["CLOTHING"],
+}
+
+
+def test_택1_옵션은_하나만_싣는다():
+    keys = sales_option_keys(ONE_OF_TEMPLATE)
+    assert [k for k in keys if k.startswith("(택1)")] == ["(택1) 색상"]
+
+
+def test_택1이_아닌_옵션은_모두_유지한다():
+    keys = sales_option_keys(ONE_OF_TEMPLATE)
+    assert "패션의류/잡화 사이즈" in keys and "수량" in keys
+    assert len(keys) == 3
+
+
+def test_택1_그룹의_색상값도_상품색상으로_채운다():
+    opts = build_sale_options(["(택1) 색상"], {"color": "블랙"}, "M")
+    assert opts == [{"groupName": "(택1) 색상", "valueName": "블랙"}]
