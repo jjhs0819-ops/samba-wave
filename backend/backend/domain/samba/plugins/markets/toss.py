@@ -48,16 +48,35 @@ class TossPlugin(MarketPlugin):
         from backend.domain.samba.proxy.toss import (
             TossClient,
             build_notice_items,
+            fetch_category_template,
             fetch_notice_items,
+            pick_notice_category_code,
+            sales_option_keys,
         )
 
-        payload = TossClient.transform_product(product, category_id, settings)
+        # 판매옵션 key 와 허용 고시코드는 카테고리마다 다르다 — 템플릿을 따른다.
+        template: dict[str, Any] = {}
+        try:
+            template = await fetch_category_template(client, category_id)
+        except Exception as e:
+            logger.warning(f"[토스] 카테고리 템플릿 조회 실패 ({category_id}): {e}")
+
+        payload = TossClient.transform_product(
+            product,
+            category_id,
+            settings,
+            sales_option_keys=sales_option_keys(template),
+        )
+
+        notice = payload.get("notice") or {}
+        notice["categoryCode"] = pick_notice_category_code(
+            template, notice.get("categoryCode")
+        )
 
         # 고시 항목 id 는 토스가 카테고리코드별로 내려준다 — 비어 있으면 채운다.
-        notice = payload.get("notice") or {}
         if not notice.get("items"):
             try:
-                raw_items = await fetch_notice_items(client, notice.get("categoryCode"))
+                raw_items = await fetch_notice_items(client, notice["categoryCode"])
                 notice["items"] = build_notice_items(raw_items, product, settings)
             except Exception as e:
                 logger.warning(f"[토스] 고시 항목 조회 실패: {e}")

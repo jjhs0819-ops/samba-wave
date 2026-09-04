@@ -232,3 +232,29 @@ async def test_판매가변경은_productItemId_경로로_PUT한다():
 
     assert seen["path"] == "/api/v3/shopping-fep/product-items/888/sale-price"
     assert seen["body"] == {"productId": 777, "salePrice": 19900}
+
+
+# ----------------------------------------------------------------- 옵션 id
+
+
+def test_옵션목록에서_itemId를_뽑는다():
+    """★라이브 실측★ 옵션 식별자 키는 id 가 아니라 itemId 다.
+
+    id 로 읽으면 None 이 들어가 INVALID_REQUEST(productItemId) 로 거부된다.
+    """
+    from backend.domain.samba.proxy.toss import extract_item_ids
+
+    resp = {
+        "items": [
+            {"itemId": 2645824263, "itemName": "다크 올리브,XS,1개"},
+            {"itemId": 2645824264, "itemName": "다크 올리브,S,1개"},
+        ]
+    }
+    assert extract_item_ids(resp) == ["2645824263", "2645824264"]
+
+
+def test_옵션목록이_비면_빈_목록():
+    from backend.domain.samba.proxy.toss import extract_item_ids
+
+    assert extract_item_ids({}) == []
+    assert extract_item_ids({"items": []}) == []

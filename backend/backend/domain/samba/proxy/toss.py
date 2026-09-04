@@ -40,6 +40,85 @@ _NOTICE_WARRANTY = "관련 법령 및 소비자분쟁해결기준에 따름"
 _NOTICE_MAX_LEN = 4000
 
 
+# 카테고리 제약 템플릿 캐시(categoryId → 템플릿)
+_CATEGORY_TEMPLATE_CACHE: dict[str, dict[str, Any]] = {}
+_DEFAULT_OPTION_GROUP = "사이즈"
+_FALLBACK_NOTICE_CODE = "CLOTHING"
+
+
+def clear_category_template_cache() -> None:
+    """카테고리 템플릿 캐시 비우기(테스트/강제 갱신용)."""
+    _CATEGORY_TEMPLATE_CACHE.clear()
+
+
+def extract_item_ids(response: dict[str, Any] | None) -> list[str]:
+    """옵션 목록 응답에서 productItemId 추출.
+
+    ★라이브 실측★ 키 이름은 itemId 다(id 아님). 잘못 읽으면
+    INVALID_REQUEST(productItemId) 로 가격/재고 변경이 전부 거부된다.
+    """
+    items = (response or {}).get("items") or []
+    ids = []
+    for it in items:
+        raw = it.get("itemId") or it.get("id")
+        if raw:
+            ids.append(str(raw))
+    return ids
+
+
+def sales_option_keys(template: dict[str, Any] | None) -> list[str]:
+    """카테고리가 요구하는 판매옵션 key 목록."""
+    options = (template or {}).get("categorySalesOptions") or []
+    return [str(o.get("key") or "") for o in options if o.get("key")]
+
+
+def build_sale_options(
+    keys: list[str], product: dict[str, Any], size_value: str
+) -> list[dict[str, str]]:
+    """판매옵션 전부 채우기.
+
+    ★라이브 실측★ 템플릿의 판매옵션은 전부 필수다. 사이즈만 보내면
+    "필수 구매 옵션 '색상'이(가) 선택되지 않았습니다" 로 거부된다.
+    """
+    built: list[dict[str, str]] = []
+    for key in keys or [_DEFAULT_OPTION_GROUP]:
+        if "사이즈" in key or key == _DEFAULT_OPTION_GROUP:
+            value = size_value
+        elif "색상" in key or "컬러" in key:
+            value = str(product.get("color") or "").strip() or "단일 색상"
+        elif "수량" in key:
+            value = "1개"
+        else:
+            value = "상세페이지 참조"
+        built.append({"groupName": key, "valueName": value})
+    return built
+
+
+def pick_notice_category_code(
+    template: dict[str, Any] | None, preferred: str | None
+) -> str:
+    """카테고리가 허용하는 고시 코드로 맞춘다."""
+    allowed = list((template or {}).get("productNoticeInfoTemplateTypes") or [])
+    if preferred and preferred in allowed:
+        return preferred
+    if _FALLBACK_NOTICE_CODE in allowed:
+        return _FALLBACK_NOTICE_CODE
+    if allowed:
+        return allowed[0]
+    return preferred or _FALLBACK_NOTICE_CODE
+
+
+async def fetch_category_template(client, category_id: str) -> dict[str, Any]:
+    """카테고리 제약 템플릿 조회 — 카테고리별 1회만 호출한다."""
+    key = str(category_id)
+    cached = _CATEGORY_TEMPLATE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    template = await client.get_category_template(key)
+    _CATEGORY_TEMPLATE_CACHE[key] = template
+    return template
+
+
 # 고시 카테고리코드 → 항목목록 캐시(항목 구성은 자주 바뀌지 않는다)
 _NOTICE_ITEM_CACHE: dict[str, list[dict[str, Any]]] = {}
 
@@ -200,6 +279,7 @@ class TossClient(BaseProxyClient):
         product: dict[str, Any],
         category_id: str,
         account_settings: dict[str, Any] | None = None,
+        sales_option_keys: list[str] | None = None,
     ) -> dict[str, Any]:
         """수집상품 → 토스쇼핑 등록 페이로드.
 
@@ -219,15 +299,17 @@ class TossClient(BaseProxyClient):
         for idx, opt in enumerate(product.get("options") or []):
             raw_name = str(opt.get("name") or opt.get("size") or f"옵션{idx + 1}")
             if ":" in raw_name:
-                group_name, value_name = (x.strip() for x in raw_name.split(":", 1))
+                _, value_name = (x.strip() for x in raw_name.split(":", 1))
             else:
-                group_name, value_name = "사이즈", raw_name
+                value_name = raw_name
             sold_out = bool(opt.get("isSoldOut"))
             raw_stock = opt.get("stock")
             stock = stock_cap if raw_stock in (None, "") else int(raw_stock)
             stocks.append(
                 {
-                    "options": [{"groupName": group_name, "valueName": value_name}],
+                    "options": build_sale_options(
+                        sales_option_keys or [], product, value_name
+                    ),
                     "remainingCount": 0 if sold_out else min(stock, stock_cap),
                     "isHide": False,
                     "isMainPrice": idx == 0,
@@ -248,13 +330,18 @@ class TossClient(BaseProxyClient):
                 }
             ]
 
-        # ── 이미지 — 대표 1장 + 추가컷 + 상세HTML ──────────────
+        # ── 이미지 — 대표 1장 + (상세HTML 또는 설명이미지) ──────────────
+        # ★라이브 실측★ 토스는 "상세 이미지 또는 html 둘 중 하나만" 받는다.
+        # 둘 다 보내면 COMMON_ERROR 로 거부된다. 상세 HTML 이 있으면 그쪽을 쓴다.
+        detail_html = str(product.get("detail_html") or "").strip()
         images: list[dict[str, Any]] = []
         order = 0
         for raw in product.get("images") or []:
             url = raw if isinstance(raw, str) else (raw.get("url") or raw.get("src"))
             if not url:
                 continue
+            if order > 0 and detail_html:
+                break
             images.append(
                 {
                     "type": "THUMBNAIL" if order == 0 else "DESCRIPTION",
@@ -263,9 +350,11 @@ class TossClient(BaseProxyClient):
                 }
             )
             order += 1
-        detail_html = product.get("detail_html") or f"<p>{name}</p>"
-        # ★DESCRIPTION_HTML 은 url 이 아니라 html 필드로 보낸다★
-        images.append({"type": "DESCRIPTION_HTML", "html": detail_html, "order": order})
+        if detail_html:
+            # ★DESCRIPTION_HTML 은 url 이 아니라 html 필드로 보낸다★
+            images.append(
+                {"type": "DESCRIPTION_HTML", "html": detail_html, "order": order}
+            )
 
         # ── 검색 키워드 — 키워드당 1~10글자만 허용 ──────────────
         keywords = [
@@ -404,6 +493,12 @@ class TossClient(BaseProxyClient):
         params = {"id": str(category_id)} if category_id else None
         return await self._request(
             "GET", f"{self.api_prefix}/products/categories/children", params=params
+        )
+
+    async def get_category_template(self, category_id: str) -> dict[str, Any]:
+        """카테고리 제약 템플릿 — 판매옵션 key/허용 고시코드 확인용."""
+        return await self._request(
+            "GET", f"{self.api_prefix}/category/{category_id}/constraint-templates"
         )
 
     async def list_notice_category_codes(self) -> dict[str, Any]:

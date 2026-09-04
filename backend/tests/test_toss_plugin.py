@@ -154,3 +154,72 @@ async def test_고시조회는_카테고리코드별로_캐시한다():
             client, PRODUCT, "12345", settings, existing_no=""
         )
     assert client.notice_calls == 1
+
+
+class TemplateClient(NoticeClient):
+    """카테고리 제약 템플릿까지 내려주는 가짜 클라이언트."""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.template_calls = 0
+
+    async def get_category_template(self, category_id):
+        self.template_calls += 1
+        return {
+            "categorySalesOptions": [{"key": "색상"}, {"key": "패션의류/잡화 사이즈"}],
+            "productNoticeInfoTemplateTypes": ["CLOTHING", "BAG"],
+        }
+
+
+def _reset_caches():
+    from backend.domain.samba.proxy.toss import (
+        clear_category_template_cache,
+        clear_notice_cache,
+    )
+
+    clear_notice_cache()
+    clear_category_template_cache()
+
+
+@pytest.mark.asyncio
+async def test_판매옵션은_카테고리_템플릿을_전부_따른다():
+    """템플릿의 판매옵션이 하나라도 빠지면 토스가 등록을 거부한다."""
+    _reset_caches()
+    client = TemplateClient()
+    await TossPlugin().execute_with_client(
+        client,
+        {**PRODUCT, "options": [{"name": "M"}], "color": "블랙"},
+        "36323",
+        SETTINGS,
+        existing_no="",
+    )
+    payload = client.calls[0][1]
+    assert payload["stocks"][0]["options"] == [
+        {"groupName": "색상", "valueName": "블랙"},
+        {"groupName": "패션의류/잡화 사이즈", "valueName": "M"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_허용되지_않는_고시코드는_템플릿에_맞춰_바꾼다():
+    _reset_caches()
+    client = TemplateClient()
+    await TossPlugin().execute_with_client(
+        client,
+        PRODUCT,
+        "36323",
+        {**SETTINGS, "noticeCategoryCode": "FURNITURE"},
+        existing_no="",
+    )
+    assert client.calls[0][1]["notice"]["categoryCode"] == "CLOTHING"
+
+
+@pytest.mark.asyncio
+async def test_카테고리_템플릿은_카테고리별로_캐시한다():
+    _reset_caches()
+    client = TemplateClient()
+    for _ in range(3):
+        await TossPlugin().execute_with_client(
+            client, PRODUCT, "36323", SETTINGS, existing_no=""
+        )
+    assert client.template_calls == 1

@@ -102,11 +102,10 @@ def test_판매가는_계산된_최종가를_우선한다():
     assert all(s["salePrice"] == 150000 for s in p["stocks"])
 
 
-def test_첫이미지는_썸네일_나머지는_설명이미지다():
+def test_첫이미지는_항상_썸네일이다():
     imgs = _payload()["images"]
     assert imgs[0]["type"] == "THUMBNAIL"
     assert imgs[0]["url"] == "https://img.example.com/main.jpg"
-    assert imgs[1]["type"] == "DESCRIPTION"
 
 
 def test_상세HTML은_url이_아니라_html필드로_보낸다():
@@ -114,6 +113,19 @@ def test_상세HTML은_url이_아니라_html필드로_보낸다():
     html = [i for i in _payload()["images"] if i["type"] == "DESCRIPTION_HTML"]
     assert len(html) == 1
     assert html[0]["html"] == "<p>상세설명</p>"
+
+
+def test_상세HTML이_있으면_설명이미지는_보내지_않는다():
+    """★라이브 실측★ 토스는 '상세 이미지 또는 html 둘 중 하나만' 받는다."""
+    types = [i["type"] for i in _payload()["images"]]
+    assert types == ["THUMBNAIL", "DESCRIPTION_HTML"]
+
+
+def test_상세HTML이_없으면_설명이미지를_보낸다():
+    p = {**PRODUCT}
+    p.pop("detail_html")
+    types = [i["type"] for i in _payload(p)["images"]]
+    assert types == ["THUMBNAIL", "DESCRIPTION"]
 
 
 def test_검색키워드는_10글자_넘으면_버린다():
