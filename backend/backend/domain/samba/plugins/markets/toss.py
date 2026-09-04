@@ -30,6 +30,10 @@ class TossPlugin(MarketPlugin):
         if account:
             access_key = access_key or (getattr(account, "api_key", "") or "")
             secret_key = secret_key or (getattr(account, "api_secret", "") or "")
+            # 설정 화면 저장분은 컬럼이 아니라 additional_fields 에 들어간다.
+            ext = getattr(account, "additional_fields", None) or {}
+            access_key = access_key or str(ext.get("apiKey") or "")
+            secret_key = secret_key or str(ext.get("apiSecret") or "")
         return access_key, secret_key
 
     # ------------------------------------------------------------------

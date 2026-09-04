@@ -218,9 +218,12 @@ def toss_creds(account: Optional["SambaMarketAccount"]) -> dict[str, Any]:
     """토스 — apiKey + apiSecret."""
     if account is None:
         return {}
+    # additional_fields fallback — 설정 화면 저장 경로는 키를 컬럼이 아니라
+    # additional_fields 에만 적재한다(SSG 와 동일). 컬럼만 읽으면 auth_failed.
+    ext = _extras(account)
     return {
-        "apiKey": account.api_key or "",
-        "apiSecret": account.api_secret or "",
+        "apiKey": account.api_key or ext.get("apiKey", "") or "",
+        "apiSecret": account.api_secret or ext.get("apiSecret", "") or "",
     }
 
 
