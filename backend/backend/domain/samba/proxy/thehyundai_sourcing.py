@@ -308,8 +308,8 @@ class TheHyundaiSourcingClient:
 
         new_options = self._normalize_options(detail_data, stck_list)
 
-        # 품절: ostkYn 단독 + 다차원 stckList 비어있으면 전 품절
-        is_sold_out = detail_data.get("ostkYn") == "1"
+        # 품절: 판매구분(일시품절) + 다차원 stckList 비어있으면 전 품절
+        is_sold_out = self._is_item_sold_out(detail_data)
         if (
             not is_sold_out
             and detail_data.get("uitmCombYn") == "1"
@@ -757,7 +757,7 @@ class TheHyundaiSourcingClient:
             # snake_case 별칭 — 잡워커 수집 루프 호환 (cost=new_cost 카드즉시할인가 정본)
             "sale_price": dc_prc or sell_prc,
             "original_price": csm_prc if csm_prc > 0 else sell_prc,
-            "isSoldOut": detail_data.get("ostkYn") == "1",
+            "isSoldOut": self._is_item_sold_out(detail_data),
             "options": options,
             "images": images,
             "category": category_path,
@@ -801,6 +801,22 @@ class TheHyundaiSourcingClient:
             return html_list[0].get("htmlItstCntn") or ""
         return ""
 
+    @staticmethod
+    def _is_item_sold_out(detail_data: dict) -> bool:
+        """상품 단위 판매불가 판정 (2026-09-04 라이브 실측으로 확정).
+
+        ★ itemSellGbcd == "11" 이면 사이트 구매버튼이 '일시품절'(비활성)이다.
+        품절이어도 uitmStckList / sellPossQty 는 재고 숫자를 그대로 내려주므로
+        재고 수치로는 절대 못 잡는다(등록상품 표본 200건에서 ostkYn 은 전부 "0").
+        옵션 레벨은 이미 uitmSellGbcd == "11" 로 같은 규칙을 쓰고 있었고,
+        상품 레벨에만 이 규칙이 빠져 있어 품절 상품이 마켓에 계속 노출됐다.
+        ostkYn 은 단독으로는 무력하지만 회귀 방지로 함께 유지한다.
+        """
+        return (
+            detail_data.get("ostkYn") == "1"
+            or detail_data.get("itemSellGbcd") == "11"
+        )
+
     @classmethod
     def _normalize_options(
         cls, detail_data: dict, stck_list: Optional[list]
@@ -817,7 +833,7 @@ class TheHyundaiSourcingClient:
                     "name": "단일",
                     "price": sell_prc,
                     "stock": cls._safe_int(detail_data.get("sellPossQty")),
-                    "isSoldOut": detail_data.get("ostkYn") == "1",
+                    "isSoldOut": cls._is_item_sold_out(detail_data),
                 }
             ]
 
