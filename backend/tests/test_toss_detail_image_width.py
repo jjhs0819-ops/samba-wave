@@ -83,3 +83,27 @@ async def test_이미지가_없으면_그대로_반환한다():
         "images": []
     }
     assert svc.calls == []
+
+
+@pytest.mark.asyncio
+async def test_갤러리_원본목록도_함께_교체한다():
+    """★함정★ 상세 HTML 은 product['images'] 가 아니라 _gallery_source_images 를 쓴다.
+
+    이 키가 이미 채워져 있으면(다른 마켓 전송에서 먼저 만들어짐) images 만 바꿔봐야
+    상세에는 옛 500px 원본이 그대로 들어간다 — 2026-09-04 재전송이 이래서 무효였다.
+    """
+    svc = FakeImageService(result=["https://cdn/a_600.jpg", "https://cdn/b_600.jpg"])
+    product = {
+        "images": ["https://img/a_500.jpg"],  # 대표 1장으로 이미 잘린 상태
+        "_gallery_source_images": list(IMAGES),  # 상세가 실제로 참조하는 원본
+    }
+
+    result = await ensure_detail_image_min_width(svc, "toss", product)
+
+    # 미러 대상은 잘린 images 가 아니라 원본 전체여야 한다
+    assert svc.calls[0][0] == IMAGES
+    assert result["_gallery_source_images"] == [
+        "https://cdn/a_600.jpg",
+        "https://cdn/b_600.jpg",
+    ]
+    assert result["images"] == ["https://cdn/a_600.jpg", "https://cdn/b_600.jpg"]

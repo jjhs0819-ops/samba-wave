@@ -340,13 +340,16 @@ async def ensure_detail_image_min_width(
     상세페이지에 흰 여백이 낀다.
     """
     min_dim = detail_image_min_width(market_type)
-    images = product.get("images") or []
+    # ★함정★ 상세 HTML 은 product["images"] 가 아니라 _gallery_source_images 를 본다.
+    # 이 키가 이미 채워져 있으면(앞선 마켓 전송에서 생성) images 만 갈아봐야 상세엔
+    # 옛 원본이 그대로 들어간다. 원본 목록을 미러링하고 양쪽을 함께 교체한다.
+    images = product.get("_gallery_source_images") or product.get("images") or []
     if not min_dim or not images:
         return product
 
     try:
         mirrored, _, _ = await image_service.mirror_oversized_to_r2(
-            images,
+            list(images),
             max_dim=5000,
             min_dim=min_dim,
             crop_square=False,
@@ -358,6 +361,8 @@ async def ensure_detail_image_min_width(
     if mirrored:
         product = dict(product)
         product["images"] = mirrored
+        if product.get("_gallery_source_images"):
+            product["_gallery_source_images"] = mirrored
     return product
 
 
