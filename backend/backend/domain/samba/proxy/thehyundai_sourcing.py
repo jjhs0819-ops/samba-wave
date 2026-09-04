@@ -821,10 +821,17 @@ class TheHyundaiSourcingClient:
     def _normalize_options(
         cls, detail_data: dict, stck_list: Optional[list]
     ) -> list[dict]:
-        """plan v5 알고리즘 그대로 — [{name, price, stock, isSoldOut}]."""
+        """plan v5 알고리즘 그대로 — [{name, price, stock, isSoldOut}].
+
+        ★상품이 판매불가(일시품절)면 옵션 재고도 0/품절로 내린다.
+        더현대는 일시품절이어도 옵션 재고 숫자를 그대로 주는데, 그걸 그대로 두면
+        오토튠의 오삭제 방지 가드("sold_out 이나 재고옵션 존재 → in_stock 유지")에
+        걸려 품절 처리가 통째로 무효화된다. 실제로 살 수 없는 재고이므로 0이 정본.
+        """
         attr_list = detail_data.get("uitmAttrList") or []
         prc_info = detail_data.get("prcInfo") or {}
         sell_prc = cls._safe_int(prc_info.get("dcPrc") or prc_info.get("sellPrc"))
+        item_sold_out = cls._is_item_sold_out(detail_data)
 
         # 옵션 없는 단일 SKU
         if not attr_list and not stck_list:
@@ -832,8 +839,10 @@ class TheHyundaiSourcingClient:
                 {
                     "name": "단일",
                     "price": sell_prc,
-                    "stock": cls._safe_int(detail_data.get("sellPossQty")),
-                    "isSoldOut": cls._is_item_sold_out(detail_data),
+                    "stock": 0
+                    if item_sold_out
+                    else cls._safe_int(detail_data.get("sellPossQty")),
+                    "isSoldOut": item_sold_out,
                 }
             ]
 
@@ -843,8 +852,10 @@ class TheHyundaiSourcingClient:
                 {
                     "name": u.get("uitmTotNm") or u.get("uitmNm", ""),
                     "price": cls._safe_int(u.get("uitmDcPrc")) or sell_prc,
-                    "stock": cls._safe_int(u.get("sellPossQty")),
-                    "isSoldOut": u.get("uitmSellGbcd") == "11",
+                    "stock": 0
+                    if item_sold_out
+                    else cls._safe_int(u.get("sellPossQty")),
+                    "isSoldOut": item_sold_out or u.get("uitmSellGbcd") == "11",
                 }
                 for u in attr_list
             ]
@@ -855,8 +866,10 @@ class TheHyundaiSourcingClient:
                 {
                     "name": s.get("uitmTotNm", ""),
                     "price": sell_prc,  # 다차원 옵션별 가격 별도 미제공
-                    "stock": cls._safe_int(s.get("sellPossQty")),
-                    "isSoldOut": False,
+                    "stock": 0
+                    if item_sold_out
+                    else cls._safe_int(s.get("sellPossQty")),
+                    "isSoldOut": item_sold_out,
                 }
                 for s in stck_list
             ]

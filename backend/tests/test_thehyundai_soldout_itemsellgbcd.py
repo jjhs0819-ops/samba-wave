@@ -120,3 +120,41 @@ def test_build_detail_itemsellgbcd_00_은_판매중():
     built = client._build_detail("40B0156585", _detail("00"), list(_STCK_LIST), {"aplyDcPrc": 36350})
 
     assert built["isSoldOut"] is False
+
+
+@pytest.mark.asyncio
+async def test_품절이면_옵션재고도_0으로_내린다(monkeypatch):
+    """오토튠 '오삭제 방지' 가드를 통과하려면 옵션 재고가 0이어야 한다.
+
+    가드(collector_autotune.py): sold_out 이어도 stock>0 이고 isSoldOut=False 인
+    옵션이 하나라도 있으면 in_stock 으로 되돌린다 — ABC/무신사의 부분품절 오보고로
+    멀쩡한 사이즈까지 통째 삭제되던 사고 방어층. 더현대는 일시품절이어도 재고 숫자를
+    그대로 주므로, 옵션 재고를 0으로 내리지 않으면 이 가드에 걸려 품절 처리가 무효화된다.
+    """
+    _patch(monkeypatch, _detail("11"))
+
+    result = await TheHyundaiSourcingClient().refresh_product(_Product())
+
+    assert result.new_sale_status == "sold_out"
+    assert result.new_options, "옵션 목록 자체는 유지돼야 한다(마켓 전송용)"
+    assert all(o["stock"] == 0 for o in result.new_options)
+    assert all(o["isSoldOut"] is True for o in result.new_options)
+
+    # 가드 재현 — 살아있는 옵션이 없어야 품절 처리가 살아남는다
+    has_live_opt = any(
+        int(o.get("stock") or 0) > 0 and not o.get("isSoldOut", False)
+        for o in result.new_options
+    )
+    assert has_live_opt is False
+
+
+@pytest.mark.asyncio
+async def test_정상판매는_옵션재고를_유지한다(monkeypatch):
+    """"00" 상품의 재고를 0으로 깎아 멀쩡한 상품을 내리는 일이 없어야 한다."""
+    _patch(monkeypatch, _detail("00"))
+
+    result = await TheHyundaiSourcingClient().refresh_product(_Product())
+
+    assert result.new_sale_status == "in_stock"
+    assert [o["stock"] for o in result.new_options] == [3, 3]
+    assert all(o["isSoldOut"] is False for o in result.new_options)
