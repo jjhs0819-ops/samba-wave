@@ -307,6 +307,12 @@ SITE_DETAIL_URLS: dict[str, str] = {
 }
 
 
+
+# [2026-09-04] 이 시간(분)보다 오래 기다린 잡은 우선 티어로 올린다 — 알파벳 후순위
+# 사이트(THEHYUNDAI 등)가 영영 dequeue 되지 않던 아사 현상 차단.
+STARVATION_MINUTES = 20
+
+
 class SourcingQueue:
     """통합 소싱 수집 큐 (싱글턴, 클래스 변수).
 
@@ -1072,11 +1078,21 @@ class SourcingQueue:
             # (실측 14일: cancel_order 63건 중 completed 1건. THEHYUNDAI 는 site
             #  알파벳 맨 뒤라 사실상 영구 후순위). 취소는 시간 민감 + 건수 극소라
             # 무조건 앞에 세워도 다른 잡 처리량에 영향이 없다.
+            # [2026-09-04] 알파벳 후순위 사이트 아사(starvation) 차단.
+            # site ASC 정렬이라 THEHYUNDAI 는 항상 맨 뒤다. 앞 사이트 잡이 매 사이클
+            # 새로 쌓이면 차례가 영영 오지 않는다 — 실측: 더현대 송장 3시간 18건 중
+            # dispatch 1건, 나머지는 pending 인 채 TTL 만료 → 송장 성공 0건.
+            # (cancel_order 는 2026-09-01 에 같은 이유로 최우선 처리로 뺐다.)
+            # 해법: 일정 시간 굶은 잡을 한 단계 위 티어로 올린다. 티어 안에서는 기존
+            # site→계정→FIFO 정렬을 그대로 유지하므로, 같은 계정 연속 처리로 자동로그인
+            # 스왑을 줄이는 이점은 그대로다.
             sql = text(
                 f"SELECT request_id, payload FROM samba_sourcing_job "
                 f"WHERE {where} "
                 f"ORDER BY "
-                f"  CASE WHEN job_type = 'cancel_order' THEN 0 ELSE 1 END ASC, "
+                f"  CASE WHEN job_type = 'cancel_order' THEN 0 "
+                f"       WHEN created_at < now() - interval '{STARVATION_MINUTES} minutes' THEN 1 "
+                f"       ELSE 2 END ASC, "
                 f"  site ASC NULLS LAST, "
                 f"  NULLIF(payload->>'sourcingAccountId', '') ASC NULLS LAST, "
                 f"  created_at ASC "
