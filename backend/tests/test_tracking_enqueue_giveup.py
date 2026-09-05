@@ -77,3 +77,36 @@ def test_return_freshness_window_is_sane() -> None:
     """회수 진행 기간을 덮되, 죽은 주문은 잘라야 한다."""
     assert isinstance(ts._RETURN_COLLECT_MAX_AGE_DAYS, int)
     assert 7 <= ts._RETURN_COLLECT_MAX_AGE_DAYS <= 60
+
+
+# ── 2026-09-05 (2차): 회수송장 수집 자체를 기본 OFF ──
+# 신규 주문 배송송장(본업)과 달리 이건 반품 회수상태 판정용 곁다리인데,
+# 도입 이후 1,902회 시도 성공 0건이면서 본업 큐를 잡아먹었다. 사장님 판단으로 끔.
+
+
+def test_return_enqueue_is_off_by_default(monkeypatch) -> None:
+    """env 없으면 적재하지 않고 즉시 반환해야 한다 (DB 도 안 건드림)."""
+    import asyncio
+
+    monkeypatch.delenv("ENABLE_LOTTEON_RETURN_WAYBILL", raising=False)
+    res = asyncio.run(ts.enqueue_return_pending())
+    assert res == {"success": True, "queued": 0, "skipped": 0, "disabled": True}
+
+
+def test_return_enqueue_gate_is_before_any_db_work() -> None:
+    """게이트가 DB 조회보다 앞에 있어야 꺼진 상태에서 쿼리가 안 나간다."""
+    src = inspect.getsource(ts.enqueue_return_pending)
+    assert src.index("ENABLE_LOTTEON_RETURN_WAYBILL") < src.index("get_write_session")
+
+
+def test_return_enqueue_can_be_turned_back_on() -> None:
+    """되살릴 수 있어야 한다 — 값 '1' 이면 게이트를 통과."""
+    src = inspect.getsource(ts.enqueue_return_pending)
+    assert '!= "1"' in src, "env 값 '1' 로 되살리는 경로가 없으면 영구 삭제나 다름없다"
+
+
+def test_normal_tracking_enqueue_is_not_gated() -> None:
+    """본업(신규 주문 배송송장)은 절대 이 게이트에 걸리면 안 된다."""
+    src = inspect.getsource(ts.enqueue_pending_orders)
+    assert "ENABLE_LOTTEON_RETURN_WAYBILL" not in src
+

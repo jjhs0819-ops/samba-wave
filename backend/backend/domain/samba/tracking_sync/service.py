@@ -645,8 +645,27 @@ async def enqueue_return_for_order(
 async def enqueue_return_pending(
     limit: int = 200, owner_device_id: Optional[str] = None
 ) -> dict[str, Any]:
-    """반품 진행 중 + 회수송장 미보유 LOTTEON 주문 일괄 회수송장 수집 적재."""
+    """반품 진행 중 + 회수송장 미보유 LOTTEON 주문 일괄 회수송장 수집 적재.
+
+    [2026-09-05] 기본 OFF. env ENABLE_LOTTEON_RETURN_WAYBILL=1 일 때만 동작한다.
+
+    왜 껐나 — 이건 신규 주문 배송송장(본업)이 아니라 반품 회수상태 판정용 곁다리인데,
+    도입(2026-08-29) 이후 1,902회 시도해 성공 0건이면서 본업 큐를 잡아먹었다.
+    죽은 옛 주문 2건이 잡마다 120초씩 확장앱을 물고 하루 89분을 태웠다.
+    반품 회수상태 판정의 주력은 원송장→반송장 역추출(CJ·한진)이고 그쪽은 정상 동작하므로,
+    이걸 꺼도 반품탭 자동판정은 그대로 돌아간다(returns/collect_status.py 우선순위 2).
+    ★단, 롯데온은 롯데택배라 원송장 역추출이 안 된다 — 롯데온 반품 회수상태는 수동 확인.
+    되살리려면 컨테이너 env 에 ENABLE_LOTTEON_RETURN_WAYBILL=1 후 재생성.
+    """
+    import os as _os
+
     from sqlalchemy import or_ as _or
+
+    if _os.getenv("ENABLE_LOTTEON_RETURN_WAYBILL") != "1":
+        logger.info(
+            "[회수송장] 비활성 (ENABLE_LOTTEON_RETURN_WAYBILL != 1) — 적재 건너뜀"
+        )
+        return {"success": True, "queued": 0, "skipped": 0, "disabled": True}
 
     from sqlalchemy import func as _rf
 
