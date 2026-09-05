@@ -391,6 +391,43 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return false
 })
 
+// [2026-09-05] 확장앱 버전이 올라가면 "코드 문제로 쌓인" 로그인 차단만 자동 해제한다.
+// 왜: 2026-09-04 더현대 로그인칸 대기 버그를 고쳐 배포했는데, 고치기 전에 쌓인 7회 차단이
+// 24시간 남아 있어 새 코드가 한 번도 시도조차 못 했다(더현대 송장 24h 0건, 수동 해제 필요).
+// 같은 패턴을 하루에 세 번 겪어 자동화한다.
+// 단서: 자격증명 오류/계정 잠금은 코드로 고쳐지는 게 아니고, 재시도가 오히려 사이트 잠금을
+// 영구화한다(SSG 실측 — 이 차단 장치를 만든 원래 이유). 그 건들은 그대로 유지한다.
+const _CREDENTIAL_FAIL_HINTS = ['자격증명', '비밀번호', '회원정보', '잠금', '잠긴', 'credential', 'locked']
+
+function _isCredentialFail(reason) {
+  const r = String(reason || '')
+  return _CREDENTIAL_FAIL_HINTS.some(h => r.includes(h))
+}
+
+async function _pruneLoginBlocksOnVersionChange() {
+  try {
+    const ver = chrome.runtime.getManifest().version
+    const st = await chrome.storage.local.get(['_autoLoginBlockVer', '_accountLoginFail'])
+    if (st._autoLoginBlockVer === ver) return // 이미 이 버전에서 정리함 (서비스워커 재기동마다 반복 금지)
+    const fails = st._accountLoginFail || {}
+    const kept = {}
+    let cleared = 0
+    for (const [k, rec] of Object.entries(fails)) {
+      if (_isCredentialFail(rec && rec.lastReason)) kept[k] = rec
+      else cleared++
+    }
+    await chrome.storage.local.set({ _accountLoginFail: kept, _autoLoginBlockVer: ver })
+    _accountLoginFail = kept
+    console.log(
+      `[자동로그인] v${ver} 업데이트 — 코드성 로그인 차단 ${cleared}건 자동 해제 ` +
+      `(자격증명/잠금 ${Object.keys(kept).length}건은 유지)`
+    )
+  } catch (e) {
+    console.warn('[자동로그인] 버전 변경 차단 정리 실패:', e)
+  }
+}
+_pruneLoginBlocksOnVersionChange()
+
 // 직전 _spaDirectLogin 의 치명적 실패 정보 — 자격증명 오류/계정 잠금은 재시도 무의미(잠금만 갱신).
 // _ensureLoggedInImpl 재시도 루프가 이 플래그를 보고 즉시 중단한다.
 let _spaLoginFatal = null // { reason: 'locked'|'credential', message }

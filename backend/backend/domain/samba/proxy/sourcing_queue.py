@@ -7,9 +7,11 @@ ABCmart, GrandStage, REXMONDE, 롯데ON, GSShop 5개 사이트 지원.
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Optional
 
 from backend.db.orm import get_write_session
 from backend.domain.samba.sourcing_job.model import SambaSourcingJob
@@ -311,6 +313,73 @@ SITE_DETAIL_URLS: dict[str, str] = {
 # [2026-09-04] 이 시간(분)보다 오래 기다린 잡은 우선 티어로 올린다 — 알파벳 후순위
 # 사이트(THEHYUNDAI 등)가 영영 dequeue 되지 않던 아사 현상 차단.
 STARVATION_MINUTES = 20
+
+# [2026-09-05] 송장(tracking) 잡 사이트 공평분배(라운드로빈).
+#
+# 왜 필요한가: STARVATION_MINUTES 티어만으로는 송장 아사가 절대 안 풀린다.
+#   ① 송장 잡은 주문동기화 루프가 12~20분마다 pending 을 전량 expire 시키고 새로 깐다
+#      (tracking_sync/service.py enqueue_pending_orders force=True). 20분 굶기 전에 지워진다.
+#   ② 더 근본적으로, 한 배치의 전 사이트 잡이 같은 1초 안에 생성된다 → 나이로 티어를
+#      올려도 전 사이트가 동시에 올라가고, 티어 안에서 다시 site ASC 라 THEHYUNDAI 는
+#      여전히 꼴찌다. 실측 2026-09-04 24h: 더현대 dispatch 0건 / 잡 전량 pending 만료.
+#
+# 조치: 최근 창(window) 안에서 "이미 dispatch 된 건수가 적은 사이트" 순으로 dequeue 한다.
+#   - 사이트 목록은 하드코딩하지 않고 큐 실데이터에서 뽑는다(신규 소싱처 자동 편입).
+#   - 같은 사이트 안에서는 기존 계정→FIFO 정렬 유지 → 자동로그인 스왑 최소화 이점 그대로.
+#   - dispatch 할 때마다 메모리 카운트를 즉시 +1 → 폴링이 초당 와도 바로 다음 사이트로 넘어감.
+_TRACKING_PRIO_WINDOW_MIN = 30
+_TRACKING_PRIO_TTL_SEC = 20.0
+# {"at": monotonic 시각, "counts": {UPPER(site): 최근 dispatch 건수}}
+_tracking_prio_cache: dict[str, Any] = {"at": 0.0, "counts": {}}
+
+
+def _tracking_site_order(counts: Mapping[str, int]) -> list[str]:
+    """dispatch 적게 된 사이트부터 — 동률이면 사이트명 ASC(결정적)."""
+    return [s for s, _ in sorted(counts.items(), key=lambda kv: (kv[1], kv[0]))]
+
+
+def _bump_tracking_dispatch(site: Optional[str]) -> None:
+    """송장 잡 1건 dispatch 반영 — 다음 폴링이 곧바로 다음 사이트를 고르게 한다."""
+    key = (site or "").strip().upper()
+    if not key:
+        return
+    counts = _tracking_prio_cache.get("counts") or {}
+    counts[key] = int(counts.get(key, 0)) + 1
+    _tracking_prio_cache["counts"] = counts
+
+
+async def _get_tracking_site_order() -> list[str]:
+    """송장 사이트 우선순위(공평분배). TTL 캐시 — 폴링마다 집계 쿼리 도는 것 방지."""
+    from sqlalchemy import text as _text
+
+    now = time.monotonic()
+    if now - float(_tracking_prio_cache.get("at") or 0.0) < _TRACKING_PRIO_TTL_SEC:
+        return _tracking_site_order(_tracking_prio_cache.get("counts") or {})
+    counts: dict[str, int] = {}
+    try:
+        async with get_write_session() as _s:
+            rows = (
+                await _s.execute(
+                    _text(
+                        "SELECT UPPER(site) AS s, "
+                        " count(*) FILTER (WHERE dispatched_at > now() - "
+                        f" interval '{_TRACKING_PRIO_WINDOW_MIN} minutes') AS done "
+                        "FROM samba_sourcing_job "
+                        "WHERE job_type = 'tracking' AND site IS NOT NULL AND site <> '' "
+                        " AND (dispatched_at > now() - "
+                        f"      interval '{_TRACKING_PRIO_WINDOW_MIN} minutes' "
+                        "      OR (status = 'pending' AND expires_at > now())) "
+                        "GROUP BY 1"
+                    )
+                )
+            ).fetchall()
+        counts = {r.s: int(r.done or 0) for r in rows if r.s}
+    except Exception as e:  # 집계 실패는 치명적이지 않다 — 기존 site ASC 로 폴백
+        logger.warning(f"[소싱큐] 송장 사이트 공평분배 집계 실패(기존 정렬 폴백): {e}")
+        counts = {}
+    _tracking_prio_cache["at"] = now
+    _tracking_prio_cache["counts"] = counts
+    return _tracking_site_order(counts)
 
 
 class SourcingQueue:
@@ -1086,13 +1155,31 @@ class SourcingQueue:
             # 해법: 일정 시간 굶은 잡을 한 단계 위 티어로 올린다. 티어 안에서는 기존
             # site→계정→FIFO 정렬을 그대로 유지하므로, 같은 계정 연속 처리로 자동로그인
             # 스왑을 줄이는 이점은 그대로다.
+            # [2026-09-05] 송장 잡은 site ASC 대신 "덜 처리된 사이트 먼저"(공평분배)로 뽑는다.
+            # 위 굶은-잡 티어는 송장엔 효력이 없다(배치가 20분 전에 전량 리셋 + 전 사이트
+            # 잡이 같은 초에 생성돼 동시에 승격). 사이트 목록은 큐 실데이터에서 가져온다.
+            _tracking_prio_sql = ""
+            _tsites = await _get_tracking_site_order()
+            if _tsites:
+                _whens = " ".join(
+                    f"WHEN :tsite_{i} THEN {i}" for i in range(len(_tsites))
+                )
+                for i, _s in enumerate(_tsites):
+                    params[f"tsite_{i}"] = _s
+                _tracking_prio_sql = (
+                    f"  CASE WHEN job_type = 'tracking' "
+                    f"       THEN (CASE UPPER(site) {_whens} ELSE {len(_tsites)} END) "
+                    f"       ELSE 0 END ASC, "
+                )
+
             sql = text(
-                f"SELECT request_id, payload FROM samba_sourcing_job "
+                f"SELECT request_id, payload, site, job_type FROM samba_sourcing_job "
                 f"WHERE {where} "
                 f"ORDER BY "
                 f"  CASE WHEN job_type = 'cancel_order' THEN 0 "
                 f"       WHEN created_at < now() - interval '{STARVATION_MINUTES} minutes' THEN 1 "
                 f"       ELSE 2 END ASC, "
+                f"{_tracking_prio_sql}"
                 f"  site ASC NULLS LAST, "
                 f"  NULLIF(payload->>'sourcingAccountId', '') ASC NULLS LAST, "
                 f"  created_at ASC "
@@ -1105,7 +1192,15 @@ class SourcingQueue:
                 if not row:
                     return {"hasJob": False}
 
-                request_id, payload = row
+                # 컬럼 수가 달라도 깨지지 않게 방어적 해체 (테스트 더블은 2컬럼만 준다).
+                _cols = tuple(row)
+                request_id, payload = _cols[0], _cols[1]
+                _row_site = _cols[2] if len(_cols) > 2 else None
+                _row_jtype = _cols[3] if len(_cols) > 3 else None
+                # 송장 잡을 하나 집어갈 때마다 사이트 카운트 즉시 +1 —
+                # TTL(20s) 캐시가 갱신되기 전 폴링이 같은 사이트만 계속 고르는 것 방지.
+                if _row_jtype == "tracking":
+                    _bump_tracking_dispatch(_row_site)
                 # owner_device_id가 NULL/빈 잡(reward 등)은 클레이밍 device_id를 기록 —
                 # 어느 PC가 잡 가져갔는지 추적용. 기존 소유자 잡은 owner 유지.
                 await session.execute(
