@@ -41,6 +41,56 @@ from backend.utils.logger import logger
 
 _UTC = timezone.utc
 
+# [2026-09-05] 송장 잡 "무응답 무한재시도" 안전망.
+#
+# 실측: 롯데온 회수송장 잡이 확장앱에서 120초를 통째로 기다리다 'timeout: content script
+# 응답 없음' 으로 죽는 것을 12분마다 영원히 반복했다(주문 2건이 24h 54회 = 확장앱 89분 낭비).
+# 원인은 회수 종결된 옛 주문의 claim 페이지가 더 이상 안 떠서 content script 자체가
+# 주입되지 않는 것 — 재시도로는 절대 안 풀린다.
+#
+# 조치: 최근 창 안에서 무응답이 임계치를 넘은 주문은 이번 배치에서 건너뛴다.
+# 창이 굴러가면 하루 1회꼴로 다시 시도하므로, 페이지가 되살아나면 자동 복구된다.
+# ★ 무응답(timeout)만 센다 — 'no_tracking(미발송)' 은 정상 응답이고 나중에 송장이 생기므로
+#   같이 세면 멀쩡한 주문까지 포기해버린다.
+_TIMEOUT_GIVEUP_THRESHOLD = 5
+_TIMEOUT_GIVEUP_WINDOW_HOURS = 24
+
+# [2026-09-05] 회수송장 적재 신선도 컷.
+# 적재 조건에 나이 제한이 없어, 회수가 영영 시작되지 않을 옛 반품(2026-05~08, 22건)을
+# 12분마다 영원히 다시 넣고 있었다. 확장앱 수집 시도 1,902회 성공 0건 — 전부 죽은 주문이다.
+# 반품 진행 중인 주문은 상태가 계속 갱신되므로 updated_at 기준으로 자른다.
+_RETURN_COLLECT_MAX_AGE_DAYS = 14
+
+
+async def _orders_with_repeated_timeouts(order_ids: list[str]) -> set[str]:
+    """최근 창에서 무응답(timeout)이 임계치 이상인 주문 id 집합. 조회 실패 시 빈 집합(=평소대로)."""
+    if not order_ids:
+        return set()
+    from sqlalchemy import text as _to_text
+
+    try:
+        async with get_write_session() as _sess:
+            await _apply_session_timeouts(_sess)
+            rows = (
+                await _sess.execute(
+                    _to_text(
+                        "SELECT payload->>'orderId' AS oid, count(*) AS c "
+                        "FROM samba_sourcing_job "
+                        "WHERE job_type = 'tracking' "
+                        f" AND created_at >= now() - interval '{_TIMEOUT_GIVEUP_WINDOW_HOURS} hours' "
+                        " AND error LIKE 'timeout:%' "
+                        " AND payload->>'orderId' = ANY(:oids) "
+                        "GROUP BY 1 HAVING count(*) >= :thr"
+                    ),
+                    {"oids": list(order_ids), "thr": _TIMEOUT_GIVEUP_THRESHOLD},
+                )
+            ).all()
+        return {r.oid for r in rows if r.oid}
+    except Exception as e:  # 안전망이 본 경로를 막으면 안 된다
+        logger.warning(f"[송장동기화] 무응답 서킷브레이커 조회 실패(무시): {e}")
+        return set()
+
+
 
 async def _apply_session_timeouts(session) -> None:
     """이 세션(트랜잭션)에 lock/statement 타임아웃을 걸어 송장수집 경로 hang·좀비를 막는다.
@@ -598,8 +648,13 @@ async def enqueue_return_pending(
     """반품 진행 중 + 회수송장 미보유 LOTTEON 주문 일괄 회수송장 수집 적재."""
     from sqlalchemy import or_ as _or
 
+    from sqlalchemy import func as _rf
+
     queued = 0
     skipped = 0
+    # [2026-09-05] 신선도 컷 — 회수가 영영 시작되지 않을 옛 반품을 영원히 재큐잉하던 것 차단.
+    # 반품이 살아 있으면 상태가 계속 갱신되므로 updated_at(없으면 created_at) 기준.
+    _fresh_since = datetime.now(_UTC) - timedelta(days=_RETURN_COLLECT_MAX_AGE_DAYS)
     async with get_write_session() as session:
         rows = (
             (
@@ -617,6 +672,8 @@ async def enqueue_return_pending(
                                 ["returning", "returned", "return_requested"]
                             ),
                         ),
+                        _rf.coalesce(SambaOrder.updated_at, SambaOrder.created_at)
+                        >= _fresh_since,
                     )
                     .limit(limit)
                 )
@@ -624,7 +681,17 @@ async def enqueue_return_pending(
             .scalars()
             .all()
         )
+    # [2026-09-05] 무응답 서킷브레이커 — 페이지가 안 떠 content script 가 영영 응답 못 하는
+    # 주문을 12분마다 120초씩 물고 있던 것 차단(주문 2건이 하루 89분 잡아먹었다).
+    _stuck = await _orders_with_repeated_timeouts(list(rows))
+    if _stuck:
+        logger.warning(
+            f"[회수송장] 무응답 반복 주문 {len(_stuck)}건 이번 배치 건너뜀: {sorted(_stuck)}"
+        )
     for oid in rows:
+        if oid in _stuck:
+            skipped += 1
+            continue
         r = await enqueue_return_for_order(oid, owner_device_id=owner_device_id)
         if r.get("success") and not r.get("skipped"):
             queued += 1
@@ -808,8 +875,20 @@ async def enqueue_pending_orders(
             f"{sorted(_login_broken_accounts)}"
         )
 
+    # [2026-09-05] 무응답 서킷브레이커 — 계정 서킷브레이커(로그인 실패)와 짝.
+    # 이쪽은 "특정 주문 페이지가 영영 응답 못 하는" 경우로, 재시도가 확장앱 시간만 태운다.
+    _stuck_orders = await _orders_with_repeated_timeouts([o for o, _ in order_specs])
+    if _stuck_orders:
+        logger.warning(
+            f"[송장동기화] 무응답 반복 주문 {len(_stuck_orders)}건 이번 배치 건너뜀: "
+            f"{sorted(_stuck_orders)}"
+        )
+
     for _o_id, _oacc in order_specs:
         if _oacc and _oacc in _login_broken_accounts:
+            skipped += 1
+            continue
+        if _o_id in _stuck_orders:
             skipped += 1
             continue
         try:
